@@ -7,7 +7,6 @@
 
 #include "bcm_host.h"
 
-#include <GLES/gl.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include "EGL/egl.h"
@@ -24,8 +23,23 @@
 
 typedef struct
 {
-  uint32_t screen_width;
-  uint32_t screen_height;
+  // HMD info/state
+  ohmd_context* hmdContext;
+  ohmd_device* hmdDevice;
+
+  int hmd_width, hmd_height;
+  int eye_width, eye_height;
+  float ipd;
+  float viewport_scale[2];
+  float distortion_coeffs[4];
+  float aberr_scale[3];
+  float sep;
+  float left_lens_center[2];
+  float right_lens_center[2];
+  float warp_scale;
+  float warp_adj;
+
+  uint32_t screen_width, screen_height;
   // OpenGL|ES objects
   EGLDisplay display;
   EGLSurface surface;
@@ -36,13 +50,40 @@ typedef struct
   GLint camTexturedQuadProgram_texcoordAttr;
   GLint camTexturedQuadProgram_textureUniform;
 
+  GLuint hmdDistortionProgram;
+  GLint hmdDistortionProgram_coordsAttr;
+  GLint hmdDistortionProgram_mvpUniform;
+  GLint hmdDistortionProgram_warpTextureUniform;
+  GLint hmdDistortionProgram_lensCenterUniform;
+  GLint hmdDistortionProgram_viewportScaleUniform;
+  GLint hmdDistortionProgram_warpScaleUniform;
+  GLint hmdDistortionProgram_hmdWarpParamUniform;
+  GLint hmdDistortionProgram_aberrUniform;
+
+  GLuint eyeFBO;
+  GLuint eyeColorTex;
+
   int verbose;
 
 } CUBE_STATE_T;
 
 
-static void init_ogl();
 static CUBE_STATE_T state;
+
+static const GLfloat s_identityMatrix[] = {
+  1.0f, 0.0f, 0.0f, 0.0f,
+  0.0f, 1.0f, 0.0f, 0.0f,
+  0.0f, 0.0f, 1.0f, 0.0f,
+  0.0f, 0.0f, 0.0f, 1.0f
+};
+
+// vec4 out = vec4((in.xy * 2.0f) - vec2(1.0f), in.z, in.w)
+static const GLfloat s_texcoordToViewportMatrix[] = {
+   2.0f,  0.0f, 0.0f, 0.0f,
+   0.0f,  2.0f, 0.0f, 0.0f,
+   0.0f,  0.0f, 1.0f, 0.0f,
+  -1.0f, -1.0f, 0.0f, 1.0f
+};
 
 static const GLfloat quadx[4*3] = {
    -1.0f, -1.0f,  0.0f,
@@ -156,15 +197,11 @@ static void init_ogl() {
    result = eglMakeCurrent(state.display, state.surface, state.surface, state.context);
    assert(EGL_FALSE != result);
 
-   // Set background color and clear buffers
    glViewport(0, 0, (GLsizei)state.screen_width, (GLsizei)state.screen_height);
-   glClearColor(0.15f, 0.25f, 0.35f, 1.0f);
-
    glDisable(GL_CULL_FACE);
    glDisable(GL_DEPTH_TEST);
-}
 
-static void init_shaders() {
+  // Set up shared resources
 
   state.camTexturedQuadProgram = compileShader(
     "attribute vec4 vPosition;"
@@ -188,10 +225,21 @@ static void init_shaders() {
   state.camTexturedQuadProgram_texcoordAttr = glGetAttribLocation(state.camTexturedQuadProgram, "TexCoordIn");
 	state.camTexturedQuadProgram_textureUniform = glGetUniformLocation(state.camTexturedQuadProgram, "Texture");
 
+  {
+    const char *vertex, *fragment;
+    ohmd_gets(OHMD_GLSL_ES_DISTORTION_VERT_SRC, &vertex);
+    ohmd_gets(OHMD_GLSL_ES_DISTORTION_FRAG_SRC, &fragment);
+    state.hmdDistortionProgram = compileShader(vertex, fragment);
+  }
+  state.hmdDistortionProgram_coordsAttr = glGetAttribLocation(state.hmdDistortionProgram, "coords"); // vec2 coords
+  state.hmdDistortionProgram_mvpUniform = glGetUniformLocation(state.hmdDistortionProgram, "mvp"); // model-view-projection matrix
+  state.hmdDistortionProgram_warpTextureUniform = glGetUniformLocation(state.hmdDistortionProgram, "warpTexture"); // per eye texture to warp for lens distortion
+  state.hmdDistortionProgram_lensCenterUniform = glGetUniformLocation(state.hmdDistortionProgram, "LensCenter"); // Position of lens center in m (usually eye_w/2, eye_h/2)
+  state.hmdDistortionProgram_viewportScaleUniform = glGetUniformLocation(state.hmdDistortionProgram, "ViewportScale"); // Scale from texture co-ords to m (usually eye_w, eye_h)
+  state.hmdDistortionProgram_warpScaleUniform = glGetUniformLocation(state.hmdDistortionProgram, "WarpScale"); // Distortion overall scale in m (usually ~eye_w/2)
+  state.hmdDistortionProgram_hmdWarpParamUniform = glGetUniformLocation(state.hmdDistortionProgram, "HmdWarpParam"); // Distoriton coefficients (PanoTools model) [a,b,c,d]
+  state.hmdDistortionProgram_aberrUniform = glGetUniformLocation(state.hmdDistortionProgram, "aberr"); // chromatic distortion post scaling
 }
-
-
-
 
 static bool want_quit = false;
 static void signal_handler(int) {
@@ -202,10 +250,54 @@ int main(int argc, char* argv[]) {
 
   bcm_host_init();
 
-  init_ogl();
-  printf("Screen dimensions: %u x %u\n", state.screen_width, state.screen_height);
+  state.hmdContext = ohmd_ctx_create();
+  int num_devices = ohmd_ctx_probe(state.hmdContext);
+  if (num_devices < 0){
+    printf("OpenHMD: failed to probe devices: %s\n", ohmd_ctx_get_error(state.hmdContext));
+    return 1;
+  }
 
-  init_shaders();
+  {
+    ohmd_device_settings* hmdSettings = ohmd_device_settings_create(state.hmdContext);
+
+    state.hmdDevice = ohmd_list_open_device_s(state.hmdContext, 0, hmdSettings);
+    if (!state.hmdDevice){
+      printf("OpenHMD: failed to open device: %s\n", ohmd_ctx_get_error(state.hmdContext));
+      return 1;
+    }
+
+    ohmd_device_geti(state.hmdDevice, OHMD_SCREEN_HORIZONTAL_RESOLUTION, &state.hmd_width);
+    ohmd_device_geti(state.hmdDevice, OHMD_SCREEN_VERTICAL_RESOLUTION, &state.hmd_height);
+
+    ohmd_device_getf(state.hmdDevice, OHMD_EYE_IPD, &state.ipd);
+    //viewport is half the screen
+    ohmd_device_getf(state.hmdDevice, OHMD_SCREEN_HORIZONTAL_SIZE, &(state.viewport_scale[0]));
+    state.viewport_scale[0] /= 2.0f;
+    ohmd_device_getf(state.hmdDevice, OHMD_SCREEN_VERTICAL_SIZE, &(state.viewport_scale[1]));
+    //distortion coefficients
+    ohmd_device_getf(state.hmdDevice, OHMD_UNIVERSAL_DISTORTION_K, &(state.distortion_coeffs[0]));
+    ohmd_device_getf(state.hmdDevice, OHMD_UNIVERSAL_ABERRATION_K, &(state.aberr_scale[0]));
+    //calculate lens centers (assuming the eye separation is the distance between the lens centers)
+    ohmd_device_getf(state.hmdDevice, OHMD_LENS_HORIZONTAL_SEPARATION, &state.sep);
+    ohmd_device_getf(state.hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(state.left_lens_center[1]));
+    ohmd_device_getf(state.hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(state.right_lens_center[1]));
+    state.left_lens_center[0] = state.viewport_scale[0] - state.sep/2.0f;
+    state.right_lens_center[0] = state.sep/2.0f;
+    //assume calibration was for lens view to which ever edge of screen is further away from lens center
+    state.warp_scale = (state.left_lens_center[0] > state.right_lens_center[0]) ? state.left_lens_center[0] : state.right_lens_center[0];
+    state.warp_adj = 1.0f;
+
+    state.eye_width = state.hmd_width / 2;
+    state.eye_height = state.hmd_height;
+
+    ohmd_device_settings_destroy(hmdSettings);
+  }
+
+  init_ogl();
+
+  createFBO(state.eye_width, state.eye_height, &state.eyeFBO, &state.eyeColorTex);
+
+  printf("Screen dimensions: %u x %u\n", state.screen_width, state.screen_height);
 
   MMALCamera* leftCamera = new MMALCamera(state.display, state.context);
   MMALCamera* rightCamera = new MMALCamera(state.display, state.context);
@@ -221,6 +313,7 @@ int main(int argc, char* argv[]) {
     leftCamera->readFrame();
     rightCamera->readFrame();
 
+#if 0
     // Draw
     glUseProgram(state.camTexturedQuadProgram);
 
@@ -253,6 +346,52 @@ int main(int argc, char* argv[]) {
       // draw first 4 vertices
       GL(glDrawArrays( GL_TRIANGLE_STRIP, 0, 4));
     }
+#else
+
+
+    for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+      // Target eye FBO
+      GL(glBindFramebuffer(GL_FRAMEBUFFER, state.eyeFBO));
+      GL(glViewport(0, 0, state.eye_width, state.eye_height));
+
+      // Draw camera content for thie eye
+      glUseProgram(state.camTexturedQuadProgram);
+      GL(glActiveTexture(GL_TEXTURE0));
+      GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, eyeIndex == 0 ? leftCamera->rgbTexture() : rightCamera->rgbTexture()));
+      glUniform1i(state.camTexturedQuadProgram_textureUniform, 0);
+
+      glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, quadx );
+      glVertexAttribPointer(state.camTexturedQuadProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords );
+      glEnableVertexAttribArray(state.camTexturedQuadProgram_positionAttr);
+      glEnableVertexAttribArray(state.camTexturedQuadProgram_texcoordAttr);
+
+      GL(glDrawArrays( GL_TRIANGLE_STRIP, 0, 4));
+
+      // Switch to output framebuffer
+      GL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+      if (eyeIndex == 0) {
+        GL(glViewport(0, 0, state.screen_width/2, state.screen_height));
+      } else {
+        GL(glViewport(state.screen_width/2, 0, state.screen_width/2, state.screen_height));
+      }
+
+      // Draw using distortion program
+      GL(glUseProgram(state.hmdDistortionProgram));
+
+      GL(glUniformMatrix4fv(state.hmdDistortionProgram_mvpUniform, 1, GL_FALSE, s_texcoordToViewportMatrix));
+      GL(glUniform1i(state.hmdDistortionProgram_warpTextureUniform, 0)); // GL_TEXTURE0
+      GL(glUniform2fv(state.hmdDistortionProgram_lensCenterUniform, 1, eyeIndex == 0 ? state.left_lens_center : state.right_lens_center));
+      GL(glUniform2fv(state.hmdDistortionProgram_viewportScaleUniform, 1, state.viewport_scale));
+      GL(glUniform1f(state.hmdDistortionProgram_warpScaleUniform, state.warp_scale * state.warp_adj));
+      GL(glUniform4fv(state.hmdDistortionProgram_hmdWarpParamUniform, 1, state.distortion_coeffs));
+      GL(glUniform3fv(state.hmdDistortionProgram_aberrUniform, 1, state.aberr_scale));
+
+      glVertexAttribPointer(state.hmdDistortionProgram_coordsAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords);
+      glEnableVertexAttribArray(state.hmdDistortionProgram_coordsAttr);
+      GL(glDrawArrays( GL_TRIANGLE_STRIP, 0, 4));
+    }
+
+#endif
 
     eglSwapBuffers(state.display, state.surface);
   }

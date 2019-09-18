@@ -79,3 +79,42 @@ GLuint compileShader(const char* vertexSource, const char* fragmentSource) {
   return programObject;
 }
 
+void createFBO(int width, int height, GLuint* outFBO, GLuint* outColorTex, GLuint* outDepthTex) {
+  GL(glGenTextures(1, outColorTex));
+  if (outDepthTex) {
+    GL(glGenTextures(1, outDepthTex));
+  }
+  GL(glGenFramebuffers(1, outFBO));
+  
+  GL(glBindTexture(GL_TEXTURE_2D, *outColorTex));
+  GL(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL));
+  GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+  GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+  GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+  GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+ 
+  if (outDepthTex) { 
+    GL(glBindTexture(GL_TEXTURE_2D, *outDepthTex));
+    GL(glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, width, height, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
+    GL(glBindTexture(GL_TEXTURE_2D, 0));
+  }
+    
+  GL(glBindFramebuffer(GL_FRAMEBUFFER, *outFBO));
+  GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *outColorTex, 0));
+
+  if (outDepthTex) {
+    GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, *outDepthTex, 0));
+  }
+
+  GLenum status = GL(glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+  if(status != GL_FRAMEBUFFER_COMPLETE){
+    die("Failed to create %u x %u fbo: %x\n", width, height, status);
+  }
+  GL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+}
+

@@ -37,7 +37,6 @@
 #define STILLS_FRAME_RATE_DEN 1
 
 #define MMAL_CHECK(x) _mmal_check(x, #x, __FILE__, __LINE__ )
-#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 
 void _mmal_check(MMAL_STATUS_T st, const char* op, const char* file, int line) {
   if (st != MMAL_SUCCESS) {

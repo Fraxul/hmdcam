@@ -19,7 +19,7 @@ Export('env')
 
 env.Program(
   target = 'hmdcam',
-  source = Glob('*.cpp') + Glob('*.c'),
-  LIBS=['stdc++', 'mmal', 'mmal_core', 'mmal_util', 'brcmGLESv2', 'brcmEGL', 'bcm_host', 'vcos']
+  source = Glob('*.cpp') + Glob('*.c') + ['openhmd/libopenhmd.a'],
+  LIBS=['stdc++', 'mmal', 'mmal_core', 'mmal_util', 'brcmGLESv2', 'brcmEGL', 'bcm_host', 'vcos', 'pthread', 'hidapi-hidraw']
 )
 
