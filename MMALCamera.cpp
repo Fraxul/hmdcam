@@ -120,7 +120,7 @@ MMALCamera::~MMALCamera() {
 
 }
 
-void MMALCamera::init(unsigned int cameraIndex, unsigned int Width, unsigned int Height, unsigned int FrameRate) {
+void MMALCamera::init(unsigned int cameraIndex, unsigned int Width, unsigned int Height) {
    /* Create the component */
    MMAL_CHECK(mmal_component_create(MMAL_COMPONENT_DEFAULT_CAMERA, &m_cameraComponent));
 

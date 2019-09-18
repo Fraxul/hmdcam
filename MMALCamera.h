@@ -12,7 +12,7 @@ public:
   MMALCamera(EGLDisplay, EGLContext);
   ~MMALCamera();
 
-  void init(unsigned int cameraIndex, unsigned int width, unsigned int height, unsigned int framerate);
+  void init(unsigned int cameraIndex, unsigned int width, unsigned int height);
   bool readFrame();
 
   void stop();

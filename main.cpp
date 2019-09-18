@@ -21,6 +21,8 @@
    #define M_PI 3.141592654
 #endif
 
+#define SINGLE_CAMERA
+
 typedef struct
 {
   // HMD info/state
@@ -40,6 +42,7 @@ typedef struct
   float warp_adj;
 
   uint32_t screen_width, screen_height;
+  bool rotate_screen;
   // OpenGL|ES objects
   EGLDisplay display;
   EGLSurface surface;
@@ -83,6 +86,13 @@ static const GLfloat s_texcoordToViewportMatrix[] = {
    0.0f,  2.0f, 0.0f, 0.0f,
    0.0f,  0.0f, 1.0f, 0.0f,
   -1.0f, -1.0f, 0.0f, 1.0f
+};
+// Same as above, but rotated (swapping x and y)
+static const GLfloat s_texcoordToViewportMatrixRotated[] = {
+   0.0f,  2.0f, 0.0f, 0.0f,
+  -2.0f,  0.0f, 0.0f, 0.0f,
+   0.0f,  0.0f, 1.0f, 0.0f,
+   1.0f, -1.0f, 0.0f, 1.0f
 };
 
 static const GLfloat quadx[4*3] = {
@@ -248,6 +258,8 @@ static void signal_handler(int) {
 
 int main(int argc, char* argv[]) {
 
+  memset(&state, NULL, sizeof(state));
+
   bcm_host_init();
 
   state.hmdContext = ohmd_ctx_create();
@@ -291,6 +303,8 @@ int main(int argc, char* argv[]) {
     state.eye_height = state.hmd_height;
 
     ohmd_device_settings_destroy(hmdSettings);
+
+    printf("HMD dimensions: %u x %u\n", state.hmd_width, state.hmd_height);
   }
 
   init_ogl();
@@ -299,10 +313,25 @@ int main(int argc, char* argv[]) {
 
   printf("Screen dimensions: %u x %u\n", state.screen_width, state.screen_height);
 
+  if (state.screen_width == state.hmd_width && state.screen_height == state.hmd_height) {
+    // Screen physical orientation matches HMD logical orientation
+  } else if (state.screen_width == state.hmd_height && state.screen_height == state.hmd_width) {
+    // Screen is oriented opposite of HMD logical orientation
+    state.rotate_screen = true;
+    printf("Will compensate for screen rotation.\n");
+  } else {
+    printf("WARNING: Screen and HMD dimensions don't match; check system configuration.\n");
+  }
+
   MMALCamera* leftCamera = new MMALCamera(state.display, state.context);
+#ifndef SINGLE_CAMERA
   MMALCamera* rightCamera = new MMALCamera(state.display, state.context);
-  leftCamera->init(/*cameraIndex=*/0, 1280, 720, 30);
-  rightCamera->init(/*cameraIndex=*/1, 1280, 720, 30);
+#endif
+
+  leftCamera->init(/*cameraIndex=*/0, 640, 480);
+#ifndef SINGLE_CAMERA
+  rightCamera->init(/*cameraIndex=*/1, 640, 480);
+#endif
 
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
@@ -311,7 +340,9 @@ int main(int argc, char* argv[]) {
   while (!want_quit)
   {
     leftCamera->readFrame();
+#ifndef SINGLE_CAMERA
     rightCamera->readFrame();
+#endif
 
 #if 0
     // Draw
@@ -357,7 +388,11 @@ int main(int argc, char* argv[]) {
       // Draw camera content for thie eye
       glUseProgram(state.camTexturedQuadProgram);
       GL(glActiveTexture(GL_TEXTURE0));
+#ifdef SINGLE_CAMERA
+      GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, leftCamera->rgbTexture()));
+#else
       GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, eyeIndex == 0 ? leftCamera->rgbTexture() : rightCamera->rgbTexture()));
+#endif
       glUniform1i(state.camTexturedQuadProgram_textureUniform, 0);
 
       glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, quadx );
@@ -369,16 +404,24 @@ int main(int argc, char* argv[]) {
 
       // Switch to output framebuffer
       GL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
-      if (eyeIndex == 0) {
-        GL(glViewport(0, 0, state.screen_width/2, state.screen_height));
+      if (state.rotate_screen) {
+        if (eyeIndex == 0) {
+          GL(glViewport(0, 0, state.screen_width, state.screen_height/2));
+        } else {
+          GL(glViewport(0, state.screen_height/2, state.screen_width, state.screen_height/2));
+        }
       } else {
-        GL(glViewport(state.screen_width/2, 0, state.screen_width/2, state.screen_height));
+        if (eyeIndex == 0) {
+          GL(glViewport(0, 0, state.screen_width/2, state.screen_height));
+        } else {
+          GL(glViewport(state.screen_width/2, 0, state.screen_width/2, state.screen_height));
+        }
       }
 
       // Draw using distortion program
       GL(glUseProgram(state.hmdDistortionProgram));
 
-      GL(glUniformMatrix4fv(state.hmdDistortionProgram_mvpUniform, 1, GL_FALSE, s_texcoordToViewportMatrix));
+      GL(glUniformMatrix4fv(state.hmdDistortionProgram_mvpUniform, 1, GL_FALSE, state.rotate_screen ? s_texcoordToViewportMatrixRotated : s_texcoordToViewportMatrix));
       GL(glUniform1i(state.hmdDistortionProgram_warpTextureUniform, 0)); // GL_TEXTURE0
       GL(glUniform2fv(state.hmdDistortionProgram_lensCenterUniform, 1, eyeIndex == 0 ? state.left_lens_center : state.right_lens_center));
       GL(glUniform2fv(state.hmdDistortionProgram_viewportScaleUniform, 1, state.viewport_scale));
@@ -406,9 +449,11 @@ int main(int argc, char* argv[]) {
   eglSwapBuffers(state.display, state.surface);
 
   leftCamera->stop();
-  rightCamera->stop();
   delete leftCamera;
+#ifndef SINGLE_CAMERA
+  rightCamera->stop();
   delete rightCamera;
+#endif
 
   // Release OpenGL resources
   eglMakeCurrent( state.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
