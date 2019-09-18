@@ -22,7 +22,7 @@
    #define M_PI 3.141592654
 #endif
 
-#define SINGLE_CAMERA
+//#define SINGLE_CAMERA
 
 typedef struct
 {
@@ -64,8 +64,8 @@ typedef struct
   GLint hmdDistortionProgram_hmdWarpParamUniform;
   GLint hmdDistortionProgram_aberrUniform;
 
-  GLuint eyeFBO;
-  GLuint eyeColorTex;
+  GLuint eyeFBO[2];
+  GLuint eyeColorTex[2];
 
   int verbose;
 
@@ -335,7 +335,9 @@ int main(int argc, char* argv[]) {
 
   init_ogl();
 
-  createFBO(state.eye_width, state.eye_height, &state.eyeFBO, &state.eyeColorTex);
+  // Create FBOs for per-eye rendering (pre distortion)
+  createFBO(state.eye_width, state.eye_height, &state.eyeFBO[0], &state.eyeColorTex[0]);
+  createFBO(state.eye_width, state.eye_height, &state.eyeFBO[1], &state.eyeColorTex[1]);
 
   printf("Screen dimensions: %u x %u\n", state.screen_width, state.screen_height);
 
@@ -370,7 +372,7 @@ int main(int argc, char* argv[]) {
     rightCamera->readFrame();
 #endif
 
-#if 0
+#if 0 // skip distortion for testing
     // Draw
     glUseProgram(state.camTexturedQuadProgram);
 
@@ -392,7 +394,11 @@ int main(int argc, char* argv[]) {
     {
       // Load camera texture into unit 0
       GL(glActiveTexture(GL_TEXTURE0));
+#ifdef SINGLE_CAMERA
+      GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, leftCamera->rgbTexture()));
+#else
       GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, rightCamera->rgbTexture()));
+#endif
       glUniform1i(state.camTexturedQuadProgram_textureUniform, 0);
 
       glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, quadx_right );
@@ -406,10 +412,15 @@ int main(int argc, char* argv[]) {
 #else
 
 
+#if 1
     for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+#else
+    { const int eyeIndex = 0;
+#endif
       // Target eye FBO
-      GL(glBindFramebuffer(GL_FRAMEBUFFER, state.eyeFBO));
+      GL(glBindFramebuffer(GL_FRAMEBUFFER, state.eyeFBO[eyeIndex]));
       GL(glViewport(0, 0, state.eye_width, state.eye_height));
+      glClear(GL_COLOR_BUFFER_BIT);
 
       // Draw camera content for thie eye
       glUseProgram(state.camTexturedQuadProgram);
@@ -427,9 +438,15 @@ int main(int argc, char* argv[]) {
       glEnableVertexAttribArray(state.camTexturedQuadProgram_texcoordAttr);
 
       GL(glDrawArrays( GL_TRIANGLE_STRIP, 0, 4));
+    }
 
-      // Switch to output framebuffer
-      GL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+
+    // Switch to output framebuffer
+    GL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+
+    // Run distortion passes
+    for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+
       if (state.rotate_screen) {
         if (eyeIndex == 0) {
           GL(glViewport(0, 0, state.screen_width, state.screen_height/2));
@@ -446,6 +463,9 @@ int main(int argc, char* argv[]) {
 
       // Draw using distortion program
       GL(glUseProgram(state.hmdDistortionProgram));
+
+      GL(glActiveTexture(GL_TEXTURE0));
+      GL(glBindTexture(GL_TEXTURE_2D, state.eyeColorTex[eyeIndex]));
 
       GL(glUniformMatrix4fv(state.hmdDistortionProgram_mvpUniform, 1, GL_FALSE, state.rotate_screen ? s_texcoordToViewportMatrixRotated : s_texcoordToViewportMatrix));
       GL(glUniform1i(state.hmdDistortionProgram_warpTextureUniform, 0)); // GL_TEXTURE0
