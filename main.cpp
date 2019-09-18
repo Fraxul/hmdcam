@@ -115,6 +115,18 @@ static const GLfloat quadx_right[4*3] = {
     0.0f,  1.0f,  0.0f,
     1.0f,  1.0f,  0.0f,
 };
+static const GLfloat quadx_left_rotated[4*3] = {
+   -1.0f, -1.0f,  0.0f,
+    1.0f, -1.0f,  0.0f,
+   -1.0f,  0.0f,  0.0f,
+    1.0f,  0.0f,  0.0f,
+};
+static const GLfloat quadx_right_rotated[4*3] = {
+   -1.0f,  0.0f,  0.0f,
+    1.0f,  0.0f,  0.0f,
+   -1.0f,  1.0f,  0.0f,
+    1.0f,  1.0f,  0.0f,
+};
 
 /** Texture coordinates for the quad. */
 static const GLfloat texCoords[4 * 2] = {
@@ -122,6 +134,12 @@ static const GLfloat texCoords[4 * 2] = {
    1.f,  0.f,
    0.f,  1.f,
    1.f,  1.f,
+};
+static const GLfloat texCoords_rotated[4 * 2] = {
+   0.f,  1.f,
+   0.f,  0.f,
+   1.f,  1.f,
+   1.f,  0.f,
 };
 
 
@@ -382,8 +400,8 @@ int main(int argc, char* argv[]) {
       GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, leftCamera->rgbTexture()));
       glUniform1i(state.camTexturedQuadProgram_textureUniform, 0);
 
-      glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, quadx_left );
-      glVertexAttribPointer(state.camTexturedQuadProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords );
+      glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, state.rotate_screen ? quadx_left_rotated : quadx_left );
+      glVertexAttribPointer(state.camTexturedQuadProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, state.rotate_screen ? texCoords_rotated : texCoords );
       glEnableVertexAttribArray(0);
       glEnableVertexAttribArray(1);
 
@@ -401,8 +419,8 @@ int main(int argc, char* argv[]) {
 #endif
       glUniform1i(state.camTexturedQuadProgram_textureUniform, 0);
 
-      glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, quadx_right );
-      glVertexAttribPointer(state.camTexturedQuadProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords );
+      glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, state.rotate_screen ? quadx_right_rotated : quadx_right );
+      glVertexAttribPointer(state.camTexturedQuadProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, state.rotate_screen ? texCoords_rotated : texCoords );
       glEnableVertexAttribArray(0);
       glEnableVertexAttribArray(1);
 
