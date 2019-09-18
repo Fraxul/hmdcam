@@ -4,6 +4,7 @@
 #include <math.h>
 #include <assert.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include "bcm_host.h"
 
@@ -251,6 +252,31 @@ static void init_ogl() {
   state.hmdDistortionProgram_aberrUniform = glGetUniformLocation(state.hmdDistortionProgram, "aberr"); // chromatic distortion post scaling
 }
 
+static void update_fps() {
+   static int frame_count = 0;
+   static long long time_start = 0;
+   long long time_now;
+   struct timeval te;
+   float fps;
+
+   frame_count++;
+
+   gettimeofday(&te, NULL);
+   time_now = te.tv_sec * 1000LL + te.tv_usec / 1000;
+
+   if (time_start == 0)
+   {
+      time_start = time_now;
+   }
+   else if (time_now - time_start > 5000)
+   {
+      fps = (float) frame_count / ((time_now - time_start) / 1000.0);
+      frame_count = 0;
+      time_start = time_now;
+      fprintf(stderr, "%3.2f FPS\n", fps);
+   }
+}
+
 static bool want_quit = false;
 static void signal_handler(int) {
   want_quit = true;
@@ -437,6 +463,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     eglSwapBuffers(state.display, state.surface);
+    update_fps();
   }
 
   // Restore signal handlers
