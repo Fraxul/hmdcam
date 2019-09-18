@@ -288,7 +288,7 @@ void MMALCamera::init(unsigned int cameraIndex, unsigned int Width, unsigned int
    m_previewPort->buffer_num = m_previewPort->buffer_num_recommended;
    m_previewPort->buffer_size = m_previewPort->buffer_size_recommended;
 
-   vcos_log_trace("Creating buffer pool for GL renderer num %d size %d",
+   fprintf(stderr, "Creating buffer pool for GL renderer num %d size %d\n",
                   m_previewPort->buffer_num, m_previewPort->buffer_size);
 
    /* Pool + queue to hold preview frames */
@@ -322,11 +322,11 @@ void MMALCamera::controlCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer
 
 void MMALCamera::previewOutputCallback(MMAL_PORT_T* port, MMAL_BUFFER_HEADER_T* buf){
    if (buf->length == 0) {
-      vcos_log_trace("%s: zero-length buffer => EOS", port->name);
+      fprintf(stderr, "%s: zero-length buffer => EOS\n", port->name);
       //state->preview_stop = 1;
       mmal_buffer_header_release(buf);
    } else if (buf->data == NULL) {
-      vcos_log_trace("%s: zero buffer handle", port->name);
+      fprintf(stderr, "%s: zero buffer handle\n", port->name);
       mmal_buffer_header_release(buf);
    } else {
       /* Enqueue the preview frame for rendering and return to
