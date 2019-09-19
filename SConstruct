@@ -3,10 +3,10 @@ import os
 
 # Environment setup
 env = Environment(
-  CPPPATH=['/opt/vc/include', '/opt/vc/include/interface/vcos/pthreads', '/opt/vc/include/interface/vmcs_host/linux'],
+  CPPPATH=['/usr/include/drm'],
   CPPFLAGS=['-ggdb', '-std=c++11', '-Wall'],
   LINKFLAGS=['-ggdb'],
-  LIBPATH=['/opt/vc/lib'],
+  #LIBPATH=[],
 )
 
 # Fix for clang colored diagnostics
@@ -20,6 +20,6 @@ Export('env')
 env.Program(
   target = 'hmdcam',
   source = Glob('*.cpp') + Glob('*.c') + ['openhmd/libopenhmd.a'],
-  LIBS=['stdc++', 'mmal', 'mmal_core', 'mmal_util', 'brcmGLESv2', 'brcmEGL', 'bcm_host', 'vcos', 'pthread', 'hidapi-hidraw']
+  LIBS=['stdc++', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-hidraw']
 )
 

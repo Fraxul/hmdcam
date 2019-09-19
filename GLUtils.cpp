@@ -1,11 +1,12 @@
 #include "GLUtils.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
-#include <EGL/eglext_brcm.h>
 
 void checkGLError(const char* op, const char* file, int line) {
   GLint error = glGetError();
