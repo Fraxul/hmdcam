@@ -43,7 +43,6 @@ NvGlDemoState demoState = {
     EGL_NO_CONTEXT,        // context
     0,                     // width
     0,                     // height
-    NvGlDemoInterface_Unknown,  // platform Type
     NULL                   // platform
 };
 
@@ -92,25 +91,6 @@ fail:
     return EGL_FALSE;
 }
 
-// Extension checking utility
-static int NvGlDemoCheckExtension(const char *exts, const char *ext)
-{
-    int extLen = (int)strlen(ext);
-    const char *end = exts + strlen(exts);
-
-    while (exts < end) {
-        while (*exts == ' ') {
-            exts++;
-        }
-        int n = strcspn(exts, " ");
-        if ((extLen == n) && (strncmp(ext, exts, n) == 0)) {
-            return 1;
-        }
-        exts += n;
-    }
-    return 0;
-}
-
 static void NvGlDemoTermEglDeviceExt(void)
 {
     if (devList) {
@@ -122,57 +102,6 @@ static void NvGlDemoTermEglDeviceExt(void)
     peglQueryDevicesEXT = NULL;
 
     demoState.nativeDisplay = EGL_NO_DISPLAY;
-    demoState.platformType  = NvGlDemoInterface_Unknown;
-}
-
-static int NvGlDemoInitEglDeviceExt(void)
-{
-    const char* exts = NULL;
-    EGLint n = 0;
-
-    // Get extension string
-    exts = NVGLDEMO_EGL_QUERY_STRING(EGL_NO_DISPLAY, EGL_EXTENSIONS);
-    if (!exts) {
-        NvGlDemoLog("eglQueryString fail.\n");
-        goto NvGlDemoInitEglDeviceExt_fail;
-    }
-
-    // Check extensions and load functions needed for using outputs
-    if (!NvGlDemoCheckExtension(exts, "EGL_EXT_device_base") ||
-            !NvGlDemoCheckExtension(exts, "EGL_EXT_platform_base") ||
-            !NvGlDemoCheckExtension(exts, "EGL_EXT_platform_device")) {
-        NvGlDemoLog("egldevice platform ext is not there.\n");
-        goto NvGlDemoInitEglDeviceExt_fail;
-    }
-
-    NVGLDEMO_EGL_GET_PROC_ADDR(eglQueryDevicesEXT, NvGlDemoInitEglDeviceExt_fail, PFNEGLQUERYDEVICESEXTPROC);
-
-    // Load device list
-    if (!peglQueryDevicesEXT(0, NULL, &n) || !n) {
-        NvGlDemoLog("peglQueryDevicesEXT fail.\n");
-        goto NvGlDemoInitEglDeviceExt_fail;
-    }
-
-    devList = (EGLDeviceEXT*)MALLOC(n * sizeof(EGLDeviceEXT));
-    if (!devList || !peglQueryDevicesEXT(n, devList, &devCount) || !devCount) {
-        NvGlDemoLog("peglQueryDevicesEXT fail.\n");
-        goto NvGlDemoInitEglDeviceExt_fail;
-    }
-
-    if(devCount > 0) {
-        demoState.nativeDisplay = (NativeDisplayType)devList[0];
-        demoState.platformType  = NvGlDemoInterface_Device;
-        // Success
-        return 1;
-    }
-
-NvGlDemoInitEglDeviceExt_fail:
-
-    NvGlDemoLog("NvGlDemoInitEglDeviceExt-fail.\n");
-
-    NvGlDemoTermEglDeviceExt();
-
-    return 0;
 }
 
 // Start up, initializing native window system and EGL after nvgldemo
@@ -189,48 +118,17 @@ NvGlDemoInitializeEGL(int depthbits, int stencilbits)
     EGLint     configCount;
     EGLBoolean eglStatus;
     GLint max_VP_dims[] = {-1, -1};
-    EGLenum   eglExtType = 0;
 
 
     // Initialize display access
     if (!NvGlDemoDisplayInit()) return 0;
 
-    extensions = NVGLDEMO_EGL_QUERY_STRING(EGL_NO_DISPLAY, EGL_EXTENSIONS);
-    if (extensions && STRSTR(extensions, "EGL_EXT_platform_base")) {
-        switch (demoState.platformType) {
-            case NvGlDemoInterface_X11:
-                eglExtType = EGL_PLATFORM_X11_EXT;
-                break;
-            case NvGlDemoInterface_Wayland:
-                eglExtType = EGL_PLATFORM_WAYLAND_EXT;
-                break;
-            case NvGlDemoInterface_Device:
-            case NvGlDemoInterface_DRM:
-            case NvGlDemoInterface_WF:
-                eglExtType = EGL_PLATFORM_DEVICE_EXT;
-                break;
-            default:
-                eglExtType = 0;
-                break;
-       }
-    }
-    else {
-      eglExtType = 0;
-    }
-
     // Obtain the EGL display
     demoState.display = EGL_NO_DISPLAY;
-    if (eglExtType) {
-        PFNEGLGETPLATFORMDISPLAYEXTPROC  peglGetPlatformDisplayEXT = NULL;
-        NVGLDEMO_EGL_GET_PROC_ADDR(eglGetPlatformDisplayEXT, fail, PFNEGLGETPLATFORMDISPLAYEXTPROC);
-        demoState.display = peglGetPlatformDisplayEXT(eglExtType,
-                                                demoState.nativeDisplay, NULL);
-    }
+    PFNEGLGETPLATFORMDISPLAYEXTPROC  peglGetPlatformDisplayEXT = NULL;
+    NVGLDEMO_EGL_GET_PROC_ADDR(eglGetPlatformDisplayEXT, fail, PFNEGLGETPLATFORMDISPLAYEXTPROC);
+    demoState.display = peglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, demoState.nativeDisplay, NULL);
 
-    if ((demoState.display == EGL_NO_DISPLAY) && (eglExtType != EGL_PLATFORM_DEVICE_EXT)) {
-        eglExtType = 0;
-        demoState.display = NVGLDEMO_EGL_GET_DISPLAY(demoState.nativeDisplay);
-    }
     if (demoState.display == EGL_NO_DISPLAY) {
         NvGlDemoLog("EGL failed to obtain display.\n");
         goto fail;
@@ -241,6 +139,12 @@ NvGlDemoInitializeEGL(int depthbits, int stencilbits)
     if (!eglStatus) {
         NvGlDemoLog("EGL failed to initialize.\n");
         goto fail;
+    }
+
+    // Create the window
+    if (!NvGlDemoWindowInit()) {
+      NvGlDemoLog("NvGlDemoWindowInit() failed\n");
+      goto fail;
     }
 
     // Query EGL extensions
@@ -269,20 +173,12 @@ NvGlDemoInitializeEGL(int depthbits, int stencilbits)
     cfgAttrs[cfgAttrIndex++] = 1;
     cfgAttrs[cfgAttrIndex++] = EGL_ALPHA_SIZE;
     cfgAttrs[cfgAttrIndex++] = 1;
-
-    if (eglExtType == EGL_PLATFORM_DEVICE_EXT) {
-
-        cfgAttrs[cfgAttrIndex++] = EGL_SURFACE_TYPE;
-        cfgAttrs[cfgAttrIndex++] = EGL_STREAM_BIT_KHR;
-        srfAttrs[srfAttrIndex++] = EGL_WIDTH;
-        srfAttrs[srfAttrIndex++] = demoOptions.windowSize[0]
-                                    ? demoOptions.windowSize[0]
-                                    : NVGLDEMO_DEFAULT_WIDTH;
-        srfAttrs[srfAttrIndex++] = EGL_HEIGHT;
-        srfAttrs[srfAttrIndex++] = demoOptions.windowSize[1]
-                                    ? demoOptions.windowSize[1]
-                                    : NVGLDEMO_DEFAULT_HEIGHT;
-    }
+    cfgAttrs[cfgAttrIndex++] = EGL_SURFACE_TYPE;
+    cfgAttrs[cfgAttrIndex++] = EGL_STREAM_BIT_KHR;
+    srfAttrs[srfAttrIndex++] = EGL_WIDTH;
+    srfAttrs[srfAttrIndex++] = demoOptions.windowSize[0];
+    srfAttrs[srfAttrIndex++] = EGL_HEIGHT;
+    srfAttrs[srfAttrIndex++] = demoOptions.windowSize[1];
 
     // If application requires depth or stencil, request them
     if (depthbits) {
@@ -344,13 +240,6 @@ NvGlDemoInitializeEGL(int depthbits, int stencilbits)
     demoState.config = configList[0];
     FREE(configList);
     configList = 0;
-
-    // Create the window
-    // (This may make use of the config, which is why it is chosen first.)
-    if (!NvGlDemoWindowInit()) {
-      NvGlDemoLog("NvGlDemoWindowInit() failed\n");
-      goto fail;
-    }
 
     // Attach surface to stream
     if (!NvGlDemoPrepareStreamToAttachProducer()) {
@@ -462,8 +351,7 @@ NvGlDemoShutdown(void)
 
 #if defined(EGL_KHR_stream_producer_eglsurface)
     // Destroy the EGL stream
-    if ((demoState.stream != EGL_NO_STREAM_KHR) &&
-        (demoState.platformType != NvGlDemoInterface_QnxScreen)) {
+    if (demoState.stream != EGL_NO_STREAM_KHR) {
         PFNEGLDESTROYSTREAMKHRPROC
             pEglDestroyStreamKHR;
 

@@ -42,7 +42,7 @@ typedef struct
   float warp_scale;
   float warp_adj;
 
-  uint32_t screen_width, screen_height;
+  int screen_width, screen_height;
   bool rotate_screen;
 
   GLuint camTexturedQuadProgram;
@@ -151,8 +151,6 @@ static void init_ogl() {
   demoOptions.windowSize[0] = 0;
   demoOptions.windowSize[1] = 0;
 
-  demoState.platformType = NvGlDemoInterface_Device;
-
   NvGlDemoInitializeEGL(0, 0);
 
   // TODO
@@ -238,7 +236,7 @@ static void signal_handler(int) {
 
 int main(int argc, char* argv[]) {
 
-  memset(&state, NULL, sizeof(state));
+  memset(&state, 0, sizeof(state));
 
   state.hmdContext = ohmd_ctx_create();
   int num_devices = ohmd_ctx_probe(state.hmdContext);

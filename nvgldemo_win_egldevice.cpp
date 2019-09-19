@@ -246,7 +246,6 @@ static bool NvGlDemoCreateEglDevice(EGLint devIndx)
 
     // Check for output extension
     exts = eglQueryString(devOut->eglDpy, EGL_EXTENSIONS);
-    fprintf(stderr, "EGL extensions: %s\n", exts);
     if (!exts ||
             !CheckExtension(exts, "EGL_EXT_output_base") ||
             !CheckExtension(exts, "EGL_KHR_stream") ||
@@ -808,12 +807,6 @@ static bool NvGlDemoSetDrmOutputMode( void )
     unsigned int modeY = 0;
     int foundMatchingDisplayRate = 1;
 
-    // If not specified, use default window size
-    if (!demoOptions.windowSize[0])
-        demoOptions.windowSize[0] = NVGLDEMO_DEFAULT_WIDTH;
-    if (!demoOptions.windowSize[1])
-        demoOptions.windowSize[1] = NVGLDEMO_DEFAULT_HEIGHT;
-
     // Parse global plane alpha
     if(demoOptions.displayAlpha < 0.0 || demoOptions.displayAlpha > 1.0) {
         //If unspecified or out of range, default to 1.0
@@ -965,8 +958,11 @@ static bool NvGlDemoSetDrmOutputMode( void )
     // If a size wasn't specified, use the whole screen
     if (!sizeX || !sizeY) {
         assert(!sizeX && !sizeY && !offsetX && !offsetY);
-        sizeX = nvGlDrmDev->crtcInfo[crtcIndex].modeX;
-        sizeY = nvGlDrmDev->crtcInfo[crtcIndex].modeY;
+        assert(currMode);
+        sizeX = currMode->mode.hdisplay;
+        sizeY = currMode->mode.vdisplay;
+        //sizeX = nvGlDrmDev->crtcInfo[crtcIndex].modeX;
+        //sizeY = nvGlDrmDev->crtcInfo[crtcIndex].modeY;
         demoOptions.windowSize[0] = sizeX;
         demoOptions.windowSize[1] = sizeY;
     }
@@ -1239,7 +1235,6 @@ int NvGlDemoDisplayInit(void)
         if(NvGlDemoInitDrmDevice()) {
             // Output functions are available
             isOutputInitDone = true;
-            demoState.platformType = NvGlDemoInterface_Device;
             // Success
             return 1;
         }
@@ -1291,7 +1286,6 @@ static void NvGlDemoResetModule(void)
 #endif
 
     demoState.platform = NULL;
-    demoState.platformType = NvGlDemoInterface_Unknown;
     demoState.nativeDisplay = NULL;
     nvGlOutDevLst = NULL;
     devList = NULL;

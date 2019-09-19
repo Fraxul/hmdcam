@@ -10,6 +10,7 @@ void ArgusCamera::init(unsigned int cameraIndex, unsigned int width, unsigned in
 }
 
 bool ArgusCamera::readFrame() {
+  return true;
 }
 
 void ArgusCamera::stop() {

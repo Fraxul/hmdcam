@@ -139,7 +139,7 @@ static bool NvGlDemoInitDrmDevice(void);
 static bool NvGlDemoCreateDrmDevice( EGLint devIndx );
 static bool NvGlDemoSetDrmOutputMode( void );
 static void NvGlDemoResetDrmDevice(void);
-static void NvGlDemoResetDrmConcetion(void);
+static void NvGlDemoResetDrmConnection(void);
 static void NvGlDemoTermDrmDevice(void);
 static void NvGlDemoResetDrmDeviceFnPtr(void);
 
