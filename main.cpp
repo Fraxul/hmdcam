@@ -22,7 +22,7 @@
    #define M_PI 3.141592654
 #endif
 
-//#define SINGLE_CAMERA
+#define SINGLE_CAMERA
 
 typedef struct
 {
@@ -175,12 +175,11 @@ static void init_ogl() {
     "} \n",
 
     "#extension GL_OES_EGL_image_external : require\n"
-    "precision mediump float;"
+    "precision highp float;"
     "varying vec2 TexCoordOut;"
     "uniform samplerExternalOES Texture;"
     "void main() { \n"
-    //"  gl_FragColor = texture2D(Texture, TexCoordOut); \n" // XXX
-    "  gl_FragColor = vec4(TexCoordOut, 0.0, 1.0); \n"
+    "  gl_FragColor = texture2D(Texture, TexCoordOut); \n"
     "} \n"
   );
 
@@ -301,14 +300,9 @@ int main(int argc, char* argv[]) {
     printf("WARNING: Screen and HMD dimensions don't match; check system configuration.\n");
   }
 
-  ArgusCamera* leftCamera = new ArgusCamera(demoState.display, demoState.context);
+  ArgusCamera* leftCamera = new ArgusCamera(demoState.display, demoState.context, 0, 1280, 720);
 #ifndef SINGLE_CAMERA
-  ArgusCamera* rightCamera = new ArgusCamera(demoState.display, demoState.context);
-#endif
-
-  leftCamera->init(/*cameraIndex=*/0, 640, 480);
-#ifndef SINGLE_CAMERA
-  rightCamera->init(/*cameraIndex=*/1, 640, 480);
+  ArgusCamera* rightCamera = new ArgusCamera(demoState.display, demoState.context, 1, 1280, 720);
 #endif
 
   signal(SIGINT,  signal_handler);
