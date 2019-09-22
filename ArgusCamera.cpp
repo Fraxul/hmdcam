@@ -62,7 +62,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int 
 
   ArgusHelpers::printCameraDeviceInfo(m_cameraDevice, "  ");
 
-  const unsigned int sensorModeIndex = 3; // TODO autoselect sensor mode
+  const unsigned int sensorModeIndex = 4; // TODO autoselect sensor mode based on width/height params
 
   Argus::SensorMode* sensorMode = ArgusHelpers::getSensorMode(m_cameraDevice, sensorModeIndex);
   Argus::ISensorMode *iSensorMode = Argus::interface_cast<Argus::ISensorMode>(sensorMode);
@@ -71,6 +71,8 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int 
 
   printf("Selected sensor mode:\n");
   ArgusHelpers::printSensorModeInfo(sensorMode, "-- ");
+  m_streamWidth = iSensorMode->getResolution().width();
+  m_streamHeight = iSensorMode->getResolution().height();
 
   // Create the capture session using the specified device and get its interfaces.
   m_captureSession = s_iCameraProvider->createCaptureSession(m_cameraDevice);
@@ -88,7 +90,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int 
 
   // Configure the OutputStream to use the EGLImage BufferType.
   iStreamSettings->setPixelFormat(Argus::PIXEL_FMT_YCbCr_420_888);
-  iStreamSettings->setResolution(Argus::Size2D<uint32_t>(width, height));
+  iStreamSettings->setResolution(Argus::Size2D<uint32_t>(m_streamWidth, m_streamHeight));
   iStreamSettings->setEGLDisplay(m_display);
 
   // Create the OutputStream.
@@ -120,6 +122,10 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int 
   // Connect the stream consumer. This must be done before starting the capture session, or libargus will return an invalid state error.
   if (!eglStreamConsumerGLTextureExternalKHR(m_display, m_stream))
     die("Unable to connect GL as EGLStream consumer");
+  glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
   // Set the acquire timeout to infinite.
   eglStreamAttribKHR(m_display, m_stream, EGL_CONSUMER_ACQUIRE_TIMEOUT_USEC_KHR, -1);
@@ -130,10 +136,6 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int 
 }
 
 ArgusCamera::~ArgusCamera() {
-  // Stop the repeating request and signal end of stream to stop the rendering thread.
-  Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSession);
-  iCaptureSession->stopRepeat();
-
   // Destroy the output stream.
   m_outputStream.reset();
 
@@ -148,6 +150,9 @@ bool ArgusCamera::readFrame() {
 }
 
 void ArgusCamera::stop() {
-
+  // Stop the repeating request and signal end of stream to stop the rendering thread.
+  Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSession);
+  iCaptureSession->stopRepeat();
+  iCaptureSession->waitForIdle();
 }
 

@@ -7,6 +7,9 @@
 #include <sys/time.h>
 #include <signal.h>
 
+#include <glm/glm.hpp>
+#include <glm/gtx/transform.hpp>
+
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include "EGL/egl.h"
@@ -42,12 +45,15 @@ typedef struct
   float warp_scale;
   float warp_adj;
 
+  glm::mat4 eyeProjection[2];
+
   int screen_width, screen_height;
   bool rotate_screen;
 
   GLuint camTexturedQuadProgram;
   GLint camTexturedQuadProgram_positionAttr;
   GLint camTexturedQuadProgram_texcoordAttr;
+  GLint camTexturedQuadProgram_mvpUniform;
   GLint camTexturedQuadProgram_textureUniform;
 
   GLuint hmdDistortionProgram;
@@ -166,11 +172,12 @@ static void init_ogl() {
   // Set up shared resources
 
   state.camTexturedQuadProgram = compileShader(
-    "attribute vec4 vPosition;"
-    "attribute vec2 TexCoordIn;"
-    "varying vec2 TexCoordOut;"
+    "attribute vec4 vPosition; \n"
+    "attribute vec2 TexCoordIn; \n"
+    "varying vec2 TexCoordOut; \n"
+    "uniform mat4 modelViewProjection; \n"
     "void main() { \n"
-    "  gl_Position = vPosition; \n"
+    "  gl_Position = modelViewProjection * vPosition; \n"
     "  TexCoordOut = TexCoordIn; \n"
     "} \n",
 
@@ -185,6 +192,7 @@ static void init_ogl() {
 
   state.camTexturedQuadProgram_positionAttr = glGetAttribLocation(state.camTexturedQuadProgram, "vPosition");
   state.camTexturedQuadProgram_texcoordAttr = glGetAttribLocation(state.camTexturedQuadProgram, "TexCoordIn");
+	state.camTexturedQuadProgram_mvpUniform = glGetUniformLocation(state.camTexturedQuadProgram, "modelViewProjection");
 	state.camTexturedQuadProgram_textureUniform = glGetUniformLocation(state.camTexturedQuadProgram, "Texture");
 
   {
@@ -231,6 +239,11 @@ static void update_fps() {
 static bool want_quit = false;
 static void signal_handler(int) {
   want_quit = true;
+
+  // Restore signal handlers so the program is still interruptable if clean shutdown gets stuck
+  signal(SIGINT,  SIG_DFL);
+  signal(SIGTERM, SIG_DFL);
+  signal(SIGQUIT, SIG_DFL);
 }
 
 int main(int argc, char* argv[]) {
@@ -277,6 +290,15 @@ int main(int argc, char* argv[]) {
     state.eye_width = state.hmd_width / 2;
     state.eye_height = state.hmd_height;
 
+
+    // Setup projection matrices
+    ohmd_device_getf(state.hmdDevice, OHMD_LEFT_EYE_GL_PROJECTION_MATRIX, &(state.eyeProjection[0][0][0]));
+    ohmd_device_getf(state.hmdDevice, OHMD_RIGHT_EYE_GL_PROJECTION_MATRIX, &(state.eyeProjection[1][0][0]));
+    // Cook the stereo separation transform into the projection matrices
+    // TODO stereo separation scale
+    state.eyeProjection[0] = state.eyeProjection[0] * glm::translate(glm::vec3(state.ipd *  10.0f, 0.0f, 0.0f));
+    state.eyeProjection[1] = state.eyeProjection[1] * glm::translate(glm::vec3(state.ipd * -10.0f, 0.0f, 0.0f));
+
     ohmd_device_settings_destroy(hmdSettings);
 
     printf("HMD dimensions: %u x %u\n", state.hmd_width, state.hmd_height);
@@ -316,50 +338,12 @@ int main(int argc, char* argv[]) {
     rightCamera->readFrame();
 #endif
 
-#if 1 // skip distortion for testing
-    // Draw
-    glUseProgram(state.camTexturedQuadProgram);
 
-    {
-      // Load camera texture into unit 0
-      GL(glActiveTexture(GL_TEXTURE0));
-      GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, leftCamera->rgbTexture()));
-      glUniform1i(state.camTexturedQuadProgram_textureUniform, 0);
-
-      glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, state.rotate_screen ? quadx_left_rotated : quadx_left );
-      glVertexAttribPointer(state.camTexturedQuadProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, state.rotate_screen ? texCoords_rotated : texCoords );
-      glEnableVertexAttribArray(0);
-      glEnableVertexAttribArray(1);
-
-      // draw first 4 vertices
-      GL(glDrawArrays( GL_TRIANGLE_STRIP, 0, 4));
-    }
-
-    {
-      // Load camera texture into unit 0
-      GL(glActiveTexture(GL_TEXTURE0));
-#ifdef SINGLE_CAMERA
-      GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, leftCamera->rgbTexture()));
-#else
-      GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, rightCamera->rgbTexture()));
-#endif
-      glUniform1i(state.camTexturedQuadProgram_textureUniform, 0);
-
-      glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, state.rotate_screen ? quadx_right_rotated : quadx_right );
-      glVertexAttribPointer(state.camTexturedQuadProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, state.rotate_screen ? texCoords_rotated : texCoords );
-      glEnableVertexAttribArray(0);
-      glEnableVertexAttribArray(1);
-
-      // draw first 4 vertices
-      GL(glDrawArrays( GL_TRIANGLE_STRIP, 0, 4));
-    }
-#else
-
-
-#if 1
     for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+#ifdef SINGLE_CAMERA
+      ArgusCamera* activeCamera = leftCamera;
 #else
-    { const int eyeIndex = 0;
+      ArgusCamera* activeCamera = (eyeIndex == 0) ? leftCamera : rightCamera;
 #endif
       // Target eye FBO
       GL(glBindFramebuffer(GL_FRAMEBUFFER, state.eyeFBO[eyeIndex]));
@@ -369,12 +353,15 @@ int main(int argc, char* argv[]) {
       // Draw camera content for thie eye
       glUseProgram(state.camTexturedQuadProgram);
       GL(glActiveTexture(GL_TEXTURE0));
-#ifdef SINGLE_CAMERA
-      GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, leftCamera->rgbTexture()));
-#else
-      GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, eyeIndex == 0 ? leftCamera->rgbTexture() : rightCamera->rgbTexture()));
-#endif
+      GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, activeCamera->rgbTexture()));
       glUniform1i(state.camTexturedQuadProgram_textureUniform, 0);
+      // coordsys right now: -X = left, -Z = into screen
+      // (camera is at the origin)
+      const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+      const float scaleFactor = 4.0f;
+      glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(-scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
+      glm::mat4 mvp = state.eyeProjection[eyeIndex] * model;
+      glUniformMatrix4fv(state.camTexturedQuadProgram_mvpUniform, 1, GL_FALSE, &mvp[0][0]);
 
       glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, quadx );
       glVertexAttribPointer(state.camTexturedQuadProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords );
@@ -423,8 +410,6 @@ int main(int argc, char* argv[]) {
       glEnableVertexAttribArray(state.hmdDistortionProgram_coordsAttr);
       GL(glDrawArrays( GL_TRIANGLE_STRIP, 0, 4));
     }
-
-#endif
 
     eglSwapBuffers(demoState.display, demoState.surface);
     update_fps();

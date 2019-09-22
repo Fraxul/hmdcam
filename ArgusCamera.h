@@ -15,6 +15,9 @@ public:
   void stop();
 
   GLuint rgbTexture() const { return m_texture; }
+  unsigned int streamWidth() const { return m_streamWidth; }
+  unsigned int streamHeight() const { return m_streamHeight; }
+
 
 private:
   EGLDisplay m_display;
@@ -22,6 +25,7 @@ private:
 
   GLuint m_texture;
   EGLStreamKHR m_stream;
+  unsigned int m_streamWidth, m_streamHeight;
 
   Argus::CameraDevice* m_cameraDevice;
   Argus::CaptureSession* m_captureSession;
