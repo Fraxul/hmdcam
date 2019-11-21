@@ -1,0 +1,35 @@
+New machine setup:
+
+Make sure that the NVidia SDK manager finishes its post-flash SDK install, or the libraries needed to build will be missing.
+Unpack Tegra_Multimedia_API_R32.2.3_aarch64.tbz2 (or a newer version, from NV developer downloads) to /usr/src/nvidia, creating /usr/src/nvidia/tegra_multimedia_api
+
+
+Don't forget to set up the submodules after cloning:
+
+git submodule init
+git submodule update
+
+Install prerequisite packages:
+
+sudo apt-get install scons libhidapi-dev libhidapi-hidraw0
+
+udev permissions:
+
+# Permissions on /dev/hidraw objects might need to be updated
+sudo chgrp plugdev /dev/hidraw*
+sudo chmod 660 /dev/hidraw*
+
+# udev rules for Vive (contents of /etc/udev/rules.d/83-hmd.rules )
+# update and run `sudo udevadm control --reload`
+
+KERNEL=="hidraw*", ATTRS{idVendor}=="28de", MODE="0660", GROUP="plugdev"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", MODE="0660", GROUP="plugdev"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0bb4", MODE="0660", GROUP="plugdev"
+
+
+Disabling the desktop environment:
+sudo systemctl disable gdm3
+sudo systemctl set-default multi-user.target
+sudo systemctl stop gdm3
+killall gdm-x-session
+
