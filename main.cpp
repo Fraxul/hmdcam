@@ -25,7 +25,17 @@
    #define M_PI 3.141592654
 #endif
 
-#define SINGLE_CAMERA
+//#define SINGLE_CAMERA
+#define SWAP_CAMERA_EYES
+
+
+#ifdef SWAP_CAMERA_EYES
+  #define LEFT_CAMERA_INDEX 1
+  #define RIGHT_CAMERA_INDEX 0
+#else
+  #define LEFT_CAMERA_INDEX 0
+  #define RIGHT_CAMERA_INDEX 1
+#endif
 
 typedef struct
 {
@@ -322,9 +332,9 @@ int main(int argc, char* argv[]) {
     printf("WARNING: Screen and HMD dimensions don't match; check system configuration.\n");
   }
 
-  ArgusCamera* leftCamera = new ArgusCamera(demoState.display, demoState.context, 0, 1280, 720);
+  ArgusCamera* leftCamera = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, 1280, 720);
 #ifndef SINGLE_CAMERA
-  ArgusCamera* rightCamera = new ArgusCamera(demoState.display, demoState.context, 1, 1280, 720);
+  ArgusCamera* rightCamera = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, 1280, 720);
 #endif
 
   signal(SIGINT,  signal_handler);
