@@ -1,7 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <stdio.h>
-#include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 

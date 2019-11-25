@@ -10,8 +10,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 
-#include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
 #include <GLES2/gl2ext.h>
+#include <GLES3/gl3ext.h>
 #include "EGL/egl.h"
 #include "EGL/eglext.h"
 #include "nvgldemo.h"
@@ -21,9 +22,10 @@
 
 #include "openhmd/openhmd.h"
 
-#ifndef M_PI
-   #define M_PI 3.141592654
-#endif
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/calib3d.hpp>
+
 
 //#define SINGLE_CAMERA
 #define SWAP_CAMERA_EYES
@@ -36,6 +38,9 @@
   #define LEFT_CAMERA_INDEX 0
   #define RIGHT_CAMERA_INDEX 1
 #endif
+
+std::array<double, 9> s_cameraMatrix = { 8.1393520905199455e+02, 0., 6.4611705518491897e+02, 0., 8.1393520905199455e+02, 3.7468428117333934e+02, 0., 0., 1. };
+std::array<double, 5> s_distortionCoeffs = { -3.7085816639967079e-01, 1.9997393684065998e-01, -2.3017909433031760e-04, 2.7313395926290304e-06, -6.9489964467138884e-02 };
 
 typedef struct
 {
@@ -66,6 +71,13 @@ typedef struct
   GLint camTexturedQuadProgram_mvpUniform;
   GLint camTexturedQuadProgram_textureUniform;
 
+  GLuint camInvDistortionProgram;
+  GLint camInvDistortionProgram_positionAttr;
+  GLint camInvDistortionProgram_texcoordAttr;
+  GLint camInvDistortionProgram_mvpUniform;
+  GLint camInvDistortionProgram_imageTexUniform;
+  GLint camInvDistortionProgram_distortionMapUniform;
+
   GLuint hmdDistortionProgram;
   GLint hmdDistortionProgram_coordsAttr;
   GLint hmdDistortionProgram_mvpUniform;
@@ -78,6 +90,8 @@ typedef struct
 
   GLuint eyeFBO[2];
   GLuint eyeColorTex[2];
+
+  GLuint distortionMapTex;
 
   int verbose;
 
@@ -168,6 +182,9 @@ static void init_ogl() {
   demoOptions.windowSize[1] = 0;
 
   NvGlDemoInitializeEGL(0, 0);
+  printf("%s\n", glGetString(GL_RENDERER));
+  printf("%s\n", glGetString(GL_VERSION));
+  printf("%s\n", glGetString(GL_EXTENSIONS));
 
   // TODO
   state.screen_width = demoOptions.windowSize[0];
@@ -204,6 +221,41 @@ static void init_ogl() {
   state.camTexturedQuadProgram_texcoordAttr = glGetAttribLocation(state.camTexturedQuadProgram, "TexCoordIn");
 	state.camTexturedQuadProgram_mvpUniform = glGetUniformLocation(state.camTexturedQuadProgram, "modelViewProjection");
 	state.camTexturedQuadProgram_textureUniform = glGetUniformLocation(state.camTexturedQuadProgram, "Texture");
+
+
+  state.camInvDistortionProgram = compileShader(
+    "attribute vec4 vPosition; \n"
+    "attribute vec2 TexCoordIn; \n"
+    "varying vec2 TexCoordOut; \n"
+    "uniform mat4 modelViewProjection; \n"
+    "void main() { \n"
+    "  gl_Position = modelViewProjection * vPosition; \n"
+    "  TexCoordOut = TexCoordIn; \n"
+    "} \n",
+
+    "#extension GL_OES_EGL_image_external : require\n"
+    "precision highp float;"
+    "varying vec2 TexCoordOut;"
+    "uniform samplerExternalOES imageTex; \n"
+    "uniform sampler2D distortionMap; \n"
+    "void main() { \n"
+    "  vec2 distortionCoord = texture2D(distortionMap, TexCoordOut).rg; \n" // RG32F texture
+    //"  gl_FragColor = vec4(TexCoordOut, 0.0, 1.0); \n"
+    //"  gl_FragColor = vec4(distortionCoord, 0.0, 1.0); \n"
+    //"  gl_FragColor = texture2D(imageTex, TexCoordOut); \n"
+    "  if (any(notEqual(clamp(distortionCoord, vec2(0.0), vec2(1.0)), distortionCoord))) { \n"
+    "    gl_FragColor = vec4(0.0); \n"
+    "  } else { \n"
+    "    gl_FragColor = texture2D(imageTex, vec2(1.0) - distortionCoord); \n"
+    "  } \n"
+    "} \n"
+  );
+
+  state.camInvDistortionProgram_positionAttr = glGetAttribLocation(state.camInvDistortionProgram, "vPosition");
+  state.camInvDistortionProgram_texcoordAttr = glGetAttribLocation(state.camInvDistortionProgram, "TexCoordIn");
+	state.camInvDistortionProgram_mvpUniform = glGetUniformLocation(state.camInvDistortionProgram, "modelViewProjection");
+	state.camInvDistortionProgram_imageTexUniform = glGetUniformLocation(state.camInvDistortionProgram, "imageTex");
+  state.camInvDistortionProgram_distortionMapUniform = glGetUniformLocation(state.camInvDistortionProgram, "distortionMap");
 
   {
     const char *vertex, *fragment;
@@ -337,6 +389,46 @@ int main(int argc, char* argv[]) {
   ArgusCamera* rightCamera = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, 1280, 720);
 #endif
 
+  {
+
+    // TODO the undistortion here doesn't seem correct -- slot this into the calibration test app to verify (toggle between undistort() and remap() using the initUndistortRectifyMap generated map)
+    // TODO: also verify that the camera matrix and distortion coefficients were imported correctly
+
+    cv::Mat cameraMatrix(cv::Size(3, 3), CV_64F, &(s_cameraMatrix[0]));
+    cv::Mat distCoeff(s_distortionCoeffs);
+    cv::Size imageSize = cv::Size(1280, 720);
+    float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels
+#if 1
+    cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(cameraMatrix, distCoeff, imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
+#else
+    cv::Mat newCameraMatrix = cv::getDefaultNewCameraMatrix(cameraMatrix, imageSize, true);
+#endif
+    cv::Mat map1, map2;
+    cv::initUndistortRectifyMap(cameraMatrix, distCoeff, cv::noArray(), newCameraMatrix, imageSize, CV_32F, map1, map2);
+    // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc)
+
+    // Combine the maps into a buffer we can upload to opengl. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
+    float* distortionMapTmp = new float[imageSize.width * imageSize.height * 2];
+    for (int y = 0; y < imageSize.height; ++y) {
+      for (int x = 0; x < imageSize.width; ++x) {
+        // .at(row, col) -- Y rows, X columns.
+        distortionMapTmp[(((y * imageSize.width) + x) * 2) + 0] = map1.at<float>(y, x) / static_cast<float>(imageSize.width);
+        distortionMapTmp[(((y * imageSize.width) + x) * 2) + 1] = map2.at<float>(y, x) / static_cast<float>(imageSize.height);
+      }
+    }
+
+    glGenTextures(1, &state.distortionMapTex);
+    GL(glBindTexture(GL_TEXTURE_2D, state.distortionMapTex));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+    GL(glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, imageSize.width, imageSize.height, 0, GL_RG, GL_FLOAT, distortionMapTmp));
+    GL(glBindTexture(GL_TEXTURE_2D, 0));
+
+    delete[] distortionMapTmp;
+  }
+
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
@@ -361,22 +453,27 @@ int main(int argc, char* argv[]) {
       glClear(GL_COLOR_BUFFER_BIT);
 
       // Draw camera content for thie eye
-      glUseProgram(state.camTexturedQuadProgram);
+      glUseProgram(state.camInvDistortionProgram);
+
       GL(glActiveTexture(GL_TEXTURE0));
       GL(glBindTexture(GL_TEXTURE_EXTERNAL_OES, activeCamera->rgbTexture()));
-      glUniform1i(state.camTexturedQuadProgram_textureUniform, 0);
+      GL(glUniform1i(state.camInvDistortionProgram_imageTexUniform, 0));
+
+      GL(glActiveTexture(GL_TEXTURE1));
+      GL(glBindTexture(GL_TEXTURE_2D, state.distortionMapTex));
+      GL(glUniform1i(state.camInvDistortionProgram_distortionMapUniform, 1));
       // coordsys right now: -X = left, -Z = into screen
       // (camera is at the origin)
       const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
-      const float scaleFactor = 4.0f;
+      const float scaleFactor = 5.0f;
       glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(-scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
       glm::mat4 mvp = state.eyeProjection[eyeIndex] * model;
-      glUniformMatrix4fv(state.camTexturedQuadProgram_mvpUniform, 1, GL_FALSE, &mvp[0][0]);
+      glUniformMatrix4fv(state.camInvDistortionProgram_mvpUniform, 1, GL_FALSE, &mvp[0][0]);
 
-      glVertexAttribPointer(state.camTexturedQuadProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, quadx );
-      glVertexAttribPointer(state.camTexturedQuadProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords );
-      glEnableVertexAttribArray(state.camTexturedQuadProgram_positionAttr);
-      glEnableVertexAttribArray(state.camTexturedQuadProgram_texcoordAttr);
+      glVertexAttribPointer(state.camInvDistortionProgram_positionAttr, 3, GL_FLOAT, GL_FALSE, 0, quadx );
+      glVertexAttribPointer(state.camInvDistortionProgram_texcoordAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords );
+      glEnableVertexAttribArray(state.camInvDistortionProgram_positionAttr);
+      glEnableVertexAttribArray(state.camInvDistortionProgram_texcoordAttr);
 
       GL(glDrawArrays( GL_TRIANGLE_STRIP, 0, 4));
     }
@@ -407,9 +504,9 @@ int main(int argc, char* argv[]) {
 
       GL(glActiveTexture(GL_TEXTURE0));
       GL(glBindTexture(GL_TEXTURE_2D, state.eyeColorTex[eyeIndex]));
+      GL(glUniform1i(state.hmdDistortionProgram_warpTextureUniform, 0)); // GL_TEXTURE0
 
       GL(glUniformMatrix4fv(state.hmdDistortionProgram_mvpUniform, 1, GL_FALSE, state.rotate_screen ? s_texcoordToViewportMatrixRotated : s_texcoordToViewportMatrix));
-      GL(glUniform1i(state.hmdDistortionProgram_warpTextureUniform, 0)); // GL_TEXTURE0
       GL(glUniform2fv(state.hmdDistortionProgram_lensCenterUniform, 1, eyeIndex == 0 ? state.left_lens_center : state.right_lens_center));
       GL(glUniform2fv(state.hmdDistortionProgram_viewportScaleUniform, 1, state.viewport_scale));
       GL(glUniform1f(state.hmdDistortionProgram_warpScaleUniform, state.warp_scale * state.warp_adj));

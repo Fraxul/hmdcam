@@ -18,6 +18,6 @@ Export('env')
 env.Program(
   target = 'hmdcam',
   source = Glob('*.cpp') + Glob('*.c') + ['openhmd/libopenhmd.a'],
-  LIBS=['stdc++', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-hidraw', 'nvargus', 'nvbuf_utils']
+  LIBS=['stdc++', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-hidraw', 'nvargus', 'nvbuf_utils', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d']
 )
 

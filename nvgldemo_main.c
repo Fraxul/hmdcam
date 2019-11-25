@@ -28,7 +28,7 @@
 //
 
 #include "nvgldemo.h"
-#include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
 #include <unistd.h>
 #define NvGlDemoLog(msg, ...) fprintf(stderr, msg"\n" , ##__VA_ARGS__)
 
@@ -158,9 +158,9 @@ NvGlDemoInitializeEGL(int depthbits, int stencilbits)
 
     // Request GL version
     cfgAttrs[cfgAttrIndex++] = EGL_RENDERABLE_TYPE;
-    cfgAttrs[cfgAttrIndex++] =  EGL_OPENGL_ES2_BIT;
+    cfgAttrs[cfgAttrIndex++] =  EGL_OPENGL_ES3_BIT;
     ctxAttrs[ctxAttrIndex++] = EGL_CONTEXT_CLIENT_VERSION;
-    ctxAttrs[ctxAttrIndex++] = 2;
+    ctxAttrs[ctxAttrIndex++] = 3;
 
     // Request a minimum of 1 bit each for red, green, blue, and alpha
     // Setting these to anything other than DONT_CARE causes the returned
