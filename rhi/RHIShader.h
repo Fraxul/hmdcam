@@ -112,6 +112,9 @@ class RHIShaderDescriptor {
 public:
   RHIShaderDescriptor();
 
+  // Common-case constructor
+  RHIShaderDescriptor(const char* vertexShaderFilename, const char* fragmentShaderFilename, const RHIVertexLayout& vertexLayout);
+
   enum ShadingUnit {
     kVertexShader,
     kGeometryShader,

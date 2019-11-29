@@ -17,8 +17,7 @@ extern RHIBuffer::ptr ndcQuadVBO;
 extern RHIBuffer::ptr frustumVisualizeVBO;
 extern RHIVertexLayout fullscreenPassVertexLayout;
 extern RHIVertexLayout ndcQuadVertexLayout;
-extern RHIRenderPipelineDescriptor fullscreenPassPipelineDescriptor;
-extern RHIRenderPipelineDescriptor ndcQuadPipelineDescriptor;
+extern RHIRenderPipelineDescriptor tristripPipelineDescriptor;
 
 extern RHIDepthStencilState::ptr disabledDepthStencilState;
 extern RHIDepthStencilState::ptr opaqueLightingPassDepthStencilState;

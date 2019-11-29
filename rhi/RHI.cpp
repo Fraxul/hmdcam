@@ -36,6 +36,11 @@ void RHI::drawFullscreenPass() {
   drawPrimitives(0, 3);
 }
 
+void RHI::drawNDCQuad() {
+  bindStreamBuffer(0, ndcQuadVBO);
+  drawPrimitives(0, 4);
+}
+
 RHIShader::ptr RHI::compileShader(const RHIShaderDescriptor& descriptor) {
   uint64_t descriptorHash = descriptor.hash();
   RHIShader::ptr& cacheSlot = m_shaderCache[descriptorHash];

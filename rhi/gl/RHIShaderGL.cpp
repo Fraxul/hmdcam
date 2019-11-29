@@ -168,6 +168,10 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
         case GL_UNSIGNED_INT_IMAGE_2D_ARRAY:
         case GL_UNSIGNED_INT_IMAGE_CUBE_MAP_ARRAY:
 
+        case GL_SAMPLER_EXTERNAL_OES:
+        case GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT:
+
+
           if (shader_debug) {
             printf("sampler [%d]: \"%s\"; type %x\n", attr.location, buffer.get(), attr.type);
           }
@@ -180,9 +184,12 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
             printf("uniform [%d]: \"%s\"; type %x\n", attr.location, buffer.get(), attr.type);
           }
 
-          // emit a warning if the uniform is in the default block. (uniforms in a non-default block report a location of -1)
-          if (attr.location >= 0)
-            printf("RHIShaderGL: WARNING: Program accepts free uniform parameter \"%s\" which is no longer supported. All uniforms need to be in a uniform block.\n", buffer.get());
+          // fail if the uniform is in the default block. (uniforms in a non-default block report a location of -1)
+          // (this can also indicate an incorrectly identified sampler attribute)
+          if (attr.location >= 0) {
+            fprintf(stderr, "RHIShaderGL: FATAL: Program accepts free uniform parameter \"%s\" which is no longer supported. All uniforms need to be in a uniform block.\n", buffer.get());
+            assert(false && "RHIShaderGL: Shader linking failed");
+          }
 
           break;
       };
@@ -322,7 +329,7 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
   }
 
   // Query compute shader workgroup size
-  {
+  if (unitSources.find(RHIShaderDescriptor::kComputeShader) != unitSources.end()) {
     GLint workgroupSize[3];
     GL(glGetProgramiv(m_program, GL_COMPUTE_WORK_GROUP_SIZE, workgroupSize));
     for (size_t i = 0; i < 3; ++i)

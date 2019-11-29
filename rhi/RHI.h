@@ -125,6 +125,7 @@ public:
   virtual void drawPrimitivesIndirect(RHIBuffer::ptr indirectBuffer, uint32_t indirectCommandCount = 1, uint32_t indirectCommandArrayOffset = 0) = 0;
   virtual void drawIndexedPrimitives(RHIBuffer::ptr indexBuffer, RHIIndexBufferType indexBufferType, uint32_t indexCount, uint32_t indexOffsetElements = 0, uint32_t instanceCount = 1, uint32_t baseInstance = 0) = 0;
   void drawFullscreenPass();
+  void drawNDCQuad();
 
   virtual RHITimerQuery::ptr newTimerQuery() = 0;
   virtual RHIOcclusionQuery::ptr newOcclusionQuery(RHIOcclusionQueryMode queryMode) = 0;

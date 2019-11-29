@@ -2,6 +2,8 @@
 #if RHI_VERTEX_SHADER
 
 #elif RHI_FRAGMENT_SHADER
+  #extension GL_OES_EGL_image_external : require
+  #extension GL_OES_EGL_image_external_essl3 : require
 
 #endif
 

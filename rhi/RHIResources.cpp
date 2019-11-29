@@ -35,8 +35,7 @@ RHISampler::ptr linearMipWrapAnisoSampler;
 
 RHIVertexLayout fullscreenPassVertexLayout;
 RHIVertexLayout ndcQuadVertexLayout;
-RHIRenderPipelineDescriptor fullscreenPassPipelineDescriptor;
-RHIRenderPipelineDescriptor ndcQuadPipelineDescriptor;
+RHIRenderPipelineDescriptor tristripPipelineDescriptor;
 
 FxAtomicString ksShadowAtlasVisualizeUniformBlock("ShadowAtlasVisualizeUniformBlock");
 FxAtomicString ksHBAOUniformBlock("HBAOUniformBlock");
@@ -77,9 +76,7 @@ void initRHIResources() {
   fullscreenPassVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position",            0, sizeof(float) * 5));
   fullscreenPassVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates", 12, sizeof(float) * 5));
 
-  ndcQuadPipelineDescriptor.primitiveTopology = kPrimitiveTopologyTriangleStrip;
-
-  fullscreenPassPipelineDescriptor.primitiveTopology = kPrimitiveTopologyTriangleStrip;
+  tristripPipelineDescriptor.primitiveTopology = kPrimitiveTopologyTriangleStrip;
 
   positionOnlyVertexLayout.elements.clear();
   positionOnlyVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position", 0, sizeof(glm::vec3)));
@@ -241,12 +238,12 @@ void initRHIResources() {
   uiLayerShaderDescriptor.addSourceFile(RHIShaderDescriptor::kVertexShader, "shaders/uiLayer.vtx.glsl");
   uiLayerShaderDescriptor.addSourceFile(RHIShaderDescriptor::kFragmentShader, "shaders/uiLayer.frag.glsl");
   uiLayerShaderDescriptor.setVertexLayout(ndcQuadVertexLayout);
-  uiLayerPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(uiLayerShaderDescriptor), ndcQuadPipelineDescriptor);
+  uiLayerPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(uiLayerShaderDescriptor), tristripPipelineDescriptor);
 
   RHIShaderDescriptor overlayCompositeShaderDescriptor;
   overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kVertexShader, "shaders/lightPass.vtx.glsl");
   overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kFragmentShader, "shaders/overlayCompositeShader.frag.glsl");
   overlayCompositeShaderDescriptor.setVertexLayout(ndcQuadVertexLayout);
-  overlayCompositePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(overlayCompositeShaderDescriptor), ndcQuadPipelineDescriptor);
+  overlayCompositePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(overlayCompositeShaderDescriptor), tristripPipelineDescriptor);
 }
 

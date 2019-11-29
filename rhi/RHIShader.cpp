@@ -37,6 +37,13 @@ RHIShaderDescriptor::RHIShaderDescriptor() {
   rhi()->populateGlobalShaderDescriptorEnvironment(this);
 }
 
+RHIShaderDescriptor::RHIShaderDescriptor(const char* vertexShaderFilename, const char* fragmentShaderFilename, const RHIVertexLayout& vertexLayout) {
+  rhi()->populateGlobalShaderDescriptorEnvironment(this);
+  addSourceFile(RHIShaderDescriptor::kVertexShader, vertexShaderFilename);
+  addSourceFile(RHIShaderDescriptor::kFragmentShader, fragmentShaderFilename);
+  setVertexLayout(vertexLayout);
+}
+
 const char* RHIShaderDescriptor::nameForShadingUnit(ShadingUnit unit) {
   switch (unit) {
     case kVertexShader: return "vertex";

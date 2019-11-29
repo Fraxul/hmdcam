@@ -1,7 +1,7 @@
 #pragma once
-#include <GLES3/gl3.h>
 #include <EGL/egl.h>
 #include <Argus/Argus.h>
+#include "rhi/gl/RHIEGLStreamSurfaceGL.h"
 
 #define NUM_BUFFERS 10
 
@@ -14,7 +14,7 @@ public:
 
   void stop();
 
-  GLuint rgbTexture() const { return m_texture; }
+  RHISurface::ptr rgbTexture() const { return m_texture; }
   unsigned int streamWidth() const { return m_streamWidth; }
   unsigned int streamHeight() const { return m_streamHeight; }
 
@@ -23,7 +23,7 @@ private:
   EGLDisplay m_display;
   EGLContext m_context;
 
-  GLuint m_texture;
+  RHIEGLStreamSurfaceGL::ptr m_texture;
   EGLStreamKHR m_stream;
   unsigned int m_streamWidth, m_streamHeight;
 

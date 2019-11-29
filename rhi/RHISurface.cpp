@@ -29,6 +29,7 @@ size_t rhiSurfaceFormatSize(RHISurfaceFormat format) {
 
     case kSurfaceFormat_RGBA16f:
     case kSurfaceFormat_RGBA16s:
+    case kSurfaceFormat_RG32f:
       return 8;
   };
 }

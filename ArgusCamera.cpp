@@ -117,8 +117,9 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int 
   iSourceSettings->setFrameDurationRange(iSensorMode->getFrameDurationRange().min());
 
   // GL texture which will be associated with EGL images in readFrame()
-  glGenTextures(1, &m_texture);
-  glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_texture);
+  m_texture = new RHIEGLStreamSurfaceGL(m_streamWidth, m_streamHeight, kSurfaceFormat_RGBA8);
+
+  glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_texture->glId());
   // Connect the stream consumer. This must be done before starting the capture session, or libargus will return an invalid state error.
   if (!eglStreamConsumerGLTextureExternalKHR(m_display, m_stream))
     die("Unable to connect GL as EGLStream consumer");
@@ -142,7 +143,7 @@ ArgusCamera::~ArgusCamera() {
   // TODO: Shut down Argus after all instances are released
   // g_cameraProvider.reset();
 
-  glDeleteTextures(1, &m_texture);
+  m_texture.reset();
 }
 
 bool ArgusCamera::readFrame() {
