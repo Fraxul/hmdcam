@@ -10,6 +10,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 
+#include "rhi/RHI.h"
+
 #include <GLES3/gl3.h>
 #include <GLES2/gl2ext.h>
 #include <GLES3/gl3ext.h>
@@ -367,6 +369,8 @@ int main(int argc, char* argv[]) {
   }
 
   init_ogl();
+
+  initRHIGL();
 
   // Create FBOs for per-eye rendering (pre distortion)
   createFBO(state.eye_width, state.eye_height, &state.eyeFBO[0], &state.eyeColorTex[0]);

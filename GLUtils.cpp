@@ -3,24 +3,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include <GLES3/gl3.h>
-#include <GLES3/gl3ext.h>
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-
-void checkGLError(const char* op, const char* file, int line) {
-  GLint error = glGetError();
-  if (error)
-    fprintf(stderr, "after %s (%s:%d) glError (0x%x)\n", op, file, line, error);
-}
-
-
-void checkEGLError(const char* op, const char* file, int line) {
-  GLint error = eglGetError();
-  if (error)
-    fprintf(stderr, "after %s (%s:%d) eglError (0x%x)\n", op, file, line, error);
-}
-
 GLuint compileShader(const char* vertexSource, const char* fragmentSource) {
 	GLuint vertexShader;
 	GLuint fragmentShader;

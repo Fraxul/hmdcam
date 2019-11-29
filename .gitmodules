@@ -3,3 +3,6 @@
   url = https://github.com/g-truc/glm
   ignore = untracked
 
+[submodule "glatter"]
+	path = glatter
+	url = https://github.com/imakris/glatter.git

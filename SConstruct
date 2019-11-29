@@ -3,7 +3,7 @@ import os
 
 # Environment setup
 env = Environment(
-  CPPPATH=['glm', '/usr/include/drm', '/usr/src/nvidia/tegra_multimedia_api/include', '/usr/src/nvidia/tegra_multimedia_api/argus/include'],
+  CPPPATH=['.', 'glm', 'glatter/include', 'glatter/include/glatter', '/usr/include/drm', '/usr/src/nvidia/tegra_multimedia_api/include', '/usr/src/nvidia/tegra_multimedia_api/argus/include'],
   CPPFLAGS=['-ggdb', '-std=c++11', '-Wall'],
   LINKFLAGS=['-ggdb'],
   LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra'],
@@ -17,7 +17,7 @@ Export('env')
 
 env.Program(
   target = 'hmdcam',
-  source = Glob('*.cpp') + Glob('*.c') + ['openhmd/libopenhmd.a'],
+  source = Glob('*.cpp') + Glob('*.c') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + ['openhmd/libopenhmd.a'],
   LIBS=['stdc++', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-hidraw', 'nvargus', 'nvbuf_utils', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d']
 )
 

@@ -11,7 +11,7 @@ git submodule update
 
 Install prerequisite packages:
 
-sudo apt-get install scons libhidapi-dev libhidapi-hidraw0
+sudo apt-get install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev
 
 udev permissions:
 
