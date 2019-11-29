@@ -49,12 +49,23 @@ std::array<double, 5> s_distortionCoeffs = { -3.7085816639967079e-01, 1.99973936
 
 RHIRenderTarget::ptr windowRenderTarget;
 
-struct CamTexturedQuadUniformBlock {
+struct NDCQuadUniformBlock {
   glm::mat4 modelViewProjection;
 };
-FxAtomicString ksCamTexturedQuadUniformBlock("CamTexturedQuadUniformBlock");
+FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
 RHIRenderPipeline::ptr camTexturedQuadPipeline;
 RHIRenderPipeline::ptr camInvDistortionPipeline;
+
+struct HMDDistortionUniformBlock {
+  glm::vec4 hmdWarpParam;
+  glm::vec4 aberr; // actually vec3, padded
+  glm::vec2 lensCenter;
+  glm::vec2 viewportScale;
+  float warpScale;
+  float pad2, pad3, pad4;
+};
+FxAtomicString ksHMDDistortionUniformBlock("HMDDistortionUniformBlock");
+RHIRenderPipeline::ptr hmdDistortionPipeline;
 
 FxAtomicString ksImageTex("imageTex");
 FxAtomicString ksDistortionMap("distortionMap");
@@ -62,6 +73,8 @@ FxAtomicString ksDistortionMap("distortionMap");
 // per-eye render targets (pre distortion)
 RHISurface::ptr eyeTex[2];
 RHIRenderTarget::ptr eyeRT[2];
+// per-eye distortion parameter buffers
+RHIBuffer::ptr hmdDistortionParams[2];
 
 
 typedef struct
@@ -72,106 +85,16 @@ typedef struct
 
   int hmd_width, hmd_height;
   int eye_width, eye_height;
-  float ipd;
-  float viewport_scale[2];
-  float distortion_coeffs[4];
-  float aberr_scale[3];
-  float sep;
-  float left_lens_center[2];
-  float right_lens_center[2];
-  float warp_scale;
-  float warp_adj;
-
   glm::mat4 eyeProjection[2];
 
   bool rotate_screen;
-
-  GLuint hmdDistortionProgram;
-  GLint hmdDistortionProgram_coordsAttr;
-  GLint hmdDistortionProgram_mvpUniform;
-  GLint hmdDistortionProgram_warpTextureUniform;
-  GLint hmdDistortionProgram_lensCenterUniform;
-  GLint hmdDistortionProgram_viewportScaleUniform;
-  GLint hmdDistortionProgram_warpScaleUniform;
-  GLint hmdDistortionProgram_hmdWarpParamUniform;
-  GLint hmdDistortionProgram_aberrUniform;
 
   int verbose;
 
 } CUBE_STATE_T;
 
 NvGlDemoOptions demoOptions;
-
 static CUBE_STATE_T state;
-
-static const GLfloat s_identityMatrix[] = {
-  1.0f, 0.0f, 0.0f, 0.0f,
-  0.0f, 1.0f, 0.0f, 0.0f,
-  0.0f, 0.0f, 1.0f, 0.0f,
-  0.0f, 0.0f, 0.0f, 1.0f
-};
-
-// vec4 out = vec4((in.xy * 2.0f) - vec2(1.0f), in.z, in.w)
-static const GLfloat s_texcoordToViewportMatrix[] = {
-   2.0f,  0.0f, 0.0f, 0.0f,
-   0.0f,  2.0f, 0.0f, 0.0f,
-   0.0f,  0.0f, 1.0f, 0.0f,
-  -1.0f, -1.0f, 0.0f, 1.0f
-};
-// Same as above, but rotated (swapping x and y)
-static const GLfloat s_texcoordToViewportMatrixRotated[] = {
-   0.0f,  2.0f, 0.0f, 0.0f,
-  -2.0f,  0.0f, 0.0f, 0.0f,
-   0.0f,  0.0f, 1.0f, 0.0f,
-   1.0f, -1.0f, 0.0f, 1.0f
-};
-
-static const GLfloat quadx[4*3] = {
-   -1.0f, -1.0f,  0.0f,
-    1.0f, -1.0f,  0.0f,
-   -1.0f,  1.0f,  0.0f,
-    1.0f,  1.0f,  0.0f,
-};
-
-static const GLfloat quadx_left[4*3] = {
-   -1.0f, -1.0f,  0.0f,
-    0.0f, -1.0f,  0.0f,
-   -1.0f,  1.0f,  0.0f,
-    0.0f,  1.0f,  0.0f,
-};
-static const GLfloat quadx_right[4*3] = {
-    0.0f, -1.0f,  0.0f,
-    1.0f, -1.0f,  0.0f,
-    0.0f,  1.0f,  0.0f,
-    1.0f,  1.0f,  0.0f,
-};
-static const GLfloat quadx_left_rotated[4*3] = {
-   -1.0f, -1.0f,  0.0f,
-    1.0f, -1.0f,  0.0f,
-   -1.0f,  0.0f,  0.0f,
-    1.0f,  0.0f,  0.0f,
-};
-static const GLfloat quadx_right_rotated[4*3] = {
-   -1.0f,  0.0f,  0.0f,
-    1.0f,  0.0f,  0.0f,
-   -1.0f,  1.0f,  0.0f,
-    1.0f,  1.0f,  0.0f,
-};
-
-/** Texture coordinates for the quad. */
-static const GLfloat texCoords[4 * 2] = {
-   0.f,  0.f,
-   1.f,  0.f,
-   0.f,  1.f,
-   1.f,  1.f,
-};
-static const GLfloat texCoords_rotated[4 * 2] = {
-   0.f,  1.f,
-   0.f,  0.f,
-   1.f,  1.f,
-   1.f,  0.f,
-};
-
 
 static void init_ogl() {
   memset(&demoOptions, 0, sizeof(demoOptions));
@@ -198,32 +121,22 @@ static void init_ogl() {
   // Set up shared resources
 
   camTexturedQuadPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
-    "shaders/camTexturedQuad.vtx.glsl",
+    "shaders/ndcQuad.vtx.glsl",
     "shaders/camTexturedQuad.frag.glsl",
     ndcQuadVertexLayout)),
     tristripPipelineDescriptor);
 
   camInvDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
-    "shaders/camTexturedQuad.vtx.glsl",
+    "shaders/ndcQuad.vtx.glsl",
     "shaders/camInvDistortion.frag.glsl",
     ndcQuadVertexLayout)),
     tristripPipelineDescriptor);
 
-
-  {
-    const char *vertex, *fragment;
-    ohmd_gets(OHMD_GLSL_ES_DISTORTION_VERT_SRC, &vertex);
-    ohmd_gets(OHMD_GLSL_ES_DISTORTION_FRAG_SRC, &fragment);
-    state.hmdDistortionProgram = compileShader(vertex, fragment);
-  }
-  state.hmdDistortionProgram_coordsAttr = glGetAttribLocation(state.hmdDistortionProgram, "coords"); // vec2 coords
-  state.hmdDistortionProgram_mvpUniform = glGetUniformLocation(state.hmdDistortionProgram, "mvp"); // model-view-projection matrix
-  state.hmdDistortionProgram_warpTextureUniform = glGetUniformLocation(state.hmdDistortionProgram, "warpTexture"); // per eye texture to warp for lens distortion
-  state.hmdDistortionProgram_lensCenterUniform = glGetUniformLocation(state.hmdDistortionProgram, "LensCenter"); // Position of lens center in m (usually eye_w/2, eye_h/2)
-  state.hmdDistortionProgram_viewportScaleUniform = glGetUniformLocation(state.hmdDistortionProgram, "ViewportScale"); // Scale from texture co-ords to m (usually eye_w, eye_h)
-  state.hmdDistortionProgram_warpScaleUniform = glGetUniformLocation(state.hmdDistortionProgram, "WarpScale"); // Distortion overall scale in m (usually ~eye_w/2)
-  state.hmdDistortionProgram_hmdWarpParamUniform = glGetUniformLocation(state.hmdDistortionProgram, "HmdWarpParam"); // Distoriton coefficients (PanoTools model) [a,b,c,d]
-  state.hmdDistortionProgram_aberrUniform = glGetUniformLocation(state.hmdDistortionProgram, "aberr"); // chromatic distortion post scaling
+  hmdDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
+    "shaders/hmdDistortion.vtx.glsl",
+    "shaders/hmdDistortion.frag.glsl",
+    ndcQuadVertexLayout)),
+    tristripPipelineDescriptor);
 }
 
 static void update_fps() {
@@ -261,6 +174,55 @@ static void signal_handler(int) {
   signal(SIGQUIT, SIG_DFL);
 }
 
+void recomputeHMDParameters() {
+  float ipd;
+  glm::vec2 viewport_scale;
+  glm::vec4 distortion_coeffs;
+  glm::vec3 aberr_scale;
+  float sep;
+  glm::vec2 left_lens_center;
+  glm::vec2 right_lens_center;
+  float warp_scale;
+  float warp_adj;
+
+  ohmd_device_getf(state.hmdDevice, OHMD_EYE_IPD, &ipd);
+  //viewport is half the screen
+  ohmd_device_getf(state.hmdDevice, OHMD_SCREEN_HORIZONTAL_SIZE, &(viewport_scale[0]));
+  viewport_scale[0] /= 2.0f;
+  ohmd_device_getf(state.hmdDevice, OHMD_SCREEN_VERTICAL_SIZE, &(viewport_scale[1]));
+  //distortion coefficients
+  ohmd_device_getf(state.hmdDevice, OHMD_UNIVERSAL_DISTORTION_K, &(distortion_coeffs[0]));
+  ohmd_device_getf(state.hmdDevice, OHMD_UNIVERSAL_ABERRATION_K, &(aberr_scale[0]));
+  //calculate lens centers (assuming the eye separation is the distance between the lens centers)
+  ohmd_device_getf(state.hmdDevice, OHMD_LENS_HORIZONTAL_SEPARATION, &sep);
+  ohmd_device_getf(state.hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(left_lens_center[1]));
+  ohmd_device_getf(state.hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(right_lens_center[1]));
+  left_lens_center[0] = viewport_scale[0] - sep/2.0f;
+  right_lens_center[0] = sep/2.0f;
+  //assume calibration was for lens view to which ever edge of screen is further away from lens center
+  warp_scale = (left_lens_center[0] > right_lens_center[0]) ? left_lens_center[0] : right_lens_center[0];
+  warp_adj = 1.0f;
+
+  // Setup projection matrices
+  ohmd_device_getf(state.hmdDevice, OHMD_LEFT_EYE_GL_PROJECTION_MATRIX, &(state.eyeProjection[0][0][0]));
+  ohmd_device_getf(state.hmdDevice, OHMD_RIGHT_EYE_GL_PROJECTION_MATRIX, &(state.eyeProjection[1][0][0]));
+  // Cook the stereo separation transform into the projection matrices
+  // TODO stereo separation scale
+  state.eyeProjection[0] = state.eyeProjection[0] * glm::translate(glm::vec3(ipd *  10.0f, 0.0f, 0.0f));
+  state.eyeProjection[1] = state.eyeProjection[1] * glm::translate(glm::vec3(ipd * -10.0f, 0.0f, 0.0f));
+
+  for (size_t eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+    HMDDistortionUniformBlock ub;
+    ub.hmdWarpParam = distortion_coeffs;
+    ub.aberr = glm::vec4(aberr_scale, 0.0f);
+    ub.lensCenter = (eyeIndex == 0 ? left_lens_center : right_lens_center);
+    ub.viewportScale = viewport_scale;
+    ub.warpScale = warp_scale * warp_adj;
+
+    hmdDistortionParams[eyeIndex] = rhi()->newUniformBufferWithContents(&ub, sizeof(HMDDistortionUniformBlock));
+  }
+}
+
 int main(int argc, char* argv[]) {
 
   memset(&state, 0, sizeof(state));
@@ -285,43 +247,19 @@ int main(int argc, char* argv[]) {
       return 1;
     }
 
-    ohmd_device_geti(state.hmdDevice, OHMD_SCREEN_HORIZONTAL_RESOLUTION, &state.hmd_width);
-    ohmd_device_geti(state.hmdDevice, OHMD_SCREEN_VERTICAL_RESOLUTION, &state.hmd_height);
-
-    ohmd_device_getf(state.hmdDevice, OHMD_EYE_IPD, &state.ipd);
-    //viewport is half the screen
-    ohmd_device_getf(state.hmdDevice, OHMD_SCREEN_HORIZONTAL_SIZE, &(state.viewport_scale[0]));
-    state.viewport_scale[0] /= 2.0f;
-    ohmd_device_getf(state.hmdDevice, OHMD_SCREEN_VERTICAL_SIZE, &(state.viewport_scale[1]));
-    //distortion coefficients
-    ohmd_device_getf(state.hmdDevice, OHMD_UNIVERSAL_DISTORTION_K, &(state.distortion_coeffs[0]));
-    ohmd_device_getf(state.hmdDevice, OHMD_UNIVERSAL_ABERRATION_K, &(state.aberr_scale[0]));
-    //calculate lens centers (assuming the eye separation is the distance between the lens centers)
-    ohmd_device_getf(state.hmdDevice, OHMD_LENS_HORIZONTAL_SEPARATION, &state.sep);
-    ohmd_device_getf(state.hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(state.left_lens_center[1]));
-    ohmd_device_getf(state.hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(state.right_lens_center[1]));
-    state.left_lens_center[0] = state.viewport_scale[0] - state.sep/2.0f;
-    state.right_lens_center[0] = state.sep/2.0f;
-    //assume calibration was for lens view to which ever edge of screen is further away from lens center
-    state.warp_scale = (state.left_lens_center[0] > state.right_lens_center[0]) ? state.left_lens_center[0] : state.right_lens_center[0];
-    state.warp_adj = 1.0f;
-
-    state.eye_width = state.hmd_width / 2;
-    state.eye_height = state.hmd_height;
-
-
-    // Setup projection matrices
-    ohmd_device_getf(state.hmdDevice, OHMD_LEFT_EYE_GL_PROJECTION_MATRIX, &(state.eyeProjection[0][0][0]));
-    ohmd_device_getf(state.hmdDevice, OHMD_RIGHT_EYE_GL_PROJECTION_MATRIX, &(state.eyeProjection[1][0][0]));
-    // Cook the stereo separation transform into the projection matrices
-    // TODO stereo separation scale
-    state.eyeProjection[0] = state.eyeProjection[0] * glm::translate(glm::vec3(state.ipd *  10.0f, 0.0f, 0.0f));
-    state.eyeProjection[1] = state.eyeProjection[1] * glm::translate(glm::vec3(state.ipd * -10.0f, 0.0f, 0.0f));
-
+    // Not used after ohmd_list_open_device_s returns
     ohmd_device_settings_destroy(hmdSettings);
 
+    // Grab some fixed parameters
+    ohmd_device_geti(state.hmdDevice, OHMD_SCREEN_HORIZONTAL_RESOLUTION, &state.hmd_width);
+    ohmd_device_geti(state.hmdDevice, OHMD_SCREEN_VERTICAL_RESOLUTION, &state.hmd_height);
+    state.eye_width = state.hmd_width / 2;
+    state.eye_height = state.hmd_height;
     printf("HMD dimensions: %u x %u\n", state.hmd_width, state.hmd_height);
   }
+
+  // Set up uniform buffers for HMD distortion passes
+  recomputeHMDParameters();
 
   // Create FBOs for per-eye rendering (pre distortion)
   for (int i = 0; i < 2; ++i) {
@@ -419,9 +357,9 @@ int main(int argc, char* argv[]) {
       glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(-scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
       glm::mat4 mvp = state.eyeProjection[eyeIndex] * model;
 
-      CamTexturedQuadUniformBlock ub;
+      NDCQuadUniformBlock ub;
       ub.modelViewProjection = mvp;
-      rhi()->loadUniformBlockImmediate(ksCamTexturedQuadUniformBlock, &ub, sizeof(CamTexturedQuadUniformBlock));
+      rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
 
       rhi()->drawNDCQuad();
 #endif
@@ -435,7 +373,7 @@ int main(int argc, char* argv[]) {
     rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
 
     // XXX TODO
-#if 1
+#if 0
     rhi()->blitTex(eyeTex[0], 0);
 #else
 
@@ -444,35 +382,23 @@ int main(int argc, char* argv[]) {
 
       if (state.rotate_screen) {
         if (eyeIndex == 0) {
-          GL(glViewport(0, 0, state.screen_width, state.screen_height/2));
+          rhi()->setViewport(RHIRect::xywh(0, 0, windowRenderTarget->width(), windowRenderTarget->height()/2));
         } else {
-          GL(glViewport(0, state.screen_height/2, state.screen_width, state.screen_height/2));
+          rhi()->setViewport(RHIRect::xywh(0, windowRenderTarget->height()/2, windowRenderTarget->width(), windowRenderTarget->height()/2));
         }
       } else {
         if (eyeIndex == 0) {
-          GL(glViewport(0, 0, state.screen_width/2, state.screen_height));
+          rhi()->setViewport(RHIRect::xywh(0, 0, windowRenderTarget->width()/2, windowRenderTarget->height()));
         } else {
-          GL(glViewport(state.screen_width/2, 0, state.screen_width/2, state.screen_height));
+          rhi()->setViewport(RHIRect::xywh(windowRenderTarget->width()/2, 0, windowRenderTarget->width()/2, windowRenderTarget->height()));
         }
       }
 
-      // Draw using distortion program
-      GL(glUseProgram(state.hmdDistortionProgram));
+      rhi()->bindRenderPipeline(hmdDistortionPipeline);
+      rhi()->loadUniformBlock(ksHMDDistortionUniformBlock, hmdDistortionParams[eyeIndex]);
+      rhi()->loadTexture(ksImageTex, eyeTex[eyeIndex]);
 
-      GL(glActiveTexture(GL_TEXTURE0));
-      GL(glBindTexture(GL_TEXTURE_2D, state.eyeColorTex[eyeIndex]));
-      GL(glUniform1i(state.hmdDistortionProgram_warpTextureUniform, 0)); // GL_TEXTURE0
-
-      GL(glUniformMatrix4fv(state.hmdDistortionProgram_mvpUniform, 1, GL_FALSE, state.rotate_screen ? s_texcoordToViewportMatrixRotated : s_texcoordToViewportMatrix));
-      GL(glUniform2fv(state.hmdDistortionProgram_lensCenterUniform, 1, eyeIndex == 0 ? state.left_lens_center : state.right_lens_center));
-      GL(glUniform2fv(state.hmdDistortionProgram_viewportScaleUniform, 1, state.viewport_scale));
-      GL(glUniform1f(state.hmdDistortionProgram_warpScaleUniform, state.warp_scale * state.warp_adj));
-      GL(glUniform4fv(state.hmdDistortionProgram_hmdWarpParamUniform, 1, state.distortion_coeffs));
-      GL(glUniform3fv(state.hmdDistortionProgram_aberrUniform, 1, state.aberr_scale));
-
-      glVertexAttribPointer(state.hmdDistortionProgram_coordsAttr, 2, GL_FLOAT, GL_FALSE, 0, texCoords);
-      glEnableVertexAttribArray(state.hmdDistortionProgram_coordsAttr);
-      GL(glDrawArrays( GL_TRIANGLE_STRIP, 0, 4));
+      rhi()->drawNDCQuad();
     }
 #endif
 
