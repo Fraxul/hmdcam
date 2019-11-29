@@ -13,16 +13,11 @@
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/gl/RHIEGLSurfaceRenderTargetGL.h"
+#include "rhi/gl/GLCommon.h"
 
-#include <GLES3/gl3.h>
-#include <GLES2/gl2ext.h>
-#include <GLES3/gl3ext.h>
-#include "EGL/egl.h"
-#include "EGL/eglext.h"
 #include "nvgldemo.h"
 
 #include "ArgusCamera.h"
-#include "GLUtils.h"
 
 #include "openhmd/openhmd.h"
 
@@ -76,25 +71,53 @@ RHIRenderTarget::ptr eyeRT[2];
 // per-eye distortion parameter buffers
 RHIBuffer::ptr hmdDistortionParams[2];
 
+// HMD info/state
+ohmd_context* hmdContext = NULL;
+ohmd_device* hmdDevice = NULL;
+int hmd_width, hmd_height;
+int eye_width, eye_height;
+bool rotate_screen = false;
+glm::mat4 eyeProjection[2];
 
-typedef struct
-{
-  // HMD info/state
-  ohmd_context* hmdContext;
-  ohmd_device* hmdDevice;
+// Camera info/state
+ArgusCamera* camera[2];
+RHISurface::ptr cameraDistortionMap[2];
 
-  int hmd_width, hmd_height;
-  int eye_width, eye_height;
-  glm::mat4 eyeProjection[2];
 
-  bool rotate_screen;
+void updateCameraDistortionMap(size_t cameraIdx)  {
+  // TODO use per-camera matrix and distortion coefficients
+  cv::Mat cameraMatrix(cv::Size(3, 3), CV_64F, &(s_cameraMatrix[0]));
+  cv::Mat distCoeff(s_distortionCoeffs);
+  cv::Size imageSize = cv::Size(1280, 720);
+  float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels
+#if 1
+  cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(cameraMatrix, distCoeff, imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
+#else
+  cv::Mat newCameraMatrix = cv::getDefaultNewCameraMatrix(cameraMatrix, imageSize, true);
+#endif
+  cv::Mat map1, map2;
+  cv::initUndistortRectifyMap(cameraMatrix, distCoeff, cv::noArray(), newCameraMatrix, imageSize, CV_32F, map1, map2);
+  // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc)
 
-  int verbose;
+  // Combine the maps into a buffer we can upload to opengl. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
+  float* distortionMapTmp = new float[imageSize.width * imageSize.height * 2];
+  for (int y = 0; y < imageSize.height; ++y) {
+    for (int x = 0; x < imageSize.width; ++x) {
+      // .at(row, col) -- Y rows, X columns.
+      distortionMapTmp[(((y * imageSize.width) + x) * 2) + 0] = map1.at<float>(y, x) / static_cast<float>(imageSize.width);
+      distortionMapTmp[(((y * imageSize.width) + x) * 2) + 1] = map2.at<float>(y, x) / static_cast<float>(imageSize.height);
+    }
+  }
 
-} CUBE_STATE_T;
+  cameraDistortionMap[cameraIdx] = rhi()->newTexture2D(imageSize.width, imageSize.height, RHISurfaceDescriptor(kSurfaceFormat_RG32f));
+
+  rhi()->loadTextureData(cameraDistortionMap[cameraIdx], kVertexElementTypeFloat2, distortionMapTmp);
+
+  delete[] distortionMapTmp;
+}
+
 
 NvGlDemoOptions demoOptions;
-static CUBE_STATE_T state;
 
 static void init_ogl() {
   memset(&demoOptions, 0, sizeof(demoOptions));
@@ -185,18 +208,18 @@ void recomputeHMDParameters() {
   float warp_scale;
   float warp_adj;
 
-  ohmd_device_getf(state.hmdDevice, OHMD_EYE_IPD, &ipd);
+  ohmd_device_getf(hmdDevice, OHMD_EYE_IPD, &ipd);
   //viewport is half the screen
-  ohmd_device_getf(state.hmdDevice, OHMD_SCREEN_HORIZONTAL_SIZE, &(viewport_scale[0]));
+  ohmd_device_getf(hmdDevice, OHMD_SCREEN_HORIZONTAL_SIZE, &(viewport_scale[0]));
   viewport_scale[0] /= 2.0f;
-  ohmd_device_getf(state.hmdDevice, OHMD_SCREEN_VERTICAL_SIZE, &(viewport_scale[1]));
+  ohmd_device_getf(hmdDevice, OHMD_SCREEN_VERTICAL_SIZE, &(viewport_scale[1]));
   //distortion coefficients
-  ohmd_device_getf(state.hmdDevice, OHMD_UNIVERSAL_DISTORTION_K, &(distortion_coeffs[0]));
-  ohmd_device_getf(state.hmdDevice, OHMD_UNIVERSAL_ABERRATION_K, &(aberr_scale[0]));
+  ohmd_device_getf(hmdDevice, OHMD_UNIVERSAL_DISTORTION_K, &(distortion_coeffs[0]));
+  ohmd_device_getf(hmdDevice, OHMD_UNIVERSAL_ABERRATION_K, &(aberr_scale[0]));
   //calculate lens centers (assuming the eye separation is the distance between the lens centers)
-  ohmd_device_getf(state.hmdDevice, OHMD_LENS_HORIZONTAL_SEPARATION, &sep);
-  ohmd_device_getf(state.hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(left_lens_center[1]));
-  ohmd_device_getf(state.hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(right_lens_center[1]));
+  ohmd_device_getf(hmdDevice, OHMD_LENS_HORIZONTAL_SEPARATION, &sep);
+  ohmd_device_getf(hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(left_lens_center[1]));
+  ohmd_device_getf(hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(right_lens_center[1]));
   left_lens_center[0] = viewport_scale[0] - sep/2.0f;
   right_lens_center[0] = sep/2.0f;
   //assume calibration was for lens view to which ever edge of screen is further away from lens center
@@ -204,12 +227,12 @@ void recomputeHMDParameters() {
   warp_adj = 1.0f;
 
   // Setup projection matrices
-  ohmd_device_getf(state.hmdDevice, OHMD_LEFT_EYE_GL_PROJECTION_MATRIX, &(state.eyeProjection[0][0][0]));
-  ohmd_device_getf(state.hmdDevice, OHMD_RIGHT_EYE_GL_PROJECTION_MATRIX, &(state.eyeProjection[1][0][0]));
+  ohmd_device_getf(hmdDevice, OHMD_LEFT_EYE_GL_PROJECTION_MATRIX, &(eyeProjection[0][0][0]));
+  ohmd_device_getf(hmdDevice, OHMD_RIGHT_EYE_GL_PROJECTION_MATRIX, &(eyeProjection[1][0][0]));
   // Cook the stereo separation transform into the projection matrices
   // TODO stereo separation scale
-  state.eyeProjection[0] = state.eyeProjection[0] * glm::translate(glm::vec3(ipd *  10.0f, 0.0f, 0.0f));
-  state.eyeProjection[1] = state.eyeProjection[1] * glm::translate(glm::vec3(ipd * -10.0f, 0.0f, 0.0f));
+  eyeProjection[0] = eyeProjection[0] * glm::translate(glm::vec3(ipd *  10.0f, 0.0f, 0.0f));
+  eyeProjection[1] = eyeProjection[1] * glm::translate(glm::vec3(ipd * -10.0f, 0.0f, 0.0f));
 
   for (size_t eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
     HMDDistortionUniformBlock ub;
@@ -225,25 +248,21 @@ void recomputeHMDParameters() {
 
 int main(int argc, char* argv[]) {
 
-  memset(&state, 0, sizeof(state));
-
   init_ogl();
 
-
-
-  state.hmdContext = ohmd_ctx_create();
-  int num_devices = ohmd_ctx_probe(state.hmdContext);
+  hmdContext = ohmd_ctx_create();
+  int num_devices = ohmd_ctx_probe(hmdContext);
   if (num_devices < 0){
-    printf("OpenHMD: failed to probe devices: %s\n", ohmd_ctx_get_error(state.hmdContext));
+    printf("OpenHMD: failed to probe devices: %s\n", ohmd_ctx_get_error(hmdContext));
     return 1;
   }
 
   {
-    ohmd_device_settings* hmdSettings = ohmd_device_settings_create(state.hmdContext);
+    ohmd_device_settings* hmdSettings = ohmd_device_settings_create(hmdContext);
 
-    state.hmdDevice = ohmd_list_open_device_s(state.hmdContext, 0, hmdSettings);
-    if (!state.hmdDevice){
-      printf("OpenHMD: failed to open device: %s\n", ohmd_ctx_get_error(state.hmdContext));
+    hmdDevice = ohmd_list_open_device_s(hmdContext, 0, hmdSettings);
+    if (!hmdDevice){
+      printf("OpenHMD: failed to open device: %s\n", ohmd_ctx_get_error(hmdContext));
       return 1;
     }
 
@@ -251,11 +270,11 @@ int main(int argc, char* argv[]) {
     ohmd_device_settings_destroy(hmdSettings);
 
     // Grab some fixed parameters
-    ohmd_device_geti(state.hmdDevice, OHMD_SCREEN_HORIZONTAL_RESOLUTION, &state.hmd_width);
-    ohmd_device_geti(state.hmdDevice, OHMD_SCREEN_VERTICAL_RESOLUTION, &state.hmd_height);
-    state.eye_width = state.hmd_width / 2;
-    state.eye_height = state.hmd_height;
-    printf("HMD dimensions: %u x %u\n", state.hmd_width, state.hmd_height);
+    ohmd_device_geti(hmdDevice, OHMD_SCREEN_HORIZONTAL_RESOLUTION, &hmd_width);
+    ohmd_device_geti(hmdDevice, OHMD_SCREEN_VERTICAL_RESOLUTION, &hmd_height);
+    eye_width = hmd_width / 2;
+    eye_height = hmd_height;
+    printf("HMD dimensions: %u x %u\n", hmd_width, hmd_height);
   }
 
   // Set up uniform buffers for HMD distortion passes
@@ -263,68 +282,29 @@ int main(int argc, char* argv[]) {
 
   // Create FBOs for per-eye rendering (pre distortion)
   for (int i = 0; i < 2; ++i) {
-    eyeTex[i] = rhi()->newTexture2D(state.eye_width, state.eye_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+    eyeTex[i] = rhi()->newTexture2D(eye_width, eye_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
     eyeRT[i] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ eyeTex[i] }));
   }
 
   printf("Screen dimensions: %u x %u\n", windowRenderTarget->width(), windowRenderTarget->height());
 
-  if (windowRenderTarget->width() == state.hmd_width && windowRenderTarget->height() == state.hmd_height) {
+  if (windowRenderTarget->width() == hmd_width && windowRenderTarget->height() == hmd_height) {
     // Screen physical orientation matches HMD logical orientation
-  } else if (windowRenderTarget->width() == state.hmd_height && windowRenderTarget->height() == state.hmd_width) {
+  } else if (windowRenderTarget->width() == hmd_height && windowRenderTarget->height() == hmd_width) {
     // Screen is oriented opposite of HMD logical orientation
-    state.rotate_screen = true;
+    rotate_screen = true;
     printf("Will compensate for screen rotation.\n");
   } else {
     printf("WARNING: Screen and HMD dimensions don't match; check system configuration.\n");
   }
 
 
-  ArgusCamera* camera[2];
-
   // Left
   camera[0] = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, 1280, 720);
-
-#ifdef SINGLE_CAMERA
-  // Left and right share the same camera
-  camera[1] = camera[0];
-#else
-  // Right
   camera[1] = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, 1280, 720);
-#endif
 
-  RHISurface::ptr distortionMap;
-
-  {
-
-    cv::Mat cameraMatrix(cv::Size(3, 3), CV_64F, &(s_cameraMatrix[0]));
-    cv::Mat distCoeff(s_distortionCoeffs);
-    cv::Size imageSize = cv::Size(1280, 720);
-    float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels
-#if 1
-    cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(cameraMatrix, distCoeff, imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
-#else
-    cv::Mat newCameraMatrix = cv::getDefaultNewCameraMatrix(cameraMatrix, imageSize, true);
-#endif
-    cv::Mat map1, map2;
-    cv::initUndistortRectifyMap(cameraMatrix, distCoeff, cv::noArray(), newCameraMatrix, imageSize, CV_32F, map1, map2);
-    // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc)
-
-    // Combine the maps into a buffer we can upload to opengl. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
-    float* distortionMapTmp = new float[imageSize.width * imageSize.height * 2];
-    for (int y = 0; y < imageSize.height; ++y) {
-      for (int x = 0; x < imageSize.width; ++x) {
-        // .at(row, col) -- Y rows, X columns.
-        distortionMapTmp[(((y * imageSize.width) + x) * 2) + 0] = map1.at<float>(y, x) / static_cast<float>(imageSize.width);
-        distortionMapTmp[(((y * imageSize.width) + x) * 2) + 1] = map2.at<float>(y, x) / static_cast<float>(imageSize.height);
-      }
-    }
-
-    distortionMap = rhi()->newTexture2D(imageSize.width, imageSize.height, RHISurfaceDescriptor(kSurfaceFormat_RG32f));
-    rhi()->loadTextureData(distortionMap, kVertexElementTypeFloat2, distortionMapTmp);
-
-    delete[] distortionMapTmp;
-  }
+  updateCameraDistortionMap(0);
+  updateCameraDistortionMap(1);
 
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
@@ -333,9 +313,7 @@ int main(int argc, char* argv[]) {
   while (!want_quit)
   {
     camera[0]->readFrame();
-#ifndef SINGLE_CAMERA
     camera[1]->readFrame();
-#endif
 
 
     for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
@@ -344,10 +322,9 @@ int main(int argc, char* argv[]) {
       rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
       rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
-#if 1
       rhi()->bindRenderPipeline(camInvDistortionPipeline);
       rhi()->loadTexture(ksImageTex, activeCamera->rgbTexture());
-      rhi()->loadTexture(ksDistortionMap, distortionMap);
+      rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[eyeIndex]);
 
 
       // coordsys right now: -X = left, -Z = into screen
@@ -355,32 +332,25 @@ int main(int argc, char* argv[]) {
       const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
       const float scaleFactor = 5.0f;
       glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(-scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
-      glm::mat4 mvp = state.eyeProjection[eyeIndex] * model;
+      glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
       NDCQuadUniformBlock ub;
       ub.modelViewProjection = mvp;
       rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
 
       rhi()->drawNDCQuad();
-#endif
 
       rhi()->endRenderPass(eyeRT[eyeIndex]);
     }
 
 
     // Switch to output framebuffer
-    rhi()->setClearColor(glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
-    rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
-
-    // XXX TODO
-#if 0
-    rhi()->blitTex(eyeTex[0], 0);
-#else
+    rhi()->beginRenderPass(windowRenderTarget, kLoadInvalidate);
 
     // Run distortion passes
     for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
 
-      if (state.rotate_screen) {
+      if (rotate_screen) {
         if (eyeIndex == 0) {
           rhi()->setViewport(RHIRect::xywh(0, 0, windowRenderTarget->width(), windowRenderTarget->height()/2));
         } else {
@@ -400,7 +370,6 @@ int main(int argc, char* argv[]) {
 
       rhi()->drawNDCQuad();
     }
-#endif
 
     rhi()->endRenderPass(windowRenderTarget);
 
@@ -420,11 +389,9 @@ int main(int argc, char* argv[]) {
   rhi()->swapBuffers(windowRenderTarget);
 
   camera[0]->stop();
-  delete camera[0];
-#ifndef SINGLE_CAMERA
   camera[1]->stop();
+  delete camera[0];
   delete camera[1];
-#endif
 
   // Release OpenGL resources
   eglMakeCurrent( demoState.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );

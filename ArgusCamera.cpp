@@ -1,32 +1,21 @@
 #include "ArgusCamera.h"
 #include "ArgusHelpers.h"
-#include "GLUtils.h"
-#include <GLES2/gl2ext.h>
-#include <EGL/eglext.h>
+#include "rhi/gl/GLCommon.h"
 #include <Argus/Argus.h>
 
-PFNEGLCREATESTREAMKHRPROC eglCreateStreamKHR;
-PFNEGLDESTROYSTREAMKHRPROC eglDestroyStreamKHR;
-PFNEGLSTREAMATTRIBKHRPROC eglStreamAttribKHR;
-PFNEGLQUERYSTREAMKHRPROC eglQueryStreamKHR;
-PFNEGLSTREAMCONSUMERGLTEXTUREEXTERNALKHRPROC eglStreamConsumerGLTextureExternalKHR;
-PFNEGLSTREAMCONSUMERACQUIREKHRPROC eglStreamConsumerAcquireKHR;
-PFNEGLSTREAMCONSUMERRELEASEKHRPROC eglStreamConsumerReleaseKHR;
-PFNEGLCREATESTREAMPRODUCERSURFACEKHRPROC eglCreateStreamProducerSurfaceKHR;
-
-PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES;
+#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int cameraIndex, unsigned int width, unsigned int height) :
   m_display(display_), m_context(context_),
   m_cameraDevice(NULL), m_captureSession(NULL), m_streamSettings(NULL), m_outputStream(NULL), m_captureRequest(NULL) {
   
 
-  static Argus::CameraProvider* s_cameraProvider = NULL;
+  static Argus::UniqueObj<Argus::CameraProvider> s_cameraProvider;
   static Argus::ICameraProvider* s_iCameraProvider = NULL;
 
   if (!s_cameraProvider) {
-    s_cameraProvider = Argus::CameraProvider::create();
-    s_iCameraProvider = Argus::interface_cast<Argus::ICameraProvider>(s_cameraProvider);
+    s_cameraProvider.reset(Argus::CameraProvider::create());
+    s_iCameraProvider = Argus::interface_cast<Argus::ICameraProvider>(s_cameraProvider.get());
     if (!s_iCameraProvider) {
       die("Failed to get ICameraProvider interface");
     }
@@ -41,22 +30,10 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int 
       }
     }
 
-    glEGLImageTargetTexture2DOES = (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC) eglGetProcAddress("glEGLImageTargetTexture2DOES");
-    assert(glEGLImageTargetTexture2DOES);
-
-    eglCreateStreamKHR = (PFNEGLCREATESTREAMKHRPROC) eglGetProcAddress("eglCreateStreamKHR");
-    eglDestroyStreamKHR = (PFNEGLDESTROYSTREAMKHRPROC) eglGetProcAddress("eglDestroyStreamKHR");
-    eglStreamAttribKHR = (PFNEGLSTREAMATTRIBKHRPROC) eglGetProcAddress("eglStreamAttribKHR");
-    eglQueryStreamKHR = (PFNEGLQUERYSTREAMKHRPROC) eglGetProcAddress("eglQueryStreamKHR");
-    eglStreamConsumerGLTextureExternalKHR = (PFNEGLSTREAMCONSUMERGLTEXTUREEXTERNALKHRPROC) eglGetProcAddress("eglStreamConsumerGLTextureExternalKHR");
-    eglStreamConsumerAcquireKHR = (PFNEGLSTREAMCONSUMERACQUIREKHRPROC) eglGetProcAddress("eglStreamConsumerAcquireKHR");
-    eglStreamConsumerReleaseKHR = (PFNEGLSTREAMCONSUMERRELEASEKHRPROC) eglGetProcAddress("eglStreamConsumerReleaseKHR");
-    eglCreateStreamProducerSurfaceKHR = (PFNEGLCREATESTREAMPRODUCERSURFACEKHRPROC) eglGetProcAddress("eglCreateStreamProducerSurfaceKHR");
   }
 
-
   // Get the selected camera device and sensor mode.
-  m_cameraDevice = ArgusHelpers::getCameraDevice(s_cameraProvider, cameraIndex);
+  m_cameraDevice = ArgusHelpers::getCameraDevice(s_cameraProvider.get(), cameraIndex);
   if (!m_cameraDevice)
       die("Selected camera device is not available");
 
