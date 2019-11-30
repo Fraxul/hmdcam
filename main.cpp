@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <signal.h>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
@@ -41,6 +42,8 @@
 std::array<double, 9> s_cameraMatrix = { 8.1393520905199455e+02, 0., 6.4611705518491897e+02, 0., 8.1393520905199455e+02, 3.7468428117333934e+02, 0., 0., 1. };
 std::array<double, 5> s_distortionCoeffs = { -3.7085816639967079e-01, 1.9997393684065998e-01, -2.3017909433031760e-04, 2.7313395926290304e-06, -6.9489964467138884e-02 };
 
+static cv::Size calibrationBoardSize(9, 6);
+
 
 RHIRenderTarget::ptr windowRenderTarget;
 
@@ -49,7 +52,9 @@ struct NDCQuadUniformBlock {
 };
 FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
 RHIRenderPipeline::ptr camTexturedQuadPipeline;
+RHIRenderPipeline::ptr camOverlayPipeline;
 RHIRenderPipeline::ptr camInvDistortionPipeline;
+RHIRenderPipeline::ptr camGreyscalePipeline;
 
 struct HMDDistortionUniformBlock {
   glm::vec4 hmdWarpParam;
@@ -63,6 +68,7 @@ FxAtomicString ksHMDDistortionUniformBlock("HMDDistortionUniformBlock");
 RHIRenderPipeline::ptr hmdDistortionPipeline;
 
 FxAtomicString ksImageTex("imageTex");
+FxAtomicString ksOverlayTex("overlayTex");
 FxAtomicString ksDistortionMap("distortionMap");
 
 // per-eye render targets (pre distortion)
@@ -144,13 +150,19 @@ static void init_ogl() {
   // Set up shared resources
 
   camTexturedQuadPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
-    "shaders/ndcQuad.vtx.glsl",
+    "shaders/ndcQuadXf.vtx.glsl",
     "shaders/camTexturedQuad.frag.glsl",
     ndcQuadVertexLayout)),
     tristripPipelineDescriptor);
 
+  camOverlayPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
+    "shaders/ndcQuadXf.vtx.glsl",
+    "shaders/camOverlay.frag.glsl",
+    ndcQuadVertexLayout)),
+    tristripPipelineDescriptor);
+
   camInvDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
-    "shaders/ndcQuad.vtx.glsl",
+    "shaders/ndcQuadXf.vtx.glsl",
     "shaders/camInvDistortion.frag.glsl",
     ndcQuadVertexLayout)),
     tristripPipelineDescriptor);
@@ -158,6 +170,12 @@ static void init_ogl() {
   hmdDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
     "shaders/hmdDistortion.vtx.glsl",
     "shaders/hmdDistortion.frag.glsl",
+    ndcQuadVertexLayout)),
+    tristripPipelineDescriptor);
+
+  camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
+    "shaders/ndcQuad.vtx.glsl",
+    "shaders/camGreyscale.frag.glsl",
     ndcQuadVertexLayout)),
     tristripPipelineDescriptor);
 }
@@ -246,6 +264,54 @@ void recomputeHMDParameters() {
   }
 }
 
+void renderHMDFrame() {
+  // Switch to output framebuffer
+  rhi()->beginRenderPass(windowRenderTarget, kLoadInvalidate);
+
+  // Run distortion passes
+  for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+
+    if (rotate_screen) {
+      if (eyeIndex == 0) {
+        rhi()->setViewport(RHIRect::xywh(0, 0, windowRenderTarget->width(), windowRenderTarget->height()/2));
+      } else {
+        rhi()->setViewport(RHIRect::xywh(0, windowRenderTarget->height()/2, windowRenderTarget->width(), windowRenderTarget->height()/2));
+      }
+    } else {
+      if (eyeIndex == 0) {
+        rhi()->setViewport(RHIRect::xywh(0, 0, windowRenderTarget->width()/2, windowRenderTarget->height()));
+      } else {
+        rhi()->setViewport(RHIRect::xywh(windowRenderTarget->width()/2, 0, windowRenderTarget->width()/2, windowRenderTarget->height()));
+      }
+    }
+
+    rhi()->bindRenderPipeline(hmdDistortionPipeline);
+    rhi()->loadUniformBlock(ksHMDDistortionUniformBlock, hmdDistortionParams[eyeIndex]);
+    rhi()->loadTexture(ksImageTex, eyeTex[eyeIndex]);
+
+    rhi()->drawNDCQuad();
+  }
+
+  rhi()->endRenderPass(windowRenderTarget);
+
+  rhi()->swapBuffers(windowRenderTarget);
+}
+
+cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt) {
+
+  rhi()->beginRenderPass(rt, kLoadInvalidate);
+  rhi()->bindRenderPipeline(camGreyscalePipeline);
+  rhi()->loadTexture(ksImageTex, camera[cameraIdx]->rgbTexture());
+  rhi()->drawNDCQuad();
+  rhi()->endRenderPass(rt);
+
+  cv::Mat res;
+  res.create(/*rows=*/ tex->height(), /*columns=*/tex->width(), CV_8UC1);
+  assert(res.isContinuous());
+  rhi()->readbackTexture(tex, 0, kVertexElementTypeUByte1N, res.ptr(0));
+  return res;
+}
+
 int main(int argc, char* argv[]) {
 
   init_ogl();
@@ -298,10 +364,12 @@ int main(int argc, char* argv[]) {
     printf("WARNING: Screen and HMD dimensions don't match; check system configuration.\n");
   }
 
+  const size_t cameraWidth = 1280, cameraHeight = 720;
+
 
   // Left
-  camera[0] = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, 1280, 720);
-  camera[1] = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, 1280, 720);
+  camera[0] = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, cameraWidth, cameraHeight);
+  camera[1] = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, cameraWidth, cameraHeight);
 
   updateCameraDistortionMap(0);
   updateCameraDistortionMap(1);
@@ -310,72 +378,132 @@ int main(int argc, char* argv[]) {
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
 
-  while (!want_quit)
-  {
-    camera[0]->readFrame();
-    camera[1]->readFrame();
+  // Calibration mode
+  while (!want_quit) {
+    // Textures and RTs we use for half and full-res captures
+    RHISurface::ptr halfGreyTex = rhi()->newTexture2D(cameraWidth / 2, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_R8));
+    RHIRenderTarget::ptr halfGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({halfGreyTex}));
+
+    RHISurface::ptr fullGreyTex = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+    RHIRenderTarget::ptr fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex}));
 
 
-    for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
-      ArgusCamera* activeCamera = camera[eyeIndex];
+    RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth / 2, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
 
-      rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-      rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+    cv::Mat feedbackHalfResView;
+    feedbackHalfResView.create(/*rows=*/ cameraHeight / 2, /*columns=*/cameraWidth / 2, CV_8UC4);
 
-      rhi()->bindRenderPipeline(camInvDistortionPipeline);
-      rhi()->loadTexture(ksImageTex, activeCamera->rgbTexture());
-      rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[eyeIndex]);
+    // Calibrate individual cameras
+    for (size_t cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
+      printf("Camera %u intrinsic calibration\n", cameraIdx);
 
+      while (!want_quit) {
+        camera[cameraIdx]->readFrame();
+        cv::Mat viewHalfRes = captureGreyscale(cameraIdx, halfGreyTex, halfGreyRT);
+        cv::Mat viewFullRes = captureGreyscale(cameraIdx, fullGreyTex, fullGreyRT);
 
-      // coordsys right now: -X = left, -Z = into screen
-      // (camera is at the origin)
-      const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
-      const float scaleFactor = 5.0f;
-      glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(-scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
-      glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+        std::vector<cv::Point2f> halfResPoints;
 
-      NDCQuadUniformBlock ub;
-      ub.modelViewProjection = mvp;
-      rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+        // Run initial search on the half-res image for speed
+        //bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK | cv::CALIB_CB_NORMALIZE_IMAGE);
+        bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_FAST_CHECK);
 
-      rhi()->drawNDCQuad();
+        if (found) {
+          // Map points from the half-res image to the full-res image
+          std::vector<cv::Point2f> fullResPoints;
+          for (size_t i = 0; i < halfResPoints.size(); ++i) {
+            fullResPoints.push_back(halfResPoints[i] * 2.0f);
+          }
 
-      rhi()->endRenderPass(eyeRT[eyeIndex]);
-    }
+          // Improve accuracy by running the subpixel corner search on the full-res view
+          cv::cornerSubPix(viewFullRes, fullResPoints, cv::Size(11,11), cv::Size(-1,-1), cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
 
-
-    // Switch to output framebuffer
-    rhi()->beginRenderPass(windowRenderTarget, kLoadInvalidate);
-
-    // Run distortion passes
-    for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
-
-      if (rotate_screen) {
-        if (eyeIndex == 0) {
-          rhi()->setViewport(RHIRect::xywh(0, 0, windowRenderTarget->width(), windowRenderTarget->height()/2));
-        } else {
-          rhi()->setViewport(RHIRect::xywh(0, windowRenderTarget->height()/2, windowRenderTarget->width(), windowRenderTarget->height()/2));
+          // Map points back to half-res for the overlay
+          halfResPoints.clear();
+          for (size_t i = 0; i < fullResPoints.size(); ++i) {
+            halfResPoints.push_back(fullResPoints[i] * 0.5f);
+          }
         }
-      } else {
-        if (eyeIndex == 0) {
-          rhi()->setViewport(RHIRect::xywh(0, 0, windowRenderTarget->width()/2, windowRenderTarget->height()));
-        } else {
-          rhi()->setViewport(RHIRect::xywh(windowRenderTarget->width()/2, 0, windowRenderTarget->width()/2, windowRenderTarget->height()));
+
+        // Draw feedback points
+        memset(feedbackHalfResView.ptr(0), 0, feedbackHalfResView.total() * 4);
+        cv::drawChessboardCorners( feedbackHalfResView, calibrationBoardSize, cv::Mat(halfResPoints), found );
+
+        rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackHalfResView.ptr(0));
+
+        // Draw camera stream and feedback overlay to both eye RTs
+
+        for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+          rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+          rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+
+          rhi()->bindRenderPipeline(camOverlayPipeline);
+          rhi()->loadTexture(ksImageTex, camera[cameraIdx]->rgbTexture());
+          rhi()->loadTexture(ksOverlayTex, feedbackTex);
+
+          // coordsys right now: -X = left, -Z = into screen
+          // (camera is at the origin)
+          const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+          const float scaleFactor = 5.0f;
+          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(-scaleFactor * (static_cast<float>(cameraWidth) / static_cast<float>(cameraHeight)), scaleFactor, 1.0f)); // TODO
+          glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+
+          NDCQuadUniformBlock ub;
+          ub.modelViewProjection = mvp;
+          rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+
+          rhi()->drawNDCQuad();
+
+          rhi()->endRenderPass(eyeRT[eyeIndex]);
         }
+        renderHMDFrame();
+
       }
 
-      rhi()->bindRenderPipeline(hmdDistortionPipeline);
-      rhi()->loadUniformBlock(ksHMDDistortionUniformBlock, hmdDistortionParams[eyeIndex]);
-      rhi()->loadTexture(ksImageTex, eyeTex[eyeIndex]);
-
-      rhi()->drawNDCQuad();
+      if (want_quit)
+        break;
     }
 
-    rhi()->endRenderPass(windowRenderTarget);
+  } // Calibration loop
 
-    rhi()->swapBuffers(windowRenderTarget);
 
-    update_fps();
+  while (!want_quit) {
+    // Camera rendering mode
+    {
+      camera[0]->readFrame();
+      camera[1]->readFrame();
+
+
+      for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+        ArgusCamera* activeCamera = camera[eyeIndex];
+
+        rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+
+        rhi()->bindRenderPipeline(camInvDistortionPipeline);
+        rhi()->loadTexture(ksImageTex, activeCamera->rgbTexture());
+        rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[eyeIndex]);
+
+
+        // coordsys right now: -X = left, -Z = into screen
+        // (camera is at the origin)
+        const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+        const float scaleFactor = 5.0f;
+        glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(-scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
+        glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+
+        NDCQuadUniformBlock ub;
+        ub.modelViewProjection = mvp;
+        rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+
+        rhi()->drawNDCQuad();
+
+        rhi()->endRenderPass(eyeRT[eyeIndex]);
+      }
+
+      renderHMDFrame();
+      update_fps();
+    }
   }
 
   // Restore signal handlers
