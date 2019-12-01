@@ -22,13 +22,19 @@
 
 #include "openhmd/openhmd.h"
 
+#define SAVE_CALIBRATION_IMAGES
+#ifdef SAVE_CALIBRATION_IMAGES
+  #define STB_IMAGE_WRITE_IMPLEMENTATION
+  #include "../stb/stb_image_write.h"
+#endif
+
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
 
-
-//#define SINGLE_CAMERA
+// Camera config
 #define SWAP_CAMERA_EYES
+#define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
 
 
 #ifdef SWAP_CAMERA_EYES
@@ -149,23 +155,43 @@ static void init_ogl() {
 
   // Set up shared resources
 
-  camTexturedQuadPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
+  {
+    RHIShaderDescriptor desc(
     "shaders/ndcQuadXf.vtx.glsl",
     "shaders/camTexturedQuad.frag.glsl",
-    ndcQuadVertexLayout)),
-    tristripPipelineDescriptor);
+    ndcQuadVertexLayout);
+    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
 
-  camOverlayPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
-    "shaders/ndcQuadXf.vtx.glsl",
-    "shaders/camOverlay.frag.glsl",
-    ndcQuadVertexLayout)),
-    tristripPipelineDescriptor);
+    camTexturedQuadPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
 
-  camInvDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
+  {
+    RHIShaderDescriptor desc(
+      "shaders/ndcQuadXf.vtx.glsl",
+      "shaders/camOverlay.frag.glsl",
+      ndcQuadVertexLayout);
+    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+    camOverlayPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
+
+
+  {
+    RHIShaderDescriptor desc(
     "shaders/ndcQuadXf.vtx.glsl",
     "shaders/camInvDistortion.frag.glsl",
-    ndcQuadVertexLayout)),
-    tristripPipelineDescriptor);
+    ndcQuadVertexLayout);
+    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+    camInvDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
+
+  {
+    RHIShaderDescriptor desc(
+      "shaders/ndcQuad.vtx.glsl",
+      "shaders/camGreyscale.frag.glsl",
+      ndcQuadVertexLayout);
+    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+    camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
 
   hmdDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
     "shaders/hmdDistortion.vtx.glsl",
@@ -173,11 +199,6 @@ static void init_ogl() {
     ndcQuadVertexLayout)),
     tristripPipelineDescriptor);
 
-  camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
-    "shaders/ndcQuad.vtx.glsl",
-    "shaders/camGreyscale.frag.glsl",
-    ndcQuadVertexLayout)),
-    tristripPipelineDescriptor);
 }
 
 static void update_fps() {
@@ -490,6 +511,31 @@ int main(int argc, char* argv[]) {
 
         rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackHalfResView.ptr(0));
 
+#ifdef SAVE_CALIBRATION_IMAGES
+        if (found) {
+          char filename1[64];
+          char filename2[64];
+          static int fileIdx = 0;
+          ++fileIdx;
+          sprintf(filename1, "calib%04u_frame.png", fileIdx);
+          sprintf(filename2, "calib%04u_overlay.png", fileIdx);
+
+          stbi_write_png(filename1, cameraWidth/2, cameraHeight/2, 1, viewHalfRes.ptr(0), /*rowBytes=*/(cameraWidth/2));
+
+          // composite with the greyscale view and fix the alpha channel before writing
+          for (size_t pixelIdx = 0; pixelIdx < ((cameraWidth/2) * (cameraHeight/2)); ++pixelIdx) {
+            uint8_t* p = feedbackHalfResView.ptr(0) + (pixelIdx * 4);
+            if (!(p[0] || p[1] || p[2])) {
+              p[0] = p[1] = p[2] = viewHalfRes.ptr(0)[pixelIdx];
+
+            }
+            p[3] = 0xff;
+          }
+          stbi_write_png(filename2, cameraWidth/2, cameraHeight/2, 4, feedbackHalfResView.ptr(0), /*rowBytes=*/(cameraWidth/2) * 4);
+          printf("Saved %s and %s\n", filename1, filename2);
+        }
+#endif
+
         // Draw camera stream and feedback overlay to both eye RTs
 
         for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
@@ -504,7 +550,7 @@ int main(int argc, char* argv[]) {
           // (camera is at the origin)
           const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
           const float scaleFactor = 5.0f;
-          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(-scaleFactor * (static_cast<float>(cameraWidth) / static_cast<float>(cameraHeight)), scaleFactor, 1.0f)); // TODO
+          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(cameraWidth) / static_cast<float>(cameraHeight)), scaleFactor, 1.0f)); // TODO
           glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
           NDCQuadUniformBlock ub;
@@ -548,7 +594,7 @@ int main(int argc, char* argv[]) {
         // (camera is at the origin)
         const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
         const float scaleFactor = 5.0f;
-        glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(-scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
+        glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
         glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
         NDCQuadUniformBlock ub;

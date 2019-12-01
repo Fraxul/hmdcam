@@ -10,3 +10,5 @@
 precision highp float;
 precision highp int;
 
+vec2 adjustCameraTexcoord(vec2 texCoord);
+

@@ -13,7 +13,7 @@ void main() {
   if (any(notEqual(clamp(distortionCoord, vec2(0.0), vec2(1.0)), distortionCoord))) {
     outColor = vec4(0.0);
   } else {
-    outColor = texture(imageTex, vec2(1.0) - distortionCoord);
+    outColor = texture(imageTex, adjustCameraTexcoord(distortionCoord));
   }
 
 }

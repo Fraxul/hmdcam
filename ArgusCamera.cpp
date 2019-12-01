@@ -69,6 +69,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int 
   iStreamSettings->setPixelFormat(Argus::PIXEL_FMT_YCbCr_420_888);
   iStreamSettings->setResolution(Argus::Size2D<uint32_t>(m_streamWidth, m_streamHeight));
   iStreamSettings->setEGLDisplay(m_display);
+  iStreamSettings->setMode(Argus::EGL_STREAM_MODE_MAILBOX);
 
   // Create the OutputStream.
   m_outputStream.reset(iCaptureSession->createOutputStream(m_streamSettings));
