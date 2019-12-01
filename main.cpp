@@ -8,6 +8,9 @@
 #include <signal.h>
 #include <vector>
 
+#include <boost/chrono/duration.hpp>
+#include <boost/chrono/system_clocks.hpp>
+
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 
@@ -95,6 +98,14 @@ glm::mat4 eyeProjection[2];
 ArgusCamera* camera[2];
 RHISurface::ptr cameraDistortionMap[2];
 
+
+uint64_t currentTimeUs() {
+  return boost::chrono::duration_cast<boost::chrono::microseconds>(boost::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+uint64_t currentTimeMs() {
+  return currentTimeUs() / 1000ULL;
+}
 
 void updateCameraDistortionMap(size_t cameraIdx)  {
   // TODO use per-camera matrix and distortion coefficients
@@ -333,6 +344,31 @@ cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget:
   return res;
 }
 
+static double computeReprojectionErrors(
+        const std::vector<std::vector<cv::Point3f> >& objectPoints,
+        const std::vector<std::vector<cv::Point2f> >& imagePoints,
+        const std::vector<cv::Mat>& rvecs, const std::vector<cv::Mat>& tvecs,
+        const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs,
+        std::vector<float>& perViewErrors )
+{
+    std::vector<cv::Point2f> imagePoints2;
+    int i, totalPoints = 0;
+    double totalErr = 0, err;
+    perViewErrors.resize(objectPoints.size());
+
+    for( i = 0; i < (int)objectPoints.size(); i++ )
+    {
+        cv::projectPoints(cv::Mat(objectPoints[i]), rvecs[i], tvecs[i], cameraMatrix, distCoeffs, imagePoints2);
+        err = cv::norm(cv::Mat(imagePoints[i]), cv::Mat(imagePoints2), cv::NORM_L2);
+        int n = (int)objectPoints[i].size();
+        perViewErrors[i] = (float)std::sqrt(err*err/n);
+        totalErr += err*err;
+        totalPoints += n;
+    }
+
+    return std::sqrt(totalErr/totalPoints);
+}
+
 void drawStatusLines(cv::Mat& image, const std::vector<std::string> lines) {
   std::vector<cv::Size> lineSizes; // total size of bounding rect per line
   std::vector<int> baselines; // Y size of area above baseline
@@ -450,7 +486,7 @@ int main(int argc, char* argv[]) {
   signal(SIGQUIT, signal_handler);
 
   // Calibration mode
-  while (!want_quit) {
+  {
     // Textures and RTs we use for half and full-res captures
     RHISurface::ptr halfGreyTex = rhi()->newTexture2D(cameraWidth / 2, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_R8));
     RHIRenderTarget::ptr halfGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({halfGreyTex}));
@@ -467,10 +503,13 @@ int main(int argc, char* argv[]) {
     // Calibrate individual cameras
     for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
       printf("Camera %u intrinsic calibration\n", cameraIdx);
-      unsigned int sampleCount = 0;
-      unsigned int targetSampleCount = 10;
+      const unsigned int targetSampleCount = 10;
+      const uint64_t captureDelayMs = 1000;
+      uint64_t lastCaptureTime = 0;
 
-      while (!want_quit) {
+      std::vector<std::vector<cv::Point2f> > calibrationPoints;
+
+      while (!want_quit && calibrationPoints.size() < targetSampleCount) {
         camera[cameraIdx]->readFrame();
         cv::Mat viewHalfRes = captureGreyscale(cameraIdx, halfGreyTex, halfGreyRT);
         cv::Mat viewFullRes = captureGreyscale(cameraIdx, fullGreyTex, fullGreyRT);
@@ -481,9 +520,9 @@ int main(int argc, char* argv[]) {
         //bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK | cv::CALIB_CB_NORMALIZE_IMAGE);
         bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_FAST_CHECK);
 
+        std::vector<cv::Point2f> fullResPoints;
         if (found) {
           // Map points from the half-res image to the full-res image
-          std::vector<cv::Point2f> fullResPoints;
           for (size_t i = 0; i < halfResPoints.size(); ++i) {
             fullResPoints.push_back(halfResPoints[i] * 2.0f);
           }
@@ -505,20 +544,21 @@ int main(int argc, char* argv[]) {
         char status1[64];
         char status2[64];
         sprintf(status1, "Camera %u", cameraIdx);
-        sprintf(status2, "%u/%u samples", sampleCount, targetSampleCount);
+        sprintf(status2, "%zu/%u samples", calibrationPoints.size(), targetSampleCount);
 
         drawStatusLines(feedbackHalfResView, { status1, "Intrinsic calibration", status2 } );
 
         rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackHalfResView.ptr(0));
 
+        if (found && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
+
 #ifdef SAVE_CALIBRATION_IMAGES
-        if (found) {
           char filename1[64];
           char filename2[64];
           static int fileIdx = 0;
           ++fileIdx;
-          sprintf(filename1, "calib%04u_frame.png", fileIdx);
-          sprintf(filename2, "calib%04u_overlay.png", fileIdx);
+          sprintf(filename1, "calib_%u_%02u_frame.png", cameraIdx, fileIdx);
+          sprintf(filename2, "calib_%u_%02u_overlay.png", cameraIdx, fileIdx);
 
           stbi_write_png(filename1, cameraWidth/2, cameraHeight/2, 1, viewHalfRes.ptr(0), /*rowBytes=*/(cameraWidth/2));
 
@@ -533,8 +573,11 @@ int main(int argc, char* argv[]) {
           }
           stbi_write_png(filename2, cameraWidth/2, cameraHeight/2, 4, feedbackHalfResView.ptr(0), /*rowBytes=*/(cameraWidth/2) * 4);
           printf("Saved %s and %s\n", filename1, filename2);
-        }
 #endif
+
+          calibrationPoints.push_back(fullResPoints);
+          lastCaptureTime = currentTimeMs();
+        }
 
         // Draw camera stream and feedback overlay to both eye RTs
 
@@ -567,9 +610,48 @@ int main(int argc, char* argv[]) {
 
       if (want_quit)
         break;
-    }
 
-  } // Calibration loop
+      // Calibration samples collected
+      {
+
+        std::vector<cv::Mat> rvecs, tvecs;
+        std::vector<float> reprojErrs;
+        cv::Size imageSize(cameraWidth, cameraHeight);
+        float squareSize = 1.0f;
+        float aspectRatio = 1.0f;
+        int flags = cv::CALIB_FIX_ASPECT_RATIO;
+
+        cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+        if( flags & cv::CALIB_FIX_ASPECT_RATIO )
+            cameraMatrix.at<double>(0,0) = aspectRatio;
+        cv::Mat distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
+
+        std::vector<std::vector<cv::Point3f> > objectPoints(1);
+
+        for (int i = 0; i < calibrationBoardSize.height; ++i) {
+            for (int j = 0; j < calibrationBoardSize.width; ++j) {
+                objectPoints[0].push_back(cv::Point3f(static_cast<float>(j)*squareSize, static_cast<float>(i)*squareSize, 0));
+            }
+        }
+
+        objectPoints.resize(calibrationPoints.size(), objectPoints[0]);
+
+        double rms = cv::calibrateCamera(objectPoints, calibrationPoints, imageSize, cameraMatrix,
+                        distCoeffs, rvecs, tvecs, flags|cv::CALIB_FIX_K4|cv::CALIB_FIX_K5);
+        printf("RMS error reported by calibrateCamera: %g\n", rms);
+
+        bool ok = cv::checkRange(cameraMatrix) && cv::checkRange(distCoeffs);
+
+        double totalAvgErr = computeReprojectionErrors(objectPoints, calibrationPoints, rvecs, tvecs, cameraMatrix, distCoeffs, reprojErrs);
+
+        printf("%s. avg reprojection error = %.2f\n",
+               ok ? "Calibration succeeded" : "Calibration failed",
+               totalAvgErr);
+      }
+    } // Per-camera calibration loop
+
+
+  } // Calibration mode
 
 
   while (!want_quit) {
