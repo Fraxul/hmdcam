@@ -312,6 +312,56 @@ cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget:
   return res;
 }
 
+void drawStatusLines(cv::Mat& image, const std::vector<std::string> lines) {
+  std::vector<cv::Size> lineSizes; // total size of bounding rect per line
+  std::vector<int> baselines; // Y size of area above baseline
+  std::vector<int> lineYOffsets; // computed Y coordinate of line in drawing stack
+
+  uint32_t rectPadding = 4;
+  uint32_t linePaddingY = 4;
+
+  for (size_t lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
+    int baseline = 0;
+    lineSizes.push_back(cv::getTextSize(lines[lineIdx].c_str(), 1, 1, 1, &baseline));
+    baselines.push_back(baseline);
+    //printf("line [%u] \"%s\" size: %u x %u baseline: %u\n", lineIdx, lines[lineIdx].c_str(), lineSizes[lineIdx].width, lineSizes[lineIdx].height, baselines[lineIdx]);
+  }
+
+  // Compute overall size of center-justified text line stack
+  cv::Size boundSize;
+  for (size_t lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
+    boundSize.width = std::max(boundSize.width, lineSizes[lineIdx].width);
+    lineYOffsets.push_back(boundSize.height);
+    boundSize.height += baselines[lineIdx]; // only counting area above the baseline, descenders can overlap the subsequent line
+    if (lineIdx == (lines.size() - 1)) {
+      // add the area under the baseline back in for the last line, since there are no subsequent lines for it to overlap
+      boundSize.height += lineSizes[lineIdx].height -  baselines[lineIdx];
+    } else {
+      // add inter-line padding
+      boundSize.height += linePaddingY;
+    }
+  }
+
+  cv::Point origin; // left-top of drawing region
+  origin.x = (image.cols / 2) - (boundSize.width / 2);
+  origin.y = image.rows - (boundSize.height + rectPadding);
+
+  // Draw background rect
+  cv::rectangle(image,
+    cv::Point(origin.x - rectPadding, origin.y - rectPadding),
+    cv::Point(origin.x + boundSize.width + rectPadding, origin.y + boundSize.height + rectPadding),
+    cv::Scalar(1, 1, 1), CV_FILLED);
+
+  // Draw lines
+  for (size_t lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
+    cv::putText(image, lines[lineIdx].c_str(),
+      cv::Point(
+        origin.x + ((boundSize.width - lineSizes[lineIdx].width) / 2),
+        origin.y + lineYOffsets[lineIdx] + lineSizes[lineIdx].height),
+      1, 1, cv::Scalar(0, 255, 0));
+  }
+}
+
 int main(int argc, char* argv[]) {
 
   init_ogl();
@@ -394,8 +444,10 @@ int main(int argc, char* argv[]) {
     feedbackHalfResView.create(/*rows=*/ cameraHeight / 2, /*columns=*/cameraWidth / 2, CV_8UC4);
 
     // Calibrate individual cameras
-    for (size_t cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
+    for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
       printf("Camera %u intrinsic calibration\n", cameraIdx);
+      unsigned int sampleCount = 0;
+      unsigned int targetSampleCount = 10;
 
       while (!want_quit) {
         camera[cameraIdx]->readFrame();
@@ -428,6 +480,13 @@ int main(int argc, char* argv[]) {
         // Draw feedback points
         memset(feedbackHalfResView.ptr(0), 0, feedbackHalfResView.total() * 4);
         cv::drawChessboardCorners( feedbackHalfResView, calibrationBoardSize, cv::Mat(halfResPoints), found );
+
+        char status1[64];
+        char status2[64];
+        sprintf(status1, "Camera %u", cameraIdx);
+        sprintf(status2, "%u/%u samples", sampleCount, targetSampleCount);
+
+        drawStatusLines(feedbackHalfResView, { status1, "Intrinsic calibration", status2 } );
 
         rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackHalfResView.ptr(0));
 
