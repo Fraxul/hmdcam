@@ -48,9 +48,6 @@
   #define RIGHT_CAMERA_INDEX 1
 #endif
 
-std::array<double, 9> s_cameraMatrix = { 8.1393520905199455e+02, 0., 6.4611705518491897e+02, 0., 8.1393520905199455e+02, 3.7468428117333934e+02, 0., 0., 1. };
-std::array<double, 5> s_distortionCoeffs = { -3.7085816639967079e-01, 1.9997393684065998e-01, -2.3017909433031760e-04, 2.7313395926290304e-06, -6.9489964467138884e-02 };
-
 static cv::Size calibrationBoardSize(9, 6);
 
 
@@ -97,6 +94,8 @@ glm::mat4 eyeProjection[2];
 // Camera info/state
 ArgusCamera* camera[2];
 RHISurface::ptr cameraDistortionMap[2];
+cv::Mat cameraMatrix[2];
+cv::Mat distCoeffs[2];
 
 
 uint64_t currentTimeUs() {
@@ -108,18 +107,15 @@ uint64_t currentTimeMs() {
 }
 
 void updateCameraDistortionMap(size_t cameraIdx)  {
-  // TODO use per-camera matrix and distortion coefficients
-  cv::Mat cameraMatrix(cv::Size(3, 3), CV_64F, &(s_cameraMatrix[0]));
-  cv::Mat distCoeff(s_distortionCoeffs);
   cv::Size imageSize = cv::Size(1280, 720);
   float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels
 #if 1
-  cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(cameraMatrix, distCoeff, imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
+  cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
 #else
-  cv::Mat newCameraMatrix = cv::getDefaultNewCameraMatrix(cameraMatrix, imageSize, true);
+  cv::Mat newCameraMatrix = cv::getDefaultNewCameraMatrix(cameraMatrix[cameraIdx], imageSize, true);
 #endif
   cv::Mat map1, map2;
-  cv::initUndistortRectifyMap(cameraMatrix, distCoeff, cv::noArray(), newCameraMatrix, imageSize, CV_32F, map1, map2);
+  cv::initUndistortRectifyMap(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], cv::noArray(), newCameraMatrix, imageSize, CV_32F, map1, map2);
   // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc)
 
   // Combine the maps into a buffer we can upload to opengl. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
@@ -478,9 +474,6 @@ int main(int argc, char* argv[]) {
   camera[0] = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, cameraWidth, cameraHeight);
   camera[1] = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, cameraWidth, cameraHeight);
 
-  updateCameraDistortionMap(0);
-  updateCameraDistortionMap(1);
-
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
@@ -621,10 +614,10 @@ int main(int argc, char* argv[]) {
         float aspectRatio = 1.0f;
         int flags = cv::CALIB_FIX_ASPECT_RATIO;
 
-        cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+        cameraMatrix[cameraIdx] = cv::Mat::eye(3, 3, CV_64F);
         if( flags & cv::CALIB_FIX_ASPECT_RATIO )
-            cameraMatrix.at<double>(0,0) = aspectRatio;
-        cv::Mat distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
+            cameraMatrix[cameraIdx].at<double>(0,0) = aspectRatio;
+        distCoeffs[cameraIdx] = cv::Mat::zeros(8, 1, CV_64F);
 
         std::vector<std::vector<cv::Point3f> > objectPoints(1);
 
@@ -636,20 +629,25 @@ int main(int argc, char* argv[]) {
 
         objectPoints.resize(calibrationPoints.size(), objectPoints[0]);
 
-        double rms = cv::calibrateCamera(objectPoints, calibrationPoints, imageSize, cameraMatrix,
-                        distCoeffs, rvecs, tvecs, flags|cv::CALIB_FIX_K4|cv::CALIB_FIX_K5);
+        double rms = cv::calibrateCamera(objectPoints, calibrationPoints, imageSize, cameraMatrix[cameraIdx],
+                        distCoeffs[cameraIdx], rvecs, tvecs, flags|cv::CALIB_FIX_K4|cv::CALIB_FIX_K5);
         printf("RMS error reported by calibrateCamera: %g\n", rms);
 
-        bool ok = cv::checkRange(cameraMatrix) && cv::checkRange(distCoeffs);
+        bool ok = cv::checkRange(cameraMatrix[cameraIdx]) && cv::checkRange(distCoeffs[cameraIdx]);
 
-        double totalAvgErr = computeReprojectionErrors(objectPoints, calibrationPoints, rvecs, tvecs, cameraMatrix, distCoeffs, reprojErrs);
+        double totalAvgErr = computeReprojectionErrors(objectPoints, calibrationPoints, rvecs, tvecs, cameraMatrix[cameraIdx], distCoeffs[cameraIdx], reprojErrs);
 
         printf("%s. avg reprojection error = %.2f\n",
                ok ? "Calibration succeeded" : "Calibration failed",
                totalAvgErr);
+
+        updateCameraDistortionMap(cameraIdx);
       }
     } // Per-camera calibration loop
 
+    // TODO: Stereo pair calibration
+
+    // TODO: Save calibration data
 
   } // Calibration mode
 
