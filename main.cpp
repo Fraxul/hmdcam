@@ -25,7 +25,7 @@
 
 #include "openhmd/openhmd.h"
 
-#define SAVE_CALIBRATION_IMAGES
+//#define SAVE_CALIBRATION_IMAGES
 #ifdef SAVE_CALIBRATION_IMAGES
   #define STB_IMAGE_WRITE_IMPLEMENTATION
   #include "../stb/stb_image_write.h"
@@ -480,174 +480,208 @@ int main(int argc, char* argv[]) {
 
   // Calibration mode
   {
-    // Textures and RTs we use for half and full-res captures
-    RHISurface::ptr halfGreyTex = rhi()->newTexture2D(cameraWidth / 2, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_R8));
-    RHIRenderTarget::ptr halfGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({halfGreyTex}));
-
-    RHISurface::ptr fullGreyTex = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
-    RHIRenderTarget::ptr fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex}));
-
-
-    RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth / 2, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-
-    cv::Mat feedbackHalfResView;
-    feedbackHalfResView.create(/*rows=*/ cameraHeight / 2, /*columns=*/cameraWidth / 2, CV_8UC4);
+    bool needIntrinsicCalibration = true;
+    bool needStereoCalibration = true;
+    // Try reading calibration data from the file
+    {
+      cv::FileStorage fs("calibration.yml", cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+      if (fs.isOpened()) {
+        try {
+          fs["camera0_matrix"] >> cameraMatrix[0];
+          fs["camera1_matrix"] >> cameraMatrix[1];
+          fs["camera0_distortionCoeffs"] >> distCoeffs[0];
+          fs["camera1_distortionCoeffs"] >> distCoeffs[1];
+          printf("Loaded camera intrinsic calibration data from file\n");
+          updateCameraDistortionMap(0);
+          updateCameraDistortionMap(1);
+          needIntrinsicCalibration = false;
+        } catch (const std::exception& ex) {
+          printf("Unable to read camera intrinsic calibration data: %s\n", ex.what());
+        }
+      } else {
+        printf("Unable to read calibration data file\n");
+      }
+    }
 
     // Calibrate individual cameras
-    for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
-      printf("Camera %u intrinsic calibration\n", cameraIdx);
-      const unsigned int targetSampleCount = 10;
-      const uint64_t captureDelayMs = 1000;
-      uint64_t lastCaptureTime = 0;
+    if (needIntrinsicCalibration) {
+      // Textures and RTs we use for half and full-res captures
+      RHISurface::ptr halfGreyTex = rhi()->newTexture2D(cameraWidth / 2, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_R8));
+      RHIRenderTarget::ptr halfGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({halfGreyTex}));
 
-      std::vector<std::vector<cv::Point2f> > calibrationPoints;
+      RHISurface::ptr fullGreyTex = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+      RHIRenderTarget::ptr fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex}));
 
-      while (!want_quit && calibrationPoints.size() < targetSampleCount) {
-        camera[cameraIdx]->readFrame();
-        cv::Mat viewHalfRes = captureGreyscale(cameraIdx, halfGreyTex, halfGreyRT);
-        cv::Mat viewFullRes = captureGreyscale(cameraIdx, fullGreyTex, fullGreyRT);
+      RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth / 2, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
 
-        std::vector<cv::Point2f> halfResPoints;
+      cv::Mat feedbackHalfResView;
+      feedbackHalfResView.create(/*rows=*/ cameraHeight / 2, /*columns=*/cameraWidth / 2, CV_8UC4);
 
-        // Run initial search on the half-res image for speed
-        //bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK | cv::CALIB_CB_NORMALIZE_IMAGE);
-        bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_FAST_CHECK);
+      for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
+        printf("Camera %u intrinsic calibration\n", cameraIdx);
+        const unsigned int targetSampleCount = 10;
+        const uint64_t captureDelayMs = 500;
+        uint64_t lastCaptureTime = 0;
 
-        std::vector<cv::Point2f> fullResPoints;
-        if (found) {
-          // Map points from the half-res image to the full-res image
-          for (size_t i = 0; i < halfResPoints.size(); ++i) {
-            fullResPoints.push_back(halfResPoints[i] * 2.0f);
-          }
+        std::vector<std::vector<cv::Point2f> > calibrationPoints;
 
-          // Improve accuracy by running the subpixel corner search on the full-res view
-          cv::cornerSubPix(viewFullRes, fullResPoints, cv::Size(11,11), cv::Size(-1,-1), cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
+        while (!want_quit && calibrationPoints.size() < targetSampleCount) {
+          camera[cameraIdx]->readFrame();
+          cv::Mat viewHalfRes = captureGreyscale(cameraIdx, halfGreyTex, halfGreyRT);
+          cv::Mat viewFullRes = captureGreyscale(cameraIdx, fullGreyTex, fullGreyRT);
 
-          // Map points back to half-res for the overlay
-          halfResPoints.clear();
-          for (size_t i = 0; i < fullResPoints.size(); ++i) {
-            halfResPoints.push_back(fullResPoints[i] * 0.5f);
-          }
-        }
+          std::vector<cv::Point2f> halfResPoints;
 
-        // Draw feedback points
-        memset(feedbackHalfResView.ptr(0), 0, feedbackHalfResView.total() * 4);
-        cv::drawChessboardCorners( feedbackHalfResView, calibrationBoardSize, cv::Mat(halfResPoints), found );
+          // Run initial search on the half-res image for speed
+          //bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK | cv::CALIB_CB_NORMALIZE_IMAGE);
+          bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_FAST_CHECK);
 
-        char status1[64];
-        char status2[64];
-        sprintf(status1, "Camera %u", cameraIdx);
-        sprintf(status2, "%zu/%u samples", calibrationPoints.size(), targetSampleCount);
-
-        drawStatusLines(feedbackHalfResView, { status1, "Intrinsic calibration", status2 } );
-
-        rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackHalfResView.ptr(0));
-
-        if (found && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
-
-#ifdef SAVE_CALIBRATION_IMAGES
-          char filename1[64];
-          char filename2[64];
-          static int fileIdx = 0;
-          ++fileIdx;
-          sprintf(filename1, "calib_%u_%02u_frame.png", cameraIdx, fileIdx);
-          sprintf(filename2, "calib_%u_%02u_overlay.png", cameraIdx, fileIdx);
-
-          stbi_write_png(filename1, cameraWidth/2, cameraHeight/2, 1, viewHalfRes.ptr(0), /*rowBytes=*/(cameraWidth/2));
-
-          // composite with the greyscale view and fix the alpha channel before writing
-          for (size_t pixelIdx = 0; pixelIdx < ((cameraWidth/2) * (cameraHeight/2)); ++pixelIdx) {
-            uint8_t* p = feedbackHalfResView.ptr(0) + (pixelIdx * 4);
-            if (!(p[0] || p[1] || p[2])) {
-              p[0] = p[1] = p[2] = viewHalfRes.ptr(0)[pixelIdx];
-
+          std::vector<cv::Point2f> fullResPoints;
+          if (found) {
+            // Map points from the half-res image to the full-res image
+            for (size_t i = 0; i < halfResPoints.size(); ++i) {
+              fullResPoints.push_back(halfResPoints[i] * 2.0f);
             }
-            p[3] = 0xff;
-          }
-          stbi_write_png(filename2, cameraWidth/2, cameraHeight/2, 4, feedbackHalfResView.ptr(0), /*rowBytes=*/(cameraWidth/2) * 4);
-          printf("Saved %s and %s\n", filename1, filename2);
-#endif
 
-          calibrationPoints.push_back(fullResPoints);
-          lastCaptureTime = currentTimeMs();
-        }
+            // Improve accuracy by running the subpixel corner search on the full-res view
+            cv::cornerSubPix(viewFullRes, fullResPoints, cv::Size(11,11), cv::Size(-1,-1), cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
 
-        // Draw camera stream and feedback overlay to both eye RTs
-
-        for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
-          rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-          rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
-
-          rhi()->bindRenderPipeline(camOverlayPipeline);
-          rhi()->loadTexture(ksImageTex, camera[cameraIdx]->rgbTexture());
-          rhi()->loadTexture(ksOverlayTex, feedbackTex);
-
-          // coordsys right now: -X = left, -Z = into screen
-          // (camera is at the origin)
-          const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
-          const float scaleFactor = 5.0f;
-          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(cameraWidth) / static_cast<float>(cameraHeight)), scaleFactor, 1.0f)); // TODO
-          glm::mat4 mvp = eyeProjection[eyeIndex] * model;
-
-          NDCQuadUniformBlock ub;
-          ub.modelViewProjection = mvp;
-          rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
-
-          rhi()->drawNDCQuad();
-
-          rhi()->endRenderPass(eyeRT[eyeIndex]);
-        }
-        renderHMDFrame();
-
-      }
-
-      if (want_quit)
-        break;
-
-      // Calibration samples collected
-      {
-
-        std::vector<cv::Mat> rvecs, tvecs;
-        std::vector<float> reprojErrs;
-        cv::Size imageSize(cameraWidth, cameraHeight);
-        float squareSize = 1.0f;
-        float aspectRatio = 1.0f;
-        int flags = cv::CALIB_FIX_ASPECT_RATIO;
-
-        cameraMatrix[cameraIdx] = cv::Mat::eye(3, 3, CV_64F);
-        if( flags & cv::CALIB_FIX_ASPECT_RATIO )
-            cameraMatrix[cameraIdx].at<double>(0,0) = aspectRatio;
-        distCoeffs[cameraIdx] = cv::Mat::zeros(8, 1, CV_64F);
-
-        std::vector<std::vector<cv::Point3f> > objectPoints(1);
-
-        for (int i = 0; i < calibrationBoardSize.height; ++i) {
-            for (int j = 0; j < calibrationBoardSize.width; ++j) {
-                objectPoints[0].push_back(cv::Point3f(static_cast<float>(j)*squareSize, static_cast<float>(i)*squareSize, 0));
+            // Map points back to half-res for the overlay
+            halfResPoints.clear();
+            for (size_t i = 0; i < fullResPoints.size(); ++i) {
+              halfResPoints.push_back(fullResPoints[i] * 0.5f);
             }
+          }
+
+          // Draw feedback points
+          memset(feedbackHalfResView.ptr(0), 0, feedbackHalfResView.total() * 4);
+          cv::drawChessboardCorners( feedbackHalfResView, calibrationBoardSize, cv::Mat(halfResPoints), found );
+
+          char status1[64];
+          char status2[64];
+          sprintf(status1, "Camera %u", cameraIdx);
+          sprintf(status2, "%zu/%u samples", calibrationPoints.size(), targetSampleCount);
+
+          drawStatusLines(feedbackHalfResView, { status1, "Intrinsic calibration", status2 } );
+
+          rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackHalfResView.ptr(0));
+
+          if (found && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
+
+  #ifdef SAVE_CALIBRATION_IMAGES
+            char filename1[64];
+            char filename2[64];
+            static int fileIdx = 0;
+            ++fileIdx;
+            sprintf(filename1, "calib_%u_%02u_frame.png", cameraIdx, fileIdx);
+            sprintf(filename2, "calib_%u_%02u_overlay.png", cameraIdx, fileIdx);
+
+            stbi_write_png(filename1, cameraWidth/2, cameraHeight/2, 1, viewHalfRes.ptr(0), /*rowBytes=*/(cameraWidth/2));
+
+            // composite with the greyscale view and fix the alpha channel before writing
+            for (size_t pixelIdx = 0; pixelIdx < ((cameraWidth/2) * (cameraHeight/2)); ++pixelIdx) {
+              uint8_t* p = feedbackHalfResView.ptr(0) + (pixelIdx * 4);
+              if (!(p[0] || p[1] || p[2])) {
+                p[0] = p[1] = p[2] = viewHalfRes.ptr(0)[pixelIdx];
+
+              }
+              p[3] = 0xff;
+            }
+            stbi_write_png(filename2, cameraWidth/2, cameraHeight/2, 4, feedbackHalfResView.ptr(0), /*rowBytes=*/(cameraWidth/2) * 4);
+            printf("Saved %s and %s\n", filename1, filename2);
+  #endif
+
+            calibrationPoints.push_back(fullResPoints);
+            lastCaptureTime = currentTimeMs();
+          }
+
+          // Draw camera stream and feedback overlay to both eye RTs
+
+          for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+            rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+
+            rhi()->bindRenderPipeline(camOverlayPipeline);
+            rhi()->loadTexture(ksImageTex, camera[cameraIdx]->rgbTexture());
+            rhi()->loadTexture(ksOverlayTex, feedbackTex);
+
+            // coordsys right now: -X = left, -Z = into screen
+            // (camera is at the origin)
+            const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+            const float scaleFactor = 5.0f;
+            glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(cameraWidth) / static_cast<float>(cameraHeight)), scaleFactor, 1.0f)); // TODO
+            glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+
+            NDCQuadUniformBlock ub;
+            ub.modelViewProjection = mvp;
+            rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+
+            rhi()->drawNDCQuad();
+
+            rhi()->endRenderPass(eyeRT[eyeIndex]);
+          }
+          renderHMDFrame();
+
         }
 
-        objectPoints.resize(calibrationPoints.size(), objectPoints[0]);
+        if (want_quit)
+          break;
 
-        double rms = cv::calibrateCamera(objectPoints, calibrationPoints, imageSize, cameraMatrix[cameraIdx],
-                        distCoeffs[cameraIdx], rvecs, tvecs, flags|cv::CALIB_FIX_K4|cv::CALIB_FIX_K5);
-        printf("RMS error reported by calibrateCamera: %g\n", rms);
+        // Calibration samples collected
+        {
 
-        bool ok = cv::checkRange(cameraMatrix[cameraIdx]) && cv::checkRange(distCoeffs[cameraIdx]);
+          std::vector<cv::Mat> rvecs, tvecs;
+          std::vector<float> reprojErrs;
+          cv::Size imageSize(cameraWidth, cameraHeight);
+          float squareSize = 1.0f;
+          float aspectRatio = 1.0f;
+          int flags = cv::CALIB_FIX_ASPECT_RATIO;
 
-        double totalAvgErr = computeReprojectionErrors(objectPoints, calibrationPoints, rvecs, tvecs, cameraMatrix[cameraIdx], distCoeffs[cameraIdx], reprojErrs);
+          cameraMatrix[cameraIdx] = cv::Mat::eye(3, 3, CV_64F);
+          if( flags & cv::CALIB_FIX_ASPECT_RATIO )
+              cameraMatrix[cameraIdx].at<double>(0,0) = aspectRatio;
+          distCoeffs[cameraIdx] = cv::Mat::zeros(8, 1, CV_64F);
 
-        printf("%s. avg reprojection error = %.2f\n",
-               ok ? "Calibration succeeded" : "Calibration failed",
-               totalAvgErr);
+          std::vector<std::vector<cv::Point3f> > objectPoints(1);
 
-        updateCameraDistortionMap(cameraIdx);
-      }
-    } // Per-camera calibration loop
+          for (int i = 0; i < calibrationBoardSize.height; ++i) {
+              for (int j = 0; j < calibrationBoardSize.width; ++j) {
+                  objectPoints[0].push_back(cv::Point3f(static_cast<float>(j)*squareSize, static_cast<float>(i)*squareSize, 0));
+              }
+          }
 
-    // TODO: Stereo pair calibration
+          objectPoints.resize(calibrationPoints.size(), objectPoints[0]);
 
-    // TODO: Save calibration data
+          double rms = cv::calibrateCamera(objectPoints, calibrationPoints, imageSize, cameraMatrix[cameraIdx],
+                          distCoeffs[cameraIdx], rvecs, tvecs, flags|cv::CALIB_FIX_K4|cv::CALIB_FIX_K5);
+          printf("RMS error reported by calibrateCamera: %g\n", rms);
+
+          bool ok = cv::checkRange(cameraMatrix[cameraIdx]) && cv::checkRange(distCoeffs[cameraIdx]);
+
+          double totalAvgErr = computeReprojectionErrors(objectPoints, calibrationPoints, rvecs, tvecs, cameraMatrix[cameraIdx], distCoeffs[cameraIdx], reprojErrs);
+
+          printf("%s. avg reprojection error = %.2f\n",
+                 ok ? "Calibration succeeded" : "Calibration failed",
+                 totalAvgErr);
+
+          updateCameraDistortionMap(cameraIdx);
+        }
+      } // Per-camera calibration loop
+
+    } // Individual camera calibration
+
+    if (needStereoCalibration) {
+      // TODO: Stereo pair calibration
+    }
+
+    // Save calibration data
+    {
+      cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+      fs.write("camera0_matrix", cameraMatrix[0]);
+      fs.write("camera1_matrix", cameraMatrix[1]);
+      fs.write("camera0_distortionCoeffs", distCoeffs[0]);
+      fs.write("camera1_distortionCoeffs", distCoeffs[1]);
+    }
 
   } // Calibration mode
 
