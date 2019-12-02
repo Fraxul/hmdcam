@@ -371,16 +371,14 @@ cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget:
 cv::Mat captureSBSUndistortedStereoGreyscale(RHISurface::ptr tex, RHIRenderTarget::ptr rt) {
 
   rhi()->beginRenderPass(rt, kLoadInvalidate);
-  rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
+  rhi()->bindRenderPipeline(camGreyscalePipeline);
 
   rhi()->setViewport(RHIRect::xywh(0, 0, tex->width() / 2, tex->height()));
   rhi()->loadTexture(ksImageTex, camera[0]->rgbTexture());
-  rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[0]);
   rhi()->drawNDCQuad();
 
   rhi()->setViewport(RHIRect::xywh(tex->width() / 2, 0, tex->width() / 2, tex->height()));
   rhi()->loadTexture(ksImageTex, camera[1]->rgbTexture());
-  rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[1]);
   rhi()->drawNDCQuad();
   rhi()->endRenderPass(rt);
 
@@ -840,9 +838,7 @@ int main(int argc, char* argv[]) {
 
           rhi()->bindRenderPipeline(camOverlayStereoPipeline);
           rhi()->loadTexture(ksLeftCameraTex, camera[0]->rgbTexture());
-          rhi()->loadTexture(ksLeftDistortionMap, cameraDistortionMap[0]);
           rhi()->loadTexture(ksRightCameraTex, camera[1]->rgbTexture());
-          rhi()->loadTexture(ksRightDistortionMap, cameraDistortionMap[1]);
           rhi()->loadTexture(ksOverlayTex, feedbackTex);
 
           // coordsys right now: -X = left, -Z = into screen
@@ -909,7 +905,7 @@ int main(int argc, char* argv[]) {
       stereoRectification[0], stereoRectification[1],
       stereoProjection[0], stereoProjection[1],
       stereoDisparityToDepth,
-      /*flags=*/0, alpha);
+      /*flags=*/cv::CALIB_ZERO_DISPARITY, alpha);
 
     // Compute new distortion maps with the now-valid stereo calibration
     updateCameraDistortionMap(0, true);

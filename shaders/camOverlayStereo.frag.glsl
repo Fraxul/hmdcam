@@ -4,19 +4,16 @@ in vec2 fragTexCoord;
 layout(location = 0) out vec4 outColor;
 uniform samplerExternalOES leftCameraTex;
 uniform samplerExternalOES rightCameraTex;
-uniform sampler2D leftDistortionMap;
-uniform sampler2D rightDistortionMap;
 uniform sampler2D overlayTex;
 void main() {
   vec4 color;
   vec2 viewTexCoord = vec2(fract(fragTexCoord.x * 2.0f), fragTexCoord.y);
+  vec2 cameraTexCoord = adjustCameraTexcoord(viewTexCoord);
 
   if (floor(fragTexCoord.x * 2.0f) == 0.0f) {
-    vec2 distortedCoord = texture(leftDistortionMap, viewTexCoord).rg;
-    color = texture(leftCameraTex, adjustCameraTexcoord(distortedCoord));
+    color = texture(leftCameraTex, cameraTexCoord);
   } else {
-    vec2 distortedCoord = texture(rightDistortionMap, viewTexCoord).rg;
-    color = texture(rightCameraTex, adjustCameraTexcoord(distortedCoord));
+    color = texture(rightCameraTex, cameraTexCoord);
   }
 
   // Flip to convert from overlay texture's OpenCV coordinate system to GL
