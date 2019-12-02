@@ -6,7 +6,7 @@ uniform samplerExternalOES imageTex;
 uniform sampler2D distortionMap;
 void main() {
   vec2 distortionCoord = texture(distortionMap, fragTexCoord).rg; // RG32F texture
-  outColor = vec4(distortionCoord, 0.0, 1.0);
+//  outColor = vec4(distortionCoord, 0.0, 1.0);
 //  outColor = vec4(fragTexCoord, 0.0, 1.0);
 //  gl_FragColor = texture2D(imageTex, fragTexCoord);
 

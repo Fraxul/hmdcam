@@ -40,6 +40,7 @@
 #define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
 
 
+// Mapping of libargus camera device index to camera[0] (left) and camera[1] (right).
 #ifdef SWAP_CAMERA_EYES
   #define LEFT_CAMERA_INDEX 1
   #define RIGHT_CAMERA_INDEX 0
@@ -59,8 +60,10 @@ struct NDCQuadUniformBlock {
 FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
 RHIRenderPipeline::ptr camTexturedQuadPipeline;
 RHIRenderPipeline::ptr camOverlayPipeline;
+RHIRenderPipeline::ptr camOverlayStereoPipeline;
 RHIRenderPipeline::ptr camInvDistortionPipeline;
 RHIRenderPipeline::ptr camGreyscalePipeline;
+RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 
 struct HMDDistortionUniformBlock {
   glm::vec4 hmdWarpParam;
@@ -74,6 +77,10 @@ FxAtomicString ksHMDDistortionUniformBlock("HMDDistortionUniformBlock");
 RHIRenderPipeline::ptr hmdDistortionPipeline;
 
 FxAtomicString ksImageTex("imageTex");
+FxAtomicString ksLeftCameraTex("leftCameraTex");
+FxAtomicString ksRightCameraTex("rightCameraTex");
+FxAtomicString ksLeftDistortionMap("leftDistortionMap");
+FxAtomicString ksRightDistortionMap("rightDistortionMap");
 FxAtomicString ksOverlayTex("overlayTex");
 FxAtomicString ksDistortionMap("distortionMap");
 
@@ -97,6 +104,10 @@ RHISurface::ptr cameraDistortionMap[2];
 cv::Mat cameraMatrix[2];
 cv::Mat distCoeffs[2];
 
+cv::Mat stereoRotation, stereoTranslation; // Calibrated
+cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify
+cv::Mat stereoDisparityToDepth;
+
 
 uint64_t currentTimeUs() {
   return boost::chrono::duration_cast<boost::chrono::microseconds>(boost::chrono::steady_clock::now().time_since_epoch()).count();
@@ -106,16 +117,16 @@ uint64_t currentTimeMs() {
   return currentTimeUs() / 1000ULL;
 }
 
-void updateCameraDistortionMap(size_t cameraIdx)  {
+void updateCameraDistortionMap(size_t cameraIdx, bool useStereoCalibration)  {
   cv::Size imageSize = cv::Size(1280, 720);
   float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels
-#if 1
-  cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
-#else
-  cv::Mat newCameraMatrix = cv::getDefaultNewCameraMatrix(cameraMatrix[cameraIdx], imageSize, true);
-#endif
   cv::Mat map1, map2;
-  cv::initUndistortRectifyMap(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], cv::noArray(), newCameraMatrix, imageSize, CV_32F, map1, map2);
+  if (useStereoCalibration) {
+    cv::initUndistortRectifyMap(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], stereoRectification[cameraIdx], stereoProjection[cameraIdx], imageSize, CV_32F, map1, map2);
+  } else {
+    cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
+    cv::initUndistortRectifyMap(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], cv::noArray(), newCameraMatrix, imageSize, CV_32F, map1, map2);
+  }
   // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc)
 
   // Combine the maps into a buffer we can upload to opengl. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
@@ -181,6 +192,14 @@ static void init_ogl() {
     camOverlayPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
+  {
+    RHIShaderDescriptor desc(
+      "shaders/ndcQuadXf.vtx.glsl",
+      "shaders/camOverlayStereo.frag.glsl",
+      ndcQuadVertexLayout);
+    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+    camOverlayStereoPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
 
   {
     RHIShaderDescriptor desc(
@@ -198,6 +217,15 @@ static void init_ogl() {
       ndcQuadVertexLayout);
     desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
     camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
+
+  {
+    RHIShaderDescriptor desc(
+      "shaders/ndcQuad.vtx.glsl",
+      "shaders/camGreyscaleUndistort.frag.glsl",
+      ndcQuadVertexLayout);
+    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+    camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
   hmdDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
@@ -340,6 +368,29 @@ cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget:
   return res;
 }
 
+cv::Mat captureSBSUndistortedStereoGreyscale(RHISurface::ptr tex, RHIRenderTarget::ptr rt) {
+
+  rhi()->beginRenderPass(rt, kLoadInvalidate);
+  rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
+
+  rhi()->setViewport(RHIRect::xywh(0, 0, tex->width() / 2, tex->height()));
+  rhi()->loadTexture(ksImageTex, camera[0]->rgbTexture());
+  rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[0]);
+  rhi()->drawNDCQuad();
+
+  rhi()->setViewport(RHIRect::xywh(tex->width() / 2, 0, tex->width() / 2, tex->height()));
+  rhi()->loadTexture(ksImageTex, camera[1]->rgbTexture());
+  rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[1]);
+  rhi()->drawNDCQuad();
+  rhi()->endRenderPass(rt);
+
+  cv::Mat res;
+  res.create(/*rows=*/ tex->height(), /*columns=*/tex->width(), CV_8UC1);
+  assert(res.isContinuous());
+  rhi()->readbackTexture(tex, 0, kVertexElementTypeUByte1N, res.ptr(0));
+  return res;
+}
+
 static double computeReprojectionErrors(
         const std::vector<std::vector<cv::Point3f> >& objectPoints,
         const std::vector<std::vector<cv::Point2f> >& imagePoints,
@@ -470,7 +521,6 @@ int main(int argc, char* argv[]) {
   const size_t cameraWidth = 1280, cameraHeight = 720;
 
 
-  // Left
   camera[0] = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, cameraWidth, cameraHeight);
   camera[1] = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, cameraWidth, cameraHeight);
 
@@ -491,15 +541,28 @@ int main(int argc, char* argv[]) {
           fs["camera1_matrix"] >> cameraMatrix[1];
           fs["camera0_distortionCoeffs"] >> distCoeffs[0];
           fs["camera1_distortionCoeffs"] >> distCoeffs[1];
-          printf("Loaded camera intrinsic calibration data from file\n");
-          updateCameraDistortionMap(0);
-          updateCameraDistortionMap(1);
-          needIntrinsicCalibration = false;
+
+          if (!(cameraMatrix[0].empty() || cameraMatrix[1].empty() || distCoeffs[0].empty() || distCoeffs[1].empty())) {
+            printf("Loaded camera intrinsic calibration data from file\n");
+            // Build initial intrinsic-only distortion maps
+            updateCameraDistortionMap(0, false);
+            updateCameraDistortionMap(1, false);
+            needIntrinsicCalibration = false;
+          }
+
+          fs["stereoRotation"] >> stereoRotation;
+          fs["stereoTranslation"] >> stereoTranslation;
+          if (!(stereoRotation.empty() || stereoTranslation.empty())) {
+            needStereoCalibration = false;
+            printf("Loaded stereo offset calibration data from file\n");
+          }
+
         } catch (const std::exception& ex) {
-          printf("Unable to read camera intrinsic calibration data: %s\n", ex.what());
+          printf("Unable to read calibration data: %s\n", ex.what());
         }
+
       } else {
-        printf("Unable to read calibration data file\n");
+        printf("Unable to open calibration data file\n");
       }
     }
 
@@ -559,7 +622,7 @@ int main(int argc, char* argv[]) {
 
           char status1[64];
           char status2[64];
-          sprintf(status1, "Camera %u", cameraIdx);
+          sprintf(status1, "Camera %u (%s)", cameraIdx, cameraIdx == 0 ? "left" : "right");
           sprintf(status2, "%zu/%u samples", calibrationPoints.size(), targetSampleCount);
 
           drawStatusLines(feedbackHalfResView, { status1, "Intrinsic calibration", status2 } );
@@ -664,24 +727,194 @@ int main(int argc, char* argv[]) {
                  ok ? "Calibration succeeded" : "Calibration failed",
                  totalAvgErr);
 
-          updateCameraDistortionMap(cameraIdx);
+          // Build initial intrinsic-only distortion map
+          updateCameraDistortionMap(cameraIdx, false);
         }
       } // Per-camera calibration loop
 
     } // Individual camera calibration
 
     if (needStereoCalibration) {
-      // TODO: Stereo pair calibration
-    }
+      // Stereo pair calibration
 
-    // Save calibration data
-    {
+      // Textures and RTs we use for full-res captures.
+      // We skip half-res captures for the full stereo calibration -- the target will be farther from the cameras,
+      // so we will probably need the extra resolution to find it.
+      RHISurface::ptr fullGreyTex = rhi()->newTexture2D(cameraWidth * 2, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+      RHIRenderTarget::ptr fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex}));
+
+      RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+
+      cv::Mat feedbackHalfResViewStereo;
+      feedbackHalfResViewStereo.create(/*rows=*/ cameraHeight / 2, /*columns=*/cameraWidth, CV_8UC4);
+
+      const unsigned int targetSampleCount = 10;
+      const uint64_t captureDelayMs = 500;
+      uint64_t lastCaptureTime = 0;
+
+      std::vector<std::vector<cv::Point2f> > calibrationPoints[2];
+
+      while (!want_quit && calibrationPoints[0].size() < targetSampleCount) {
+
+        camera[0]->readFrame();
+        camera[1]->readFrame();
+
+        cv::Mat viewFullResStereo = captureSBSUndistortedStereoGreyscale(fullGreyTex, fullGreyRT);
+
+        // Create monoscopic views of SbS-stereo images
+        cv::Mat viewFullRes[2];
+        cv::Mat feedbackHalfResView[2];
+        viewFullRes[0] = viewFullResStereo.colRange(0, viewFullResStereo.cols / 2);
+        viewFullRes[1] = viewFullResStereo.colRange(viewFullResStereo.cols / 2, viewFullResStereo.cols);
+        feedbackHalfResView[0] = feedbackHalfResViewStereo.colRange(0, feedbackHalfResViewStereo.cols / 2);
+        feedbackHalfResView[1] = feedbackHalfResViewStereo.colRange(feedbackHalfResViewStereo.cols / 2, feedbackHalfResViewStereo.cols);
+
+
+        std::vector<cv::Point2f> fullResPoints[2];
+        // Run initial search
+        bool foundLeft = cv::findChessboardCorners(viewFullRes[0], calibrationBoardSize, fullResPoints[0], cv::CALIB_CB_FAST_CHECK);
+        bool foundRight =  cv::findChessboardCorners(viewFullRes[1], calibrationBoardSize, fullResPoints[1], cv::CALIB_CB_FAST_CHECK);
+        bool found = foundLeft && foundRight;
+
+        if (found) {
+          // Improve accuracy by running the subpixel corner search
+          cv::cornerSubPix(viewFullRes[0], fullResPoints[0], cv::Size(11,11), cv::Size(-1,-1), cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
+          cv::cornerSubPix(viewFullRes[1], fullResPoints[1], cv::Size(11,11), cv::Size(-1,-1), cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
+        }
+
+        std::vector<cv::Point2f> halfResPoints[2];
+        // Map points back to half-res for the overlay
+        for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx) {
+          for (size_t i = 0; i < fullResPoints[viewIdx].size(); ++i) {
+            halfResPoints[viewIdx].push_back(fullResPoints[viewIdx][i] * 0.5f);
+          }
+        }
+
+        // Draw feedback points
+        memset(feedbackHalfResViewStereo.ptr(0), 0, feedbackHalfResViewStereo.total() * 4);
+        cv::drawChessboardCorners(feedbackHalfResView[0], calibrationBoardSize, cv::Mat(halfResPoints[0]), foundLeft);
+        cv::drawChessboardCorners(feedbackHalfResView[1], calibrationBoardSize, cv::Mat(halfResPoints[1]), foundRight);
+
+        char status1[64];
+        sprintf(status1, "%zu/%u samples", calibrationPoints[0].size(), targetSampleCount);
+
+        drawStatusLines(feedbackHalfResViewStereo, { "Stereo calibration", status1 } );
+
+        rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackHalfResViewStereo.ptr(0));
+
+        if (found && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
+
+#if 0 //def SAVE_CALIBRATION_IMAGES
+          char filename1[64];
+          char filename2[64];
+          static int fileIdx = 0;
+          ++fileIdx;
+          sprintf(filename1, "calib_stereo_%02u_frame.png", fileIdx);
+          sprintf(filename2, "calib_stereo_%02u_overlay.png", fileIdx);
+
+          stbi_write_png(filename1, cameraWidth, cameraHeight/2, 1, viewHalfRes.ptr(0), /*rowBytes=*/(cameraWidth));
+
+          // composite with the greyscale view and fix the alpha channel before writing
+          for (size_t pixelIdx = 0; pixelIdx < (cameraWidth * (cameraHeight/2)); ++pixelIdx) {
+            uint8_t* p = feedbackHalfResView.ptr(0) + (pixelIdx * 4);
+            if (!(p[0] || p[1] || p[2])) {
+              p[0] = p[1] = p[2] = viewHalfRes.ptr(0)[pixelIdx];
+
+            }
+            p[3] = 0xff;
+          }
+          stbi_write_png(filename2, cameraWidth, cameraHeight/2, 4, feedbackHalfResView.ptr(0), /*rowBytes=*/cameraWidth * 4);
+          printf("Saved %s and %s\n", filename1, filename2);
+#endif
+
+          calibrationPoints[0].push_back(fullResPoints[0]);
+          calibrationPoints[1].push_back(fullResPoints[1]);
+          lastCaptureTime = currentTimeMs();
+        }
+
+        // Draw camera stream and feedback overlay to both eye RTs
+
+        for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+          rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+          rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+
+          rhi()->bindRenderPipeline(camOverlayStereoPipeline);
+          rhi()->loadTexture(ksLeftCameraTex, camera[0]->rgbTexture());
+          rhi()->loadTexture(ksLeftDistortionMap, cameraDistortionMap[0]);
+          rhi()->loadTexture(ksRightCameraTex, camera[1]->rgbTexture());
+          rhi()->loadTexture(ksRightDistortionMap, cameraDistortionMap[1]);
+          rhi()->loadTexture(ksOverlayTex, feedbackTex);
+
+          // coordsys right now: -X = left, -Z = into screen
+          // (camera is at the origin)
+          const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+          const float scaleFactor = 2.5f;
+          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(cameraWidth*2) / static_cast<float>(cameraHeight)), scaleFactor, 1.0f)); // TODO
+          glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+
+          NDCQuadUniformBlock ub;
+          ub.modelViewProjection = mvp;
+          rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+
+          rhi()->drawNDCQuad();
+
+          rhi()->endRenderPass(eyeRT[eyeIndex]);
+        }
+        renderHMDFrame();
+
+      } // Stereo calibration sample-gathering loop
+
+      // Samples collected, run calibration
+      std::vector<std::vector<cv::Point3f> > objectPoints(1);
+      float squareSize = 1.0f;
+
+      for (int i = 0; i < calibrationBoardSize.height; ++i) {
+          for (int j = 0; j < calibrationBoardSize.width; ++j) {
+              objectPoints[0].push_back(cv::Point3f(static_cast<float>(j)*squareSize, static_cast<float>(i)*squareSize, 0));
+          }
+      }
+
+      objectPoints.resize(calibrationPoints[0].size(), objectPoints[0]);
+
+      cv::Mat E, F;
+
+      cv::stereoCalibrate(objectPoints,
+        calibrationPoints[0], calibrationPoints[1],
+        cameraMatrix[0], distCoeffs[0],
+        cameraMatrix[1], distCoeffs[1],
+        cv::Size(cameraWidth, cameraHeight),
+        stereoRotation, stereoTranslation, E, F, cv::CALIB_FIX_INTRINSIC | cv::CALIB_SAME_FOCAL_LENGTH);
+
+    } // needStereoCalibration
+
+    // Save calibration data if it was updated this run
+    if (needStereoCalibration || needIntrinsicCalibration) {
       cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
       fs.write("camera0_matrix", cameraMatrix[0]);
       fs.write("camera1_matrix", cameraMatrix[1]);
       fs.write("camera0_distortionCoeffs", distCoeffs[0]);
       fs.write("camera1_distortionCoeffs", distCoeffs[1]);
+      fs.write("stereoRotation", stereoRotation);
+      fs.write("stereoTranslation", stereoTranslation);
+      printf("Saved updated calibration data\n");
     }
+
+    // Compute rectification/projection transforms from the stereo calibration data
+    float alpha = 0.25;
+    cv::stereoRectify(
+      cameraMatrix[0], distCoeffs[0],
+      cameraMatrix[1], distCoeffs[1],
+      cv::Size(cameraWidth, cameraHeight),
+      stereoRotation, stereoTranslation,
+      stereoRectification[0], stereoRectification[1],
+      stereoProjection[0], stereoProjection[1],
+      stereoDisparityToDepth,
+      /*flags=*/0, alpha);
+
+    // Compute new distortion maps with the now-valid stereo calibration
+    updateCameraDistortionMap(0, true);
+    updateCameraDistortionMap(1, true);
+
 
   } // Calibration mode
 
