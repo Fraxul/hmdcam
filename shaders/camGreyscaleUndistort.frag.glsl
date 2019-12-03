@@ -5,11 +5,8 @@ layout(location = 0) out vec4 outColor;
 uniform samplerExternalOES imageTex;
 uniform sampler2D distortionMap;
 void main() {
-  // Flip coordinate system to match OpenCV's on the output
-  vec2 flippedTexCoord = vec2(fragTexCoord.x, 1.0f - fragTexCoord.y);
-
   // Remap through OpenCV-generated distortion map
-  vec2 distortionCoord = texture(distortionMap, flippedTexCoord).rg; // RG32F texture
+  vec2 distortionCoord = flipTexcoordY(texture(distortionMap, flipTexcoordY(fragTexCoord)).rg); // RG32F texture
 
   // Flip coordinate system to match OpenCV's on the output
   vec3 color = texture(imageTex, adjustCameraTexcoord(distortionCoord)).rgb;

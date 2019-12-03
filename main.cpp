@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <signal.h>
+#include <iostream>
 #include <vector>
 
 #include <boost/chrono/duration.hpp>
@@ -896,7 +897,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Compute rectification/projection transforms from the stereo calibration data
-    float alpha = 0.25;
+    float alpha = -1.0f;  //0.25;
     cv::stereoRectify(
       cameraMatrix[0], distCoeffs[0],
       cameraMatrix[1], distCoeffs[1],
@@ -906,6 +907,9 @@ int main(int argc, char* argv[]) {
       stereoProjection[0], stereoProjection[1],
       stereoDisparityToDepth,
       /*flags=*/cv::CALIB_ZERO_DISPARITY, alpha);
+
+    std::cout << "Rectification matrices:" << std::endl << stereoRectification[0] << std::endl << stereoRectification[1] << std::endl;
+    std::cout << "Projection matrices:" << std::endl << stereoProjection[0] << std::endl << stereoProjection[1] << std::endl;
 
     // Compute new distortion maps with the now-valid stereo calibration
     updateCameraDistortionMap(0, true);

@@ -13,3 +13,7 @@ vec2 adjustCameraTexcoord(vec2 texCoord) {
 }
 #endif
 
+vec2 flipTexcoordY(vec2 texCoord) {
+  return vec2(texCoord.x, 1.0f - texCoord.y);
+}
+

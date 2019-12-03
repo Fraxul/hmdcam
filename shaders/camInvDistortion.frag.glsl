@@ -5,7 +5,10 @@ layout(location = 0) out vec4 outColor;
 uniform samplerExternalOES imageTex;
 uniform sampler2D distortionMap;
 void main() {
-  vec2 distortionCoord = texture(distortionMap, fragTexCoord).rg; // RG32F texture
+  // Texture coordinates get flipped for the distortion map lookup (convert from OpenGL -> OpenCV coordsys),
+  // then the output gets flipped to convert from OpenCV -> OpenGL coordsys
+  vec2 distortionCoord = flipTexcoordY(texture(distortionMap, flipTexcoordY(fragTexCoord)).rg); // RG32F texture
+
 //  outColor = vec4(distortionCoord, 0.0, 1.0);
 //  outColor = vec4(fragTexCoord, 0.0, 1.0);
 //  gl_FragColor = texture2D(imageTex, fragTexCoord);
