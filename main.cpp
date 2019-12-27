@@ -37,7 +37,7 @@
 #include <opencv2/calib3d.hpp>
 
 // Camera config
-#define SWAP_CAMERA_EYES
+// #define SWAP_CAMERA_EYES
 #define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
 
 
@@ -453,7 +453,7 @@ void drawStatusLines(cv::Mat& image, const std::vector<std::string> lines) {
   cv::rectangle(image,
     cv::Point(origin.x - rectPadding, origin.y - rectPadding),
     cv::Point(origin.x + boundSize.width + rectPadding, origin.y + boundSize.height + rectPadding),
-    cv::Scalar(1, 1, 1), CV_FILLED);
+    cv::Scalar(1, 1, 1), cv::FILLED);
 
   // Draw lines
   for (size_t lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
@@ -582,7 +582,7 @@ int main(int argc, char* argv[]) {
       for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
         printf("Camera %u intrinsic calibration\n", cameraIdx);
         const unsigned int targetSampleCount = 10;
-        const uint64_t captureDelayMs = 500;
+        const uint64_t captureDelayMs = 1000;
         uint64_t lastCaptureTime = 0;
 
         std::vector<std::vector<cv::Point2f> > calibrationPoints;
@@ -898,6 +898,8 @@ int main(int argc, char* argv[]) {
 
     // Compute rectification/projection transforms from the stereo calibration data
     float alpha = -1.0f;  //0.25;
+    cv::Rect validPixROI[2];
+
     cv::stereoRectify(
       cameraMatrix[0], distCoeffs[0],
       cameraMatrix[1], distCoeffs[1],
@@ -906,10 +908,12 @@ int main(int argc, char* argv[]) {
       stereoRectification[0], stereoRectification[1],
       stereoProjection[0], stereoProjection[1],
       stereoDisparityToDepth,
-      /*flags=*/cv::CALIB_ZERO_DISPARITY, alpha);
+      /*flags=*/cv::CALIB_ZERO_DISPARITY, alpha, cv::Size(),
+      &validPixROI[0], &validPixROI[1]);
 
     std::cout << "Rectification matrices:" << std::endl << stereoRectification[0] << std::endl << stereoRectification[1] << std::endl;
     std::cout << "Projection matrices:" << std::endl << stereoProjection[0] << std::endl << stereoProjection[1] << std::endl;
+    std::cout << "Valid image regions:" << std::endl << validPixROI[0] << std::endl << validPixROI[1] << std::endl;
 
     // Compute new distortion maps with the now-valid stereo calibration
     updateCameraDistortionMap(0, true);

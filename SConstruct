@@ -3,10 +3,10 @@ import os
 
 # Environment setup
 env = Environment(
-  CPPPATH=['.', 'glm', 'glatter/include', 'glatter/include/glatter', '/usr/include/drm', '/usr/src/nvidia/tegra_multimedia_api/include', '/usr/src/nvidia/tegra_multimedia_api/argus/include'],
+  CPPPATH=['.', 'glm', 'glatter/include', 'glatter/include/glatter', '/usr/include/drm', '/usr/src/nvidia/tegra_multimedia_api/include', '/usr/src/nvidia/tegra_multimedia_api/argus/include', '/usr/local/include/opencv4'],
   CPPFLAGS=['-ggdb', '-std=c++11', '-Wall'],
   LINKFLAGS=['-ggdb'],
-  LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra'],
+  LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib'],
 )
 
 # Fix for clang colored diagnostics
