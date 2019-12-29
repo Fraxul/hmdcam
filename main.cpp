@@ -35,11 +35,18 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
+#include <opencv2/aruco/charuco.hpp>
 
 // Camera config
 // #define SWAP_CAMERA_EYES
 #define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
 
+// ChArUco target pattern config
+const cv::aruco::PREDEFINED_DICTIONARY_NAME s_charucoDictionaryName = cv::aruco::DICT_4X4_250;
+const unsigned int s_charucoBoardSquareCountX = 12;
+const unsigned int s_charucoBoardSquareCountY = 9;
+const float s_charucoBoardSquareSideLengthMeters = 0.020f;
+const float s_charucoBoardMarkerSideLengthMeters = 0.015f;
 
 // Mapping of libargus camera device index to camera[0] (left) and camera[1] (right).
 #ifdef SWAP_CAMERA_EYES
@@ -50,7 +57,10 @@
   #define RIGHT_CAMERA_INDEX 1
 #endif
 
-static cv::Size calibrationBoardSize(9, 6);
+cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary;
+cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
+
+static cv::Size calibrationBoardSize_old(9, 6);
 
 
 RHIRenderTarget::ptr windowRenderTarget;
@@ -390,31 +400,6 @@ cv::Mat captureSBSUndistortedStereoGreyscale(RHISurface::ptr tex, RHIRenderTarge
   return res;
 }
 
-static double computeReprojectionErrors(
-        const std::vector<std::vector<cv::Point3f> >& objectPoints,
-        const std::vector<std::vector<cv::Point2f> >& imagePoints,
-        const std::vector<cv::Mat>& rvecs, const std::vector<cv::Mat>& tvecs,
-        const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs,
-        std::vector<float>& perViewErrors )
-{
-    std::vector<cv::Point2f> imagePoints2;
-    int i, totalPoints = 0;
-    double totalErr = 0, err;
-    perViewErrors.resize(objectPoints.size());
-
-    for( i = 0; i < (int)objectPoints.size(); i++ )
-    {
-        cv::projectPoints(cv::Mat(objectPoints[i]), rvecs[i], tvecs[i], cameraMatrix, distCoeffs, imagePoints2);
-        err = cv::norm(cv::Mat(imagePoints[i]), cv::Mat(imagePoints2), cv::NORM_L2);
-        int n = (int)objectPoints[i].size();
-        perViewErrors[i] = (float)std::sqrt(err*err/n);
-        totalErr += err*err;
-        totalPoints += n;
-    }
-
-    return std::sqrt(totalErr/totalPoints);
-}
-
 void drawStatusLines(cv::Mat& image, const std::vector<std::string> lines) {
   std::vector<cv::Size> lineSizes; // total size of bounding rect per line
   std::vector<int> baselines; // Y size of area above baseline
@@ -517,11 +502,14 @@ int main(int argc, char* argv[]) {
     printf("WARNING: Screen and HMD dimensions don't match; check system configuration.\n");
   }
 
+  // Open the cameras
   const size_t cameraWidth = 1280, cameraHeight = 720;
-
-
   camera[0] = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, cameraWidth, cameraHeight);
   camera[1] = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, cameraWidth, cameraHeight);
+
+  // Generate derived data for calibration
+  s_charucoDictionary = cv::aruco::getPredefinedDictionary(s_charucoDictionaryName);
+  s_charucoBoard = cv::aruco::CharucoBoard::create(s_charucoBoardSquareCountX, s_charucoBoardSquareCountY, s_charucoBoardSquareSideLengthMeters, s_charucoBoardMarkerSideLengthMeters, s_charucoDictionary);
 
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
@@ -567,17 +555,14 @@ int main(int argc, char* argv[]) {
 
     // Calibrate individual cameras
     if (needIntrinsicCalibration) {
-      // Textures and RTs we use for half and full-res captures
-      RHISurface::ptr halfGreyTex = rhi()->newTexture2D(cameraWidth / 2, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_R8));
-      RHIRenderTarget::ptr halfGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({halfGreyTex}));
-
+      // Textures and RTs we use for captures
       RHISurface::ptr fullGreyTex = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
       RHIRenderTarget::ptr fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex}));
 
-      RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth / 2, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+      RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
 
-      cv::Mat feedbackHalfResView;
-      feedbackHalfResView.create(/*rows=*/ cameraHeight / 2, /*columns=*/cameraWidth / 2, CV_8UC4);
+      cv::Mat feedbackView;
+      feedbackView.create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
 
       for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
         printf("Camera %u intrinsic calibration\n", cameraIdx);
@@ -585,51 +570,50 @@ int main(int argc, char* argv[]) {
         const uint64_t captureDelayMs = 1000;
         uint64_t lastCaptureTime = 0;
 
-        std::vector<std::vector<cv::Point2f> > calibrationPoints;
+        std::vector<cv::Mat> allCharucoCorners;
+        std::vector<cv::Mat> allCharucoIds;
 
-        while (!want_quit && calibrationPoints.size() < targetSampleCount) {
+        while (!want_quit && allCharucoCorners.size() < targetSampleCount) {
+          bool found = false;
+
           camera[cameraIdx]->readFrame();
-          cv::Mat viewHalfRes = captureGreyscale(cameraIdx, halfGreyTex, halfGreyRT);
           cv::Mat viewFullRes = captureGreyscale(cameraIdx, fullGreyTex, fullGreyRT);
 
-          std::vector<cv::Point2f> halfResPoints;
 
-          // Run initial search on the half-res image for speed
-          //bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK | cv::CALIB_CB_NORMALIZE_IMAGE);
-          bool found = cv::findChessboardCorners(viewHalfRes, calibrationBoardSize, halfResPoints, cv::CALIB_CB_FAST_CHECK);
+          std::vector<std::vector<cv::Point2f> > corners, rejected;
+          std::vector<int> ids;
+          cv::Mat currentCharucoCorners, currentCharucoIds;
 
-          std::vector<cv::Point2f> fullResPoints;
-          if (found) {
-            // Map points from the half-res image to the full-res image
-            for (size_t i = 0; i < halfResPoints.size(); ++i) {
-              fullResPoints.push_back(halfResPoints[i] * 2.0f);
-            }
+          // Run ArUco marker detection
+          cv::aruco::detectMarkers(viewFullRes, s_charucoDictionary, corners, ids, cv::aruco::DetectorParameters::create(), rejected);
+          cv::aruco::refineDetectedMarkers(viewFullRes, s_charucoBoard, corners, ids, rejected);
 
-            // Improve accuracy by running the subpixel corner search on the full-res view
-            cv::cornerSubPix(viewFullRes, fullResPoints, cv::Size(11,11), cv::Size(-1,-1), cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
-
-            // Map points back to half-res for the overlay
-            halfResPoints.clear();
-            for (size_t i = 0; i < fullResPoints.size(); ++i) {
-              halfResPoints.push_back(fullResPoints[i] * 0.5f);
-            }
+          // Find corners using detected markers
+          if (!ids.empty()) {
+            cv::aruco::interpolateCornersCharuco(corners, ids, viewFullRes, s_charucoBoard, currentCharucoCorners, currentCharucoIds);
           }
 
           // Draw feedback points
-          memset(feedbackHalfResView.ptr(0), 0, feedbackHalfResView.total() * 4);
-          cv::drawChessboardCorners( feedbackHalfResView, calibrationBoardSize, cv::Mat(halfResPoints), found );
+          memset(feedbackView.ptr(0), 0, feedbackView.total() * 4);
+
+          if (!ids.empty()) {
+            cv::aruco::drawDetectedMarkers(feedbackView, corners);
+          }
+          if (currentCharucoCorners.total() > 3) {
+            cv::aruco::drawDetectedCornersCharuco(feedbackView, currentCharucoCorners, currentCharucoIds);
+            found = true;
+          }
 
           char status1[64];
           char status2[64];
           sprintf(status1, "Camera %u (%s)", cameraIdx, cameraIdx == 0 ? "left" : "right");
-          sprintf(status2, "%zu/%u samples", calibrationPoints.size(), targetSampleCount);
+          sprintf(status2, "%zu/%u samples", allCharucoCorners.size(), targetSampleCount);
 
-          drawStatusLines(feedbackHalfResView, { status1, "Intrinsic calibration", status2 } );
+          drawStatusLines(feedbackView, { status1, "Intrinsic calibration", status2 } );
 
-          rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackHalfResView.ptr(0));
+          rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackView.ptr(0));
 
           if (found && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
-
   #ifdef SAVE_CALIBRATION_IMAGES
             char filename1[64];
             char filename2[64];
@@ -653,7 +637,8 @@ int main(int argc, char* argv[]) {
             printf("Saved %s and %s\n", filename1, filename2);
   #endif
 
-            calibrationPoints.push_back(fullResPoints);
+            allCharucoCorners.push_back(currentCharucoCorners);
+            allCharucoIds.push_back(currentCharucoIds);
             lastCaptureTime = currentTimeMs();
           }
 
@@ -692,10 +677,9 @@ int main(int argc, char* argv[]) {
         // Calibration samples collected
         {
 
-          std::vector<cv::Mat> rvecs, tvecs;
+          cv::Mat stdDeviations, perViewErrors;
           std::vector<float> reprojErrs;
           cv::Size imageSize(cameraWidth, cameraHeight);
-          float squareSize = 1.0f;
           float aspectRatio = 1.0f;
           int flags = cv::CALIB_FIX_ASPECT_RATIO;
 
@@ -704,27 +688,15 @@ int main(int argc, char* argv[]) {
               cameraMatrix[cameraIdx].at<double>(0,0) = aspectRatio;
           distCoeffs[cameraIdx] = cv::Mat::zeros(8, 1, CV_64F);
 
-          std::vector<std::vector<cv::Point3f> > objectPoints(1);
 
-          for (int i = 0; i < calibrationBoardSize.height; ++i) {
-              for (int j = 0; j < calibrationBoardSize.width; ++j) {
-                  objectPoints[0].push_back(cv::Point3f(static_cast<float>(j)*squareSize, static_cast<float>(i)*squareSize, 0));
-              }
-          }
+          double rms = cv::aruco::calibrateCameraCharuco(allCharucoCorners, allCharucoIds,
+                                         s_charucoBoard, imageSize,
+                                         cameraMatrix[cameraIdx], distCoeffs[cameraIdx],
+                                         cv::noArray(), cv::noArray(), stdDeviations, cv::noArray(),
+                                         perViewErrors, flags);
 
-          objectPoints.resize(calibrationPoints.size(), objectPoints[0]);
 
-          double rms = cv::calibrateCamera(objectPoints, calibrationPoints, imageSize, cameraMatrix[cameraIdx],
-                          distCoeffs[cameraIdx], rvecs, tvecs, flags|cv::CALIB_FIX_K4|cv::CALIB_FIX_K5);
-          printf("RMS error reported by calibrateCamera: %g\n", rms);
-
-          bool ok = cv::checkRange(cameraMatrix[cameraIdx]) && cv::checkRange(distCoeffs[cameraIdx]);
-
-          double totalAvgErr = computeReprojectionErrors(objectPoints, calibrationPoints, rvecs, tvecs, cameraMatrix[cameraIdx], distCoeffs[cameraIdx], reprojErrs);
-
-          printf("%s. avg reprojection error = %.2f\n",
-                 ok ? "Calibration succeeded" : "Calibration failed",
-                 totalAvgErr);
+          printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);
 
           // Build initial intrinsic-only distortion map
           updateCameraDistortionMap(cameraIdx, false);
@@ -771,8 +743,8 @@ int main(int argc, char* argv[]) {
 
         std::vector<cv::Point2f> fullResPoints[2];
         // Run initial search
-        bool foundLeft = cv::findChessboardCorners(viewFullRes[0], calibrationBoardSize, fullResPoints[0], cv::CALIB_CB_FAST_CHECK);
-        bool foundRight =  cv::findChessboardCorners(viewFullRes[1], calibrationBoardSize, fullResPoints[1], cv::CALIB_CB_FAST_CHECK);
+        bool foundLeft = cv::findChessboardCorners(viewFullRes[0], calibrationBoardSize_old, fullResPoints[0], cv::CALIB_CB_FAST_CHECK);
+        bool foundRight =  cv::findChessboardCorners(viewFullRes[1], calibrationBoardSize_old, fullResPoints[1], cv::CALIB_CB_FAST_CHECK);
         bool found = foundLeft && foundRight;
 
         if (found) {
@@ -791,8 +763,8 @@ int main(int argc, char* argv[]) {
 
         // Draw feedback points
         memset(feedbackHalfResViewStereo.ptr(0), 0, feedbackHalfResViewStereo.total() * 4);
-        cv::drawChessboardCorners(feedbackHalfResView[0], calibrationBoardSize, cv::Mat(halfResPoints[0]), foundLeft);
-        cv::drawChessboardCorners(feedbackHalfResView[1], calibrationBoardSize, cv::Mat(halfResPoints[1]), foundRight);
+        cv::drawChessboardCorners(feedbackHalfResView[0], calibrationBoardSize_old, cv::Mat(halfResPoints[0]), foundLeft);
+        cv::drawChessboardCorners(feedbackHalfResView[1], calibrationBoardSize_old, cv::Mat(halfResPoints[1]), foundRight);
 
         char status1[64];
         sprintf(status1, "%zu/%u samples", calibrationPoints[0].size(), targetSampleCount);
@@ -865,8 +837,8 @@ int main(int argc, char* argv[]) {
       std::vector<std::vector<cv::Point3f> > objectPoints(1);
       float squareSize = 1.0f;
 
-      for (int i = 0; i < calibrationBoardSize.height; ++i) {
-          for (int j = 0; j < calibrationBoardSize.width; ++j) {
+      for (int i = 0; i < calibrationBoardSize_old.height; ++i) {
+          for (int j = 0; j < calibrationBoardSize_old.width; ++j) {
               objectPoints[0].push_back(cv::Point3f(static_cast<float>(j)*squareSize, static_cast<float>(i)*squareSize, 0));
           }
       }
