@@ -7,6 +7,7 @@
 #include <sys/time.h>
 #include <signal.h>
 #include <iostream>
+#include <set>
 #include <vector>
 
 #include <boost/chrono/duration.hpp>
@@ -26,7 +27,7 @@
 
 #include "openhmd/openhmd.h"
 
-//#define SAVE_CALIBRATION_IMAGES
+#define SAVE_CALIBRATION_IMAGES
 #ifdef SAVE_CALIBRATION_IMAGES
   #define STB_IMAGE_WRITE_IMPLEMENTATION
   #include "../stb/stb_image_write.h"
@@ -407,10 +408,11 @@ void drawStatusLines(cv::Mat& image, const std::vector<std::string> lines) {
 
   uint32_t rectPadding = 4;
   uint32_t linePaddingY = 4;
+  double fontScale = 2.0;
 
   for (size_t lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
     int baseline = 0;
-    lineSizes.push_back(cv::getTextSize(lines[lineIdx].c_str(), 1, 1, 1, &baseline));
+    lineSizes.push_back(cv::getTextSize(lines[lineIdx].c_str(), 1, fontScale, 1, &baseline));
     baselines.push_back(baseline);
     //printf("line [%u] \"%s\" size: %u x %u baseline: %u\n", lineIdx, lines[lineIdx].c_str(), lineSizes[lineIdx].width, lineSizes[lineIdx].height, baselines[lineIdx]);
   }
@@ -446,7 +448,7 @@ void drawStatusLines(cv::Mat& image, const std::vector<std::string> lines) {
       cv::Point(
         origin.x + ((boundSize.width - lineSizes[lineIdx].width) / 2),
         origin.y + lineYOffsets[lineIdx] + lineSizes[lineIdx].height),
-      1, 1, cv::Scalar(0, 255, 0));
+      1, fontScale, cv::Scalar(0, 255, 0));
   }
 }
 
@@ -565,6 +567,7 @@ int main(int argc, char* argv[]) {
       feedbackView.create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
 
       for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
+retryIntrinsicCalibration:
         printf("Camera %u intrinsic calibration\n", cameraIdx);
         const unsigned int targetSampleCount = 10;
         const uint64_t captureDelayMs = 1000;
@@ -622,19 +625,20 @@ int main(int argc, char* argv[]) {
             sprintf(filename1, "calib_%u_%02u_frame.png", cameraIdx, fileIdx);
             sprintf(filename2, "calib_%u_%02u_overlay.png", cameraIdx, fileIdx);
 
-            stbi_write_png(filename1, cameraWidth/2, cameraHeight/2, 1, viewHalfRes.ptr(0), /*rowBytes=*/(cameraWidth/2));
+            //stbi_write_png(filename1, cameraWidth, cameraHeight, 1, viewFullRes.ptr(0), /*rowBytes=*/cameraWidth);
+            //printf("Saved %s\n", filename1);
 
             // composite with the greyscale view and fix the alpha channel before writing
-            for (size_t pixelIdx = 0; pixelIdx < ((cameraWidth/2) * (cameraHeight/2)); ++pixelIdx) {
-              uint8_t* p = feedbackHalfResView.ptr(0) + (pixelIdx * 4);
+            for (size_t pixelIdx = 0; pixelIdx < (cameraWidth * cameraHeight); ++pixelIdx) {
+              uint8_t* p = feedbackView.ptr(0) + (pixelIdx * 4);
               if (!(p[0] || p[1] || p[2])) {
-                p[0] = p[1] = p[2] = viewHalfRes.ptr(0)[pixelIdx];
+                p[0] = p[1] = p[2] = viewFullRes.ptr(0)[pixelIdx];
 
               }
               p[3] = 0xff;
             }
-            stbi_write_png(filename2, cameraWidth/2, cameraHeight/2, 4, feedbackHalfResView.ptr(0), /*rowBytes=*/(cameraWidth/2) * 4);
-            printf("Saved %s and %s\n", filename1, filename2);
+            stbi_write_png(filename2, cameraWidth, cameraHeight, 4, feedbackView.ptr(0), /*rowBytes=*/cameraWidth * 4);
+            printf("Saved %s\n", filename2);
   #endif
 
             allCharucoCorners.push_back(currentCharucoCorners);
@@ -675,7 +679,7 @@ int main(int argc, char* argv[]) {
           break;
 
         // Calibration samples collected
-        {
+        try {
 
           cv::Mat stdDeviations, perViewErrors;
           std::vector<float> reprojErrs;
@@ -697,33 +701,51 @@ int main(int argc, char* argv[]) {
 
 
           printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);
+          std::cout << "Per-view error: " << std::endl << perViewErrors << std::endl;
 
           // Build initial intrinsic-only distortion map
           updateCameraDistortionMap(cameraIdx, false);
+        } catch (const std::exception& ex) {
+          printf("Camera intrinsic calibration failed: %s\n", ex.what());
+          goto retryIntrinsicCalibration;
         }
       } // Per-camera calibration loop
 
     } // Individual camera calibration
 
+    // Incrementally save calibration data if it was updated this run
+    // TODO: should probably remove this after finished debugging stereo calibration
+    if (want_quit)
+      goto quit;
+
+    if (needIntrinsicCalibration) {
+      cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+      fs.write("camera0_matrix", cameraMatrix[0]);
+      fs.write("camera1_matrix", cameraMatrix[1]);
+      fs.write("camera0_distortionCoeffs", distCoeffs[0]);
+      fs.write("camera1_distortionCoeffs", distCoeffs[1]);
+      printf("Saved updated intrinsic calibration data\n");
+    }
+
     if (needStereoCalibration) {
+retryStereoCalibration:
       // Stereo pair calibration
 
       // Textures and RTs we use for full-res captures.
-      // We skip half-res captures for the full stereo calibration -- the target will be farther from the cameras,
-      // so we will probably need the extra resolution to find it.
       RHISurface::ptr fullGreyTex = rhi()->newTexture2D(cameraWidth * 2, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
       RHIRenderTarget::ptr fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex}));
 
-      RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth, cameraHeight / 2, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+      RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth * 2, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
 
-      cv::Mat feedbackHalfResViewStereo;
-      feedbackHalfResViewStereo.create(/*rows=*/ cameraHeight / 2, /*columns=*/cameraWidth, CV_8UC4);
+      cv::Mat feedbackViewStereo;
+      feedbackViewStereo.create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth * 2, CV_8UC4);
 
       const unsigned int targetSampleCount = 10;
       const uint64_t captureDelayMs = 500;
       uint64_t lastCaptureTime = 0;
 
-      std::vector<std::vector<cv::Point2f> > calibrationPoints[2];
+      std::vector<std::vector<cv::Point3f> > objectPoints; // Points from the board definition for the relevant corners each frame
+      std::vector<std::vector<cv::Point2f> > calibrationPoints[2]; // Points in image space for the 2 views for the relevant corners each frame
 
       while (!want_quit && calibrationPoints[0].size() < targetSampleCount) {
 
@@ -734,48 +756,71 @@ int main(int argc, char* argv[]) {
 
         // Create monoscopic views of SbS-stereo images
         cv::Mat viewFullRes[2];
-        cv::Mat feedbackHalfResView[2];
+        cv::Mat feedbackView[2];
         viewFullRes[0] = viewFullResStereo.colRange(0, viewFullResStereo.cols / 2);
         viewFullRes[1] = viewFullResStereo.colRange(viewFullResStereo.cols / 2, viewFullResStereo.cols);
-        feedbackHalfResView[0] = feedbackHalfResViewStereo.colRange(0, feedbackHalfResViewStereo.cols / 2);
-        feedbackHalfResView[1] = feedbackHalfResViewStereo.colRange(feedbackHalfResViewStereo.cols / 2, feedbackHalfResViewStereo.cols);
+        feedbackView[0] = feedbackViewStereo.colRange(0, feedbackViewStereo.cols / 2);
+        feedbackView[1] = feedbackViewStereo.colRange(feedbackViewStereo.cols / 2, feedbackViewStereo.cols);
 
+        std::vector<std::vector<cv::Point2f> > corners[2], rejected[2];
+        std::vector<int> ids[2];
 
-        std::vector<cv::Point2f> fullResPoints[2];
-        // Run initial search
-        bool foundLeft = cv::findChessboardCorners(viewFullRes[0], calibrationBoardSize_old, fullResPoints[0], cv::CALIB_CB_FAST_CHECK);
-        bool foundRight =  cv::findChessboardCorners(viewFullRes[1], calibrationBoardSize_old, fullResPoints[1], cv::CALIB_CB_FAST_CHECK);
-        bool found = foundLeft && foundRight;
+        std::vector<cv::Point2f> currentCharucoCornerPoints[2];
+        std::vector<int> currentCharucoCornerIds[2];
 
-        if (found) {
-          // Improve accuracy by running the subpixel corner search
-          cv::cornerSubPix(viewFullRes[0], fullResPoints[0], cv::Size(11,11), cv::Size(-1,-1), cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
-          cv::cornerSubPix(viewFullRes[1], fullResPoints[1], cv::Size(11,11), cv::Size(-1,-1), cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
-        }
-
-        std::vector<cv::Point2f> halfResPoints[2];
-        // Map points back to half-res for the overlay
+        // TODO: we should probably feed the previously established intrinsic parameters here and to refineDetectedMarkers / interpolateCornersCharuco.
+        // Run ArUco marker detection
         for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx) {
-          for (size_t i = 0; i < fullResPoints[viewIdx].size(); ++i) {
-            halfResPoints[viewIdx].push_back(fullResPoints[viewIdx][i] * 0.5f);
+          cv::aruco::detectMarkers(viewFullRes[viewIdx], s_charucoDictionary, corners[viewIdx], ids[viewIdx], cv::aruco::DetectorParameters::create(), rejected[viewIdx]);
+          cv::aruco::refineDetectedMarkers(viewFullRes[viewIdx], s_charucoBoard, corners[viewIdx], ids[viewIdx], rejected[viewIdx]);
+
+          // Find chessboard corners using detected markers
+          if (!ids[viewIdx].empty()) {
+            cv::aruco::interpolateCornersCharuco(corners[viewIdx], ids[viewIdx], viewFullRes[viewIdx], s_charucoBoard, currentCharucoCornerPoints[viewIdx], currentCharucoCornerIds[viewIdx]);
           }
         }
 
-        // Draw feedback points
-        memset(feedbackHalfResViewStereo.ptr(0), 0, feedbackHalfResViewStereo.total() * 4);
-        cv::drawChessboardCorners(feedbackHalfResView[0], calibrationBoardSize_old, cv::Mat(halfResPoints[0]), foundLeft);
-        cv::drawChessboardCorners(feedbackHalfResView[1], calibrationBoardSize_old, cv::Mat(halfResPoints[1]), foundRight);
+        // Find set of chessboard corners present in both views
+        std::set<int> stereoCornerIds;
+        {
+          std::set<int> view0Ids;
+          for (size_t i = 0; i < currentCharucoCornerIds[0].size(); ++i) {
+            view0Ids.insert(currentCharucoCornerIds[0][i]);
+          }
+          for (size_t i = 0; i < currentCharucoCornerIds[1].size(); ++i) {
+            int id = currentCharucoCornerIds[1][i];
+            if (view0Ids.find(id) != view0Ids.end())
+              stereoCornerIds.insert(id);
+          }
+        }
 
-        char status1[64];
-        sprintf(status1, "%zu/%u samples", calibrationPoints[0].size(), targetSampleCount);
+        // Require at least 3 corners visibile to both cameras to consider this frame
+        bool foundOverlap = stereoCornerIds.size() >= 3;
 
-        drawStatusLines(feedbackHalfResViewStereo, { "Stereo calibration", status1 } );
+        // Filter the view corner sets to only overlapping corners, which we will later feed to stereoCalibrate
+        std::vector<cv::Point3f> thisFrameBoardRefCorners;
+        std::vector<cv::Point2f> thisFrameImageCorners[2];
 
-        rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackHalfResViewStereo.ptr(0));
+        for (std::set<int>::const_iterator corner_it = stereoCornerIds.begin(); corner_it != stereoCornerIds.end(); ++corner_it) {
+          int cornerId = *corner_it;
 
-        if (found && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
+          for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx) {
+            for (int viewCornerIdx = 0; viewCornerIdx < currentCharucoCornerIds[viewIdx].size(); ++viewCornerIdx) {
+              if (currentCharucoCornerIds[viewIdx][viewCornerIdx] == cornerId) {
+                thisFrameImageCorners[viewIdx].push_back(currentCharucoCornerPoints[viewIdx][viewCornerIdx]);
+                break;
+              }
+            }
+          }
 
-#if 0 //def SAVE_CALIBRATION_IMAGES
+          // save the corner point in board space from the board definition
+          thisFrameBoardRefCorners.push_back(s_charucoBoard->chessboardCorners[cornerId]);
+        }
+        assert(thisFrameBoardRefCorners.size() == thisFrameImageCorners[0].size() && thisFrameBoardRefCorners.size() == thisFrameImageCorners[1].size());
+
+        if (foundOverlap && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
+
+#ifdef SAVE_CALIBRATION_IMAGES
           char filename1[64];
           char filename2[64];
           static int fileIdx = 0;
@@ -783,25 +828,46 @@ int main(int argc, char* argv[]) {
           sprintf(filename1, "calib_stereo_%02u_frame.png", fileIdx);
           sprintf(filename2, "calib_stereo_%02u_overlay.png", fileIdx);
 
-          stbi_write_png(filename1, cameraWidth, cameraHeight/2, 1, viewHalfRes.ptr(0), /*rowBytes=*/(cameraWidth));
+          //stbi_write_png(filename1, cameraWidth*2, cameraHeight, 1, viewFullResStereo.ptr(0), /*rowBytes=*/(cameraWidth*2));
+          //printf("Saved %s\n", filename2);
 
           // composite with the greyscale view and fix the alpha channel before writing
-          for (size_t pixelIdx = 0; pixelIdx < (cameraWidth * (cameraHeight/2)); ++pixelIdx) {
-            uint8_t* p = feedbackHalfResView.ptr(0) + (pixelIdx * 4);
+          for (size_t pixelIdx = 0; pixelIdx < (cameraWidth * 2) * cameraHeight; ++pixelIdx) {
+            uint8_t* p = feedbackViewStereo.ptr(0) + (pixelIdx * 4);
             if (!(p[0] || p[1] || p[2])) {
-              p[0] = p[1] = p[2] = viewHalfRes.ptr(0)[pixelIdx];
+              p[0] = p[1] = p[2] = viewFullResStereo.ptr(0)[pixelIdx];
 
             }
             p[3] = 0xff;
           }
-          stbi_write_png(filename2, cameraWidth, cameraHeight/2, 4, feedbackHalfResView.ptr(0), /*rowBytes=*/cameraWidth * 4);
-          printf("Saved %s and %s\n", filename1, filename2);
+          stbi_write_png(filename2, cameraWidth*2, cameraHeight, 4, feedbackViewStereo.ptr(0), /*rowBytes=*/cameraWidth*2 * 4);
+          printf("Saved %s\n", filename2);
 #endif
 
-          calibrationPoints[0].push_back(fullResPoints[0]);
-          calibrationPoints[1].push_back(fullResPoints[1]);
           lastCaptureTime = currentTimeMs();
+          objectPoints.push_back(thisFrameBoardRefCorners);
+          calibrationPoints[0].push_back(thisFrameImageCorners[0]);
+          calibrationPoints[1].push_back(thisFrameImageCorners[1]);
         }
+
+        // Draw feedback points
+        memset(feedbackViewStereo.ptr(0), 0, feedbackViewStereo.total() * 4);
+        for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx) {
+          if (!corners[viewIdx].empty()) {
+            cv::aruco::drawDetectedMarkers(feedbackView[viewIdx], corners[viewIdx]);
+          }
+          if (!currentCharucoCornerPoints[viewIdx].empty()) {
+            cv::aruco::drawDetectedCornersCharuco(feedbackView[viewIdx], currentCharucoCornerPoints[viewIdx], currentCharucoCornerIds[viewIdx]);
+          }
+        }
+
+        char status1[64];
+        sprintf(status1, "%zu/%u samples", calibrationPoints[0].size(), targetSampleCount);
+
+        drawStatusLines(feedbackViewStereo, { "Stereo calibration", status1 } );
+
+        rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackViewStereo.ptr(0));
+
 
         // Draw camera stream and feedback overlay to both eye RTs
 
@@ -834,27 +900,26 @@ int main(int argc, char* argv[]) {
       } // Stereo calibration sample-gathering loop
 
       // Samples collected, run calibration
-      std::vector<std::vector<cv::Point3f> > objectPoints(1);
-      float squareSize = 1.0f;
-
-      for (int i = 0; i < calibrationBoardSize_old.height; ++i) {
-          for (int j = 0; j < calibrationBoardSize_old.width; ++j) {
-              objectPoints[0].push_back(cv::Point3f(static_cast<float>(j)*squareSize, static_cast<float>(i)*squareSize, 0));
-          }
-      }
-
-      objectPoints.resize(calibrationPoints[0].size(), objectPoints[0]);
-
       cv::Mat E, F;
 
-      cv::stereoCalibrate(objectPoints,
-        calibrationPoints[0], calibrationPoints[1],
-        cameraMatrix[0], distCoeffs[0],
-        cameraMatrix[1], distCoeffs[1],
-        cv::Size(cameraWidth, cameraHeight),
-        stereoRotation, stereoTranslation, E, F, cv::CALIB_FIX_INTRINSIC | cv::CALIB_SAME_FOCAL_LENGTH);
+      try {
+        double rms = cv::stereoCalibrate(objectPoints,
+          calibrationPoints[0], calibrationPoints[1],
+          cameraMatrix[0], distCoeffs[0],
+          cameraMatrix[1], distCoeffs[1],
+          cv::Size(cameraWidth, cameraHeight),
+          stereoRotation, stereoTranslation, E, F, cv::CALIB_FIX_INTRINSIC | cv::CALIB_SAME_FOCAL_LENGTH);
+
+        printf("RMS error reported by stereoCalibrate: %g\n", rms);
+      } catch (const std::exception& ex) {
+        printf("Stereo calibration failed: %s\n", ex.what());
+        goto retryStereoCalibration;
+      }
 
     } // needStereoCalibration
+
+    if (want_quit)
+      goto quit;
 
     // Save calibration data if it was updated this run
     if (needStereoCalibration || needIntrinsicCalibration) {
@@ -933,7 +998,7 @@ int main(int argc, char* argv[]) {
       update_fps();
     }
   }
-
+quit:
   // Restore signal handlers
   signal(SIGINT,  SIG_DFL);
   signal(SIGTERM, SIG_DFL);
