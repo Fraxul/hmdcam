@@ -94,6 +94,8 @@ FxAtomicString ksRightCameraTex("rightCameraTex");
 FxAtomicString ksLeftDistortionMap("leftDistortionMap");
 FxAtomicString ksRightDistortionMap("rightDistortionMap");
 FxAtomicString ksOverlayTex("overlayTex");
+FxAtomicString ksLeftOverlayTex("leftOverlayTex");
+FxAtomicString ksRightOverlayTex("rightOverlayTex");
 FxAtomicString ksDistortionMap("distortionMap");
 
 // per-eye render targets (pre distortion)
@@ -370,27 +372,6 @@ cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget:
   rhi()->beginRenderPass(rt, kLoadInvalidate);
   rhi()->bindRenderPipeline(camGreyscalePipeline);
   rhi()->loadTexture(ksImageTex, camera[cameraIdx]->rgbTexture());
-  rhi()->drawNDCQuad();
-  rhi()->endRenderPass(rt);
-
-  cv::Mat res;
-  res.create(/*rows=*/ tex->height(), /*columns=*/tex->width(), CV_8UC1);
-  assert(res.isContinuous());
-  rhi()->readbackTexture(tex, 0, kVertexElementTypeUByte1N, res.ptr(0));
-  return res;
-}
-
-cv::Mat captureSBSUndistortedStereoGreyscale(RHISurface::ptr tex, RHIRenderTarget::ptr rt) {
-
-  rhi()->beginRenderPass(rt, kLoadInvalidate);
-  rhi()->bindRenderPipeline(camGreyscalePipeline);
-
-  rhi()->setViewport(RHIRect::xywh(0, 0, tex->width() / 2, tex->height()));
-  rhi()->loadTexture(ksImageTex, camera[0]->rgbTexture());
-  rhi()->drawNDCQuad();
-
-  rhi()->setViewport(RHIRect::xywh(tex->width() / 2, 0, tex->width() / 2, tex->height()));
-  rhi()->loadTexture(ksImageTex, camera[1]->rgbTexture());
   rhi()->drawNDCQuad();
   rhi()->endRenderPass(rt);
 
@@ -732,13 +713,20 @@ retryStereoCalibration:
       // Stereo pair calibration
 
       // Textures and RTs we use for full-res captures.
-      RHISurface::ptr fullGreyTex = rhi()->newTexture2D(cameraWidth * 2, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
-      RHIRenderTarget::ptr fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex}));
+      RHISurface::ptr fullGreyTex[2];
+      RHIRenderTarget::ptr fullGreyRT[2];
+      RHISurface::ptr feedbackTex[2];
 
-      RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth * 2, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+      for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx) {
+        fullGreyTex[viewIdx] = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+        fullGreyRT[viewIdx] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex[viewIdx]}));
 
-      cv::Mat feedbackViewStereo;
-      feedbackViewStereo.create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth * 2, CV_8UC4);
+        feedbackTex[viewIdx] = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+      }
+
+      cv::Mat feedbackView[2];
+      feedbackView[0].create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
+      feedbackView[1].create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
 
       const unsigned int targetSampleCount = 10;
       const uint64_t captureDelayMs = 500;
@@ -752,15 +740,10 @@ retryStereoCalibration:
         camera[0]->readFrame();
         camera[1]->readFrame();
 
-        cv::Mat viewFullResStereo = captureSBSUndistortedStereoGreyscale(fullGreyTex, fullGreyRT);
-
-        // Create monoscopic views of SbS-stereo images
         cv::Mat viewFullRes[2];
-        cv::Mat feedbackView[2];
-        viewFullRes[0] = viewFullResStereo.colRange(0, viewFullResStereo.cols / 2);
-        viewFullRes[1] = viewFullResStereo.colRange(viewFullResStereo.cols / 2, viewFullResStereo.cols);
-        feedbackView[0] = feedbackViewStereo.colRange(0, feedbackViewStereo.cols / 2);
-        feedbackView[1] = feedbackViewStereo.colRange(feedbackViewStereo.cols / 2, feedbackViewStereo.cols);
+        viewFullRes[0] = captureGreyscale(0, fullGreyTex[0], fullGreyRT[0]);
+        viewFullRes[1] = captureGreyscale(1, fullGreyTex[1], fullGreyRT[1]);
+
 
         std::vector<std::vector<cv::Point2f> > corners[2], rejected[2];
         std::vector<int> ids[2];
@@ -820,7 +803,7 @@ retryStereoCalibration:
 
         if (foundOverlap && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
 
-#ifdef SAVE_CALIBRATION_IMAGES
+#if 0 //def SAVE_CALIBRATION_IMAGES
           char filename1[64];
           char filename2[64];
           static int fileIdx = 0;
@@ -851,8 +834,9 @@ retryStereoCalibration:
         }
 
         // Draw feedback points
-        memset(feedbackViewStereo.ptr(0), 0, feedbackViewStereo.total() * 4);
         for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx) {
+          memset(feedbackView[viewIdx].ptr(0), 0, feedbackView[viewIdx].total() * 4);
+
           if (!corners[viewIdx].empty()) {
             cv::aruco::drawDetectedMarkers(feedbackView[viewIdx], corners[viewIdx]);
           }
@@ -864,9 +848,11 @@ retryStereoCalibration:
         char status1[64];
         sprintf(status1, "%zu/%u samples", calibrationPoints[0].size(), targetSampleCount);
 
-        drawStatusLines(feedbackViewStereo, { "Stereo calibration", status1 } );
+        for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx)
+          drawStatusLines(feedbackView[viewIdx], { "Stereo calibration", status1 } );
 
-        rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackViewStereo.ptr(0));
+        rhi()->loadTextureData(feedbackTex[0], kVertexElementTypeUByte4N, feedbackView[0].ptr(0));
+        rhi()->loadTextureData(feedbackTex[1], kVertexElementTypeUByte4N, feedbackView[1].ptr(0));
 
 
         // Draw camera stream and feedback overlay to both eye RTs
@@ -878,7 +864,8 @@ retryStereoCalibration:
           rhi()->bindRenderPipeline(camOverlayStereoPipeline);
           rhi()->loadTexture(ksLeftCameraTex, camera[0]->rgbTexture());
           rhi()->loadTexture(ksRightCameraTex, camera[1]->rgbTexture());
-          rhi()->loadTexture(ksOverlayTex, feedbackTex);
+          rhi()->loadTexture(ksLeftOverlayTex, feedbackTex[0]);
+          rhi()->loadTexture(ksRightOverlayTex, feedbackTex[1]);
 
           // coordsys right now: -X = left, -Z = into screen
           // (camera is at the origin)
