@@ -27,7 +27,7 @@
 
 #include "openhmd/openhmd.h"
 
-#define SAVE_CALIBRATION_IMAGES
+// #define SAVE_CALIBRATION_IMAGES
 #ifdef SAVE_CALIBRATION_IMAGES
   #define STB_IMAGE_WRITE_IMPLEMENTATION
   #include "../stb/stb_image_write.h"
@@ -550,7 +550,7 @@ int main(int argc, char* argv[]) {
       for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
 retryIntrinsicCalibration:
         printf("Camera %u intrinsic calibration\n", cameraIdx);
-        const unsigned int targetSampleCount = 10;
+        const unsigned int targetSampleCount = 16;
         const uint64_t captureDelayMs = 1000;
         uint64_t lastCaptureTime = 0;
 
@@ -585,8 +585,10 @@ retryIntrinsicCalibration:
           }
           if (currentCharucoCorners.total() > 3) {
             cv::aruco::drawDetectedCornersCharuco(feedbackView, currentCharucoCorners, currentCharucoIds);
-            found = true;
           }
+
+          // Require at least a third of the markers to be in frame to take an intrinsic calibration sample
+          found = (currentCharucoCorners.total() >= (s_charucoBoard->chessboardCorners.size() / 3));
 
           char status1[64];
           char status2[64];
@@ -728,7 +730,7 @@ retryStereoCalibration:
       feedbackView[0].create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
       feedbackView[1].create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
 
-      const unsigned int targetSampleCount = 10;
+      const unsigned int targetSampleCount = 16;
       const uint64_t captureDelayMs = 500;
       uint64_t lastCaptureTime = 0;
 
