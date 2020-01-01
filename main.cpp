@@ -730,7 +730,7 @@ retryStereoCalibration:
       feedbackView[0].create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
       feedbackView[1].create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
 
-      const unsigned int targetSampleCount = 16;
+      const unsigned int targetSampleCount = 32;
       const uint64_t captureDelayMs = 500;
       uint64_t lastCaptureTime = 0;
 
@@ -779,8 +779,8 @@ retryStereoCalibration:
           }
         }
 
-        // Require at least 3 corners visibile to both cameras to consider this frame
-        bool foundOverlap = stereoCornerIds.size() >= 3;
+        // Require at least 6 corners visibile to both cameras to consider this frame
+        bool foundOverlap = stereoCornerIds.size() >= 6;
 
         // Filter the view corner sets to only overlapping corners, which we will later feed to stereoCalibrate
         std::vector<cv::Point3f> thisFrameBoardRefCorners;
@@ -842,8 +842,26 @@ retryStereoCalibration:
           if (!corners[viewIdx].empty()) {
             cv::aruco::drawDetectedMarkers(feedbackView[viewIdx], corners[viewIdx]);
           }
-          if (!currentCharucoCornerPoints[viewIdx].empty()) {
-            cv::aruco::drawDetectedCornersCharuco(feedbackView[viewIdx], currentCharucoCornerPoints[viewIdx], currentCharucoCornerIds[viewIdx]);
+
+          // Borrowed from cv::aruco::drawDetectedCornersCharuco -- modified to switch the color per-marker to indicate stereo visibility
+          for(size_t cornerIdx = 0; cornerIdx < currentCharucoCornerIds[viewIdx].size(); ++cornerIdx) {
+            cv::Point2f corner = currentCharucoCornerPoints[viewIdx][cornerIdx];
+            int id = currentCharucoCornerIds[viewIdx][cornerIdx];
+
+            // grey for mono points
+            cv::Scalar cornerColor = cv::Scalar(127, 127, 127);
+            if (stereoCornerIds.find(id) != stereoCornerIds.end()) {
+              // red for stereo points
+              cornerColor = cv::Scalar(255, 0, 0);
+            }
+
+            // draw first corner mark
+            cv::rectangle(feedbackView[viewIdx], corner - cv::Point2f(3, 3), corner + cv::Point2f(3, 3), cornerColor, 1, cv::LINE_AA);
+
+            // draw ID
+            char idbuf[16];
+            sprintf(idbuf, "id=%u", id);
+            cv::putText(feedbackView[viewIdx], idbuf, corner + cv::Point2f(5, -5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cornerColor, 2);
           }
         }
 
