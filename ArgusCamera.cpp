@@ -39,12 +39,35 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, unsigned int 
 
   ArgusHelpers::printCameraDeviceInfo(m_cameraDevice, "  ");
 
-  const unsigned int sensorModeIndex = 4; // TODO autoselect sensor mode based on width/height params
+  Argus::ICameraProperties *iCameraProperties = Argus::interface_cast<Argus::ICameraProperties>(m_cameraDevice);
 
-  Argus::SensorMode* sensorMode = ArgusHelpers::getSensorMode(m_cameraDevice, sensorModeIndex);
+  Argus::SensorMode* sensorMode = NULL;
+  {
+    // Select sensor mode. Pick the fastest mode (smallest FrameDurationRange.min) that matches the requested resolution.
+    uint64_t bestFrameDurationRangeMin = UINT64_MAX;
+
+    std::vector<Argus::SensorMode*> sensorModes;
+    iCameraProperties->getAllSensorModes(&sensorModes);
+    for (size_t modeIdx = 0; modeIdx < sensorModes.size(); ++modeIdx) {
+      Argus::SensorMode* sensorModeCandidate = sensorModes[modeIdx];
+      Argus::ISensorMode *iSensorModeCandidate = Argus::interface_cast<Argus::ISensorMode>(sensorModeCandidate);
+
+      if (!(iSensorModeCandidate->getResolution().width() == width && iSensorModeCandidate->getResolution().height() == height)) {
+        continue; // Match failed: wrong resolution
+      }
+
+      if (iSensorModeCandidate->getFrameDurationRange().min() < bestFrameDurationRangeMin) {
+        bestFrameDurationRangeMin = iSensorModeCandidate->getFrameDurationRange().min();
+        sensorMode = sensorModeCandidate;
+      }
+    }
+  }
+
+  if (!sensorMode)
+    die("Unable to select a sensor mode matching the requested resolution (%ux%u)", width, height);
+
   Argus::ISensorMode *iSensorMode = Argus::interface_cast<Argus::ISensorMode>(sensorMode);
-  if (!iSensorMode)
-      die("Selected sensor mode not available");
+  assert(iSensorMode);
 
   printf("Selected sensor mode:\n");
   ArgusHelpers::printSensorModeInfo(sensorMode, "-- ");

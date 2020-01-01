@@ -39,6 +39,12 @@
 #include <opencv2/aruco/charuco.hpp>
 
 // Camera config
+// Size parameters for sensor mode selection.
+// Note that changing the sensor mode will invalidate the calibration
+// (Pixel coordinates are baked into the calibration data)
+const size_t s_cameraWidth = 1280, s_cameraHeight = 720;
+//const size_t s_cameraWidth = 1920, s_cameraHeight = 1080;
+
 // #define SWAP_CAMERA_EYES
 #define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
 
@@ -132,7 +138,7 @@ uint64_t currentTimeMs() {
 }
 
 void updateCameraDistortionMap(size_t cameraIdx, bool useStereoCalibration)  {
-  cv::Size imageSize = cv::Size(1280, 720);
+  cv::Size imageSize = cv::Size(s_cameraWidth, s_cameraHeight);
   float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels
   cv::Mat map1, map2;
   if (useStereoCalibration) {
@@ -486,9 +492,8 @@ int main(int argc, char* argv[]) {
   }
 
   // Open the cameras
-  const size_t cameraWidth = 1280, cameraHeight = 720;
-  camera[0] = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, cameraWidth, cameraHeight);
-  camera[1] = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, cameraWidth, cameraHeight);
+  camera[0] = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, s_cameraWidth, s_cameraHeight);
+  camera[1] = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, s_cameraWidth, s_cameraHeight);
 
   // Generate derived data for calibration
   s_charucoDictionary = cv::aruco::getPredefinedDictionary(s_charucoDictionaryName);
@@ -539,13 +544,13 @@ int main(int argc, char* argv[]) {
     // Calibrate individual cameras
     if (needIntrinsicCalibration) {
       // Textures and RTs we use for captures
-      RHISurface::ptr fullGreyTex = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+      RHISurface::ptr fullGreyTex = rhi()->newTexture2D(s_cameraWidth, s_cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
       RHIRenderTarget::ptr fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex}));
 
-      RHISurface::ptr feedbackTex = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+      RHISurface::ptr feedbackTex = rhi()->newTexture2D(s_cameraWidth, s_cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
 
       cv::Mat feedbackView;
-      feedbackView.create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
+      feedbackView.create(/*rows=*/ s_cameraHeight, /*columns=*/s_cameraWidth, CV_8UC4);
 
       for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
 retryIntrinsicCalibration:
@@ -608,11 +613,11 @@ retryIntrinsicCalibration:
             sprintf(filename1, "calib_%u_%02u_frame.png", cameraIdx, fileIdx);
             sprintf(filename2, "calib_%u_%02u_overlay.png", cameraIdx, fileIdx);
 
-            //stbi_write_png(filename1, cameraWidth, cameraHeight, 1, viewFullRes.ptr(0), /*rowBytes=*/cameraWidth);
+            //stbi_write_png(filename1, s_cameraWidth, s_cameraHeight, 1, viewFullRes.ptr(0), /*rowBytes=*/s_cameraWidth);
             //printf("Saved %s\n", filename1);
 
             // composite with the greyscale view and fix the alpha channel before writing
-            for (size_t pixelIdx = 0; pixelIdx < (cameraWidth * cameraHeight); ++pixelIdx) {
+            for (size_t pixelIdx = 0; pixelIdx < (s_cameraWidth * s_cameraHeight); ++pixelIdx) {
               uint8_t* p = feedbackView.ptr(0) + (pixelIdx * 4);
               if (!(p[0] || p[1] || p[2])) {
                 p[0] = p[1] = p[2] = viewFullRes.ptr(0)[pixelIdx];
@@ -620,7 +625,7 @@ retryIntrinsicCalibration:
               }
               p[3] = 0xff;
             }
-            stbi_write_png(filename2, cameraWidth, cameraHeight, 4, feedbackView.ptr(0), /*rowBytes=*/cameraWidth * 4);
+            stbi_write_png(filename2, s_cameraWidth, s_cameraHeight, 4, feedbackView.ptr(0), /*rowBytes=*/s_cameraWidth * 4);
             printf("Saved %s\n", filename2);
   #endif
 
@@ -643,7 +648,7 @@ retryIntrinsicCalibration:
             // (camera is at the origin)
             const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
             const float scaleFactor = 5.0f;
-            glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(cameraWidth) / static_cast<float>(cameraHeight)), scaleFactor, 1.0f)); // TODO
+            glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
             glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
             NDCQuadUniformBlock ub;
@@ -666,7 +671,7 @@ retryIntrinsicCalibration:
 
           cv::Mat stdDeviations, perViewErrors;
           std::vector<float> reprojErrs;
-          cv::Size imageSize(cameraWidth, cameraHeight);
+          cv::Size imageSize(s_cameraWidth, s_cameraHeight);
           float aspectRatio = 1.0f;
           int flags = cv::CALIB_FIX_ASPECT_RATIO;
 
@@ -684,7 +689,9 @@ retryIntrinsicCalibration:
 
 
           printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);
-          std::cout << "Per-view error: " << std::endl << perViewErrors << std::endl;
+          std::cout << "Camera " << cameraIdx << " Per-view error: " << std::endl << perViewErrors << std::endl;
+          std::cout << "Camera " << cameraIdx << " Matrix: " << std::endl << cameraMatrix[cameraIdx] << std::endl;
+          std::cout << "Camera " << cameraIdx << " Distortion coefficients: " << std::endl << distCoeffs[cameraIdx] << std::endl;
 
           // Build initial intrinsic-only distortion map
           updateCameraDistortionMap(cameraIdx, false);
@@ -720,15 +727,15 @@ retryStereoCalibration:
       RHISurface::ptr feedbackTex[2];
 
       for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx) {
-        fullGreyTex[viewIdx] = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+        fullGreyTex[viewIdx] = rhi()->newTexture2D(s_cameraWidth, s_cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
         fullGreyRT[viewIdx] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({fullGreyTex[viewIdx]}));
 
-        feedbackTex[viewIdx] = rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+        feedbackTex[viewIdx] = rhi()->newTexture2D(s_cameraWidth, s_cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
       }
 
       cv::Mat feedbackView[2];
-      feedbackView[0].create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
-      feedbackView[1].create(/*rows=*/ cameraHeight, /*columns=*/cameraWidth, CV_8UC4);
+      feedbackView[0].create(/*rows=*/ s_cameraHeight, /*columns=*/s_cameraWidth, CV_8UC4);
+      feedbackView[1].create(/*rows=*/ s_cameraHeight, /*columns=*/s_cameraWidth, CV_8UC4);
 
       const unsigned int targetSampleCount = 32;
       const uint64_t captureDelayMs = 500;
@@ -753,15 +760,14 @@ retryStereoCalibration:
         std::vector<cv::Point2f> currentCharucoCornerPoints[2];
         std::vector<int> currentCharucoCornerIds[2];
 
-        // TODO: we should probably feed the previously established intrinsic parameters here and to refineDetectedMarkers / interpolateCornersCharuco.
         // Run ArUco marker detection
         for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx) {
-          cv::aruco::detectMarkers(viewFullRes[viewIdx], s_charucoDictionary, corners[viewIdx], ids[viewIdx], cv::aruco::DetectorParameters::create(), rejected[viewIdx]);
-          cv::aruco::refineDetectedMarkers(viewFullRes[viewIdx], s_charucoBoard, corners[viewIdx], ids[viewIdx], rejected[viewIdx]);
+          cv::aruco::detectMarkers(viewFullRes[viewIdx], s_charucoDictionary, corners[viewIdx], ids[viewIdx], cv::aruco::DetectorParameters::create(), rejected[viewIdx], cameraMatrix[viewIdx], distCoeffs[viewIdx]);
+          cv::aruco::refineDetectedMarkers(viewFullRes[viewIdx], s_charucoBoard, corners[viewIdx], ids[viewIdx], rejected[viewIdx], cameraMatrix[viewIdx], distCoeffs[viewIdx]);
 
           // Find chessboard corners using detected markers
           if (!ids[viewIdx].empty()) {
-            cv::aruco::interpolateCornersCharuco(corners[viewIdx], ids[viewIdx], viewFullRes[viewIdx], s_charucoBoard, currentCharucoCornerPoints[viewIdx], currentCharucoCornerIds[viewIdx]);
+            cv::aruco::interpolateCornersCharuco(corners[viewIdx], ids[viewIdx], viewFullRes[viewIdx], s_charucoBoard, currentCharucoCornerPoints[viewIdx], currentCharucoCornerIds[viewIdx], cameraMatrix[viewIdx], distCoeffs[viewIdx]);
           }
         }
 
@@ -813,11 +819,11 @@ retryStereoCalibration:
           sprintf(filename1, "calib_stereo_%02u_frame.png", fileIdx);
           sprintf(filename2, "calib_stereo_%02u_overlay.png", fileIdx);
 
-          //stbi_write_png(filename1, cameraWidth*2, cameraHeight, 1, viewFullResStereo.ptr(0), /*rowBytes=*/(cameraWidth*2));
+          //stbi_write_png(filename1, s_cameraWidth*2, s_cameraHeight, 1, viewFullResStereo.ptr(0), /*rowBytes=*/(s_cameraWidth*2));
           //printf("Saved %s\n", filename2);
 
           // composite with the greyscale view and fix the alpha channel before writing
-          for (size_t pixelIdx = 0; pixelIdx < (cameraWidth * 2) * cameraHeight; ++pixelIdx) {
+          for (size_t pixelIdx = 0; pixelIdx < (s_cameraWidth * 2) * s_cameraHeight; ++pixelIdx) {
             uint8_t* p = feedbackViewStereo.ptr(0) + (pixelIdx * 4);
             if (!(p[0] || p[1] || p[2])) {
               p[0] = p[1] = p[2] = viewFullResStereo.ptr(0)[pixelIdx];
@@ -825,7 +831,7 @@ retryStereoCalibration:
             }
             p[3] = 0xff;
           }
-          stbi_write_png(filename2, cameraWidth*2, cameraHeight, 4, feedbackViewStereo.ptr(0), /*rowBytes=*/cameraWidth*2 * 4);
+          stbi_write_png(filename2, s_cameraWidth*2, s_cameraHeight, 4, feedbackViewStereo.ptr(0), /*rowBytes=*/s_cameraWidth*2 * 4);
           printf("Saved %s\n", filename2);
 #endif
 
@@ -891,7 +897,7 @@ retryStereoCalibration:
           // (camera is at the origin)
           const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
           const float scaleFactor = 2.5f;
-          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(cameraWidth*2) / static_cast<float>(cameraHeight)), scaleFactor, 1.0f)); // TODO
+          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth*2) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
           glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
           NDCQuadUniformBlock ub;
@@ -914,7 +920,7 @@ retryStereoCalibration:
           calibrationPoints[0], calibrationPoints[1],
           cameraMatrix[0], distCoeffs[0],
           cameraMatrix[1], distCoeffs[1],
-          cv::Size(cameraWidth, cameraHeight),
+          cv::Size(s_cameraWidth, s_cameraHeight),
           stereoRotation, stereoTranslation, E, F, cv::CALIB_FIX_INTRINSIC | cv::CALIB_SAME_FOCAL_LENGTH);
 
         printf("RMS error reported by stereoCalibrate: %g\n", rms);
@@ -947,7 +953,7 @@ retryStereoCalibration:
     cv::stereoRectify(
       cameraMatrix[0], distCoeffs[0],
       cameraMatrix[1], distCoeffs[1],
-      cv::Size(cameraWidth, cameraHeight),
+      cv::Size(s_cameraWidth, s_cameraHeight),
       stereoRotation, stereoTranslation,
       stereoRectification[0], stereoRectification[1],
       stereoProjection[0], stereoProjection[1],
