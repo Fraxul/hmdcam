@@ -62,6 +62,7 @@ static unsigned char* compress_for_stbiw(unsigned char *data, int data_len, int 
 // (Pixel coordinates are baked into the calibration data)
 const size_t s_cameraWidth = 1280, s_cameraHeight = 720;
 //const size_t s_cameraWidth = 1920, s_cameraHeight = 1080;
+const double s_cameraFramerate = 100.0; // Requested capture rate for the camera.
 
 // #define SWAP_CAMERA_EYES
 #define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
@@ -73,7 +74,7 @@ const unsigned int s_charucoBoardSquareCountY = 9;
 const float s_charucoBoardSquareSideLengthMeters = 0.020f;
 const float s_charucoBoardMarkerSideLengthMeters = 0.015f;
 
-// Mapping of libargus camera device index to camera[0] (left) and camera[1] (right).
+// Mapping of libargus camera device ID to index 0 (left) and 1 (right).
 #ifdef SWAP_CAMERA_EYES
   #define LEFT_CAMERA_INDEX 1
   #define RIGHT_CAMERA_INDEX 0
@@ -140,7 +141,7 @@ glm::mat4 eyeProjection[2];
 float scaleFactor = 3.5f;
 
 // Camera info/state
-ArgusCamera* camera[2];
+ArgusCamera* stereoCamera;
 RHISurface::ptr cameraDistortionMap[2];
 RHISurface::ptr cameraMask[2];
 cv::Mat cameraMatrix[2];
@@ -399,7 +400,7 @@ cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget:
 
   rhi()->beginRenderPass(rt, kLoadInvalidate);
   rhi()->bindRenderPipeline(camGreyscalePipeline);
-  rhi()->loadTexture(ksImageTex, camera[cameraIdx]->rgbTexture());
+  rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx));
   rhi()->drawNDCQuad();
   rhi()->endRenderPass(rt);
 
@@ -515,8 +516,7 @@ int main(int argc, char* argv[]) {
   }
 
   // Open the cameras
-  camera[0] = new ArgusCamera(demoState.display, demoState.context, LEFT_CAMERA_INDEX, s_cameraWidth, s_cameraHeight);
-  camera[1] = new ArgusCamera(demoState.display, demoState.context, RIGHT_CAMERA_INDEX, s_cameraWidth, s_cameraHeight);
+  stereoCamera = new ArgusCamera(demoState.display, demoState.context, {LEFT_CAMERA_INDEX, RIGHT_CAMERA_INDEX}, s_cameraWidth, s_cameraHeight, s_cameraFramerate);
 
   // Generate derived data for calibration
   s_charucoDictionary = cv::aruco::getPredefinedDictionary(s_charucoDictionaryName);
@@ -590,7 +590,7 @@ retryIntrinsicCalibration:
 
           bool found = false;
 
-          camera[cameraIdx]->readFrame();
+          stereoCamera->readFrame();
           cv::Mat viewFullRes = captureGreyscale(cameraIdx, fullGreyTex, fullGreyRT);
 
 
@@ -666,7 +666,7 @@ retryIntrinsicCalibration:
             rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
             rhi()->bindRenderPipeline(camOverlayPipeline);
-            rhi()->loadTexture(ksImageTex, camera[cameraIdx]->rgbTexture());
+            rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx));
             rhi()->loadTexture(ksOverlayTex, feedbackTex);
 
             // coordsys right now: -X = left, -Z = into screen
@@ -771,8 +771,7 @@ retryStereoCalibration:
           break;
         }
 
-        camera[0]->readFrame();
-        camera[1]->readFrame();
+        stereoCamera->readFrame();
 
         cv::Mat viewFullRes[2];
         viewFullRes[0] = captureGreyscale(0, fullGreyTex[0], fullGreyRT[0]);
@@ -913,8 +912,8 @@ retryStereoCalibration:
           rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
           rhi()->bindRenderPipeline(camOverlayStereoPipeline);
-          rhi()->loadTexture(ksLeftCameraTex, camera[0]->rgbTexture());
-          rhi()->loadTexture(ksRightCameraTex, camera[1]->rgbTexture());
+          rhi()->loadTexture(ksLeftCameraTex, stereoCamera->rgbTexture(0));
+          rhi()->loadTexture(ksRightCameraTex, stereoCamera->rgbTexture(1));
           rhi()->loadTexture(ksLeftOverlayTex, feedbackTex[0]);
           rhi()->loadTexture(ksRightOverlayTex, feedbackTex[1]);
 
@@ -1036,13 +1035,13 @@ retryStereoCalibration:
         maskData = (uint8_t*) STBI_MALLOC(x * y);
 
         // Save a snapshot from this camera as a template.
-        camera[cameraIdx]->readFrame();
+        stereoCamera->readFrame();
 
         RHIRenderTarget::ptr snapRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({cameraMask[cameraIdx]}));
         rhi()->beginRenderPass(snapRT, kLoadInvalidate);
         // This pipeline flips the Y axis for OpenCV's coordinate system, which is the same as the PNG coordinate system
         rhi()->bindRenderPipeline(camGreyscalePipeline);
-        rhi()->loadTexture(ksImageTex, camera[cameraIdx]->rgbTexture());
+        rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx));
         rhi()->drawNDCQuad();
         rhi()->endRenderPass(snapRT);
 
@@ -1092,18 +1091,15 @@ retryStereoCalibration:
 
     // Camera rendering mode
     {
-      camera[0]->readFrame();
-      camera[1]->readFrame();
+      stereoCamera->readFrame();
 
 
       for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
-        ArgusCamera* activeCamera = camera[eyeIndex];
-
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
         rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
         rhi()->bindRenderPipeline(camUndistortMaskPipeline);
-        rhi()->loadTexture(ksImageTex, activeCamera->rgbTexture());
+        rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(eyeIndex));
         rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[eyeIndex]);
         rhi()->loadTexture(ksMaskTex, cameraMask[eyeIndex]);
 
@@ -1111,7 +1107,7 @@ retryStereoCalibration:
         // coordsys right now: -X = left, -Z = into screen
         // (camera is at the origin)
         const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
-        glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
+        glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(stereoCamera->streamWidth()) / static_cast<float>(stereoCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
         glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
         NDCQuadUniformBlock ub;
@@ -1138,10 +1134,8 @@ quit:
   rhi()->endRenderPass(windowRenderTarget);
   rhi()->swapBuffers(windowRenderTarget);
 
-  camera[0]->stop();
-  camera[1]->stop();
-  delete camera[0];
-  delete camera[1];
+  stereoCamera->stop();
+  delete stereoCamera;
 
   // Release OpenGL resources
   eglMakeCurrent( demoState.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );

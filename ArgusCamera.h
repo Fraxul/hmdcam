@@ -1,38 +1,40 @@
 #pragma once
+#include <vector>
 #include <EGL/egl.h>
 #include <Argus/Argus.h>
 #include "rhi/gl/RHIEGLStreamSurfaceGL.h"
 
-#define NUM_BUFFERS 10
-
 class ArgusCamera {
 public:
-  ArgusCamera(EGLDisplay, EGLContext, unsigned int cameraIndex, unsigned int width, unsigned int height);
+  ArgusCamera(EGLDisplay, EGLContext, std::vector<unsigned int> cameraIndices, unsigned int width, unsigned int height, double framerate);
   ~ArgusCamera();
 
   bool readFrame();
 
   void stop();
 
-  RHISurface::ptr rgbTexture() const { return m_texture; }
+  size_t streamCount() const { return m_eglStreams.size(); }
+  RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
   unsigned int streamWidth() const { return m_streamWidth; }
   unsigned int streamHeight() const { return m_streamHeight; }
-
 
 private:
   EGLDisplay m_display;
   EGLContext m_context;
 
-  RHIEGLStreamSurfaceGL::ptr m_texture;
-  EGLStreamKHR m_stream;
+  std::vector<unsigned int> m_cameraIds;
+  std::vector<RHIEGLStreamSurfaceGL::ptr> m_textures;
+  std::vector<EGLStreamKHR> m_eglStreams;
   unsigned int m_streamWidth, m_streamHeight;
 
-  Argus::CameraDevice* m_cameraDevice;
-  Argus::CaptureSession* m_captureSession;
-  Argus::OutputStreamSettings* m_streamSettings;
-  Argus::UniqueObj<Argus::OutputStream> m_outputStream;
-  Argus::Request* m_captureRequest;
+  // Per-sensor objects
+  std::vector<Argus::CameraDevice*> m_cameraDevices;
+  std::vector<Argus::OutputStream*> m_outputStreams;
 
+  // Session common objects
+  Argus::UniqueObj<Argus::CameraProvider> m_cameraProvider;
+  Argus::CaptureSession* m_captureSession;
+  Argus::Request* m_captureRequest;
 
   // noncopyable
   ArgusCamera(const ArgusCamera&);
