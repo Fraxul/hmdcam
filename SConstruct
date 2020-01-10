@@ -18,6 +18,6 @@ Export('env')
 env.Program(
   target = 'hmdcam',
   source = Glob('*.cpp') + Glob('*.c') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + ['openhmd/libopenhmd.a'],
-  LIBS=['stdc++', 'boost_chrono', 'boost_system', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-hidraw', 'nvargus', 'nvbuf_utils', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco']
+  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-hidraw', 'nvargus', 'nvbuf_utils', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco']
 )
 

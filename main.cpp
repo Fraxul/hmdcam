@@ -29,10 +29,27 @@
 #include "openhmd/openhmd.h"
 
 // #define SAVE_CALIBRATION_IMAGES
-#ifdef SAVE_CALIBRATION_IMAGES
-  #define STB_IMAGE_WRITE_IMPLEMENTATION
-  #include "../stb/stb_image_write.h"
-#endif
+
+#include <zlib.h>
+static unsigned char* compress_for_stbiw(unsigned char *data, int data_len, int *out_len, int quality) {
+  uLongf bufSize = compressBound(data_len);
+  // note that buf will be free'd by stb_image_write.h with STBIW_FREE() (plain free() by default)
+  unsigned char* buf = (unsigned char*) malloc(bufSize);
+  if(buf == NULL)  return NULL;
+  if(compress2(buf, &bufSize, data, data_len, quality) != Z_OK) {
+    free(buf);
+    return NULL;
+  }
+  *out_len = bufSize;
+  return buf;
+}
+#define STBIW_ZLIB_COMPRESS compress_for_stbiw
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb/stb_image_write.h"
+
+#define STBI_ONLY_PNG
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb/stb_image.h"
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -80,7 +97,7 @@ FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
 RHIRenderPipeline::ptr camTexturedQuadPipeline;
 RHIRenderPipeline::ptr camOverlayPipeline;
 RHIRenderPipeline::ptr camOverlayStereoPipeline;
-RHIRenderPipeline::ptr camInvDistortionPipeline;
+RHIRenderPipeline::ptr camUndistortMaskPipeline;
 RHIRenderPipeline::ptr camGreyscalePipeline;
 RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 
@@ -104,6 +121,7 @@ FxAtomicString ksOverlayTex("overlayTex");
 FxAtomicString ksLeftOverlayTex("leftOverlayTex");
 FxAtomicString ksRightOverlayTex("rightOverlayTex");
 FxAtomicString ksDistortionMap("distortionMap");
+FxAtomicString ksMaskTex("maskTex");
 
 // per-eye render targets (pre distortion)
 RHISurface::ptr eyeTex[2];
@@ -122,6 +140,7 @@ glm::mat4 eyeProjection[2];
 // Camera info/state
 ArgusCamera* camera[2];
 RHISurface::ptr cameraDistortionMap[2];
+RHISurface::ptr cameraMask[2];
 cv::Mat cameraMatrix[2];
 cv::Mat distCoeffs[2];
 
@@ -225,10 +244,10 @@ static void init_ogl() {
   {
     RHIShaderDescriptor desc(
     "shaders/ndcQuadXf.vtx.glsl",
-    "shaders/camInvDistortion.frag.glsl",
+    "shaders/camUndistortMask.frag.glsl",
     ndcQuadVertexLayout);
     desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
-    camInvDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+    camUndistortMaskPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
   {
@@ -992,6 +1011,63 @@ retryStereoCalibration:
 
   } // Calibration mode
 
+  // Load masks.
+  {
+    for (size_t cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
+      cameraMask[cameraIdx] = rhi()->newTexture2D(s_cameraWidth, s_cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+
+      int x, y, fileChannels;
+      char filename[32];
+      sprintf(filename, "camera%zu_mask.png", cameraIdx);
+      uint8_t* maskData = stbi_load(filename, &x, &y, &fileChannels, 1);
+      if (maskData && ((x != s_cameraWidth) || (y != s_cameraHeight))) {
+        printf("Mask file \"%s\" dimensions %dx%d do not match camera dimensions %zux%zu. The mask will not be applied.\n", filename, x, y, s_cameraWidth, s_cameraHeight);
+        STBI_FREE(maskData);
+        maskData = NULL;
+      }
+
+      if (!maskData) {
+        printf("No usable mask data found in \"%s\" for camera %zu. A template will be created.\n", filename, cameraIdx);
+
+        x = s_cameraWidth;
+        y = s_cameraHeight;
+        maskData = (uint8_t*) STBI_MALLOC(x * y);
+
+        // Save a snapshot from this camera as a template.
+        camera[cameraIdx]->readFrame();
+
+        RHIRenderTarget::ptr snapRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({cameraMask[cameraIdx]}));
+        rhi()->beginRenderPass(snapRT, kLoadInvalidate);
+        // This pipeline flips the Y axis for OpenCV's coordinate system, which is the same as the PNG coordinate system
+        rhi()->bindRenderPipeline(camGreyscalePipeline);
+        rhi()->loadTexture(ksImageTex, camera[cameraIdx]->rgbTexture());
+        rhi()->drawNDCQuad();
+        rhi()->endRenderPass(snapRT);
+
+        rhi()->readbackTexture(cameraMask[cameraIdx], 0, kVertexElementTypeUByte1N, maskData);
+        char templateFilename[32];
+        sprintf(templateFilename, "camera%zu_mask_template.png", cameraIdx);
+        stbi_write_png(templateFilename, s_cameraWidth, s_cameraHeight, 1, maskData, /*rowBytes=*/s_cameraWidth);
+
+        // Fill a completely white mask for upload
+        memset(maskData, 0xff, x * y);
+      } else {
+        printf("Loaded mask data for camera %zu\n", cameraIdx);
+      }
+
+      // Y-flip the image to convert from PNG to GL coordsys
+      char* flippedMask = new char[s_cameraWidth * s_cameraHeight];
+      for (size_t row = 0; row < s_cameraHeight; ++row) {
+        memcpy(flippedMask + (row * s_cameraWidth), maskData + (((s_cameraHeight - 1) - row) * s_cameraWidth), s_cameraWidth);
+      }
+
+      rhi()->loadTextureData(cameraMask[cameraIdx], kVertexElementTypeUByte1N, flippedMask);
+
+      delete[] flippedMask;
+
+      STBI_FREE(maskData);
+    }
+  }
 
   while (!want_quit) {
     // Camera rendering mode
@@ -1006,9 +1082,10 @@ retryStereoCalibration:
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
         rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
-        rhi()->bindRenderPipeline(camInvDistortionPipeline);
+        rhi()->bindRenderPipeline(camUndistortMaskPipeline);
         rhi()->loadTexture(ksImageTex, activeCamera->rgbTexture());
         rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[eyeIndex]);
+        rhi()->loadTexture(ksMaskTex, cameraMask[eyeIndex]);
 
 
         // coordsys right now: -X = left, -Z = into screen

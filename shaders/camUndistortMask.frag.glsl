@@ -4,6 +4,7 @@ in vec2 fragTexCoord;
 layout(location = 0) out vec4 outColor;
 uniform samplerExternalOES imageTex;
 uniform sampler2D distortionMap;
+uniform sampler2D maskTex;
 void main() {
   // Texture coordinates get flipped for the distortion map lookup (convert from OpenGL -> OpenCV coordsys),
   // then the output gets flipped to convert from OpenCV -> OpenGL coordsys
@@ -16,7 +17,7 @@ void main() {
   if (any(notEqual(clamp(distortionCoord, vec2(0.0), vec2(1.0)), distortionCoord))) {
     outColor = vec4(0.0);
   } else {
-    outColor = texture(imageTex, adjustCameraTexcoord(distortionCoord));
+    outColor = texture(imageTex, adjustCameraTexcoord(distortionCoord)) * texture(maskTex, distortionCoord).r;
   }
 
 }
