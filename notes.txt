@@ -26,6 +26,9 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="28de", MODE="0660", GROUP="plugdev"
 KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", MODE="0660", GROUP="plugdev"
 KERNEL=="hidraw*", ATTRS{idVendor}=="0bb4", MODE="0660", GROUP="plugdev"
 
+Make sure that the user you're running as is members of the "plugdev" and "input" groups.
+plugdev is required to open the Vive's /dev/hidraw* node
+input is required to open nodes under /dev/input for the USB-HID remote control
 
 Disabling the desktop environment:
 sudo systemctl disable gdm3

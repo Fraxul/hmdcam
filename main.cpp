@@ -24,6 +24,7 @@
 #include "nvgldemo.h"
 
 #include "ArgusCamera.h"
+#include "InputListener.h"
 
 #include "openhmd/openhmd.h"
 
@@ -441,6 +442,7 @@ void drawStatusLines(cv::Mat& image, const std::vector<std::string> lines) {
 
 int main(int argc, char* argv[]) {
 
+  startInputListenerThread();
   init_ogl();
 
   hmdContext = ohmd_ctx_create();
@@ -555,14 +557,16 @@ int main(int argc, char* argv[]) {
       for (unsigned int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
 retryIntrinsicCalibration:
         printf("Camera %u intrinsic calibration\n", cameraIdx);
-        const unsigned int targetSampleCount = 16;
-        const uint64_t captureDelayMs = 1000;
-        uint64_t lastCaptureTime = 0;
 
         std::vector<cv::Mat> allCharucoCorners;
         std::vector<cv::Mat> allCharucoIds;
 
-        while (!want_quit && allCharucoCorners.size() < targetSampleCount) {
+        while (!want_quit) {
+          if (testButton(kButtonDown)) {
+            // Calibration finished
+            break;
+          }
+
           bool found = false;
 
           camera[cameraIdx]->readFrame();
@@ -598,13 +602,14 @@ retryIntrinsicCalibration:
           char status1[64];
           char status2[64];
           sprintf(status1, "Camera %u (%s)", cameraIdx, cameraIdx == 0 ? "left" : "right");
-          sprintf(status2, "%zu/%u samples", allCharucoCorners.size(), targetSampleCount);
+          sprintf(status2, "%zu samples", allCharucoCorners.size());
 
           drawStatusLines(feedbackView, { status1, "Intrinsic calibration", status2 } );
 
           rhi()->loadTextureData(feedbackTex, kVertexElementTypeUByte4N, feedbackView.ptr(0));
 
-          if (found && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
+          bool captureRequested = testButton(kButtonUp);
+          if (found && captureRequested) {
   #ifdef SAVE_CALIBRATION_IMAGES
             char filename1[64];
             char filename2[64];
@@ -631,7 +636,6 @@ retryIntrinsicCalibration:
 
             allCharucoCorners.push_back(currentCharucoCorners);
             allCharucoIds.push_back(currentCharucoIds);
-            lastCaptureTime = currentTimeMs();
           }
 
           // Draw camera stream and feedback overlay to both eye RTs
@@ -673,7 +677,7 @@ retryIntrinsicCalibration:
           std::vector<float> reprojErrs;
           cv::Size imageSize(s_cameraWidth, s_cameraHeight);
           float aspectRatio = 1.0f;
-          int flags = cv::CALIB_FIX_ASPECT_RATIO;
+          int flags = cv::CALIB_FIX_PRINCIPAL_POINT | cv::CALIB_FIX_ASPECT_RATIO;
 
           cameraMatrix[cameraIdx] = cv::Mat::eye(3, 3, CV_64F);
           if( flags & cv::CALIB_FIX_ASPECT_RATIO )
@@ -737,14 +741,14 @@ retryStereoCalibration:
       feedbackView[0].create(/*rows=*/ s_cameraHeight, /*columns=*/s_cameraWidth, CV_8UC4);
       feedbackView[1].create(/*rows=*/ s_cameraHeight, /*columns=*/s_cameraWidth, CV_8UC4);
 
-      const unsigned int targetSampleCount = 32;
-      const uint64_t captureDelayMs = 500;
-      uint64_t lastCaptureTime = 0;
-
       std::vector<std::vector<cv::Point3f> > objectPoints; // Points from the board definition for the relevant corners each frame
       std::vector<std::vector<cv::Point2f> > calibrationPoints[2]; // Points in image space for the 2 views for the relevant corners each frame
 
-      while (!want_quit && calibrationPoints[0].size() < targetSampleCount) {
+      while (!want_quit) {
+        if (testButton(kButtonDown)) {
+          // Calibration finished
+          break;
+        }
 
         camera[0]->readFrame();
         camera[1]->readFrame();
@@ -809,7 +813,8 @@ retryStereoCalibration:
         }
         assert(thisFrameBoardRefCorners.size() == thisFrameImageCorners[0].size() && thisFrameBoardRefCorners.size() == thisFrameImageCorners[1].size());
 
-        if (foundOverlap && currentTimeMs() > (lastCaptureTime + captureDelayMs)) {
+        bool captureRequested = testButton(kButtonUp);
+        if (foundOverlap && captureRequested) {
 
 #if 0 //def SAVE_CALIBRATION_IMAGES
           char filename1[64];
@@ -835,7 +840,6 @@ retryStereoCalibration:
           printf("Saved %s\n", filename2);
 #endif
 
-          lastCaptureTime = currentTimeMs();
           objectPoints.push_back(thisFrameBoardRefCorners);
           calibrationPoints[0].push_back(thisFrameImageCorners[0]);
           calibrationPoints[1].push_back(thisFrameImageCorners[1]);
@@ -872,7 +876,7 @@ retryStereoCalibration:
         }
 
         char status1[64];
-        sprintf(status1, "%zu/%u samples", calibrationPoints[0].size(), targetSampleCount);
+        sprintf(status1, "%zu samples", calibrationPoints[0].size());
 
         for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx)
           drawStatusLines(feedbackView[viewIdx], { "Stereo calibration", status1 } );
@@ -912,8 +916,12 @@ retryStereoCalibration:
 
       } // Stereo calibration sample-gathering loop
 
+      if (want_quit)
+        goto quit;
+
       // Samples collected, run calibration
       cv::Mat E, F;
+      cv::Mat perViewErrors;
 
       try {
         double rms = cv::stereoCalibrate(objectPoints,
@@ -921,9 +929,10 @@ retryStereoCalibration:
           cameraMatrix[0], distCoeffs[0],
           cameraMatrix[1], distCoeffs[1],
           cv::Size(s_cameraWidth, s_cameraHeight),
-          stereoRotation, stereoTranslation, E, F, cv::CALIB_FIX_INTRINSIC | cv::CALIB_SAME_FOCAL_LENGTH);
+          stereoRotation, stereoTranslation, E, F, perViewErrors, cv::CALIB_FIX_INTRINSIC);
 
         printf("RMS error reported by stereoCalibrate: %g\n", rms);
+        std::cout << " Per-view error: " << std::endl << perViewErrors << std::endl;
       } catch (const std::exception& ex) {
         printf("Stereo calibration failed: %s\n", ex.what());
         goto retryStereoCalibration;
@@ -933,18 +942,6 @@ retryStereoCalibration:
 
     if (want_quit)
       goto quit;
-
-    // Save calibration data if it was updated this run
-    if (needStereoCalibration || needIntrinsicCalibration) {
-      cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
-      fs.write("camera0_matrix", cameraMatrix[0]);
-      fs.write("camera1_matrix", cameraMatrix[1]);
-      fs.write("camera0_distortionCoeffs", distCoeffs[0]);
-      fs.write("camera1_distortionCoeffs", distCoeffs[1]);
-      fs.write("stereoRotation", stereoRotation);
-      fs.write("stereoTranslation", stereoTranslation);
-      printf("Saved updated calibration data\n");
-    }
 
     // Compute rectification/projection transforms from the stereo calibration data
     float alpha = -1.0f;  //0.25;
@@ -964,6 +961,29 @@ retryStereoCalibration:
     std::cout << "Rectification matrices:" << std::endl << stereoRectification[0] << std::endl << stereoRectification[1] << std::endl;
     std::cout << "Projection matrices:" << std::endl << stereoProjection[0] << std::endl << stereoProjection[1] << std::endl;
     std::cout << "Valid image regions:" << std::endl << validPixROI[0] << std::endl << validPixROI[1] << std::endl;
+
+    // Check the valid image regions for a failed stereo calibration. A bad calibration will usually result in a valid ROI for one or both views with a 0-pixel dimension.
+/*
+    if (needStereoCalibration) {
+      if (validPixROI[0].area() == 0 || validPixROI[1].area() == 0) {
+        printf("Stereo calibration failed: one or both of the valid image regions has zero area.\n");
+        goto retryStereoCalibration;
+      }
+    }
+*/
+
+    // Save calibration data if it was updated this run
+    if (needStereoCalibration || needIntrinsicCalibration) {
+      cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+      fs.write("camera0_matrix", cameraMatrix[0]);
+      fs.write("camera1_matrix", cameraMatrix[1]);
+      fs.write("camera0_distortionCoeffs", distCoeffs[0]);
+      fs.write("camera1_distortionCoeffs", distCoeffs[1]);
+      fs.write("stereoRotation", stereoRotation);
+      fs.write("stereoTranslation", stereoTranslation);
+      printf("Saved updated calibration data\n");
+    }
+
 
     // Compute new distortion maps with the now-valid stereo calibration
     updateCameraDistortionMap(0, true);
