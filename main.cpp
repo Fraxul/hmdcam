@@ -137,6 +137,8 @@ int eye_width, eye_height;
 bool rotate_screen = false;
 glm::mat4 eyeProjection[2];
 
+float scaleFactor = 3.5f;
+
 // Camera info/state
 ArgusCamera* camera[2];
 RHISurface::ptr cameraDistortionMap[2];
@@ -1070,6 +1072,24 @@ retryStereoCalibration:
   }
 
   while (!want_quit) {
+    {
+      // Scale factor adjustment
+
+      bool didChangeScale = false;
+      if (testButton(kButtonUp)) {
+        scaleFactor += 0.1f;
+        didChangeScale = true;
+      }
+      if (testButton(kButtonDown)) {
+        scaleFactor -= 0.1f;
+        didChangeScale = true;
+      }
+
+      if (didChangeScale) {
+        printf("New scale factor: %.3g\n", scaleFactor);
+      }
+    }
+
     // Camera rendering mode
     {
       camera[0]->readFrame();
@@ -1091,7 +1111,6 @@ retryStereoCalibration:
         // coordsys right now: -X = left, -Z = into screen
         // (camera is at the origin)
         const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
-        const float scaleFactor = 5.0f;
         glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(activeCamera->streamWidth()) / static_cast<float>(activeCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
         glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
