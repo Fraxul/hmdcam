@@ -2,6 +2,7 @@
 #include "ArgusHelpers.h"
 #include "rhi/gl/GLCommon.h"
 #include <Argus/Argus.h>
+#include <EGLStream/EGLStream.h>
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 
@@ -96,6 +97,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
   iEGLOutputStreamSettings->setResolution(Argus::Size2D<uint32_t>(m_streamWidth, m_streamHeight));
   iEGLOutputStreamSettings->setEGLDisplay(m_display);
   iEGLOutputStreamSettings->setMode(Argus::EGL_STREAM_MODE_MAILBOX);
+  iEGLOutputStreamSettings->setMetadataEnable(true);
 
   // Create the per-camera OutputStreams and textures.
   for (size_t cameraIdx = 0; cameraIdx < m_cameraIds.size(); ++cameraIdx) {
@@ -125,6 +127,9 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
     // Set the acquire timeout to infinite.
     eglStreamAttribKHR(m_display, m_eglStreams[cameraIdx], EGL_CONSUMER_ACQUIRE_TIMEOUT_USEC_KHR, -1);
   }
+
+  // Set up all of the per-stream metadata containers
+  m_sensorTimestamps.resize(m_eglStreams.size());
 
   // Create capture request, set the sensor mode, and enable the output stream.s
   m_captureRequest = iCaptureSession->createRequest();
@@ -158,9 +163,29 @@ ArgusCamera::~ArgusCamera() {
 
 bool ArgusCamera::readFrame() {
   bool res = true;
-  for (EGLStreamKHR eglStream : m_eglStreams) {
+  for (size_t streamIdx = 0; streamIdx < m_eglStreams.size(); ++streamIdx) {
+    const EGLStreamKHR& eglStream = m_eglStreams[streamIdx];
     res |= eglStreamConsumerAcquireKHR(m_display, eglStream);
+
+    const Argus::ICaptureMetadata* iMetadata = NULL;
+
+    // Try and acquire the metadata interface for this frame from the EGLStream
+    Argus::UniqueObj<EGLStream::MetadataContainer> metadataContainer(EGLStream::MetadataContainer::create(m_display, eglStream));
+    EGLStream::IArgusCaptureMetadata *iArgusCaptureMetadata = Argus::interface_cast<EGLStream::IArgusCaptureMetadata>(metadataContainer);
+
+    if (iArgusCaptureMetadata) {
+      iMetadata = Argus::interface_cast<const Argus::ICaptureMetadata>(iArgusCaptureMetadata->getMetadata());
+    }
+
+    if (!iMetadata) {
+      printf("ArgusCamera::readFrame(): Failed to read metadata for stream index %zu\n", streamIdx);
+      continue;
+    }
+
+    // Update metadata fields for this frame
+    m_sensorTimestamps[streamIdx] = iMetadata->getSensorTimestamp();
   }
+
   return res;
 }
 

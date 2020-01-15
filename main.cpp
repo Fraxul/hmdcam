@@ -10,6 +10,12 @@
 #include <set>
 #include <vector>
 
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/min.hpp>
+#include <boost/accumulators/statistics/max.hpp>
+#include <boost/accumulators/statistics/median.hpp>
+#include <boost/accumulators/statistics/mean.hpp>
 #include <boost/chrono/duration.hpp>
 #include <boost/chrono/system_clocks.hpp>
 
@@ -152,12 +158,10 @@ cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotat
 cv::Mat stereoDisparityToDepth;
 
 
-uint64_t currentTimeUs() {
-  return boost::chrono::duration_cast<boost::chrono::microseconds>(boost::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-uint64_t currentTimeMs() {
-  return currentTimeUs() / 1000ULL;
+uint64_t currentTimeNs() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
 
 void updateCameraDistortionMap(size_t cameraIdx, bool useStereoCalibration)  {
@@ -1070,29 +1074,83 @@ retryStereoCalibration:
     }
   }
 
-  while (!want_quit) {
-    {
-      // Scale factor adjustment
-
-      bool didChangeScale = false;
-      if (testButton(kButtonUp)) {
-        scaleFactor += 0.1f;
-        didChangeScale = true;
-      }
-      if (testButton(kButtonDown)) {
-        scaleFactor -= 0.1f;
-        didChangeScale = true;
-      }
-
-      if (didChangeScale) {
-        printf("New scale factor: %.3g\n", scaleFactor);
-      }
-    }
-
+  {
     // Camera rendering mode
-    {
-      stereoCamera->readFrame();
+    uint64_t frameCounter = 0;
+    boost::accumulators::accumulator_set<double, boost::accumulators::stats<
+        boost::accumulators::tag::min,
+        boost::accumulators::tag::max,
+        boost::accumulators::tag::mean,
+        boost::accumulators::tag::median
+      > > captureLatency;
 
+    uint64_t previousFrameTimestamp = 0;
+    boost::accumulators::accumulator_set<double, boost::accumulators::stats<
+        boost::accumulators::tag::min,
+        boost::accumulators::tag::max,
+        boost::accumulators::tag::mean,
+        boost::accumulators::tag::median
+      > > captureInterval;
+
+    while (!want_quit) {
+      ++frameCounter;
+      {
+        // Scale factor adjustment
+
+        bool didChangeScale = false;
+        if (testButton(kButtonUp)) {
+          scaleFactor += 0.1f;
+          didChangeScale = true;
+        }
+        if (testButton(kButtonDown)) {
+          scaleFactor -= 0.1f;
+          didChangeScale = true;
+        }
+
+        if (didChangeScale) {
+          printf("New scale factor: %.3g\n", scaleFactor);
+        }
+      }
+
+      stereoCamera->readFrame();
+      {
+        uint64_t now_ns = currentTimeNs();
+        // With synchronized capture enabled, sensorTimestamp(0) and sensorTimestamp(1) should be identical, so we just compare to sensorTimestamp(0)
+        uint64_t timestamp = stereoCamera->sensorTimestamp(0);
+        uint64_t latency_ns = 0;
+        if (timestamp < now_ns) // prevent wraparound on error
+          latency_ns = now_ns - timestamp;
+
+        double latency_ms = static_cast<double>(latency_ns) / 1000000.0;
+        captureLatency(latency_ms);
+
+        if (previousFrameTimestamp) {
+          double interval_ms = static_cast<double>(timestamp - previousFrameTimestamp) / 1000000.0;
+          captureInterval(interval_ms);
+        }
+        previousFrameTimestamp = timestamp;
+
+      }
+
+      if ((frameCounter & 0x7fUL) == 0) {
+        printf("Capture latency: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
+          boost::accumulators::min(captureLatency),
+          boost::accumulators::max(captureLatency),
+          boost::accumulators::mean(captureLatency),
+          boost::accumulators::median(captureLatency));
+
+        captureLatency = {};
+
+        printf("Capture interval: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
+          boost::accumulators::min(captureInterval),
+          boost::accumulators::max(captureInterval),
+          boost::accumulators::mean(captureInterval),
+          boost::accumulators::median(captureInterval));
+
+        captureInterval = {};
+
+        //printf("CLOCK_MONOTONIC: %llu. Sensor timestamps: %llu %llu\n", raw_ns, stereoCamera->sensorTimestamp(0), stereoCamera->sensorTimestamp(1));
+      }
 
       for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
@@ -1121,7 +1179,7 @@ retryStereoCalibration:
 
       renderHMDFrame();
       update_fps();
-    }
+    } // Camera rendering loop
   }
 quit:
   // Restore signal handlers

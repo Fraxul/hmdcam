@@ -15,6 +15,8 @@ public:
 
   size_t streamCount() const { return m_eglStreams.size(); }
   RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
+  // Start timestamp for the sensor capture, in nanoseconds. Appears to be referenced to CLOCK_MONOTONIC, though that's not documented...
+  uint64_t sensorTimestamp(size_t sensorIndex) const { return m_sensorTimestamps[sensorIndex]; }
   unsigned int streamWidth() const { return m_streamWidth; }
   unsigned int streamHeight() const { return m_streamHeight; }
 
@@ -26,6 +28,9 @@ private:
   std::vector<RHIEGLStreamSurfaceGL::ptr> m_textures;
   std::vector<EGLStreamKHR> m_eglStreams;
   unsigned int m_streamWidth, m_streamHeight;
+
+  // Per-stream metadata, populated for each frame in readFrame()
+  std::vector<uint64_t> m_sensorTimestamps;
 
   // Per-sensor objects
   std::vector<Argus::CameraDevice*> m_cameraDevices;
