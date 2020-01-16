@@ -4,6 +4,11 @@
 #include <Argus/Argus.h>
 #include "rhi/gl/RHIEGLStreamSurfaceGL.h"
 
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/rolling_mean.hpp>
+#include <boost/accumulators/statistics/rolling_count.hpp>
+
 class ArgusCamera {
 public:
   ArgusCamera(EGLDisplay, EGLContext, std::vector<unsigned int> cameraIndices, unsigned int width, unsigned int height, double framerate);
@@ -20,6 +25,9 @@ public:
   unsigned int streamWidth() const { return m_streamWidth; }
   unsigned int streamHeight() const { return m_streamHeight; }
 
+  uint64_t targetCaptureIntervalNs() const { return m_targetCaptureIntervalNs; }
+  void setTargetCaptureIntervalNs(uint64_t value) { m_targetCaptureIntervalNs = value; }
+
 private:
   EGLDisplay m_display;
   EGLContext m_context;
@@ -28,6 +36,19 @@ private:
   std::vector<RHIEGLStreamSurfaceGL::ptr> m_textures;
   std::vector<EGLStreamKHR> m_eglStreams;
   unsigned int m_streamWidth, m_streamHeight;
+
+  uint64_t m_targetCaptureIntervalNs;
+
+  uint64_t m_currentCaptureDurationNs;
+  uint64_t m_captureDurationMinNs, m_captureDurationMaxNs; // from sensor mode
+  uint64_t m_previousSensorTimestampNs;
+  unsigned int m_samplesAtCurrentDuration;
+  boost::accumulators::accumulator_set<double, boost::accumulators::stats<
+      boost::accumulators::tag::rolling_mean,
+      boost::accumulators::tag::rolling_count
+    > > m_captureIntervalStats;
+
+  void setCaptureDurationNs(uint64_t captureDurationNs);
 
   // Per-stream metadata, populated for each frame in readFrame()
   std::vector<uint64_t> m_sensorTimestamps;

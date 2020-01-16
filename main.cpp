@@ -68,7 +68,10 @@ static unsigned char* compress_for_stbiw(unsigned char *data, int data_len, int 
 // (Pixel coordinates are baked into the calibration data)
 const size_t s_cameraWidth = 1280, s_cameraHeight = 720;
 //const size_t s_cameraWidth = 1920, s_cameraHeight = 1080;
-const double s_cameraFramerate = 100.0; // Requested capture rate for the camera.
+
+// Requested capture rate for the camera. This should be the framerate of the display device, with as much precision as possible.
+// TODO: autodetect this. (current value pulled from running `fbset`)
+const double s_cameraFramerate = 89.527;
 
 // #define SWAP_CAMERA_EYES
 #define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
@@ -151,7 +154,7 @@ int eye_width, eye_height;
 bool rotate_screen = false;
 glm::mat4 eyeProjection[2];
 
-float scaleFactor = 3.5f;
+float scaleFactor = 4.3f;
 
 // Camera info/state
 ArgusCamera* stereoCamera;

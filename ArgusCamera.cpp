@@ -9,7 +9,10 @@
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<unsigned int> cameraIds, unsigned int width, unsigned int height, double framerate) :
   m_display(display_), m_context(context_),
   m_cameraIds(cameraIds),
+  m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = 128),
   m_captureSession(NULL), m_captureRequest(NULL) {
+
+  m_targetCaptureIntervalNs = 1000000000.0 / framerate;
 
   if (cameraIds.empty()) {
     die("No camera IDs provided");
@@ -143,11 +146,13 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
   if (!iSourceSettings)
       die("Failed to get source settings request interface");
   iSourceSettings->setSensorMode(sensorMode);
-  // Set the framerate to the maximum that the sensor mode supports.
-  // TODO: The sensor we're working with goes to 120fps, while our display tops out at 90fps.
-  // Should probably cap/sync the sensor framerate to display rate to improve noise.
-  //iSourceSettings->setFrameDurationRange(iSensorMode->getFrameDurationRange().min());
-  iSourceSettings->setFrameDurationRange(/*nanoseconds*/ 1000000000.0 / framerate);
+
+  m_captureDurationMinNs = iSensorMode->getFrameDurationRange().min();
+  m_captureDurationMaxNs = iSensorMode->getFrameDurationRange().max();
+
+  // Set the initial capture duration to the requested frame interval. This will be wrong since there's some overhead;
+  // we'll recompute it later once we start getting back capture timestamps.
+  setCaptureDurationNs(m_targetCaptureIntervalNs);
 
   // Start a repeating capture
   if (iCaptureSession->repeat(m_captureRequest) != Argus::STATUS_OK)
@@ -162,6 +167,10 @@ ArgusCamera::~ArgusCamera() {
 }
 
 bool ArgusCamera::readFrame() {
+
+  // TODO service CaptureSession event queue and wait for capture completed event here
+  // that should be able to smooth out some of the jitter without missing frames
+
   bool res = true;
   for (size_t streamIdx = 0; streamIdx < m_eglStreams.size(); ++streamIdx) {
     const EGLStreamKHR& eglStream = m_eglStreams[streamIdx];
@@ -186,7 +195,49 @@ bool ArgusCamera::readFrame() {
     m_sensorTimestamps[streamIdx] = iMetadata->getSensorTimestamp();
   }
 
+  if (((++m_samplesAtCurrentDuration) > 8) && m_previousSensorTimestampNs) {
+    uint64_t thisCaptureDuration = m_sensorTimestamps[0] - m_previousSensorTimestampNs;
+    if ((static_cast<double>(thisCaptureDuration) * 1.5) > boost::accumulators::rolling_mean(m_captureIntervalStats)) {
+      // Throw away outlier -- we probably missed a frame and got double duration
+    } else {
+      m_captureIntervalStats(thisCaptureDuration);
+    }
+    if (boost::accumulators::rolling_count(m_captureIntervalStats) > 8) {
+
+      int64_t durationToTSDeltaOffset = boost::accumulators::rolling_mean(m_captureIntervalStats) - m_currentCaptureDurationNs;
+
+      // printf("Capture duration % .6f -> interval % .6f (duration-to-interval offset: %ld ns)\n", static_cast<double>(m_currentCaptureDurationNs) / 1000000.0, static_cast<double>(boost::accumulators::rolling_mean(m_captureIntervalStats)) / 1000000.0, durationToTSDeltaOffset);
+
+      int64_t targetDuration = m_targetCaptureIntervalNs - durationToTSDeltaOffset;
+      // Clamp the offset to a reasonable small value so that a timestamp discontinuity doesn't cause a massive overshoot
+      const int64_t offsetMax = 500000; // 500 microseconds
+      int64_t targetOffset = std::min<int64_t>(std::max<int64_t>(targetDuration - m_currentCaptureDurationNs, -offsetMax), offsetMax);
+      // printf("durationToTSDeltaOffset %ld targetDuration %ld targetOffset %ld\n", durationToTSDeltaOffset, targetDuration, targetOffset);
+
+      // Perform an adjustment if we're off by at least 1 microsecond
+      if (abs(targetOffset) > 1000) {
+        // Clamp new duration to sensor mode limits
+        int64_t newDuration = std::min<int64_t>(std::max<int64_t>(m_currentCaptureDurationNs + (targetOffset / 64), m_captureDurationMinNs), m_captureDurationMaxNs);
+        // printf("Capture duration adjust %ld (%ld -> %ld)\n", targetOffset/64, m_currentCaptureDurationNs, newDuration);
+        setCaptureDurationNs(newDuration);
+
+        // Start a repeating capture
+        if (Argus::interface_cast<Argus::ICaptureSession>(m_captureSession)->repeat(m_captureRequest) != Argus::STATUS_OK)
+          die("Failed to update repeat capture request");
+
+      }
+    }
+  }
+  m_previousSensorTimestampNs = m_sensorTimestamps[0];
+
   return res;
+}
+
+void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {
+
+  Argus::interface_cast<Argus::ISourceSettings>(m_captureRequest)->setFrameDurationRange(captureDurationNs);
+  m_currentCaptureDurationNs = captureDurationNs;
+  m_samplesAtCurrentDuration = -64; // Wait long enough to clear out the rolling window of interval stats
 }
 
 void ArgusCamera::stop() {
