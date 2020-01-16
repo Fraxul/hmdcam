@@ -101,6 +101,13 @@ struct NDCQuadUniformBlock {
   glm::mat4 modelViewProjection;
 };
 FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
+
+struct NDCClippedQuadUniformBlock {
+  glm::mat4 modelViewProjection;
+  glm::vec2 minUV;
+  glm::vec2 maxUV;
+};
+FxAtomicString ksNDCClippedQuadUniformBlock("NDCClippedQuadUniformBlock");
 RHIRenderPipeline::ptr camTexturedQuadPipeline;
 RHIRenderPipeline::ptr camOverlayPipeline;
 RHIRenderPipeline::ptr camOverlayStereoPipeline;
@@ -156,6 +163,7 @@ cv::Mat distCoeffs[2];
 cv::Mat stereoRotation, stereoTranslation; // Calibrated
 cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify
 cv::Mat stereoDisparityToDepth;
+cv::Rect stereoValidROI[2];
 
 
 uint64_t currentTimeNs() {
@@ -250,7 +258,7 @@ static void init_ogl() {
 
   {
     RHIShaderDescriptor desc(
-    "shaders/ndcQuadXf.vtx.glsl",
+    "shaders/ndcClippedQuadXf.vtx.glsl",
     "shaders/camUndistortMask.frag.glsl",
     ndcQuadVertexLayout);
     desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
@@ -969,7 +977,6 @@ retryStereoCalibration:
 
     // Compute rectification/projection transforms from the stereo calibration data
     float alpha = -1.0f;  //0.25;
-    cv::Rect validPixROI[2];
 
     cv::stereoRectify(
       cameraMatrix[0], distCoeffs[0],
@@ -980,16 +987,16 @@ retryStereoCalibration:
       stereoProjection[0], stereoProjection[1],
       stereoDisparityToDepth,
       /*flags=*/cv::CALIB_ZERO_DISPARITY, alpha, cv::Size(),
-      &validPixROI[0], &validPixROI[1]);
+      &stereoValidROI[0], &stereoValidROI[1]);
 
     std::cout << "Rectification matrices:" << std::endl << stereoRectification[0] << std::endl << stereoRectification[1] << std::endl;
     std::cout << "Projection matrices:" << std::endl << stereoProjection[0] << std::endl << stereoProjection[1] << std::endl;
-    std::cout << "Valid image regions:" << std::endl << validPixROI[0] << std::endl << validPixROI[1] << std::endl;
+    std::cout << "Valid image regions:" << std::endl << stereoValidROI[0] << std::endl << stereoValidROI[1] << std::endl;
 
     // Check the valid image regions for a failed stereo calibration. A bad calibration will usually result in a valid ROI for one or both views with a 0-pixel dimension.
 /*
     if (needStereoCalibration) {
-      if (validPixROI[0].area() == 0 || validPixROI[1].area() == 0) {
+      if (stereoValidROI[0].area() == 0 || stereoValidROI[1].area() == 0) {
         printf("Stereo calibration failed: one or both of the valid image regions has zero area.\n");
         goto retryStereoCalibration;
       }
@@ -1168,9 +1175,17 @@ retryStereoCalibration:
         glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(stereoCamera->streamWidth()) / static_cast<float>(stereoCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
         glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
-        NDCQuadUniformBlock ub;
+        NDCClippedQuadUniformBlock ub;
         ub.modelViewProjection = mvp;
-        rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+        if (eyeIndex == 0) { // left
+          ub.minUV = glm::vec2(0.0f,  0.0f);
+          ub.maxUV = glm::vec2(0.75f, 1.0f);
+        } else { // right
+          ub.minUV = glm::vec2(0.25f, 0.0f);
+          ub.maxUV = glm::vec2(1.0f,  1.0f);
+        }
+
+        rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
 
         rhi()->drawNDCQuad();
 
