@@ -61,6 +61,7 @@ private:
   Argus::UniqueObj<Argus::CameraProvider> m_cameraProvider;
   Argus::CaptureSession* m_captureSession;
   Argus::Request* m_captureRequest;
+  Argus::EventQueue* m_completionEventQueue; // for EVENT_TYPE_CAPTURE_COMPLETE
 
   // noncopyable
   ArgusCamera(const ArgusCamera&);

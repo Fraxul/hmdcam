@@ -4,7 +4,18 @@
 #include <Argus/Argus.h>
 #include <EGLStream/EGLStream.h>
 
+#include <boost/accumulators/statistics/min.hpp>
+#include <boost/accumulators/statistics/max.hpp>
+#include <boost/accumulators/statistics/median.hpp>
+#include <boost/accumulators/statistics/mean.hpp>
+
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
+
+static inline uint64_t currentTimeNs() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
+}
 
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<unsigned int> cameraIds, unsigned int width, unsigned int height, double framerate) :
   m_display(display_), m_context(context_),
@@ -89,6 +100,9 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
   if (!iCaptureSession || !iEventProvider)
       die("Failed to create CaptureSession");
 
+  m_completionEventQueue = iEventProvider->createEventQueue( {Argus::EVENT_TYPE_CAPTURE_COMPLETE });
+  assert(m_completionEventQueue);
+
   // Create the OutputStreamSettings object for an EGL OutputStream
   Argus::UniqueObj<Argus::OutputStreamSettings> streamSettings(iCaptureSession->createOutputStreamSettings(Argus::STREAM_TYPE_EGL));
   Argus::IEGLOutputStreamSettings *iEGLOutputStreamSettings = Argus::interface_cast<Argus::IEGLOutputStreamSettings>(streamSettings);
@@ -167,9 +181,32 @@ ArgusCamera::~ArgusCamera() {
 }
 
 bool ArgusCamera::readFrame() {
+  static uint32_t s_frameCounter = 0;
+  ++s_frameCounter;
 
-  // TODO service CaptureSession event queue and wait for capture completed event here
+  static boost::accumulators::accumulator_set<double, boost::accumulators::stats<
+        boost::accumulators::tag::min,
+        boost::accumulators::tag::max,
+        boost::accumulators::tag::mean,
+        boost::accumulators::tag::median
+    > > s_frameWaitTimeStats;
+
+
+  // Service CaptureSession event queue and wait for capture completed event here
   // that should be able to smooth out some of the jitter without missing frames
+  uint64_t eventWaitStart = currentTimeNs();
+  Argus::interface_cast<Argus::IEventProvider>(m_captureSession)->waitForEvents(m_completionEventQueue, m_targetCaptureIntervalNs / 2);
+  uint64_t eventWaitEnd = currentTimeNs();
+  s_frameWaitTimeStats(static_cast<double>(eventWaitEnd - eventWaitStart) / 1000000.0);
+
+  if ((s_frameCounter & 0x7f) == 0x7f) {
+    printf("Frame wait-time: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
+      boost::accumulators::min(s_frameWaitTimeStats),
+      boost::accumulators::max(s_frameWaitTimeStats),
+      boost::accumulators::mean(s_frameWaitTimeStats),
+      boost::accumulators::median(s_frameWaitTimeStats));
+      s_frameWaitTimeStats = {};
+  }
 
   bool res = true;
   for (size_t streamIdx = 0; streamIdx < m_eglStreams.size(); ++streamIdx) {

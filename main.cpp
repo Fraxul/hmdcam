@@ -170,7 +170,7 @@ cv::Mat stereoDisparityToDepth;
 cv::Rect stereoValidROI[2];
 
 
-uint64_t currentTimeNs() {
+static inline uint64_t currentTimeNs() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
