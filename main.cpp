@@ -16,6 +16,7 @@
 #include <boost/accumulators/statistics/max.hpp>
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/mean.hpp>
+#include <boost/accumulators/statistics/rolling_mean.hpp>
 #include <boost/chrono/duration.hpp>
 #include <boost/chrono/system_clocks.hpp>
 
@@ -292,31 +293,6 @@ static void init_ogl() {
     ndcQuadVertexLayout)),
     tristripPipelineDescriptor);
 
-}
-
-static void update_fps() {
-   static int frame_count = 0;
-   static long long time_start = 0;
-   long long time_now;
-   struct timeval te;
-   float fps;
-
-   frame_count++;
-
-   gettimeofday(&te, NULL);
-   time_now = te.tv_sec * 1000LL + te.tv_usec / 1000;
-
-   if (time_start == 0)
-   {
-      time_start = time_now;
-   }
-   else if (time_now - time_start > 5000)
-   {
-      fps = (float) frame_count / ((time_now - time_start) / 1000.0);
-      frame_count = 0;
-      time_start = time_now;
-      fprintf(stderr, "%3.2f FPS\n", fps);
-   }
 }
 
 static bool want_quit = false;
@@ -1094,13 +1070,18 @@ retryStereoCalibration:
         boost::accumulators::tag::median
       > > captureLatency;
 
-    uint64_t previousFrameTimestamp = 0;
+    uint64_t previousCaptureTimestamp = 0;
     boost::accumulators::accumulator_set<double, boost::accumulators::stats<
         boost::accumulators::tag::min,
         boost::accumulators::tag::max,
         boost::accumulators::tag::mean,
         boost::accumulators::tag::median
       > > captureInterval;
+
+    uint64_t previousFrameTimestamp = 0;
+    boost::accumulators::accumulator_set<double, boost::accumulators::stats<
+        boost::accumulators::tag::rolling_mean
+      > > frameInterval(boost::accumulators::tag::rolling_window::window_size = 1024);
 
     while (!want_quit) {
       ++frameCounter;
@@ -1123,24 +1104,13 @@ retryStereoCalibration:
       }
 
       stereoCamera->readFrame();
-      {
-        uint64_t now_ns = currentTimeNs();
-        // With synchronized capture enabled, sensorTimestamp(0) and sensorTimestamp(1) should be identical, so we just compare to sensorTimestamp(0)
-        uint64_t timestamp = stereoCamera->sensorTimestamp(0);
-        uint64_t latency_ns = 0;
-        if (timestamp < now_ns) // prevent wraparound on error
-          latency_ns = now_ns - timestamp;
 
-        double latency_ms = static_cast<double>(latency_ns) / 1000000.0;
-        captureLatency(latency_ms);
-
-        if (previousFrameTimestamp) {
-          double interval_ms = static_cast<double>(timestamp - previousFrameTimestamp) / 1000000.0;
-          captureInterval(interval_ms);
-        }
-        previousFrameTimestamp = timestamp;
-
+      if (previousCaptureTimestamp) {
+        double interval_ms = static_cast<double>(stereoCamera->sensorTimestamp(0) - previousCaptureTimestamp) / 1000000.0;
+        captureInterval(interval_ms);
       }
+      previousCaptureTimestamp = stereoCamera->sensorTimestamp(0);
+
 
       if ((frameCounter & 0x7fUL) == 0) {
         printf("Capture latency: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
@@ -1156,6 +1126,11 @@ retryStereoCalibration:
           boost::accumulators::max(captureInterval),
           boost::accumulators::mean(captureInterval),
           boost::accumulators::median(captureInterval));
+
+        printf("Frame interval: % .6f ms (% .6f fps)\n",
+          static_cast<double>(boost::accumulators::rolling_mean(frameInterval)) / 1000000.0,
+          1000000000.0 / static_cast<double>(boost::accumulators::rolling_mean(frameInterval)));
+        //printf("Frame interval: %f ns\n", boost::accumulators::rolling_mean(frameInterval));
 
         captureInterval = {};
 
@@ -1196,7 +1171,28 @@ retryStereoCalibration:
       }
 
       renderHMDFrame();
-      update_fps();
+      {
+        uint64_t thisFrameTimestamp = currentTimeNs();
+        if (previousFrameTimestamp) {
+          uint64_t interval = thisFrameTimestamp - previousFrameTimestamp;
+          //if ((frameCounter & 0xff)  == 0xff) {
+          //  printf("raw interval %lu\n", interval);
+          //}
+          frameInterval(interval);
+
+          // Update the target capture interval periodically
+#if 0
+          if ((frameCounter & 0x1f) == 0x1f) {
+            stereoCamera->setTargetCaptureIntervalNs(boost::accumulators::rolling_mean(frameInterval));
+          }
+#endif
+
+        }
+
+        captureLatency(static_cast<double>(thisFrameTimestamp - stereoCamera->sensorTimestamp(0)) / 1000000.0);
+
+        previousFrameTimestamp = thisFrameTimestamp;
+      }
     } // Camera rendering loop
   }
 quit:
