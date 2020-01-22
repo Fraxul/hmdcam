@@ -168,9 +168,24 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
   // we'll recompute it later once we start getting back capture timestamps.
   setCaptureDurationNs(m_targetCaptureIntervalNs);
 
-  // Start a repeating capture
-  if (iCaptureSession->repeat(m_captureRequest) != Argus::STATUS_OK)
-    die("Failed to start repeat capture request");
+  m_captureIsRepeating = false;
+}
+
+void ArgusCamera::setRepeatCapture(bool value) {
+  if (m_captureIsRepeating == value)
+    return;
+
+  m_captureIsRepeating = value;
+
+  Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSession);
+  if (m_captureIsRepeating) {
+    // Start a repeating capture
+    if (iCaptureSession->repeat(m_captureRequest) != Argus::STATUS_OK)
+      die("Failed to start repeat capture request");
+  } else {
+    iCaptureSession->stopRepeat();
+    iCaptureSession->waitForIdle();
+  }
 }
 
 ArgusCamera::~ArgusCamera() {
@@ -191,21 +206,31 @@ bool ArgusCamera::readFrame() {
         boost::accumulators::tag::median
     > > s_frameWaitTimeStats;
 
+  if (!m_captureIsRepeating) {
+    Argus::Status status;
+    Argus::interface_cast<Argus::ICaptureSession>(m_captureSession)->capture(m_captureRequest, Argus::TIMEOUT_INFINITE, &status);
+    if (status != Argus::STATUS_OK)
+      die("ArgusCamera::readFrame(): Failed to request capture");
+  }
+
 
   // Service CaptureSession event queue and wait for capture completed event here
   // that should be able to smooth out some of the jitter without missing frames
   uint64_t eventWaitStart = currentTimeNs();
   Argus::interface_cast<Argus::IEventProvider>(m_captureSession)->waitForEvents(m_completionEventQueue, m_targetCaptureIntervalNs / 2);
   uint64_t eventWaitEnd = currentTimeNs();
-  s_frameWaitTimeStats(static_cast<double>(eventWaitEnd - eventWaitStart) / 1000000.0);
 
-  if ((s_frameCounter & 0x7f) == 0x7f) {
-    printf("Frame wait-time: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
-      boost::accumulators::min(s_frameWaitTimeStats),
-      boost::accumulators::max(s_frameWaitTimeStats),
-      boost::accumulators::mean(s_frameWaitTimeStats),
-      boost::accumulators::median(s_frameWaitTimeStats));
-      s_frameWaitTimeStats = {};
+  if (m_captureIsRepeating) {
+    s_frameWaitTimeStats(static_cast<double>(eventWaitEnd - eventWaitStart) / 1000000.0);
+
+    if ((s_frameCounter & 0x7f) == 0x7f) {
+      printf("Frame wait-time: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
+        boost::accumulators::min(s_frameWaitTimeStats),
+        boost::accumulators::max(s_frameWaitTimeStats),
+        boost::accumulators::mean(s_frameWaitTimeStats),
+        boost::accumulators::median(s_frameWaitTimeStats));
+        s_frameWaitTimeStats = {};
+    }
   }
 
   bool res = true;
@@ -232,7 +257,7 @@ bool ArgusCamera::readFrame() {
     m_sensorTimestamps[streamIdx] = iMetadata->getSensorTimestamp();
   }
 
-  if (((++m_samplesAtCurrentDuration) > 8) && m_previousSensorTimestampNs) {
+  if (m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > 8) && m_previousSensorTimestampNs)) {
     uint64_t thisCaptureDuration = m_sensorTimestamps[0] - m_previousSensorTimestampNs;
     if ((static_cast<double>(thisCaptureDuration) * 1.5) > boost::accumulators::rolling_mean(m_captureIntervalStats)) {
       // Throw away outlier -- we probably missed a frame and got double duration
@@ -278,9 +303,6 @@ void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {
 }
 
 void ArgusCamera::stop() {
-  // Stop the repeating request and signal end of stream to stop the rendering thread.
-  Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSession);
-  iCaptureSession->stopRepeat();
-  iCaptureSession->waitForIdle();
+  setRepeatCapture(false);
 }
 

@@ -28,6 +28,8 @@ public:
   uint64_t targetCaptureIntervalNs() const { return m_targetCaptureIntervalNs; }
   void setTargetCaptureIntervalNs(uint64_t value) { m_targetCaptureIntervalNs = value; }
 
+  void setRepeatCapture(bool);
+
 private:
   EGLDisplay m_display;
   EGLContext m_context;
@@ -36,6 +38,7 @@ private:
   std::vector<RHIEGLStreamSurfaceGL::ptr> m_textures;
   std::vector<EGLStreamKHR> m_eglStreams;
   unsigned int m_streamWidth, m_streamHeight;
+  bool m_captureIsRepeating;
 
   uint64_t m_targetCaptureIntervalNs;
 

@@ -1061,6 +1061,8 @@ retryStereoCalibration:
   }
 
   {
+    stereoCamera->setRepeatCapture(true);
+
     // Camera rendering mode
     uint64_t frameCounter = 0;
     boost::accumulators::accumulator_set<double, boost::accumulators::stats<
