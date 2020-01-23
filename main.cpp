@@ -715,6 +715,56 @@ retryIntrinsicCalibration:
           printf("Camera intrinsic calibration failed: %s\n", ex.what());
           goto retryIntrinsicCalibration;
         }
+
+        // Show a preview of the intrinsic calibration and give the option to retry or continue
+        {
+          RHISurface::ptr tempMask = rhi()->newTexture2D(4, 4, RHISurfaceDescriptor(kSurfaceFormat_R8));
+          uint8_t tempMaskData[16];
+          memset(tempMaskData, 0xff, 16);
+          rhi()->loadTextureData(tempMask, kVertexElementTypeUByte1N, tempMaskData);
+
+          while (!want_quit) {
+            if (testButton(kButtonLeft)) {
+              goto retryIntrinsicCalibration;
+            }
+            if (testButton(kButtonRight)) {
+              // Calibration accepted by user
+              break;
+            }
+
+            stereoCamera->readFrame();
+
+            for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+              rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+              rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+
+              rhi()->bindRenderPipeline(camUndistortMaskPipeline);
+              rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx));
+              rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx]);
+              rhi()->loadTexture(ksMaskTex, tempMask);
+
+              // coordsys right now: -X = left, -Z = into screen
+              // (camera is at the origin)
+              const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+              const float scaleFactor = 5.0f;
+              glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
+              glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+
+              NDCClippedQuadUniformBlock ub;
+              ub.modelViewProjection = mvp;
+              ub.minUV = glm::vec2(0.0f);
+              ub.maxUV = glm::vec2(1.0f);
+
+              rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+
+              rhi()->drawNDCQuad();
+
+              rhi()->endRenderPass(eyeRT[eyeIndex]);
+            }
+            renderHMDFrame();
+          } // Preview rendering
+        }
+
       } // Per-camera calibration loop
 
     } // Individual camera calibration
