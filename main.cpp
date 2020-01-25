@@ -115,6 +115,7 @@ FxAtomicString ksNDCClippedQuadUniformBlock("NDCClippedQuadUniformBlock");
 RHIRenderPipeline::ptr camTexturedQuadPipeline;
 RHIRenderPipeline::ptr camOverlayPipeline;
 RHIRenderPipeline::ptr camOverlayStereoPipeline;
+RHIRenderPipeline::ptr camOverlayStereoUndistortPipeline;
 RHIRenderPipeline::ptr camUndistortMaskPipeline;
 RHIRenderPipeline::ptr camGreyscalePipeline;
 RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
@@ -161,13 +162,15 @@ float scaleFactor = 4.3f;
 ArgusCamera* stereoCamera;
 RHISurface::ptr cameraDistortionMap[2];
 RHISurface::ptr cameraMask[2];
-cv::Mat cameraMatrix[2];
+cv::Mat cameraIntrinsicMatrix[2]; // From calibration
 cv::Mat distCoeffs[2];
+cv::Mat cameraOptimizedMatrix[2]; // Computed by cv::getOptimalNewCameraMatrix from cameraIntrinsicMatrix and distCoeffs
 
 cv::Mat stereoRotation, stereoTranslation; // Calibrated
 cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify
 cv::Mat stereoDisparityToDepth;
 cv::Rect stereoValidROI[2];
+static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_32FC1);
 
 
 static inline uint64_t currentTimeNs() {
@@ -180,12 +183,23 @@ void updateCameraDistortionMap(size_t cameraIdx, bool useStereoCalibration)  {
   cv::Size imageSize = cv::Size(s_cameraWidth, s_cameraHeight);
   float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels
   cv::Mat map1, map2;
+  cameraOptimizedMatrix[cameraIdx] = cv::getOptimalNewCameraMatrix(cameraIntrinsicMatrix[cameraIdx], distCoeffs[cameraIdx], imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
+  cv::initUndistortRectifyMap(cameraIntrinsicMatrix[cameraIdx], distCoeffs[cameraIdx], cv::noArray(), cameraOptimizedMatrix[cameraIdx], imageSize, CV_32F, map1, map2);
+
   if (useStereoCalibration) {
-    cv::initUndistortRectifyMap(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], stereoRectification[cameraIdx], stereoProjection[cameraIdx], imageSize, CV_32F, map1, map2);
-  } else {
-    cv::Mat newCameraMatrix = cv::getOptimalNewCameraMatrix(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
-    cv::initUndistortRectifyMap(cameraMatrix[cameraIdx], distCoeffs[cameraIdx], cv::noArray(), newCameraMatrix, imageSize, CV_32F, map1, map2);
+    cv::Mat stereo_map1, stereo_map2;
+
+    // Compute the stereo remap and apply it on top of the intrinsic distortion remap layer
+    cv::initUndistortRectifyMap(cameraOptimizedMatrix[cameraIdx], distCoeffs[cameraIdx], stereoRectification[cameraIdx], stereoProjection[cameraIdx], imageSize, CV_32F, stereo_map1, stereo_map2);
+
+    cv::Mat remap1, remap2;
+    cv::remap(map1, remap1, stereo_map1, stereo_map2, cv::INTER_LINEAR);
+    cv::remap(map2, remap2, stereo_map1, stereo_map2, cv::INTER_LINEAR);
+
+    map1 = remap1;
+    map2 = remap2;
   }
+
   // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc)
 
   // Combine the maps into a buffer we can upload to opengl. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
@@ -258,6 +272,15 @@ static void init_ogl() {
       ndcQuadVertexLayout);
     desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
     camOverlayStereoPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
+
+  {
+    RHIShaderDescriptor desc(
+      "shaders/ndcQuadXf.vtx.glsl",
+      "shaders/camOverlayStereoUndistort.frag.glsl",
+      ndcQuadVertexLayout);
+    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+    camOverlayStereoUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
   {
@@ -387,10 +410,15 @@ void renderHMDFrame() {
   rhi()->swapBuffers(windowRenderTarget);
 }
 
-cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt) {
+cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, bool undistort) {
 
   rhi()->beginRenderPass(rt, kLoadInvalidate);
-  rhi()->bindRenderPipeline(camGreyscalePipeline);
+  if (undistort) {
+    rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
+    rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx]);
+  } else {
+    rhi()->bindRenderPipeline(camGreyscalePipeline);
+  }
   rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx));
   rhi()->drawNDCQuad();
   rhi()->endRenderPass(rt);
@@ -526,12 +554,12 @@ int main(int argc, char* argv[]) {
       cv::FileStorage fs("calibration.yml", cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
       if (fs.isOpened()) {
         try {
-          fs["camera0_matrix"] >> cameraMatrix[0];
-          fs["camera1_matrix"] >> cameraMatrix[1];
+          fs["camera0_matrix"] >> cameraIntrinsicMatrix[0];
+          fs["camera1_matrix"] >> cameraIntrinsicMatrix[1];
           fs["camera0_distortionCoeffs"] >> distCoeffs[0];
           fs["camera1_distortionCoeffs"] >> distCoeffs[1];
 
-          if (!(cameraMatrix[0].empty() || cameraMatrix[1].empty() || distCoeffs[0].empty() || distCoeffs[1].empty())) {
+          if (!(cameraIntrinsicMatrix[0].empty() || cameraIntrinsicMatrix[1].empty() || distCoeffs[0].empty() || distCoeffs[1].empty())) {
             printf("Loaded camera intrinsic calibration data from file\n");
             // Build initial intrinsic-only distortion maps
             updateCameraDistortionMap(0, false);
@@ -582,7 +610,7 @@ retryIntrinsicCalibration:
           bool found = false;
 
           stereoCamera->readFrame();
-          cv::Mat viewFullRes = captureGreyscale(cameraIdx, fullGreyTex, fullGreyRT);
+          cv::Mat viewFullRes = captureGreyscale(cameraIdx, fullGreyTex, fullGreyRT, /*undistort=*/false);
 
 
           std::vector<std::vector<cv::Point2f> > corners, rejected;
@@ -691,22 +719,22 @@ retryIntrinsicCalibration:
           float aspectRatio = 1.0f;
           int flags = cv::CALIB_FIX_PRINCIPAL_POINT | cv::CALIB_FIX_ASPECT_RATIO;
 
-          cameraMatrix[cameraIdx] = cv::Mat::eye(3, 3, CV_64F);
+          cameraIntrinsicMatrix[cameraIdx] = cv::Mat::eye(3, 3, CV_64F);
           if( flags & cv::CALIB_FIX_ASPECT_RATIO )
-              cameraMatrix[cameraIdx].at<double>(0,0) = aspectRatio;
+              cameraIntrinsicMatrix[cameraIdx].at<double>(0,0) = aspectRatio;
           distCoeffs[cameraIdx] = cv::Mat::zeros(8, 1, CV_64F);
 
 
           double rms = cv::aruco::calibrateCameraCharuco(allCharucoCorners, allCharucoIds,
                                          s_charucoBoard, imageSize,
-                                         cameraMatrix[cameraIdx], distCoeffs[cameraIdx],
+                                         cameraIntrinsicMatrix[cameraIdx], distCoeffs[cameraIdx],
                                          cv::noArray(), cv::noArray(), stdDeviations, cv::noArray(),
                                          perViewErrors, flags);
 
 
           printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);
           std::cout << "Camera " << cameraIdx << " Per-view error: " << std::endl << perViewErrors << std::endl;
-          std::cout << "Camera " << cameraIdx << " Matrix: " << std::endl << cameraMatrix[cameraIdx] << std::endl;
+          std::cout << "Camera " << cameraIdx << " Matrix: " << std::endl << cameraIntrinsicMatrix[cameraIdx] << std::endl;
           std::cout << "Camera " << cameraIdx << " Distortion coefficients: " << std::endl << distCoeffs[cameraIdx] << std::endl;
 
           // Build initial intrinsic-only distortion map
@@ -776,8 +804,8 @@ retryIntrinsicCalibration:
 
     if (needIntrinsicCalibration) {
       cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
-      fs.write("camera0_matrix", cameraMatrix[0]);
-      fs.write("camera1_matrix", cameraMatrix[1]);
+      fs.write("camera0_matrix", cameraIntrinsicMatrix[0]);
+      fs.write("camera1_matrix", cameraIntrinsicMatrix[1]);
       fs.write("camera0_distortionCoeffs", distCoeffs[0]);
       fs.write("camera1_distortionCoeffs", distCoeffs[1]);
       printf("Saved updated intrinsic calibration data\n");
@@ -814,9 +842,10 @@ retryStereoCalibration:
 
         stereoCamera->readFrame();
 
+        // Capture and undistort camera views.
         cv::Mat viewFullRes[2];
-        viewFullRes[0] = captureGreyscale(0, fullGreyTex[0], fullGreyRT[0]);
-        viewFullRes[1] = captureGreyscale(1, fullGreyTex[1], fullGreyRT[1]);
+        viewFullRes[0] = captureGreyscale(0, fullGreyTex[0], fullGreyRT[0], /*undistort=*/true);
+        viewFullRes[1] = captureGreyscale(1, fullGreyTex[1], fullGreyRT[1], /*undistort=*/true);
 
 
         std::vector<std::vector<cv::Point2f> > corners[2], rejected[2];
@@ -826,13 +855,14 @@ retryStereoCalibration:
         std::vector<int> currentCharucoCornerIds[2];
 
         // Run ArUco marker detection
+        // Note that we don't feed the camera distortion parameters to the aruco functions here, since the views we're operating on have already been undistorted.
         for (size_t viewIdx = 0; viewIdx < 2; ++viewIdx) {
-          cv::aruco::detectMarkers(viewFullRes[viewIdx], s_charucoDictionary, corners[viewIdx], ids[viewIdx], cv::aruco::DetectorParameters::create(), rejected[viewIdx], cameraMatrix[viewIdx], distCoeffs[viewIdx]);
-          cv::aruco::refineDetectedMarkers(viewFullRes[viewIdx], s_charucoBoard, corners[viewIdx], ids[viewIdx], rejected[viewIdx], cameraMatrix[viewIdx], distCoeffs[viewIdx]);
+          cv::aruco::detectMarkers(viewFullRes[viewIdx], s_charucoDictionary, corners[viewIdx], ids[viewIdx], cv::aruco::DetectorParameters::create(), rejected[viewIdx], cameraOptimizedMatrix[viewIdx], zeroDistortion);
+          cv::aruco::refineDetectedMarkers(viewFullRes[viewIdx], s_charucoBoard, corners[viewIdx], ids[viewIdx], rejected[viewIdx], cameraOptimizedMatrix[viewIdx], zeroDistortion);
 
           // Find chessboard corners using detected markers
           if (!ids[viewIdx].empty()) {
-            cv::aruco::interpolateCornersCharuco(corners[viewIdx], ids[viewIdx], viewFullRes[viewIdx], s_charucoBoard, currentCharucoCornerPoints[viewIdx], currentCharucoCornerIds[viewIdx], cameraMatrix[viewIdx], distCoeffs[viewIdx]);
+            cv::aruco::interpolateCornersCharuco(corners[viewIdx], ids[viewIdx], viewFullRes[viewIdx], s_charucoBoard, currentCharucoCornerPoints[viewIdx], currentCharucoCornerIds[viewIdx], cameraOptimizedMatrix[viewIdx], zeroDistortion);
           }
         }
 
@@ -952,11 +982,13 @@ retryStereoCalibration:
           rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
           rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
-          rhi()->bindRenderPipeline(camOverlayStereoPipeline);
+          rhi()->bindRenderPipeline(camOverlayStereoUndistortPipeline);
           rhi()->loadTexture(ksLeftCameraTex, stereoCamera->rgbTexture(0));
           rhi()->loadTexture(ksRightCameraTex, stereoCamera->rgbTexture(1));
           rhi()->loadTexture(ksLeftOverlayTex, feedbackTex[0]);
           rhi()->loadTexture(ksRightOverlayTex, feedbackTex[1]);
+          rhi()->loadTexture(ksLeftDistortionMap, cameraDistortionMap[0]);
+          rhi()->loadTexture(ksRightDistortionMap, cameraDistortionMap[1]);
 
           // coordsys right now: -X = left, -Z = into screen
           // (camera is at the origin)
@@ -985,10 +1017,12 @@ retryStereoCalibration:
       cv::Mat perViewErrors;
 
       try {
+        // Note the use of the zero distortion matrix and optimized camera matrix, since we already corrected for individual camera distortions when capturing the images.
+
         double rms = cv::stereoCalibrate(objectPoints,
           calibrationPoints[0], calibrationPoints[1],
-          cameraMatrix[0], distCoeffs[0],
-          cameraMatrix[1], distCoeffs[1],
+          cameraOptimizedMatrix[0], zeroDistortion,
+          cameraOptimizedMatrix[1], zeroDistortion,
           cv::Size(s_cameraWidth, s_cameraHeight),
           stereoRotation, stereoTranslation, E, F, perViewErrors, cv::CALIB_FIX_INTRINSIC);
 
@@ -1007,9 +1041,10 @@ retryStereoCalibration:
     // Compute rectification/projection transforms from the stereo calibration data
     float alpha = -1.0f;  //0.25;
 
+    // Using the optimized camera matrix and zero distortion matrix again to create a rectification remap that can be layered on top of the intrinsic distortion remap
     cv::stereoRectify(
-      cameraMatrix[0], distCoeffs[0],
-      cameraMatrix[1], distCoeffs[1],
+      cameraOptimizedMatrix[0], zeroDistortion,
+      cameraOptimizedMatrix[1], zeroDistortion,
       cv::Size(s_cameraWidth, s_cameraHeight),
       stereoRotation, stereoTranslation,
       stereoRectification[0], stereoRectification[1],
@@ -1035,8 +1070,8 @@ retryStereoCalibration:
     // Save calibration data if it was updated this run
     if (needStereoCalibration || needIntrinsicCalibration) {
       cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
-      fs.write("camera0_matrix", cameraMatrix[0]);
-      fs.write("camera1_matrix", cameraMatrix[1]);
+      fs.write("camera0_matrix", cameraIntrinsicMatrix[0]);
+      fs.write("camera1_matrix", cameraIntrinsicMatrix[1]);
       fs.write("camera0_distortionCoeffs", distCoeffs[0]);
       fs.write("camera1_distortionCoeffs", distCoeffs[1]);
       fs.write("stereoRotation", stereoRotation);
@@ -1045,7 +1080,7 @@ retryStereoCalibration:
     }
 
 
-    // Compute new distortion maps with the now-valid stereo calibration
+    // Compute new distortion maps with the now-valid stereo calibration.
     updateCameraDistortionMap(0, true);
     updateCameraDistortionMap(1, true);
 
