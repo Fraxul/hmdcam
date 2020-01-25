@@ -1053,9 +1053,27 @@ retryStereoCalibration:
       /*flags=*/cv::CALIB_ZERO_DISPARITY, alpha, cv::Size(),
       &stereoValidROI[0], &stereoValidROI[1]);
 
-    std::cout << "Rectification matrices:" << std::endl << stereoRectification[0] << std::endl << stereoRectification[1] << std::endl;
-    std::cout << "Projection matrices:" << std::endl << stereoProjection[0] << std::endl << stereoProjection[1] << std::endl;
-    std::cout << "Valid image regions:" << std::endl << stereoValidROI[0] << std::endl << stereoValidROI[1] << std::endl;
+    // Camera info dump
+    for (size_t cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
+      printf("\n ===== Camera %zu ===== \n", cameraIdx);
+
+      std::cout << "* Rectification matrix:" << std::endl << stereoRectification[cameraIdx] << std::endl;
+      std::cout << "* Projection matrix:" << std::endl << stereoProjection[cameraIdx] << std::endl;
+      std::cout << "* Valid image region:" << std::endl << stereoValidROI[cameraIdx] << std::endl;
+
+
+      const double apertureSize = 6.35; // mm, 1/4" sensor
+      double fovX, fovY, focalLength, aspectRatio;
+      cv::Point2d principalPoint;
+
+      cv::calibrationMatrixValues(cameraIntrinsicMatrix[cameraIdx], cv::Size(s_cameraWidth, s_cameraHeight), apertureSize, apertureSize, fovX, fovY, focalLength, principalPoint, aspectRatio);
+      printf("* Intrinsic matrix: FOV %.1f x %.1f deg, approx focal length %.2fmm\n", fovX, fovY, focalLength);
+      cv::calibrationMatrixValues(cameraOptimizedMatrix[cameraIdx], cv::Size(s_cameraWidth, s_cameraHeight), apertureSize, apertureSize, fovX, fovY, focalLength, principalPoint, aspectRatio);
+      printf("* Optimized matrix: FOV %.1f x %.1f deg\n", fovX, fovY);
+      cv::calibrationMatrixValues(cv::Mat(stereoProjection[cameraIdx], cv::Rect(0, 0, 3, 3)), cv::Size(s_cameraWidth, s_cameraHeight), apertureSize, apertureSize, fovX, fovY, focalLength, principalPoint, aspectRatio);
+      printf("* Stereo projection matrix: FOV %.1f x %.1f deg\n", fovX, fovY);
+    }
+    printf("\n ==================== \n");
 
     // Check the valid image regions for a failed stereo calibration. A bad calibration will usually result in a valid ROI for one or both views with a 0-pixel dimension.
 /*
