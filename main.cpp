@@ -415,11 +415,11 @@ cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget:
   rhi()->beginRenderPass(rt, kLoadInvalidate);
   if (undistort) {
     rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
-    rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx]);
+    rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
   } else {
     rhi()->bindRenderPipeline(camGreyscalePipeline);
   }
-  rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx));
+  rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
   rhi()->drawNDCQuad();
   rhi()->endRenderPass(rt);
 
@@ -685,8 +685,8 @@ retryIntrinsicCalibration:
             rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
             rhi()->bindRenderPipeline(camOverlayPipeline);
-            rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx));
-            rhi()->loadTexture(ksOverlayTex, feedbackTex);
+            rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+            rhi()->loadTexture(ksOverlayTex, feedbackTex, linearClampSampler);
 
             // coordsys right now: -X = left, -Z = into screen
             // (camera is at the origin)
@@ -767,9 +767,9 @@ retryIntrinsicCalibration:
               rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
               rhi()->bindRenderPipeline(camUndistortMaskPipeline);
-              rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx));
-              rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx]);
-              rhi()->loadTexture(ksMaskTex, tempMask);
+              rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+              rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
+              rhi()->loadTexture(ksMaskTex, tempMask, linearClampSampler);
 
               // coordsys right now: -X = left, -Z = into screen
               // (camera is at the origin)
@@ -983,12 +983,12 @@ retryStereoCalibration:
           rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
           rhi()->bindRenderPipeline(camOverlayStereoUndistortPipeline);
-          rhi()->loadTexture(ksLeftCameraTex, stereoCamera->rgbTexture(0));
-          rhi()->loadTexture(ksRightCameraTex, stereoCamera->rgbTexture(1));
-          rhi()->loadTexture(ksLeftOverlayTex, feedbackTex[0]);
-          rhi()->loadTexture(ksRightOverlayTex, feedbackTex[1]);
-          rhi()->loadTexture(ksLeftDistortionMap, cameraDistortionMap[0]);
-          rhi()->loadTexture(ksRightDistortionMap, cameraDistortionMap[1]);
+          rhi()->loadTexture(ksLeftCameraTex, stereoCamera->rgbTexture(0), linearClampSampler);
+          rhi()->loadTexture(ksRightCameraTex, stereoCamera->rgbTexture(1), linearClampSampler);
+          rhi()->loadTexture(ksLeftOverlayTex, feedbackTex[0], linearClampSampler);
+          rhi()->loadTexture(ksRightOverlayTex, feedbackTex[1], linearClampSampler);
+          rhi()->loadTexture(ksLeftDistortionMap, cameraDistortionMap[0], linearClampSampler);
+          rhi()->loadTexture(ksRightDistortionMap, cameraDistortionMap[1], linearClampSampler);
 
           // coordsys right now: -X = left, -Z = into screen
           // (camera is at the origin)
@@ -1134,7 +1134,7 @@ retryStereoCalibration:
         rhi()->beginRenderPass(snapRT, kLoadInvalidate);
         // This pipeline flips the Y axis for OpenCV's coordinate system, which is the same as the PNG coordinate system
         rhi()->bindRenderPipeline(camGreyscalePipeline);
-        rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx));
+        rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
         rhi()->drawNDCQuad();
         rhi()->endRenderPass(snapRT);
 
@@ -1247,9 +1247,9 @@ retryStereoCalibration:
         rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
         rhi()->bindRenderPipeline(camUndistortMaskPipeline);
-        rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(eyeIndex));
-        rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[eyeIndex]);
-        rhi()->loadTexture(ksMaskTex, cameraMask[eyeIndex]);
+        rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(eyeIndex), linearClampSampler);
+        rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[eyeIndex], linearClampSampler);
+        rhi()->loadTexture(ksMaskTex, cameraMask[eyeIndex], linearClampSampler);
 
 
         // coordsys right now: -X = left, -Z = into screen
