@@ -120,16 +120,16 @@ RHIRenderPipeline::ptr camUndistortMaskPipeline;
 RHIRenderPipeline::ptr camGreyscalePipeline;
 RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 
-struct HMDDistortionUniformBlock {
-  glm::vec4 hmdWarpParam;
-  glm::vec4 aberr; // actually vec3, padded
-  glm::vec2 lensCenter;
-  glm::vec2 viewportScale;
-  float warpScale;
-  float pad2, pad3, pad4;
+struct ViveDistortionUniformBlock {
+  glm::vec4 coeffs[3];
+  glm::vec4 center;
+  float undistort_r2_cutoff;
+  float aspect_x_over_y;
+  float grow_for_undistort;
+  float pad4;
 };
-FxAtomicString ksHMDDistortionUniformBlock("HMDDistortionUniformBlock");
-RHIRenderPipeline::ptr hmdDistortionPipeline;
+FxAtomicString ksViveDistortionUniformBlock("ViveDistortionUniformBlock");
+RHIRenderPipeline::ptr viveDistortionPipeline;
 
 FxAtomicString ksImageTex("imageTex");
 FxAtomicString ksLeftCameraTex("leftCameraTex");
@@ -146,7 +146,7 @@ FxAtomicString ksMaskTex("maskTex");
 RHISurface::ptr eyeTex[2];
 RHIRenderTarget::ptr eyeRT[2];
 // per-eye distortion parameter buffers
-RHIBuffer::ptr hmdDistortionParams[2];
+RHIBuffer::ptr viveDistortionParams[2];
 
 // HMD info/state
 ohmd_context* hmdContext = NULL;
@@ -156,7 +156,8 @@ int eye_width, eye_height;
 bool rotate_screen = false;
 glm::mat4 eyeProjection[2];
 
-float scaleFactor = 4.3f;
+float scaleFactor = 2.1f;
+float stereoSeparationScale = 1.0f;
 
 // Camera info/state
 ArgusCamera* stereoCamera;
@@ -310,9 +311,9 @@ static void init_ogl() {
     camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
-  hmdDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
+  viveDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(
     "shaders/hmdDistortion.vtx.glsl",
-    "shaders/hmdDistortion.frag.glsl",
+    "shaders/viveDistortion.frag.glsl",
     ndcQuadVertexLayout)),
     tristripPipelineDescriptor);
 
@@ -330,50 +331,92 @@ static void signal_handler(int) {
 
 void recomputeHMDParameters() {
   float ipd;
-  glm::vec2 viewport_scale;
-  glm::vec4 distortion_coeffs;
-  glm::vec3 aberr_scale;
-  float sep;
-  glm::vec2 left_lens_center;
-  glm::vec2 right_lens_center;
-  float warp_scale;
-  float warp_adj;
+  //float sep;
 
   ohmd_device_getf(hmdDevice, OHMD_EYE_IPD, &ipd);
-  //viewport is half the screen
-  ohmd_device_getf(hmdDevice, OHMD_SCREEN_HORIZONTAL_SIZE, &(viewport_scale[0]));
-  viewport_scale[0] /= 2.0f;
-  ohmd_device_getf(hmdDevice, OHMD_SCREEN_VERTICAL_SIZE, &(viewport_scale[1]));
-  //distortion coefficients
-  ohmd_device_getf(hmdDevice, OHMD_UNIVERSAL_DISTORTION_K, &(distortion_coeffs[0]));
-  ohmd_device_getf(hmdDevice, OHMD_UNIVERSAL_ABERRATION_K, &(aberr_scale[0]));
-  //calculate lens centers (assuming the eye separation is the distance between the lens centers)
-  ohmd_device_getf(hmdDevice, OHMD_LENS_HORIZONTAL_SEPARATION, &sep);
-  ohmd_device_getf(hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(left_lens_center[1]));
-  ohmd_device_getf(hmdDevice, OHMD_LENS_VERTICAL_POSITION, &(right_lens_center[1]));
-  left_lens_center[0] = viewport_scale[0] - sep/2.0f;
-  right_lens_center[0] = sep/2.0f;
-  //assume calibration was for lens view to which ever edge of screen is further away from lens center
-  warp_scale = (left_lens_center[0] > right_lens_center[0]) ? left_lens_center[0] : right_lens_center[0];
-  warp_adj = 1.0f;
+  //ohmd_device_getf(hmdDevice, OHMD_LENS_HORIZONTAL_SEPARATION, &sep);
 
   // Setup projection matrices
-  ohmd_device_getf(hmdDevice, OHMD_LEFT_EYE_GL_PROJECTION_MATRIX, &(eyeProjection[0][0][0]));
-  ohmd_device_getf(hmdDevice, OHMD_RIGHT_EYE_GL_PROJECTION_MATRIX, &(eyeProjection[1][0][0]));
+  // TODO: read/compute this from the Vive config (look at how Monado does it)
+  glm::vec4 eyeFovs[2] = {
+    /*left, right, top, bottom*/
+    glm::vec4(-0.986542, 0.913441, 0.991224, -0.991224),
+    glm::vec4(-0.932634, 0.967350, 0.990125, -0.990125)
+  };
+
+  for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+    float projLeft = eyeFovs[eyeIdx][0];
+    float projRight = eyeFovs[eyeIdx][1];
+#if 0
+    float projTop = eyeFovs[eyeIdx][2];
+    float projBottom = eyeFovs[eyeIdx][3];
+#else
+    // flipped
+    float projBottom = eyeFovs[eyeIdx][2];
+    float projTop = eyeFovs[eyeIdx][3];
+#endif
+
+    float idx = 1.0f / (projRight - projLeft);
+    float idy = 1.0f / (projBottom - projTop);
+    float sx = projRight + projLeft;
+    float sy = projBottom + projTop;
+
+    float zNear = 1.0f;
+
+    eyeProjection[eyeIdx] = glm::mat4(
+      2.0f*idx,  0.0f,       0.0f,    0.0f,
+      0.0f,      2.0f*idy,   0.0f,    0.0f,
+      sx*idx,    sy*idy,     0.0f,   -1.0f,
+      0.0f,      0.0f,      zNear,    0.0f);
+  }
+
+  for (size_t i = 0; i < 2; ++i) {
+    printf("Projection matrix %zu:\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n\n", i,
+      eyeProjection[i][0][0], eyeProjection[i][0][1], eyeProjection[i][0][2], eyeProjection[i][0][3],
+      eyeProjection[i][1][0], eyeProjection[i][1][1], eyeProjection[i][1][2], eyeProjection[i][1][3],
+      eyeProjection[i][2][0], eyeProjection[i][2][1], eyeProjection[i][2][2], eyeProjection[i][2][3],
+      eyeProjection[i][3][0], eyeProjection[i][3][1], eyeProjection[i][3][2], eyeProjection[i][3][3]);
+  }
+
+
   // Cook the stereo separation transform into the projection matrices
-  // TODO stereo separation scale
-  eyeProjection[0] = eyeProjection[0] * glm::translate(glm::vec3(ipd *  10.0f, 0.0f, 0.0f));
-  eyeProjection[1] = eyeProjection[1] * glm::translate(glm::vec3(ipd * -10.0f, 0.0f, 0.0f));
+  // TODO correct eye offsets
+  eyeProjection[0] = eyeProjection[0] * glm::translate(glm::vec3(ipd *  stereoSeparationScale, 0.0f, 0.0f));
+  eyeProjection[1] = eyeProjection[1] * glm::translate(glm::vec3(ipd * -stereoSeparationScale, 0.0f, 0.0f));
 
-  for (size_t eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
-    HMDDistortionUniformBlock ub;
-    ub.hmdWarpParam = distortion_coeffs;
-    ub.aberr = glm::vec4(aberr_scale, 0.0f);
-    ub.lensCenter = (eyeIndex == 0 ? left_lens_center : right_lens_center);
-    ub.viewportScale = viewport_scale;
-    ub.warpScale = warp_scale * warp_adj;
+  // TODO read vive distortion parameters from JSON config instead of hard-coding them
+  // Note that the coeffs[] array is transposed from the storage of in the JSON config
+  // JSON stores { distortion_red : { coeffs : [rx, ry, rz, 0] }, distortion : { coeffs : [gx, gy, gz, 0] }, distortion_blue : { coeffs : [bx, by, bz, 0] } }
+  // Coeffs array is: {
+  // coeffs[0] = (rx, gx, bx, 0)
+  // coeffs[1] = (ry, gy, by, 0)
+  // coeffs[2] = (rz, gz, bz, 0)
+  // }
+  {
+    ViveDistortionUniformBlock ub;
+    ub.coeffs[0] = glm::vec4(-0.187709024978468, -0.2248243919182109, -0.2650347859647872, 0.0);
+    ub.coeffs[1] = glm::vec4(-0.08699418167995299, -0.02890679801668017, 0.03408880667124125, 0.0);
+    ub.coeffs[2] = glm::vec4(-0.008524150931075117, -0.04008145037518276, -0.07739435170293799, 0.0);
 
-    hmdDistortionParams[eyeIndex] = rhi()->newUniformBufferWithContents(&ub, sizeof(HMDDistortionUniformBlock));
+    ub.center = glm::vec4(0.0895289183308623, -0.005774193813369232, 0.0, 0.0); // distortion.center_x, distortion.center_y
+    ub.undistort_r2_cutoff = 1.114643216133118;
+    ub.aspect_x_over_y = 0.8999999761581421; // // physical_aspect_x_over_y, same for both sides
+    ub.grow_for_undistort = 0.6000000238418579;
+
+    viveDistortionParams[0] = rhi()->newUniformBufferWithContents(&ub, sizeof(ViveDistortionUniformBlock));
+  }
+
+  {
+    ViveDistortionUniformBlock ub;
+    ub.coeffs[0] = glm::vec4(-0.1850211958007479, -0.2200407667682694, -0.2690216561778251, 0.0);
+    ub.coeffs[1] = glm::vec4(-0.08403208842715496, -0.02952833754861919, 0.05386620639519943, 0.0);
+    ub.coeffs[2] = glm::vec4(-0.01036514909834557, -0.04015020276712449, -0.08959133710605897, 0.0);
+    ub.center = glm::vec4( -0.08759391576262035, -0.004206675752489539, 0.0, 0.0); // distortion.center_x, distortion.center_y
+    ub.undistort_r2_cutoff = 1.087415933609009;
+    ub.aspect_x_over_y = 0.8999999761581421; // // physical_aspect_x_over_y, same for both sides
+    ub.grow_for_undistort = 0.6000000238418579;
+
+    viveDistortionParams[1] = rhi()->newUniformBufferWithContents(&ub, sizeof(ViveDistortionUniformBlock));
   }
 }
 
@@ -398,9 +441,9 @@ void renderHMDFrame() {
       }
     }
 
-    rhi()->bindRenderPipeline(hmdDistortionPipeline);
-    rhi()->loadUniformBlock(ksHMDDistortionUniformBlock, hmdDistortionParams[eyeIndex]);
-    rhi()->loadTexture(ksImageTex, eyeTex[eyeIndex]);
+    rhi()->bindRenderPipeline(viveDistortionPipeline);
+    rhi()->loadUniformBlock(ksViveDistortionUniformBlock, viveDistortionParams[eyeIndex]);
+    rhi()->loadTexture(ksImageTex, eyeTex[eyeIndex], linearClampSampler);
 
     rhi()->drawNDCQuad();
   }
@@ -1206,6 +1249,24 @@ retryStereoCalibration:
         if (didChangeScale) {
           printf("New scale factor: %.3g\n", scaleFactor);
         }
+
+#if 0
+        bool didChangeStereoSeparation = false;
+        if (testButton(kButtonRight)) {
+          stereoSeparationScale += 0.1f;
+          didChangeStereoSeparation = true;
+        }
+        if (testButton(kButtonLeft)) {
+          stereoSeparationScale -= 0.1f;
+          didChangeStereoSeparation = true;
+        }
+
+        if (didChangeStereoSeparation) {
+          printf("New stereo separation scale: %.3g\n", stereoSeparationScale);
+          recomputeHMDParameters();
+        }
+#endif
+
       }
 
       stereoCamera->readFrame();
