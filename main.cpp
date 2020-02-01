@@ -78,11 +78,11 @@ const double s_cameraFramerate = 89.527;
 #define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
 
 // ChArUco target pattern config
-const cv::aruco::PREDEFINED_DICTIONARY_NAME s_charucoDictionaryName = cv::aruco::DICT_4X4_250;
+const cv::aruco::PREDEFINED_DICTIONARY_NAME s_charucoDictionaryName = cv::aruco::DICT_5X5_100;
 const unsigned int s_charucoBoardSquareCountX = 12;
 const unsigned int s_charucoBoardSquareCountY = 9;
-const float s_charucoBoardSquareSideLengthMeters = 0.020f;
-const float s_charucoBoardMarkerSideLengthMeters = 0.015f;
+const float s_charucoBoardSquareSideLengthMeters = 0.060f;
+const float s_charucoBoardMarkerSideLengthMeters = 0.045f;
 
 // Mapping of libargus camera device ID to index 0 (left) and 1 (right).
 #ifdef SWAP_CAMERA_EYES
