@@ -157,7 +157,7 @@ bool rotate_screen = false;
 glm::mat4 eyeProjection[2];
 
 float scaleFactor = 2.1f;
-float stereoSeparationScale = 1.0f;
+float stereoSeparationScale = 2.0f; // TODO: why? some of the Vive projection math is still wrong...
 
 // Camera info/state
 ArgusCamera* stereoCamera;
@@ -370,19 +370,18 @@ void recomputeHMDParameters() {
       0.0f,      0.0f,      zNear,    0.0f);
   }
 
+  // Cook the stereo separation transform into the projection matrices
+  // TODO correct eye offsets
+  eyeProjection[0] = eyeProjection[0] * glm::translate(glm::vec3(ipd *  stereoSeparationScale, 0.0f, 0.0f));
+  eyeProjection[1] = eyeProjection[1] * glm::translate(glm::vec3(ipd * -stereoSeparationScale, 0.0f, 0.0f));
+
   for (size_t i = 0; i < 2; ++i) {
-    printf("Projection matrix %zu:\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n\n", i,
+    printf("View-Projection matrix %zu:\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n\n", i,
       eyeProjection[i][0][0], eyeProjection[i][0][1], eyeProjection[i][0][2], eyeProjection[i][0][3],
       eyeProjection[i][1][0], eyeProjection[i][1][1], eyeProjection[i][1][2], eyeProjection[i][1][3],
       eyeProjection[i][2][0], eyeProjection[i][2][1], eyeProjection[i][2][2], eyeProjection[i][2][3],
       eyeProjection[i][3][0], eyeProjection[i][3][1], eyeProjection[i][3][2], eyeProjection[i][3][3]);
   }
-
-
-  // Cook the stereo separation transform into the projection matrices
-  // TODO correct eye offsets
-  eyeProjection[0] = eyeProjection[0] * glm::translate(glm::vec3(ipd *  stereoSeparationScale, 0.0f, 0.0f));
-  eyeProjection[1] = eyeProjection[1] * glm::translate(glm::vec3(ipd * -stereoSeparationScale, 0.0f, 0.0f));
 
   // TODO read vive distortion parameters from JSON config instead of hard-coding them
   // Note that the coeffs[] array is transposed from the storage of in the JSON config
