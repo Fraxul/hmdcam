@@ -592,6 +592,7 @@ int main(int argc, char* argv[]) {
   {
     bool needIntrinsicCalibration = true;
     bool needStereoCalibration = true;
+    bool calibrationMonoscopicFeedback = false;
     // Try reading calibration data from the file
     {
       cv::FileStorage fs("calibration.yml", cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
@@ -648,6 +649,9 @@ retryIntrinsicCalibration:
           if (testButton(kButtonDown)) {
             // Calibration finished
             break;
+          }
+          if (testButton(kButtonLeft)) {
+            calibrationMonoscopicFeedback = !calibrationMonoscopicFeedback;
           }
 
           bool found = false;
@@ -721,32 +725,52 @@ retryIntrinsicCalibration:
             allCharucoIds.push_back(currentCharucoIds);
           }
 
-          // Draw camera stream and feedback overlay to both eye RTs
-
-          for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+          if (calibrationMonoscopicFeedback) {
             rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-            rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+            rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
 
             rhi()->bindRenderPipeline(camOverlayPipeline);
             rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
             rhi()->loadTexture(ksOverlayTex, feedbackTex, linearClampSampler);
 
-            // coordsys right now: -X = left, -Z = into screen
-            // (camera is at the origin)
-            const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
-            const float scaleFactor = 5.0f;
-            glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
-            glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+            // Don't need a projection, just fill the screen with the feedback quad.
+            glm::mat4 mvp = glm::mat4(1.0f);
 
             NDCQuadUniformBlock ub;
             ub.modelViewProjection = mvp;
             rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
-
             rhi()->drawNDCQuad();
 
-            rhi()->endRenderPass(eyeRT[eyeIndex]);
+            rhi()->endRenderPass(windowRenderTarget);
+            rhi()->swapBuffers(windowRenderTarget);
+          } else {
+            // Draw camera stream and feedback overlay to both eye RTs
+
+            for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+              rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+              rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+
+              rhi()->bindRenderPipeline(camOverlayPipeline);
+              rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+              rhi()->loadTexture(ksOverlayTex, feedbackTex, linearClampSampler);
+
+              // coordsys right now: -X = left, -Z = into screen
+              // (camera is at the origin)
+              const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+              const float scaleFactor = 5.0f;
+              glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
+              glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+
+              NDCQuadUniformBlock ub;
+              ub.modelViewProjection = mvp;
+              rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+
+              rhi()->drawNDCQuad();
+
+              rhi()->endRenderPass(eyeRT[eyeIndex]);
+            }
+            renderHMDFrame();
           }
-          renderHMDFrame();
 
         }
 
@@ -881,6 +905,9 @@ retryStereoCalibration:
         if (testButton(kButtonDown)) {
           // Calibration finished
           break;
+        }
+        if (testButton(kButtonLeft)) {
+          calibrationMonoscopicFeedback = !calibrationMonoscopicFeedback;
         }
 
         stereoCamera->readFrame();
@@ -1019,11 +1046,9 @@ retryStereoCalibration:
         rhi()->loadTextureData(feedbackTex[1], kVertexElementTypeUByte4N, feedbackView[1].ptr(0));
 
 
-        // Draw camera stream and feedback overlay to both eye RTs
-
-        for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+        if (calibrationMonoscopicFeedback) {
           rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-          rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+          rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
 
           rhi()->bindRenderPipeline(camOverlayStereoUndistortPipeline);
           rhi()->loadTexture(ksLeftCameraTex, stereoCamera->rgbTexture(0), linearClampSampler);
@@ -1033,12 +1058,8 @@ retryStereoCalibration:
           rhi()->loadTexture(ksLeftDistortionMap, cameraDistortionMap[0], linearClampSampler);
           rhi()->loadTexture(ksRightDistortionMap, cameraDistortionMap[1], linearClampSampler);
 
-          // coordsys right now: -X = left, -Z = into screen
-          // (camera is at the origin)
-          const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
-          const float scaleFactor = 2.5f;
-          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth*2) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
-          glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+          // Don't need a projection, just fill the screen with the feedback quad.
+          glm::mat4 mvp = glm::mat4(1.0f);
 
           NDCQuadUniformBlock ub;
           ub.modelViewProjection = mvp;
@@ -1046,9 +1067,40 @@ retryStereoCalibration:
 
           rhi()->drawNDCQuad();
 
-          rhi()->endRenderPass(eyeRT[eyeIndex]);
+          rhi()->endRenderPass(windowRenderTarget);
+          rhi()->swapBuffers(windowRenderTarget);
+        } else {
+          // Draw camera stream and feedback overlay to both eye RTs
+
+          for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+            rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+
+            rhi()->bindRenderPipeline(camOverlayStereoUndistortPipeline);
+            rhi()->loadTexture(ksLeftCameraTex, stereoCamera->rgbTexture(0), linearClampSampler);
+            rhi()->loadTexture(ksRightCameraTex, stereoCamera->rgbTexture(1), linearClampSampler);
+            rhi()->loadTexture(ksLeftOverlayTex, feedbackTex[0], linearClampSampler);
+            rhi()->loadTexture(ksRightOverlayTex, feedbackTex[1], linearClampSampler);
+            rhi()->loadTexture(ksLeftDistortionMap, cameraDistortionMap[0], linearClampSampler);
+            rhi()->loadTexture(ksRightDistortionMap, cameraDistortionMap[1], linearClampSampler);
+
+            // coordsys right now: -X = left, -Z = into screen
+            // (camera is at the origin)
+            const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+            const float scaleFactor = 2.5f;
+            glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth*2) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
+            glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+
+            NDCQuadUniformBlock ub;
+            ub.modelViewProjection = mvp;
+            rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+
+            rhi()->drawNDCQuad();
+
+            rhi()->endRenderPass(eyeRT[eyeIndex]);
+          }
+          renderHMDFrame();
         }
-        renderHMDFrame();
 
       } // Stereo calibration sample-gathering loop
 
@@ -1117,6 +1169,9 @@ retryStereoCalibration:
       printf("* Stereo projection matrix: FOV %.1f x %.1f deg\n", fovX, fovY);
     }
     printf("\n ==================== \n");
+    std::cout << "Stereo translation:" << std::endl << stereoTranslation << std::endl;
+    std::cout << "Stereo rotation matrix:" << std::endl << stereoRotation << std::endl;
+
 
     // Check the valid image regions for a failed stereo calibration. A bad calibration will usually result in a valid ROI for one or both views with a 0-pixel dimension.
 /*
