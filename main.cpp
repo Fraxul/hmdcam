@@ -1373,13 +1373,28 @@ retryStereoCalibration:
         glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(stereoCamera->streamWidth()) / static_cast<float>(stereoCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
         glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
+        float uClipFrac = 0.75f;
+#if 1
+        // Compute the clipping parameters to cut the views off at the centerline of the view (x=0 in model space)
+        {
+          glm::vec3 worldP0 = glm::vec3(model * glm::vec4(-1.0f, 0.0f, 0.0f, 1.0f));
+          glm::vec3 worldP1 = glm::vec3(model * glm::vec4( 1.0f, 0.0f, 0.0f, 1.0f));
+
+          float xLen = fabs(worldP0.x - worldP1.x);
+          // the coordinate that's closest to X0 will be the one we want to clip
+          float xOver = std::min<float>(fabs(worldP0.x), fabs(worldP1.x));
+
+          uClipFrac = (xLen - xOver)/xLen;
+        }
+#endif
+
         NDCClippedQuadUniformBlock ub;
         ub.modelViewProjection = mvp;
         if (eyeIndex == 0) { // left
           ub.minUV = glm::vec2(0.0f,  0.0f);
-          ub.maxUV = glm::vec2(0.75f, 1.0f);
+          ub.maxUV = glm::vec2(uClipFrac, 1.0f);
         } else { // right
-          ub.minUV = glm::vec2(0.25f, 0.0f);
+          ub.minUV = glm::vec2(1.0f - uClipFrac, 0.0f);
           ub.maxUV = glm::vec2(1.0f,  1.0f);
         }
 
