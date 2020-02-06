@@ -7,6 +7,12 @@ enum EButton {
   kButtonLeft,
   kButtonRight,
 
+  kButtonPower,
+  kButtonHome,
+  kButtonMenu,
+  kButtonBack,
+  kButtonOK,
+
   kButtonCount
 };
 

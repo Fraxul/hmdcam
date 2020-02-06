@@ -1,7 +1,7 @@
 #include "rhi/gl/RHIShaderGL.h"
 #include <boost/scoped_array.hpp>
 
-static /*CVar*/ bool shader_debug = true;
+static /*CVar*/ bool shader_debug = false;
 
 static GLenum glEnumForShadingUnit(RHIShaderDescriptor::ShadingUnit unit) {
   switch (unit) {

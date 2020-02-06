@@ -13,7 +13,6 @@
 #include <boost/accumulators/statistics/max.hpp>
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/mean.hpp>
-#include <boost/accumulators/statistics/rolling_mean.hpp>
 #include <boost/chrono/duration.hpp>
 #include <boost/chrono/system_clocks.hpp>
 
@@ -29,6 +28,9 @@
 
 #include "ArgusCamera.h"
 #include "InputListener.h"
+
+#include "imgui.h"
+#include "imgui_backend.h"
 
 #include "openhmd/openhmd.h"
 
@@ -117,9 +119,13 @@ int hmd_width, hmd_height;
 int eye_width, eye_height;
 bool rotate_screen = false;
 glm::mat4 eyeProjection[2];
+glm::mat4 eyeView[2];
 
-float scaleFactor = 2.1f;
 float stereoSeparationScale = 2.0f; // TODO: why? some of the Vive projection math is still wrong...
+
+// Camera render parameters
+float scaleFactor = 2.1f;
+float stereoOffset = 0.0f;
 
 // Camera info/state
 ArgusCamera* stereoCamera;
@@ -283,11 +289,11 @@ void recomputeHMDParameters() {
 
   // Cook the stereo separation transform into the projection matrices
   // TODO correct eye offsets
-  eyeProjection[0] = eyeProjection[0] * glm::translate(glm::vec3(ipd *  stereoSeparationScale, 0.0f, 0.0f));
-  eyeProjection[1] = eyeProjection[1] * glm::translate(glm::vec3(ipd * -stereoSeparationScale, 0.0f, 0.0f));
+  eyeView[0] = glm::translate(glm::vec3(ipd *  stereoSeparationScale, 0.0f, 0.0f));
+  eyeView[1] = glm::translate(glm::vec3(ipd * -stereoSeparationScale, 0.0f, 0.0f));
 
   for (size_t i = 0; i < 2; ++i) {
-    printf("View-Projection matrix %zu:\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n\n", i,
+    printf("Eye %zu projection matrix:\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n\n", i,
       eyeProjection[i][0][0], eyeProjection[i][0][1], eyeProjection[i][0][2], eyeProjection[i][0][3],
       eyeProjection[i][1][0], eyeProjection[i][1][1], eyeProjection[i][1][2], eyeProjection[i][1][3],
       eyeProjection[i][2][0], eyeProjection[i][2][1], eyeProjection[i][2][2], eyeProjection[i][2][3],
@@ -367,6 +373,18 @@ int main(int argc, char* argv[]) {
 
   startInputListenerThread();
   init_ogl();
+
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO();
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Keyboard navigation (mapped from the InputListener media remote interface)
+  // io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; // Gamepad navigation (not used right now)
+  ImGui_ImplOpenGL3_Init(NULL);
+  ImGui_ImplInputListener_Init();
+
+  io.DisplaySize = ImVec2(512.0f, 512.0f);
+  io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f);
+
 
   hmdContext = ohmd_ctx_create();
   int num_devices = ohmd_ctx_probe(hmdContext);
@@ -540,46 +558,26 @@ int main(int argc, char* argv[]) {
 
     uint64_t previousFrameTimestamp = 0;
     boost::accumulators::accumulator_set<double, boost::accumulators::stats<
-        boost::accumulators::tag::rolling_mean
-      > > frameInterval(boost::accumulators::tag::rolling_window::window_size = 1024);
+        boost::accumulators::tag::min,
+        boost::accumulators::tag::max,
+        boost::accumulators::tag::mean,
+        boost::accumulators::tag::median
+      > > frameInterval;
+
+    io.DeltaTime = 1.0f / 60.0f; // Will be updated during frame-timing computation
+
+    RHIRenderTarget::ptr guiRT;
+    RHISurface::ptr guiTex;
+
+    guiTex = rhi()->newTexture2D(io.DisplaySize.x * io.DisplayFramebufferScale.x, io.DisplaySize.y * io.DisplayFramebufferScale.y, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+    guiRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ guiTex }));
 
     while (!want_quit) {
+      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplInputListener_NewFrame();
+      ImGui::NewFrame();
+
       ++frameCounter;
-      {
-        // Scale factor adjustment
-
-        bool didChangeScale = false;
-        if (testButton(kButtonUp)) {
-          scaleFactor += 0.1f;
-          didChangeScale = true;
-        }
-        if (testButton(kButtonDown)) {
-          scaleFactor -= 0.1f;
-          didChangeScale = true;
-        }
-
-        if (didChangeScale) {
-          printf("New scale factor: %.3g\n", scaleFactor);
-        }
-
-#if 0
-        bool didChangeStereoSeparation = false;
-        if (testButton(kButtonRight)) {
-          stereoSeparationScale += 0.1f;
-          didChangeStereoSeparation = true;
-        }
-        if (testButton(kButtonLeft)) {
-          stereoSeparationScale -= 0.1f;
-          didChangeStereoSeparation = true;
-        }
-
-        if (didChangeStereoSeparation) {
-          printf("New stereo separation scale: %.3g\n", stereoSeparationScale);
-          recomputeHMDParameters();
-        }
-#endif
-
-      }
 
       stereoCamera->readFrame();
 
@@ -605,14 +603,37 @@ int main(int argc, char* argv[]) {
           boost::accumulators::mean(captureInterval),
           boost::accumulators::median(captureInterval));
 
-        printf("Frame interval: % .6f ms (% .6f fps)\n",
-          static_cast<double>(boost::accumulators::rolling_mean(frameInterval)) / 1000000.0,
-          1000000000.0 / static_cast<double>(boost::accumulators::rolling_mean(frameInterval)));
-        //printf("Frame interval: %f ns\n", boost::accumulators::rolling_mean(frameInterval));
-
         captureInterval = {};
 
+        printf("Frame interval: % .6f ms (% .6f fps) min=%.3g max=%.3g median=%.3g\n",
+          static_cast<double>(boost::accumulators::mean(frameInterval)) / 1000000.0,
+          1000000000.0 / static_cast<double>(boost::accumulators::mean(frameInterval)),
+
+          static_cast<double>(boost::accumulators::min(frameInterval)) / 1000000.0,
+          static_cast<double>(boost::accumulators::max(frameInterval)) / 1000000.0,
+          static_cast<double>(boost::accumulators::median(frameInterval)) / 1000000.0);
+
+        frameInterval = {};
+
         //printf("CLOCK_MONOTONIC: %llu. Sensor timestamps: %llu %llu\n", raw_ns, stereoCamera->sensorTimestamp(0), stereoCamera->sensorTimestamp(1));
+      }
+
+
+      {
+        // GUI support
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
+        ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+        ImGui::Text("Config");
+        ImGui::SliderFloat("Scale", &scaleFactor, 0.1f, 5.0f);
+        ImGui::SliderFloat("Stereo Offset", &stereoOffset, -2.0f, 2.0f);
+        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+        ImGui::End();
+
+        rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+        rhi()->beginRenderPass(guiRT, kLoadClear);
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        rhi()->endRenderPass(guiRT);
       }
 
       for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
@@ -627,8 +648,10 @@ int main(int argc, char* argv[]) {
 
         // coordsys right now: -X = left, -Z = into screen
         // (camera is at the origin)
-        const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+        float stereoOffsetSign = (eyeIndex == 0 ? -1.0f : 1.0f);
+        const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -7.0f);
         glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(stereoCamera->streamWidth()) / static_cast<float>(stereoCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
+        // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
         glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
         float uClipFrac = 0.75f;
@@ -660,6 +683,16 @@ int main(int argc, char* argv[]) {
 
         rhi()->drawNDCQuad();
 
+        // UI overlay
+        rhi()->bindBlendState(standardAlphaOverBlendState);
+        rhi()->bindRenderPipeline(uiLayerPipeline);
+        rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
+        UILayerUniformBlock uiLayerBlock;
+        uiLayerBlock.modelViewProjection = eyeProjection[eyeIndex] * eyeView[eyeIndex] * glm::translate(glm::vec3(0.0f, 0.0f, -2.0f)) * glm::scale(glm::vec3(io.DisplaySize.x / io.DisplaySize.y, 1.0f, 1.0f));
+
+        rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
+        rhi()->drawNDCQuad();
+
         rhi()->endRenderPass(eyeRT[eyeIndex]);
       }
 
@@ -680,6 +713,7 @@ int main(int argc, char* argv[]) {
           }
 #endif
 
+          io.DeltaTime = static_cast<double>(interval / 1000000000.0);
         }
 
         captureLatency(static_cast<double>(thisFrameTimestamp - stereoCamera->sensorTimestamp(0)) / 1000000.0);

@@ -6,3 +6,6 @@
 [submodule "glatter"]
 	path = glatter
 	url = https://github.com/imakris/glatter.git
+[submodule "imgui"]
+	path = imgui
+	url = https://github.com/ocornut/imgui.git

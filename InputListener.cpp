@@ -196,35 +196,54 @@ void* inputListenerThread(void*) {
         if (ev.type != EV_KEY) continue; // Looking for KEY events...
         if (ev.value != 1) continue; // ...where the key is being pressed. (value={0, 1, 2} is {released, pressed, repeat})
 
-        // Keycodes for a presentation remote, where:
+        // Previously using keycodes for a presentation remote, where:
         // Up    => "Blank Screen" (b)
         // Down  => "Start/Stop Presentation" (alternates between Shift+F5 and ESC)
         // Left  => "Previous Slide" (Page Up)
         // Right => "Next Slide" (Page Down)
+
+        // Now using keycodes for a media remote. More direct mapping.
         switch (ev.code) {
           case KEY_DOWN:
-          case KEY_ESC:
-          case KEY_F5:
-            //printf("Down\n");
+          //case KEY_ESC:
+          //case KEY_F5:
             buttonState[kButtonDown].store(true);
             break;
 
           case KEY_LEFT:
-          case KEY_PAGEUP: //
-            //printf("Left\n");
+          //case KEY_PAGEUP:
             buttonState[kButtonLeft].store(true);
             break;
 
           case KEY_RIGHT:
-          case KEY_PAGEDOWN:
-            //printf("Right\n");
+          //case KEY_PAGEDOWN:
             buttonState[kButtonRight].store(true);
             break;
 
           case KEY_UP:
-          case KEY_B:
-            //printf("Up\n");
+          //case KEY_B:
             buttonState[kButtonUp].store(true);
+            break;
+
+          case KEY_POWER:
+            buttonState[kButtonPower].store(true);
+            break;
+
+          case KEY_HOMEPAGE:
+            buttonState[kButtonHome].store(true);
+            break;
+
+          case KEY_COMPOSE:
+            buttonState[kButtonMenu].store(true);
+            break;
+
+          case KEY_ESC:
+          case KEY_BACK:
+            buttonState[kButtonBack].store(true);
+            break;
+
+          case KEY_ENTER:
+            buttonState[kButtonOK].store(true);
             break;
 
           default:

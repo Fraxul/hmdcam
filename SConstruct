@@ -3,7 +3,7 @@ import os
 
 # Environment setup
 env = Environment(
-  CPPPATH=['.', 'glm', 'glatter/include', 'glatter/include/glatter', '/usr/include/drm', '/usr/src/nvidia/tegra_multimedia_api/include', '/usr/src/nvidia/tegra_multimedia_api/argus/include', '/usr/local/include/opencv4'],
+  CPPPATH=['.', 'glm', 'glatter/include', 'glatter/include/glatter', 'imgui', '/usr/include/drm', '/usr/src/nvidia/tegra_multimedia_api/include', '/usr/src/nvidia/tegra_multimedia_api/argus/include', '/usr/local/include/opencv4'],
   CPPFLAGS=['-ggdb', '-std=c++11', '-Wall'],
   LINKFLAGS=['-ggdb'],
   LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib'],
@@ -17,7 +17,7 @@ Export('env')
 
 env.Program(
   target = 'hmdcam',
-  source = Glob('*.cpp') + Glob('*.c') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + ['openhmd/libopenhmd.a'],
+  source = Glob('*.cpp') + Glob('*.c') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('imgui/*.cpp') + ['openhmd/libopenhmd.a'],
   LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-hidraw', 'udev', 'nvargus', 'nvbuf_utils', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco']
 )
 
