@@ -4,13 +4,11 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <errno.h>
-#include <glob.h>
 #include <assert.h>
-#include <pthread.h>
 
 #include <linux/input.h>
 #include <sys/epoll.h>
-#include <sys/inotify.h>
+#include <libudev.h>
 
 #include <map>
 #include <set>
@@ -20,11 +18,80 @@
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 
 std::atomic<bool> buttonState[kButtonCount];
+static std::map<std::string, int> keyboardDevices;
+static int epoll_fd = -1;
 
 bool testButton(EButton button) {
   assert(button < kButtonCount);
   return buttonState[button].exchange(false);
 }
+
+void udevProcessDevice(struct udev_device* dev) {
+  if (!dev)
+    return;
+
+  {
+    const char* devicePath = udev_device_get_devnode(dev);
+    if (!devicePath) {
+      goto cleanup;
+    }
+
+    if (!udev_device_get_property_value(dev, "ID_INPUT_KEYBOARD")) {
+      goto cleanup;
+    }
+
+    const char* action = udev_device_get_action(dev);
+    if (!action)
+      action = "exists";
+
+    printf("Input device %s: %s\n", devicePath, action);
+
+    if ((!strcmp(action, "add")) || (!strcmp(action, "exists"))) {
+      int& fd = keyboardDevices[devicePath];
+
+      fd = open(devicePath, O_RDONLY | O_CLOEXEC);
+      if (fd < 0) {
+        printf("Unable to open event device %s. Device will be ignored.\n", devicePath);
+        goto cleanup;
+      }
+
+      // Grab input
+      if(ioctl(fd, EVIOCGRAB, (void*)1) == -1) {
+        printf("Failed to grab input for device %s: %s\n", devicePath, strerror(errno));
+        close(fd);
+        fd = -1;
+        goto cleanup;
+      }
+
+      // Device is open and grabbed, add it to the epoll set
+      struct epoll_event ev;
+      ev.events = EPOLLIN;
+      ev.data.fd = fd;
+      if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
+        printf("epoll_ctl() failed adding device fd: %s\n", strerror(errno));
+        close(fd);
+        fd = -1;
+        goto cleanup;
+      }
+
+    } else if (!strcmp(action, "remove")) {
+      int fd = keyboardDevices[devicePath];
+      printf("Device removed: %s\n", devicePath);
+
+      if (fd >= 0) {
+        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
+        close(fd);
+      }
+      keyboardDevices.erase(devicePath);
+    } else {
+      printf("Unhandled event type %s\n", action);
+    }
+  }
+
+cleanup:
+  udev_device_unref(dev);
+}
+
 
 void* inputListenerThread(void*) {
 
@@ -33,119 +100,51 @@ void* inputListenerThread(void*) {
     std::atomic_init<bool>(&buttonState[buttonIdx], false);
   }
 
-  int inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-  if (inotify_fd < 0) {
-    die("inotify_init1() failed: %s", strerror(errno));
-  }
-
-  int inotify_watch_descriptor = inotify_add_watch(inotify_fd, "/dev/input/by-id", IN_CREATE | IN_DELETE);
-  if (inotify_watch_descriptor < 0) {
-    die("inotify_add_watch() failed: %s", strerror(errno));
-  }
-
-  int epoll_fd = epoll_create1(0);
+  // Set up epoll
+  epoll_fd = epoll_create1(0);
   if (epoll_fd < 0) {
     die("epoll_create1() failed: %s", strerror(errno));
   }
 
+  // Set up udev monitoring
+  struct udev* udev = udev_new();
+  struct udev_monitor* mon = udev_monitor_new_from_netlink(udev, "udev");
+  
+  udev_monitor_filter_add_match_subsystem_devtype(mon, "input", NULL);
+  udev_monitor_enable_receiving(mon);
+
+  int udev_fd = udev_monitor_get_fd(mon);
+
   {
     struct epoll_event ev;
     ev.events = EPOLLIN;
-    ev.data.fd = inotify_fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, inotify_fd, &ev) < 0) {
+    ev.data.fd = udev_fd;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, udev_fd, &ev) < 0) {
       die("epoll_ctl() failed to add inotify fd: %s", strerror(errno));
     }
   }
 
-  std::map<std::string, int> keyboardDevices;
+  // Initial device scan
+  struct udev_enumerate* enumerate = udev_enumerate_new(udev);
 
-  bool shouldRescanDevices = true;
+  udev_enumerate_add_match_subsystem(enumerate, "input");
+  udev_enumerate_add_match_property(enumerate, "ID_INPUT_KEYBOARD", "1");
 
+  udev_enumerate_scan_devices(enumerate);
+
+  struct udev_list_entry* devices = udev_enumerate_get_list_entry(enumerate);
+  struct udev_list_entry* entry;
+
+  udev_list_entry_foreach(entry, devices) {
+      const char* path = udev_list_entry_get_name(entry);
+      struct udev_device* dev = udev_device_new_from_syspath(udev, path);
+      udevProcessDevice(dev);
+  }
+
+  udev_enumerate_unref(enumerate);
+
+  // Process events
   while (true) {
-
-    if (shouldRescanDevices) {
-      shouldRescanDevices = false;
-
-      std::set<std::string> scanResults;
-      {
-        glob_t globResult;
-        memset(&globResult, 0, sizeof(glob_t));
-        int globRes = glob("/dev/input/by-id/*-kbd", GLOB_NOSORT, NULL, &globResult);
-
-        if (globRes == GLOB_NOMATCH) {
-          // no matches, but that's OK
-        } else if (globRes == 0) {
-          for (size_t matchIdx = 0; matchIdx < globResult.gl_pathc; ++matchIdx) {
-            scanResults.insert(globResult.gl_pathv[matchIdx]);
-          }
-        } else {
-          if (errno == GLOB_NOMATCH) {}
-          else {
-            die("glob(): %s", strerror(errno));
-          }
-        }
-        globfree(&globResult); 
-      }
-
-      for (const std::string& devicePath : scanResults) {
-        auto deviceMapIt = keyboardDevices.find(devicePath);
-        if (deviceMapIt != keyboardDevices.end()) {
-          // Device is either already open or a previous open attempt failed (in which case we ignore it until it's unplugged)
-          continue;
-        }
-
-        // Device appears to be new
-        printf("New device path: %s\n", devicePath.c_str());
-        int& fd = keyboardDevices[devicePath];
-
-        fd = open(devicePath.c_str(), O_RDONLY | O_CLOEXEC);
-        if (fd < 0) {
-          printf("Unable to open event device %s. Device will be ignored.\n", devicePath.c_str());
-          continue;
-        }
-
-        // Grab input
-        if(ioctl(fd, EVIOCGRAB, (void*)1) == -1) {
-          printf("Failed to grab input for device %s: %s\n", devicePath.c_str(), strerror(errno));
-          close(fd);
-          fd = -1;
-          continue;
-        }
-
-        // Device is open and grabbed, add it to the epoll set
-        struct epoll_event ev;
-        ev.events = EPOLLIN;
-        ev.data.fd = fd;
-        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
-          printf("epoll_ctl() failed adding device fd: %s\n", strerror(errno));
-          close(fd);
-          fd = -1;
-          continue;
-        }
-      }
-
-      // Check for devices that have been removed
-      for (auto deviceMapIt = keyboardDevices.begin(); deviceMapIt != keyboardDevices.end(); ) {
-        const std::string& devicePath = deviceMapIt->first;
-        int fd = deviceMapIt->second;
-        if (scanResults.find(devicePath) != scanResults.end()) {
-          ++deviceMapIt;
-          continue; // Device still exists
-        }
-
-        printf("Device removed: %s\n", devicePath.c_str());
-
-        if (fd >= 0) {
-          epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-          close(fd);
-        }
-
-        keyboardDevices.erase(deviceMapIt);
-        deviceMapIt = keyboardDevices.begin(); // iterator invalidated
-      }
-
-    } /// device rescan finished
-
 
     const size_t MAX_EVENTS = 32;
     struct epoll_event events[MAX_EVENTS];
@@ -160,21 +159,10 @@ void* inputListenerThread(void*) {
     for (ssize_t evIdx = 0; evIdx < nfds; ++evIdx) {
       int fd = events[evIdx].data.fd;
 
-      if (fd == inotify_fd) {
-        shouldRescanDevices = true;
-        // drain the inotify buffer. we don't actually care about the contents since we just use it to trigger a scan
-        char buf[4096];
-        while (true) {
-          ssize_t readlen = read(inotify_fd, buf, 4096);
-          //printf("inotify fd read returned %zd\n", readlen);
-          if (readlen < 0) {
-            if (errno == EAGAIN) {
-              break;
-            } else {
-              printf("read() on inotify FD: %s\n", strerror(errno));
-            }
-          }
-        }
+      if (fd == udev_fd) {
+        struct udev_device* dev = udev_monitor_receive_device(mon);
+        udevProcessDevice(dev);
+
       } else {
 
         struct input_event ev;
@@ -248,8 +236,11 @@ void* inputListenerThread(void*) {
 
   } // epoll event loop
 
-  close(inotify_fd);
+  close(udev_fd);
   close(epoll_fd);
+
+  udev_monitor_unref(mon);
+  udev_unref(udev);
 
   return NULL;
 }
