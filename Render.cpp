@@ -17,6 +17,7 @@ RHIRenderTarget::ptr windowRenderTarget;
 
 FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
 FxAtomicString ksNDCClippedQuadUniformBlock("NDCClippedQuadUniformBlock");
+FxAtomicString ksSolidQuadUniformBlock("SolidQuadUniformBlock");
 
 RHIRenderPipeline::ptr camTexturedQuadPipeline;
 RHIRenderPipeline::ptr camOverlayPipeline;
@@ -25,6 +26,7 @@ RHIRenderPipeline::ptr camOverlayStereoUndistortPipeline;
 RHIRenderPipeline::ptr camUndistortMaskPipeline;
 RHIRenderPipeline::ptr camGreyscalePipeline;
 RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
+RHIRenderPipeline::ptr solidQuadPipeline;
 
 struct ViveDistortionUniformBlock {
   glm::vec4 coeffs[3];
@@ -159,6 +161,14 @@ bool RenderInit() {
       ndcQuadVertexLayout);
     desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
     camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
+
+  {
+    RHIShaderDescriptor desc(
+      "shaders/solidQuad.vtx.glsl",
+      "shaders/solidQuad.frag.glsl",
+      ndcQuadVertexLayout);
+    solidQuadPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
   viveDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor(

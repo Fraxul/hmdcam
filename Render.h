@@ -31,6 +31,13 @@ struct NDCQuadUniformBlock {
   glm::mat4 modelViewProjection;
 };
 extern FxAtomicString ksNDCQuadUniformBlock;
+
+struct SolidQuadUniformBlock {
+  glm::mat4 modelViewProjection;
+  glm::vec4 color;
+};
+extern FxAtomicString ksSolidQuadUniformBlock;
+
 extern FxAtomicString ksImageTex;
 extern FxAtomicString ksLeftCameraTex;
 extern FxAtomicString ksRightCameraTex;
@@ -49,4 +56,5 @@ extern RHIRenderPipeline::ptr camOverlayStereoUndistortPipeline;
 extern RHIRenderPipeline::ptr camUndistortMaskPipeline;
 extern RHIRenderPipeline::ptr camGreyscalePipeline;
 extern RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
+extern RHIRenderPipeline::ptr solidQuadPipeline;
 

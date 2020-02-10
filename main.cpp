@@ -58,7 +58,8 @@ const double s_cameraFramerate = 89.527;
 // Camera render parameters
 float scaleFactor = 1.0f;
 float stereoOffset = 0.0f;
-bool renderSBS = false;
+bool renderSBS = true;
+int sbsSeparatorWidth = 4;
 
 // Camera info/state
 ArgusCamera* stereoCamera;
@@ -292,6 +293,9 @@ int main(int argc, char* argv[]) {
         ImGui::Checkbox("SBS", &renderSBS);
         ImGui::SliderFloat("Scale", &scaleFactor, 0.5f, 2.0f);
         ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
+        if (renderSBS) {
+          ImGui::SliderInt("Separator Width", (int*) &sbsSeparatorWidth, 0, 32);
+        }
         ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
         ImGui::End();
 
@@ -352,6 +356,16 @@ int main(int argc, char* argv[]) {
 
           rhi()->drawNDCQuad();
         } // camera loop
+
+        if (renderSBS && sbsSeparatorWidth) {
+          rhi()->bindRenderPipeline(solidQuadPipeline);
+          SolidQuadUniformBlock ub;
+          // Scale to reduce the X-width of the -1...1 quad to the size requested in sbsSeparatorWidth
+          ub.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -3.0f)) * glm::scale(glm::vec3(static_cast<float>(sbsSeparatorWidth * 4) / static_cast<float>(eyeRT[eyeIdx]->width()), 1.0f, 1.0f));
+          ub.color = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+          rhi()->loadUniformBlockImmediate(ksSolidQuadUniformBlock, &ub, sizeof(SolidQuadUniformBlock));
+          rhi()->drawNDCQuad();
+        }
 
         // UI overlay
         rhi()->bindBlendState(standardAlphaOverBlendState);
