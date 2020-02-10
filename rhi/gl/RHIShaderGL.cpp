@@ -317,7 +317,7 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
   for (size_t idx = 0; idx < m_samplerAttributes.size(); ++idx) {
     GLint loc = m_samplerAttributes[idx].location;
     if (shader_debug) {
-      printf("sampler [loc %d -> unit %u]: \"%s\"; type %x\n", loc, idx, m_samplerAttributes[idx].name.c_str(), m_samplerAttributes[idx].type);
+      printf("sampler [loc %d -> unit %zu]: \"%s\"; type %x\n", loc, idx, m_samplerAttributes[idx].name.c_str(), m_samplerAttributes[idx].type);
     }
     GL(glProgramUniform1i(m_program, loc, idx));
     m_samplerAttributes[idx].textureUnit = idx;

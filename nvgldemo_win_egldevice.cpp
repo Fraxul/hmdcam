@@ -239,7 +239,7 @@ static bool NvGlDemoCreateEglDevice(EGLint devIndx)
     devOut->device = devList[devIndx];
     devOut->eglDpy = demoState.display;
 
-    if ((devOut->eglDpy==EGL_NO_DISPLAY)) {
+    if (devOut->eglDpy==EGL_NO_DISPLAY) {
         NvGlDemoLog("peglGetPlatformDisplayEXT-fail.\n");
         goto NvGlDemoCreateEglDevice_fail;
     }

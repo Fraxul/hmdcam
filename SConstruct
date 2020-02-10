@@ -2,10 +2,11 @@ import platform
 import os
 
 # Environment setup
-env = Environment(
+env = Environment(tools = ['clang', 'clangxx', 'link'],
   CPPPATH=['.', 'glm', 'glatter/include', 'glatter/include/glatter', 'imgui', '/usr/include/drm', '/usr/src/nvidia/tegra_multimedia_api/include', '/usr/src/nvidia/tegra_multimedia_api/argus/include', '/usr/local/include/opencv4'],
-  CPPFLAGS=['-ggdb', '-std=c++11', '-Wall'],
-  LINKFLAGS=['-ggdb'],
+  CPPFLAGS=['-g', '-Wall'],
+  CXXFLAGS=['-std=c++11'],
+  LINKFLAGS=['-g'],
   LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib'],
 )
 

@@ -277,7 +277,7 @@ bool ArgusCamera::readFrame() {
       // printf("durationToTSDeltaOffset %ld targetDuration %ld targetOffset %ld\n", durationToTSDeltaOffset, targetDuration, targetOffset);
 
       // Perform an adjustment if we're off by at least 1 microsecond
-      if (abs(targetOffset) > 1000) {
+      if (std::abs(targetOffset) > 1000) {
         // Clamp new duration to sensor mode limits
         int64_t newDuration = std::min<int64_t>(std::max<int64_t>(m_currentCaptureDurationNs + (targetOffset / 64), m_captureDurationMinNs), m_captureDurationMaxNs);
         // printf("Capture duration adjust %ld (%ld -> %ld)\n", targetOffset/64, m_currentCaptureDurationNs, newDuration);
