@@ -233,6 +233,30 @@ bool ArgusCamera::readFrame() {
     }
   }
 
+  static uint64_t previousCaptureCompletionTimestamp = 0;
+  if (m_captureIsRepeating) {
+    while (true) {
+      const Argus::Event* ev = Argus::interface_cast<Argus::IEventQueue>(m_completionEventQueue)->getNextEvent();
+      if (!ev)
+        break;
+
+      const Argus::IEvent* iev = Argus::interface_cast<const Argus::IEvent>(ev);
+      if (iev->getEventType() == Argus::EVENT_TYPE_CAPTURE_COMPLETE) {
+        if (previousCaptureCompletionTimestamp) {
+          int64_t ts_delta_us = iev->getTime() - previousCaptureCompletionTimestamp;
+          m_captureIntervalStats(static_cast<double>(ts_delta_us * 1000 /*convert to ns*/));
+        }
+        previousCaptureCompletionTimestamp = iev->getTime();
+      }
+      //if (iev->getEventType() == Argus::EVENT_TYPE_CAPTURE_STARTED)
+
+    }
+  } else {
+    // Don't track timestamp deltas for single shot captures
+    previousCaptureCompletionTimestamp = 0;
+  }
+
+
   bool res = true;
   for (size_t streamIdx = 0; streamIdx < m_eglStreams.size(); ++streamIdx) {
     const EGLStreamKHR& eglStream = m_eglStreams[streamIdx];
@@ -258,12 +282,7 @@ bool ArgusCamera::readFrame() {
   }
 
   if (m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > 8) && m_previousSensorTimestampNs)) {
-    uint64_t thisCaptureDuration = m_sensorTimestamps[0] - m_previousSensorTimestampNs;
-    if ((static_cast<double>(thisCaptureDuration) * 1.5) > boost::accumulators::rolling_mean(m_captureIntervalStats)) {
-      // Throw away outlier -- we probably missed a frame and got double duration
-    } else {
-      m_captureIntervalStats(thisCaptureDuration);
-    }
+
     if (boost::accumulators::rolling_count(m_captureIntervalStats) > 8) {
 
       int64_t durationToTSDeltaOffset = boost::accumulators::rolling_mean(m_captureIntervalStats) - m_currentCaptureDurationNs;
