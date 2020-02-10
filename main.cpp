@@ -56,8 +56,9 @@ const double s_cameraFramerate = 89.527;
 #endif
 
 // Camera render parameters
-float scaleFactor = 2.1f;
+float scaleFactor = 1.0f;
 float stereoOffset = 0.0f;
+bool renderSBS = false;
 
 // Camera info/state
 ArgusCamera* stereoCamera;
@@ -287,9 +288,10 @@ int main(int argc, char* argv[]) {
         // GUI support
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
         ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-        ImGui::Text("Config");
-        ImGui::SliderFloat("Scale", &scaleFactor, 0.1f, 5.0f);
-        ImGui::SliderFloat("Stereo Offset", &stereoOffset, -2.0f, 2.0f);
+        //ImGui::Text("Config");
+        ImGui::Checkbox("SBS", &renderSBS);
+        ImGui::SliderFloat("Scale", &scaleFactor, 0.5f, 2.0f);
+        ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
         ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
         ImGui::End();
 
@@ -300,63 +302,68 @@ int main(int argc, char* argv[]) {
         rhi()->endRenderPass(guiRT);
       }
 
-      for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+      for (int eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+        rhi()->beginRenderPass(eyeRT[eyeIdx], kLoadClear);
 
-        rhi()->bindRenderPipeline(camUndistortMaskPipeline);
-        rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(eyeIndex), linearClampSampler);
-        rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[eyeIndex], linearClampSampler);
-        rhi()->loadTexture(ksMaskTex, cameraMask[eyeIndex], linearClampSampler);
+        for (int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
+          if (renderSBS == false && (cameraIdx != eyeIdx))
+            continue;
 
-        // coordsys right now: -X = left, -Z = into screen
-        // (camera is at the origin)
-        float stereoOffsetSign = (eyeIndex == 0 ? -1.0f : 1.0f);
-        const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -7.0f);
-        glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(stereoCamera->streamWidth()) / static_cast<float>(stereoCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
-        // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
-        glm::mat4 mvp = eyeProjection[eyeIndex] * model;
+          rhi()->bindRenderPipeline(camUndistortMaskPipeline);
+          rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+          rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
+          rhi()->loadTexture(ksMaskTex, cameraMask[cameraIdx], linearClampSampler);
 
-        float uClipFrac = 0.75f;
-#if 1
-        // Compute the clipping parameters to cut the views off at the centerline of the view (x=0 in model space)
-        {
-          glm::vec3 worldP0 = glm::vec3(model * glm::vec4(-1.0f, 0.0f, 0.0f, 1.0f));
-          glm::vec3 worldP1 = glm::vec3(model * glm::vec4( 1.0f, 0.0f, 0.0f, 1.0f));
+          // coordsys right now: -X = left, -Z = into screen
+          // (camera is at the origin)
+          float stereoOffsetSign = (cameraIdx == 0 ? -1.0f : 1.0f);
+          const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -3.0f);
+          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(stereoCamera->streamWidth()) / static_cast<float>(stereoCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
+          // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
+          glm::mat4 mvp = eyeProjection[eyeIdx] * eyeView[eyeIdx] * model;
 
-          float xLen = fabs(worldP0.x - worldP1.x);
-          // the coordinate that's closest to X0 will be the one we want to clip
-          float xOver = std::min<float>(fabs(worldP0.x), fabs(worldP1.x));
+          float uClipFrac = 0.75f;
+  #if 1
+          // Compute the clipping parameters to cut the views off at the centerline of the view (x=0 in model space)
+          {
+            glm::vec3 worldP0 = glm::vec3(model * glm::vec4(-1.0f, 0.0f, 0.0f, 1.0f));
+            glm::vec3 worldP1 = glm::vec3(model * glm::vec4( 1.0f, 0.0f, 0.0f, 1.0f));
 
-          uClipFrac = (xLen - xOver)/xLen;
-        }
-#endif
+            float xLen = fabs(worldP0.x - worldP1.x);
+            // the coordinate that's closest to X0 will be the one we want to clip
+            float xOver = std::min<float>(fabs(worldP0.x), fabs(worldP1.x));
 
-        NDCClippedQuadUniformBlock ub;
-        ub.modelViewProjection = mvp;
-        if (eyeIndex == 0) { // left
-          ub.minUV = glm::vec2(0.0f,  0.0f);
-          ub.maxUV = glm::vec2(uClipFrac, 1.0f);
-        } else { // right
-          ub.minUV = glm::vec2(1.0f - uClipFrac, 0.0f);
-          ub.maxUV = glm::vec2(1.0f,  1.0f);
-        }
+            uClipFrac = (xLen - xOver)/xLen;
+          }
+  #endif
 
-        rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+          NDCClippedQuadUniformBlock ub;
+          ub.modelViewProjection = mvp;
+          if (cameraIdx == 0) { // left
+            ub.minUV = glm::vec2(0.0f,  0.0f);
+            ub.maxUV = glm::vec2(uClipFrac, 1.0f);
+          } else { // right
+            ub.minUV = glm::vec2(1.0f - uClipFrac, 0.0f);
+            ub.maxUV = glm::vec2(1.0f,  1.0f);
+          }
 
-        rhi()->drawNDCQuad();
+          rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+
+          rhi()->drawNDCQuad();
+        } // camera loop
 
         // UI overlay
         rhi()->bindBlendState(standardAlphaOverBlendState);
         rhi()->bindRenderPipeline(uiLayerPipeline);
         rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
         UILayerUniformBlock uiLayerBlock;
-        uiLayerBlock.modelViewProjection = eyeProjection[eyeIndex] * eyeView[eyeIndex] * glm::translate(glm::vec3(0.0f, 0.0f, -2.0f)) * glm::scale(glm::vec3(io.DisplaySize.x / io.DisplaySize.y, 1.0f, 1.0f));
+        uiLayerBlock.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -2.0f)) * glm::scale(glm::vec3(io.DisplaySize.x / io.DisplaySize.y, 1.0f, 1.0f));
 
         rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
         rhi()->drawNDCQuad();
 
-        rhi()->endRenderPass(eyeRT[eyeIndex]);
+        rhi()->endRenderPass(eyeRT[eyeIdx]);
       }
 
       renderHMDFrame();
