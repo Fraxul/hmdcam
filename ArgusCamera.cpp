@@ -146,7 +146,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
   }
 
   // Set up all of the per-stream metadata containers
-  m_sensorTimestamps.resize(m_eglStreams.size());
+  m_frameMetadata.resize(m_eglStreams.size());
 
   // Create capture request, set the sensor mode, and enable the output stream.s
   m_captureRequest = iCaptureSession->createRequest();
@@ -278,7 +278,11 @@ bool ArgusCamera::readFrame() {
     }
 
     // Update metadata fields for this frame
-    m_sensorTimestamps[streamIdx] = iMetadata->getSensorTimestamp();
+    m_frameMetadata[streamIdx].sensorTimestamp = iMetadata->getSensorTimestamp();
+    m_frameMetadata[streamIdx].sensorExposureTimeNs = iMetadata->getSensorExposureTime();
+    m_frameMetadata[streamIdx].sensorSensitivityISO = iMetadata->getSensorSensitivity();
+    m_frameMetadata[streamIdx].ispDigitalGain = iMetadata->getIspDigitalGain();
+    m_frameMetadata[streamIdx].sensorAnalogGain = iMetadata->getSensorAnalogGain();
   }
 
   if (m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > 8) && m_previousSensorTimestampNs)) {
@@ -309,7 +313,7 @@ bool ArgusCamera::readFrame() {
       }
     }
   }
-  m_previousSensorTimestampNs = m_sensorTimestamps[0];
+  m_previousSensorTimestampNs = m_frameMetadata[0].sensorTimestamp;
 
   return res;
 }

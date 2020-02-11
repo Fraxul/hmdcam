@@ -238,6 +238,9 @@ int main(int argc, char* argv[]) {
     guiTex = rhi()->newTexture2D(io.DisplaySize.x * io.DisplayFramebufferScale.x, io.DisplaySize.y * io.DisplayFramebufferScale.y, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
     guiRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ guiTex }));
 
+    double currentCaptureLatencyMs = 0.0;
+    double currentCaptureIntervalMs = 0.0;
+
     while (!want_quit) {
       ImGui_ImplOpenGL3_NewFrame();
       ImGui_ImplInputListener_NewFrame();
@@ -248,11 +251,38 @@ int main(int argc, char* argv[]) {
       stereoCamera->readFrame();
 
       if (previousCaptureTimestamp) {
-        double interval_ms = static_cast<double>(stereoCamera->sensorTimestamp(0) - previousCaptureTimestamp) / 1000000.0;
-        captureInterval(interval_ms);
+        currentCaptureIntervalMs = static_cast<double>(stereoCamera->frameSensorTimestamp(0) - previousCaptureTimestamp) / 1000000.0;
+        captureInterval(currentCaptureIntervalMs);
       }
-      previousCaptureTimestamp = stereoCamera->sensorTimestamp(0);
+      previousCaptureTimestamp = stereoCamera->frameSensorTimestamp(0);
 
+
+      {
+        // GUI support
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
+        ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+        //ImGui::Text("Config");
+        ImGui::Checkbox("SBS", &renderSBS);
+        ImGui::SliderFloat("Scale", &scaleFactor, 0.5f, 2.0f);
+        ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
+        if (renderSBS) {
+          ImGui::SliderInt("Separator Width", (int*) &sbsSeparatorWidth, 0, 32);
+        }
+        {
+          const auto& meta = stereoCamera->frameMetadata(0);
+          ImGui::Text("Exp=1/%usec %uISO DGain=%f AGain=%f",
+            (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs/1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
+        }
+
+        ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
+        ImGui::End();
+
+        rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+        rhi()->beginRenderPass(guiRT, kLoadClear);
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        rhi()->endRenderPass(guiRT);
+      }
 
       if ((frameCounter & 0x7fUL) == 0) {
         printf("Capture latency: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
@@ -280,30 +310,6 @@ int main(int argc, char* argv[]) {
           static_cast<double>(boost::accumulators::median(frameInterval)) / 1000000.0);
 
         frameInterval = {};
-
-        //printf("CLOCK_MONOTONIC: %llu. Sensor timestamps: %llu %llu\n", raw_ns, stereoCamera->sensorTimestamp(0), stereoCamera->sensorTimestamp(1));
-      }
-
-
-      {
-        // GUI support
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
-        ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-        //ImGui::Text("Config");
-        ImGui::Checkbox("SBS", &renderSBS);
-        ImGui::SliderFloat("Scale", &scaleFactor, 0.5f, 2.0f);
-        ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
-        if (renderSBS) {
-          ImGui::SliderInt("Separator Width", (int*) &sbsSeparatorWidth, 0, 32);
-        }
-        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-        ImGui::End();
-
-        rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
-        rhi()->beginRenderPass(guiRT, kLoadClear);
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        rhi()->endRenderPass(guiRT);
       }
 
       for (int eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
@@ -400,7 +406,8 @@ int main(int argc, char* argv[]) {
           io.DeltaTime = static_cast<double>(interval / 1000000000.0);
         }
 
-        captureLatency(static_cast<double>(thisFrameTimestamp - stereoCamera->sensorTimestamp(0)) / 1000000.0);
+        currentCaptureLatencyMs = static_cast<double>(thisFrameTimestamp - stereoCamera->frameSensorTimestamp(0)) / 1000000.0;
+        captureLatency(currentCaptureLatencyMs);
 
         previousFrameTimestamp = thisFrameTimestamp;
       }
