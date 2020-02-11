@@ -36,7 +36,14 @@ void udevProcessDevice(struct udev_device* dev) {
       goto cleanup;
     }
 
-    if (!udev_device_get_property_value(dev, "ID_INPUT_KEYBOARD")) {
+    {
+      const char* deviceType = udev_device_get_property_value(dev, "ID_TYPE");
+      if ((!deviceType) || strcmp(deviceType, "hid") != 0) {
+        goto cleanup;
+      }
+    }
+
+    if (!udev_device_get_property_value(dev, "ID_INPUT_KEY")) {
       goto cleanup;
     }
 
@@ -128,7 +135,8 @@ void* inputListenerThread(void*) {
   struct udev_enumerate* enumerate = udev_enumerate_new(udev);
 
   udev_enumerate_add_match_subsystem(enumerate, "input");
-  udev_enumerate_add_match_property(enumerate, "ID_INPUT_KEYBOARD", "1");
+  udev_enumerate_add_match_property(enumerate, "ID_TYPE", "hid");
+  udev_enumerate_add_match_property(enumerate, "ID_INPUT_KEY", "1");
 
   udev_enumerate_scan_devices(enumerate);
 

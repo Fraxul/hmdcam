@@ -241,7 +241,13 @@ int main(int argc, char* argv[]) {
     double currentCaptureLatencyMs = 0.0;
     double currentCaptureIntervalMs = 0.0;
 
+    bool drawUI = false;
+
     while (!want_quit) {
+      if (testButton(kButtonPower)) {
+        drawUI = !drawUI;
+      }
+
       ImGui_ImplOpenGL3_NewFrame();
       ImGui_ImplInputListener_NewFrame();
       ImGui::NewFrame();
@@ -257,7 +263,7 @@ int main(int argc, char* argv[]) {
       previousCaptureTimestamp = stereoCamera->frameSensorTimestamp(0);
 
 
-      {
+      if (drawUI) {
         // GUI support
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
         ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
@@ -282,6 +288,8 @@ int main(int argc, char* argv[]) {
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         rhi()->endRenderPass(guiRT);
+      } else {
+        ImGui::EndFrame();
       }
 
       if ((frameCounter & 0x7fUL) == 0) {
@@ -374,14 +382,16 @@ int main(int argc, char* argv[]) {
         }
 
         // UI overlay
-        rhi()->bindBlendState(standardAlphaOverBlendState);
-        rhi()->bindRenderPipeline(uiLayerPipeline);
-        rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
-        UILayerUniformBlock uiLayerBlock;
-        uiLayerBlock.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -2.0f)) * glm::scale(glm::vec3(io.DisplaySize.x / io.DisplaySize.y, 1.0f, 1.0f));
+        if (drawUI) {
+          rhi()->bindBlendState(standardAlphaOverBlendState);
+          rhi()->bindRenderPipeline(uiLayerPipeline);
+          rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
+          UILayerUniformBlock uiLayerBlock;
+          uiLayerBlock.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -2.0f)) * glm::scale(glm::vec3(io.DisplaySize.x / io.DisplaySize.y, 1.0f, 1.0f));
 
-        rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
-        rhi()->drawNDCQuad();
+          rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
+          rhi()->drawNDCQuad();
+        }
 
         rhi()->endRenderPass(eyeRT[eyeIdx]);
       }
