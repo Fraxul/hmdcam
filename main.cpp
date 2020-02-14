@@ -33,6 +33,8 @@
 
 #include "Calibration.h"
 
+//#define LATENCY_DEBUG
+
 // Camera config
 // Size parameters for sensor mode selection.
 // Note that changing the sensor mode will invalidate the calibration
@@ -293,21 +295,18 @@ int main(int argc, char* argv[]) {
       }
 
       if ((frameCounter & 0x7fUL) == 0) {
+#ifdef LATENCY_DEBUG
         printf("Capture latency: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
           boost::accumulators::min(captureLatency),
           boost::accumulators::max(captureLatency),
           boost::accumulators::mean(captureLatency),
           boost::accumulators::median(captureLatency));
 
-        captureLatency = {};
-
         printf("Capture interval: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
           boost::accumulators::min(captureInterval),
           boost::accumulators::max(captureInterval),
           boost::accumulators::mean(captureInterval),
           boost::accumulators::median(captureInterval));
-
-        captureInterval = {};
 
         printf("Frame interval: % .6f ms (% .6f fps) min=%.3g max=%.3g median=%.3g\n",
           static_cast<double>(boost::accumulators::mean(frameInterval)) / 1000000.0,
@@ -316,7 +315,10 @@ int main(int argc, char* argv[]) {
           static_cast<double>(boost::accumulators::min(frameInterval)) / 1000000.0,
           static_cast<double>(boost::accumulators::max(frameInterval)) / 1000000.0,
           static_cast<double>(boost::accumulators::median(frameInterval)) / 1000000.0);
+#endif
 
+        captureLatency = {};
+        captureInterval = {};
         frameInterval = {};
       }
 

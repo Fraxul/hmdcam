@@ -10,6 +10,7 @@
 #include <boost/accumulators/statistics/mean.hpp>
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
+//#define FRAME_WAIT_TIME_STATS 1
 
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
@@ -199,12 +200,14 @@ bool ArgusCamera::readFrame() {
   static uint32_t s_frameCounter = 0;
   ++s_frameCounter;
 
+#ifdef FRAME_WAIT_TIME_STATS
   static boost::accumulators::accumulator_set<double, boost::accumulators::stats<
         boost::accumulators::tag::min,
         boost::accumulators::tag::max,
         boost::accumulators::tag::mean,
         boost::accumulators::tag::median
     > > s_frameWaitTimeStats;
+#endif
 
   if (!m_captureIsRepeating) {
     Argus::Status status;
@@ -214,12 +217,16 @@ bool ArgusCamera::readFrame() {
   }
 
 
+#ifdef FRAME_WAIT_TIME_STATS
+  uint64_t eventWaitStart = currentTimeNs();
+#endif
+
   // Service CaptureSession event queue and wait for capture completed event here
   // that should be able to smooth out some of the jitter without missing frames
-  uint64_t eventWaitStart = currentTimeNs();
   Argus::interface_cast<Argus::IEventProvider>(m_captureSession)->waitForEvents(m_completionEventQueue, m_targetCaptureIntervalNs / 2);
-  uint64_t eventWaitEnd = currentTimeNs();
 
+#ifdef FRAME_WAIT_TIME_STATS
+  uint64_t eventWaitEnd = currentTimeNs();
   if (m_captureIsRepeating) {
     s_frameWaitTimeStats(static_cast<double>(eventWaitEnd - eventWaitStart) / 1000000.0);
 
@@ -232,6 +239,7 @@ bool ArgusCamera::readFrame() {
         s_frameWaitTimeStats = {};
     }
   }
+#endif
 
   static uint64_t previousCaptureCompletionTimestamp = 0;
   if (m_captureIsRepeating) {
