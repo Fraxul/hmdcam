@@ -16,11 +16,16 @@ const std::string& lookupShaderSourceCache(const std::string& path, bool forceRe
 
   std::string& source = s_shaderSourceCache[path];
   if (source.empty() || forceReload) {
-    std::string fullPath = path; //FxVFS::expandPath(path); // Removed VFS dependency
-    boost::interprocess::file_mapping fm(fullPath.c_str(), boost::interprocess::read_only);
-    boost::interprocess::mapped_region mr(fm, boost::interprocess::read_only);
+    try {
+      std::string fullPath = path; //FxVFS::expandPath(path); // Removed VFS dependency
+      boost::interprocess::file_mapping fm(fullPath.c_str(), boost::interprocess::read_only);
+      boost::interprocess::mapped_region mr(fm, boost::interprocess::read_only);
 
-    source = std::string(static_cast<const char*>(mr.get_address()), mr.get_size());
+      source = std::string(static_cast<const char*>(mr.get_address()), mr.get_size());
+    } catch (const std::exception& ex) {
+      printf("Unable to open shader source file \"%s\": %s\n", path.c_str(), ex.what());
+      exit(-1);
+    }
   }
   return source;
 }
