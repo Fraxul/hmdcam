@@ -61,6 +61,7 @@ const double s_cameraFramerate = 89.527;
 float scaleFactor = 1.0f;
 float stereoOffset = 0.0f;
 bool renderSBS = true;
+bool useMask = true;
 int sbsSeparatorWidth = 4;
 
 // Camera info/state
@@ -271,6 +272,7 @@ int main(int argc, char* argv[]) {
         ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
         //ImGui::Text("Config");
         ImGui::Checkbox("SBS", &renderSBS);
+        ImGui::Checkbox("Mask", &useMask);
         ImGui::SliderFloat("Scale", &scaleFactor, 0.5f, 2.0f);
         ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
         if (renderSBS) {
@@ -333,7 +335,7 @@ int main(int argc, char* argv[]) {
           rhi()->bindRenderPipeline(camUndistortMaskPipeline);
           rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
           rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
-          rhi()->loadTexture(ksMaskTex, cameraMask[cameraIdx], linearClampSampler);
+          rhi()->loadTexture(ksMaskTex, useMask ? cameraMask[cameraIdx] : disabledMaskTex, linearClampSampler);
 
           // coordsys right now: -X = left, -Z = into screen
           // (camera is at the origin)

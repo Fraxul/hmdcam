@@ -28,6 +28,8 @@ RHIRenderPipeline::ptr camGreyscalePipeline;
 RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 RHIRenderPipeline::ptr solidQuadPipeline;
 
+RHISurface::ptr disabledMaskTex;
+
 struct ViveDistortionUniformBlock {
   glm::vec4 coeffs[3];
   glm::vec4 center;
@@ -177,6 +179,14 @@ bool RenderInit() {
     ndcQuadVertexLayout)),
     tristripPipelineDescriptor);
 
+
+  {
+    uint8_t* maskData = new uint8_t[8 * 8];
+    memset(maskData, 0xff, 8 * 8);
+    disabledMaskTex = rhi()->newTexture2D(8, 8, RHISurfaceDescriptor(kSurfaceFormat_R8));
+    rhi()->loadTextureData(disabledMaskTex, kVertexElementTypeUByte1N, maskData);
+    delete[] maskData;
+  }
 
   hmdContext = ohmd_ctx_create();
   int num_devices = ohmd_ctx_probe(hmdContext);
