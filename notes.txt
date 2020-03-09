@@ -1,7 +1,7 @@
 New machine setup:
 
 Make sure that the NVidia SDK manager finishes its post-flash SDK install, or the libraries needed to build will be missing.
-Unpack Tegra_Multimedia_API_R32.2.3_aarch64.tbz2 (or a newer version, from NV developer downloads) to /usr/src/nvidia, creating /usr/src/nvidia/tegra_multimedia_api
+If it doesn't already exist, unpack Tegra_Multimedia_API_R32.2.3_aarch64.tbz2 (or a newer version, from NV developer downloads) to /usr/src, creating /usr/src/tegra_multimedia_api
 
 
 Don't forget to set up the submodules after cloning:
@@ -11,7 +11,7 @@ git submodule update
 
 Install prerequisite packages:
 
-sudo apt-get install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev
+sudo apt-get install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb
 
 udev permissions:
 

@@ -24,7 +24,6 @@
 #include "InputListener.h"
 #include "Render.h"
 
-#include "imgui.h"
 #include "imgui_backend.h"
 
 #define STBI_ONLY_PNG

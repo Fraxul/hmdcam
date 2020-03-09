@@ -1,4 +1,5 @@
-#define IMGUI_IMPL_OPENGL_ES3
+#include "imgui_backend.h"
+#include "rhi/gl/GLCommon.h"
 #include "imgui/examples/imgui_impl_opengl3.cpp"
 #include "InputListener.h"
 

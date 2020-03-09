@@ -3,7 +3,7 @@ import os
 
 # Environment setup
 env = Environment(tools = ['clang', 'clangxx', 'link'],
-  CPPPATH=['.', 'glm', 'glatter/include', 'glatter/include/glatter', 'imgui', '/usr/include/drm', '/usr/src/nvidia/tegra_multimedia_api/include', '/usr/src/nvidia/tegra_multimedia_api/argus/include', '/usr/local/include/opencv4'],
+  CPPPATH=['.', 'glm', 'glatter/include', 'glatter/include/glatter', 'imgui', '/usr/include/drm', '/usr/src/tegra_multimedia_api/include', '/usr/src/tegra_multimedia_api/argus/include', '/usr/local/include/opencv4'],
   CPPFLAGS=['-g', '-Wall'],
   CXXFLAGS=['-std=c++11'],
   LINKFLAGS=['-g'],
