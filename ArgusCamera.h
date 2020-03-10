@@ -11,7 +11,7 @@
 
 class ArgusCamera {
 public:
-  ArgusCamera(EGLDisplay, EGLContext, std::vector<unsigned int> cameraIndices, unsigned int width, unsigned int height, double framerate);
+  ArgusCamera(EGLDisplay, EGLContext, std::vector<unsigned int> cameraIndices, double framerate);
   ~ArgusCamera();
 
   bool readFrame();

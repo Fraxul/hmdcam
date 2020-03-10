@@ -105,7 +105,9 @@ int main(int argc, char* argv[]) {
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f);
 
   // Open the cameras
-  stereoCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), {LEFT_CAMERA_INDEX, RIGHT_CAMERA_INDEX}, s_cameraWidth, s_cameraHeight, s_cameraFramerate);
+  stereoCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), {LEFT_CAMERA_INDEX, RIGHT_CAMERA_INDEX}, s_cameraFramerate);
+  s_cameraWidth = stereoCamera->streamWidth();
+  s_cameraHeight = stereoCamera->streamHeight();
 
   // Generate derived data for calibration
   initCalibration();

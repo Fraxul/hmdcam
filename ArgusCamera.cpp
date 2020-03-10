@@ -18,7 +18,7 @@ static inline uint64_t currentTimeNs() {
   return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
 
-ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<unsigned int> cameraIds, unsigned int width, unsigned int height, double framerate) :
+ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<unsigned int> cameraIds, double framerate) :
   m_display(display_), m_context(context_),
   m_cameraIds(cameraIds),
   m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = 128),
@@ -62,8 +62,9 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
   Argus::ICameraProperties *iCameraProperties = Argus::interface_cast<Argus::ICameraProperties>(m_cameraDevices[0]);
   Argus::SensorMode* sensorMode = NULL;
   {
-    // Select sensor mode. Pick the fastest mode (smallest FrameDurationRange.min) that matches the requested resolution.
+    // Select sensor mode. Pick the fastest mode (smallest FrameDurationRange.min) with the largest pixel area.
     uint64_t bestFrameDurationRangeMin = UINT64_MAX;
+    uint64_t bestPixelArea = 0;
 
     std::vector<Argus::SensorMode*> sensorModes;
     iCameraProperties->getAllSensorModes(&sensorModes);
@@ -71,19 +72,19 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
       Argus::SensorMode* sensorModeCandidate = sensorModes[modeIdx];
       Argus::ISensorMode *iSensorModeCandidate = Argus::interface_cast<Argus::ISensorMode>(sensorModeCandidate);
 
-      if (!(iSensorModeCandidate->getResolution().width() == width && iSensorModeCandidate->getResolution().height() == height)) {
-        continue; // Match failed: wrong resolution
-      }
+      uint64_t pixelArea = iSensorModeCandidate->getResolution().width() * iSensorModeCandidate->getResolution().height();
 
-      if (iSensorModeCandidate->getFrameDurationRange().min() < bestFrameDurationRangeMin) {
+      if ((iSensorModeCandidate->getFrameDurationRange().min() < bestFrameDurationRangeMin) || // faster mode
+        ((iSensorModeCandidate->getFrameDurationRange().min() == bestFrameDurationRangeMin) && (pixelArea > bestPixelArea))) /*same speed, more pixels*/ {
         bestFrameDurationRangeMin = iSensorModeCandidate->getFrameDurationRange().min();
+        bestPixelArea = pixelArea;
         sensorMode = sensorModeCandidate;
       }
     }
   }
 
   if (!sensorMode)
-    die("Unable to select a sensor mode matching the requested resolution (%ux%u)", width, height);
+    die("Unable to select a sensor mode");
 
   Argus::ISensorMode *iSensorMode = Argus::interface_cast<Argus::ISensorMode>(sensorMode);
   assert(iSensorMode);
