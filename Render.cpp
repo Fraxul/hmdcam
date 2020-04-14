@@ -8,6 +8,12 @@
 
 #include "openhmd/openhmd.h"
 
+#include "NvEncSession.h"
+#include "liveMedia.hh"
+#include "BasicUsageEnvironment.hh"
+#include "BufferRingSource.h"
+#include "H264VideoNvEncSessionServerMediaSubsession.h"
+
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 
@@ -70,8 +76,26 @@ glm::mat4 eyeView[2];
 
 float stereoSeparationScale = 2.0f; // TODO: why? some of the Vive projection math is still wrong...
 
-
 NvGlDemoOptions demoOptions;
+
+// Streaming server / NvEnc state
+
+NvEncSession* nvencSession;
+
+TaskScheduler* rtspScheduler;
+BasicUsageEnvironment* rtspEnv;
+RTSPServer* rtspServer;
+ServerMediaSession* rtspMediaSession;
+std::string rtspURL;
+unsigned int rtspRenderInterval = 3; // stream every third frame, which should get us to about 30fps
+
+// -----------
+
+void* rtspServerThreadEntryPoint(void* arg) {
+  printf("Starting RTSP server event loop\n");
+  rtspEnv->taskScheduler().doEventLoop();
+  return NULL;
+}
 
 bool RenderInit() {
   memset(&demoOptions, 0, sizeof(demoOptions));
@@ -236,6 +260,43 @@ bool RenderInit() {
     printf("WARNING: Screen and HMD dimensions don't match; check system configuration.\n");
   }
 
+  // RTSP server and NvEnc setup
+  {
+    nvencSession = new NvEncSession();
+    nvencSession->setDimensions(eye_width, eye_height);
+    nvencSession->setInputFormat(NvEncSession::kInputFormatRGBX8);
+    //nvencSession->setBitrate(bitrate);
+    //nvencSession->setFramerate(fps_n, fps_d);
+    nvencSession->setFramerate(89527, 3000); // TODO derive this from the screen's framerate. hardcoded to 89.527 fps / 3
+    
+
+    // Begin by setting up our usage environment:
+    rtspScheduler = BasicTaskScheduler::createNew();
+    rtspEnv = BasicUsageEnvironment::createNew(*rtspScheduler);
+    OutPacketBuffer::maxSize = 1048576;
+
+    // Create the RTSP server:
+    rtspServer = RTSPServer::createNew(*rtspEnv, 8554);
+    if (rtspServer == NULL) {
+      printf("Failed to create RTSP server: %s\n", rtspEnv->getResultMsg());
+      exit(1);
+    }
+
+    char const* descriptionString = "Live555 embedded stream";
+    char const* streamName = "0";
+    rtspMediaSession = ServerMediaSession::createNew(*rtspEnv, streamName, streamName, descriptionString);
+    rtspMediaSession->addSubsession(H264VideoNvEncSessionServerMediaSubsession::createNew(*rtspEnv, nvencSession));
+    rtspServer->addServerMediaSession(rtspMediaSession);
+
+    char* urlTmp = rtspServer->rtspURL(rtspMediaSession);
+    printf("RTSP server is listening at %s\n", urlTmp);
+    rtspURL = std::string(urlTmp);
+    delete[] urlTmp;
+
+    pthread_t server_tid;
+    pthread_create(&server_tid, NULL, &rtspServerThreadEntryPoint, NULL);
+  }
+
   return true;
 }
 
@@ -369,6 +430,22 @@ void renderHMDFrame() {
   }
 
   rhi()->endRenderPass(windowRenderTarget);
+
+  {
+    // RTSP server rendering
+    // TODO need to rework the frame handoff so the GPU does the buffer copy
+    static int rtspRenderCounter = 0;
+    if (ctx.nvencSession->isRunning() && ((++rtspRenderCounter) >= rtspRenderInterval) {
+      rtspRenderCounter = 0;
+
+      size_t frameSize = eye_width * eye_height * 4;
+      char* frameBuffer = new char[frameSize];
+      rhi()->readbackTexture(eyeTex[0], 0, kVertexElementTypeUByte4N, frameBuffer);
+      ctx.nvencSession->submitFrame(frameBuffer, frameSize, /*block=*/false);
+
+      delete[] frameBuffer;
+    }
+  }
 
   rhi()->swapBuffers(windowRenderTarget);
 }
