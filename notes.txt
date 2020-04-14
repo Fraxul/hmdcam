@@ -22,13 +22,26 @@ sudo chmod 660 /dev/hidraw*
 # udev rules for Vive (contents of /etc/udev/rules.d/83-hmd.rules )
 # update and run `sudo udevadm control --reload`
 
-KERNEL=="hidraw*", ATTRS{idVendor}=="28de", MODE="0660", GROUP="plugdev"
-KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", MODE="0660", GROUP="plugdev"
-KERNEL=="hidraw*", ATTRS{idVendor}=="0bb4", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bb4", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="28de", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0bb4", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="28de", MODE="0666", GROUP="plugdev"
 
 Make sure that the user you're running as is members of the "plugdev" and "input" groups.
 plugdev is required to open the Vive's /dev/hidraw* node
 input is required to open nodes under /dev/input for the USB-HID remote control
+
+To avoid accidentally powering off the Jetson with the USB-HID remote, disable systemd's response to power/suspend/hibernate/whatever keys:
+edit /etc/systemd/logind.conf :
+
+[Login]
+HandlePowerKey=ignore
+HandleSuspendKey=ignore
+HandleHibernateKey=ignore
+HandleLidSwitch=ignore
+HandleLidSwitchDocked=ignore
+
+then sudo systemctl restart systemd-logind
 
 Disabling the desktop environment:
 sudo systemctl disable gdm3

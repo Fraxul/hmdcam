@@ -6,9 +6,12 @@
 [submodule "glatter"]
 	path = glatter
 	url = https://github.com/imakris/glatter.git
+  ignore = untracked
 [submodule "imgui"]
 	path = imgui
 	url = https://github.com/ocornut/imgui.git
+  ignore = untracked
 [submodule "stb"]
 	path = stb
 	url = https://github.com/nothings/stb
+  ignore = untracked
