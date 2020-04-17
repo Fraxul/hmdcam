@@ -17,6 +17,7 @@ public:
 
   void setDimensions(uint32_t width, uint32_t height) { m_width = width; m_height = height; }
   void setBitrate(uint32_t bitsPerSecond) { m_bitsPerSecond = bitsPerSecond; }
+  uint32_t bitrate() const { return m_bitsPerSecond; }
   void setFramerate(uint32_t numerator, uint32_t denominator) { m_framerateNumerator = numerator; m_framerateDenominator = denominator; }
 
   enum InputFormat {
@@ -27,7 +28,7 @@ public:
   void setInputFormat(InputFormat inputFormat) { m_inputFormat = inputFormat; }
   InputFormat inputFormat() const { return m_inputFormat; }
 
-  size_t registerEncodedFrameDeliveryCallback(const std::function<void(const char*, size_t)>& cb);
+  size_t registerEncodedFrameDeliveryCallback(const std::function<void(const char*, size_t, struct timeval&)>& cb);
   void unregisterEncodedFrameDeliveryCallback(size_t cbId);
 
   size_t inputFrameSize() const { return m_inputFrameSize; }
@@ -46,7 +47,7 @@ protected:
   uint32_t m_encoderPixfmt;
   InputFormat m_inputFormat;
 
-  std::map<size_t, std::function<void(const char*, size_t)> > m_encodedFrameDeliveryCallbacks;
+  std::map<size_t, std::function<void(const char*, size_t, struct timeval&)> > m_encodedFrameDeliveryCallbacks;
   size_t m_encodedFrameDeliveryCallbackIdGen;
 
   uint32_t m_startCount;

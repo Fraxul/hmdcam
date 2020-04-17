@@ -16,6 +16,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
+#include <sys/time.h>
 
 #define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
 
@@ -87,9 +88,17 @@ BasicUsageEnvironment* rtspEnv;
 RTSPServer* rtspServer;
 ServerMediaSession* rtspMediaSession;
 std::string rtspURL;
-unsigned int rtspRenderInterval = 3; // stream every third frame, which should get us to about 30fps
+uint64_t rtspRenderIntervalNs = 33333333; // 30fps
+//uint64_t rtspRenderIntervalNs = 66666667; // 15fps
+//uint64_t rtspRenderIntervalNs = 11169814; // 89.527fps
 
 // -----------
+
+static inline uint64_t currentTimeNs() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
+}
 
 void* rtspServerThreadEntryPoint(void* arg) {
   printf("Starting RTSP server event loop\n");
@@ -267,7 +276,7 @@ bool RenderInit() {
     nvencSession->setInputFormat(NvEncSession::kInputFormatRGBX8);
     //nvencSession->setBitrate(bitrate);
     //nvencSession->setFramerate(fps_n, fps_d);
-    nvencSession->setFramerate(89527, 3000); // TODO derive this from the screen's framerate. hardcoded to 89.527 fps / 3
+    nvencSession->setFramerate(90, 1); // TODO derive this from the screen's framerate.
     
 
     // Begin by setting up our usage environment:
@@ -434,16 +443,19 @@ void renderHMDFrame() {
   {
     // RTSP server rendering
     // TODO need to rework the frame handoff so the GPU does the buffer copy
-    static int rtspRenderCounter = 0;
-    if (ctx.nvencSession->isRunning() && ((++rtspRenderCounter) >= rtspRenderInterval) {
-      rtspRenderCounter = 0;
+    static uint64_t lastFrameSubmissionTimeNs = 0;
+    if (nvencSession->isRunning()) {
+      uint64_t now = currentTimeNs();
+      if (lastFrameSubmissionTimeNs + rtspRenderIntervalNs <= now) {
+        lastFrameSubmissionTimeNs = now;
 
-      size_t frameSize = eye_width * eye_height * 4;
-      char* frameBuffer = new char[frameSize];
-      rhi()->readbackTexture(eyeTex[0], 0, kVertexElementTypeUByte4N, frameBuffer);
-      ctx.nvencSession->submitFrame(frameBuffer, frameSize, /*block=*/false);
+        size_t frameSize = eye_width * eye_height * 4;
+        char* frameBuffer = new char[frameSize];
+        rhi()->readbackTexture(eyeTex[0], 0, kVertexElementTypeUByte4N, frameBuffer);
+        nvencSession->submitFrame(frameBuffer, frameSize, /*block=*/false);
 
-      delete[] frameBuffer;
+        delete[] frameBuffer;
+      }
     }
   }
 

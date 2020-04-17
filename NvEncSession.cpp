@@ -17,7 +17,9 @@ NvEncSession::NvEncSession() : m_width(0), m_height(0), m_bitsPerSecond(8000000)
   m_encoderPixfmt(V4L2_PIX_FMT_H264),
   m_inputFormat(kInputFormatNV12),
   m_encodedFrameDeliveryCallbackIdGen(0),
-  m_startCount(0) {
+  m_startCount(0),
+  m_inShutdown(false),
+  m_inputFrameSize(0) {
 
   pthread_mutex_init(&m_stateLock, NULL);
   pthread_mutex_init(&m_callbackLock, NULL);
@@ -44,7 +46,7 @@ NvEncSession::~NvEncSession() {
 
 }
 
-size_t NvEncSession::registerEncodedFrameDeliveryCallback(const std::function<void(const char*, size_t)>& cb) {
+size_t NvEncSession::registerEncodedFrameDeliveryCallback(const std::function<void(const char*, size_t, struct timeval&)>& cb) {
   pthread_mutex_lock(&m_callbackLock);
 
   size_t cbid = ++m_encodedFrameDeliveryCallbackIdGen;
@@ -61,6 +63,9 @@ void NvEncSession::unregisterEncodedFrameDeliveryCallback(size_t cbId) {
 }
 
 bool NvEncSession::submitFrame(char* data, size_t length, bool blockIfQueueFull) {
+
+  if (inputFrameSize() == 0)
+    return false; // Reject frames submitted before startup is finished
 
   if (m_inShutdown && length != 0)
     return false; // Reject frames submitted during shutdown
@@ -94,6 +99,7 @@ bool NvEncSession::submitFrame(char* data, size_t length, bool blockIfQueueFull)
 
   v4l2_buf.index = buffer->index;
   v4l2_buf.m.planes = planes;
+  gettimeofday(&v4l2_buf.timestamp, NULL);
 
   if (data && length) {
     const char* readPtr = data; 
@@ -195,15 +201,17 @@ void NvEncSession::start() {
   // Set up for streaming -- insert SPS and PPS every 60 frames so the decoder can sync to an in-progress stream.
   m_enc->setInsertSpsPpsAtIdrEnabled(true);
   m_enc->setIDRInterval(60 /*frames*/);
+  // Insert VUI so that the RTSP server can pull framerate information out of it
+  //m_enc->setInsertVuiEnabled(true);
 
   // REQBUF, EXPORT and MAP conv0 output plane buffers
-  ret = m_conv0->output_plane.setupPlane(V4L2_MEMORY_USERPTR, 10, false, true);
+  ret = m_conv0->output_plane.setupPlane(V4L2_MEMORY_USERPTR, 6, false, true);
   if (ret < 0) die("Error while setting up output plane for conv0");
 
   // REQBUF and EXPORT conv0 capture plane buffers
   // No need to MAP since buffer will be shared to next component
   // and not read in application
-  ret = m_conv0->capture_plane.setupPlane(V4L2_MEMORY_MMAP, 10, false, false);
+  ret = m_conv0->capture_plane.setupPlane(V4L2_MEMORY_MMAP, 6, false, false);
   if (ret < 0) die("Error while setting up capture plane for conv0");
 
   // conv0 output plane STREAMON
@@ -216,7 +224,7 @@ void NvEncSession::start() {
 
   // REQBUF on encoder output plane buffers
   // DMABUF is used here since it is a shared buffer allocated by another component
-  ret = m_enc->output_plane.setupPlane(V4L2_MEMORY_DMABUF, 10, false, false);
+  ret = m_enc->output_plane.setupPlane(V4L2_MEMORY_DMABUF, 6, false, false);
   if (ret < 0) die("Could not setup encoder output plane");
 
   // Query, Export and Map the output plane buffers so that we can write
@@ -329,6 +337,7 @@ void NvEncSession::stop() {
   while (!m_encoderOutputPlaneBufferQueue.empty()) m_encoderOutputPlaneBufferQueue.pop();
   while (!m_conv0OutputPlaneBufferQueue.empty()) m_conv0OutputPlaneBufferQueue.pop();
 
+  m_inputFrameSize = 0;
   pthread_mutex_unlock(&m_stateLock);
 }
 
@@ -382,6 +391,7 @@ bool NvEncSession::conv0_capture_dqbuf_thread_callback(struct v4l2_buffer *v4l2_
 
   enc_qbuf.index = enc_buffer->index;
   enc_qbuf.m.planes = planes;
+  memcpy(&enc_qbuf.timestamp, &v4l2_buf->timestamp, sizeof(struct timeval));
 
   // A reference to buffer is saved which can be used when
   // buffer is dequeued from enc output plane
@@ -450,13 +460,57 @@ bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_bu
     return false;
   }
 
-  //write_encoder_output_frame(ctx->out_file, buffer);
-  //ctx->bufferRingSource->asyncDeliverFrame(ctx->scheduler, (char*) buffer->planes[0].data, buffer->planes[0].bytesused);
-  pthread_mutex_lock(&m_callbackLock);
-  for (const auto& cbIt : m_encodedFrameDeliveryCallbacks) {
-    cbIt.second((const char*) buffer->planes[0].data, buffer->planes[0].bytesused);
+  if (buffer->planes[0].bytesused >= 4) {
+    // TODO: v4l2_buf->timestamp should have a valid PTS passed through the encoder chain, but using that causes the test player (vlc)
+    // to complain about frames being too old to display. might want to offset it somehow?
+    // Just calling gettimeofday here to conjure a new PTS seems to work fine
+
+    struct timeval pts;
+    gettimeofday(&pts, NULL);
+
+    pthread_mutex_lock(&m_callbackLock);
+
+    const char* data = reinterpret_cast<const char*>(buffer->planes[0].data);
+    size_t dataSize = buffer->planes[0].bytesused;
+
+    // Break the delivered buffer up into NAL units, removing start codes, and deliver them individually to downstream clients (RTSP sessions).
+    // We only ever get a buffer with an optional SPS (type 7) and PPS (type 8) and then a slice (type 5 or 1)
+    const char startCode[] = {0x00, 0x00, 0x00, 0x01};
+    const size_t startCodeLength = 4;
+
+    const char* start = data;
+    size_t remaining = dataSize;
+
+    if (!memcmp(data, startCode, startCodeLength)) {
+      // Skip the first start code
+      start += startCodeLength;
+      remaining -= startCodeLength;
+    } else {
+      printf("NvEncSession::encoder_capture_plane_dq_callback: WARNING: delivered buffer is missing start code");
+    }
+
+    while (remaining) {
+      size_t nextBlockLength = remaining;
+
+      // Split at the next start code in the buffer, if there is one
+      const void* nextStartCode = memmem(start, remaining, startCode, startCodeLength);
+      if (nextStartCode) {
+        nextBlockLength = reinterpret_cast<const char*>(nextStartCode) - start;
+      }
+
+      for (const auto& cbIt : m_encodedFrameDeliveryCallbacks) {
+        cbIt.second(start, nextBlockLength, pts);
+      }
+
+      if (!nextStartCode) // current NALU is the entire rest of the buffer
+        break;
+
+      remaining -= nextBlockLength + startCodeLength;
+      start += nextBlockLength + startCodeLength;
+    }
+
+    pthread_mutex_unlock(&m_callbackLock);
   }
-  pthread_mutex_unlock(&m_callbackLock);
 
   if (m_enc->capture_plane.qBuffer(*v4l2_buf, NULL) < 0) {
     die("Error while Qing buffer at capture plane");

@@ -21,7 +21,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "H264VideoNvEncSessionServerMediaSubsession.h"
 #include "H264VideoRTPSink.hh"
-#include "H264VideoStreamFramer.hh"
+#include "H264VideoStreamDiscreteFramer.hh"
 
 #include "NvEncSession.h"
 #include "BufferRingSource.h"
@@ -100,10 +100,13 @@ char const* H264VideoNvEncSessionServerMediaSubsession::getAuxSDPLine(RTPSink* r
 }
 
 FramedSource* H264VideoNvEncSessionServerMediaSubsession::createNewStreamSource(unsigned /*clientSessionId*/, unsigned& estBitrate) {
-  estBitrate = 500; // kbps, estimate
+  estBitrate = fNvEncSession->bitrate() / 1000; // kbps, estimate
+  if (!estBitrate)
+    estBitrate = 8000;
 
   // Create a framer for the Video Elementary Stream:
-  return H264VideoStreamFramer::createNew(envir(), BufferRingSource::createNew(envir(), fNvEncSession));
+  // TODO: this needs to be H264VideoStreamDiscreteFramer to use our PTSes, which means we need to strip the start codes and probably separate the SPS and PPS (since they're delivered in the same buffer)
+  return H264VideoStreamDiscreteFramer::createNew(envir(), BufferRingSource::createNew(envir(), fNvEncSession));
 }
 
 RTPSink* H264VideoNvEncSessionServerMediaSubsession

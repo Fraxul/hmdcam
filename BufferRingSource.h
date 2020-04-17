@@ -17,7 +17,7 @@ public:
   // You can, however, redefine this to be a non-static member variable.
 
   // Intended to be called from outside the TaskScheduler environment -- delivers a frame.
-  void asyncDeliverFrame(TaskScheduler* taskScheduler, const char* data, size_t length);
+  void asyncDeliverFrame(TaskScheduler* taskScheduler, const char* data, size_t length, struct timeval& timestamp);
 
 protected:
   BufferRingSource(UsageEnvironment& env, NvEncSession*);
@@ -35,8 +35,13 @@ private:
 
 private:
   pthread_mutex_t m_qLock;
-  std::deque<std::string*> m_filledBuffers;
-  std::deque<std::string*> m_emptyBuffers;
+  struct Buffer {
+    std::string payload;
+    struct timeval pts;
+  };
+
+  std::deque<Buffer*> m_filledBuffers;
+  std::deque<Buffer*> m_emptyBuffers;
   bool m_buffersOverflowing;
   NvEncSession* m_nvencSession;
   size_t m_nvencSessionCallbackId;

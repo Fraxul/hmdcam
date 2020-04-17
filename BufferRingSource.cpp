@@ -2,8 +2,8 @@
 #include "NvEncSession.h"
 #include <GroupsockHelper.hh> // for "gettimeofday()"
 
-const size_t kBufferCount = 32;
-const size_t kBufferReserveSize = 16384;
+const size_t kBufferCount = 8;
+const size_t kBufferReserveSize = 32768;
 
 BufferRingSource* BufferRingSource::createNew(UsageEnvironment& env, NvEncSession* session) {
   return new BufferRingSource(env, session);
@@ -16,8 +16,8 @@ BufferRingSource::BufferRingSource(UsageEnvironment& env, NvEncSession* session)
   // Any instance-specific initialization of the device would be done here:
   pthread_mutex_init(&m_qLock, NULL);
   for (size_t i = 0; i < kBufferCount; ++i) {
-    std::string* b = new std::string();
-    b->reserve(kBufferReserveSize);
+    Buffer* b = new Buffer();
+    b->payload.reserve(kBufferReserveSize);
     m_emptyBuffers.push_back(b);
   }
 
@@ -37,8 +37,8 @@ BufferRingSource::BufferRingSource(UsageEnvironment& env, NvEncSession* session)
   {
     BufferRingSource* source = this;
     TaskScheduler* scheduler = &envir().taskScheduler();
-    m_nvencSessionCallbackId = session->registerEncodedFrameDeliveryCallback([source, scheduler](const char* data, size_t length) {
-      source->asyncDeliverFrame(scheduler, data, length);
+    m_nvencSessionCallbackId = session->registerEncodedFrameDeliveryCallback([source, scheduler](const char* data, size_t length, struct timeval& timestamp) {
+      source->asyncDeliverFrame(scheduler, data, length, timestamp);
     });
   }
   session->start();
@@ -115,7 +115,7 @@ void BufferRingSource::deliverFrame() {
 
   if (!isCurrentlyAwaitingData()) return; // we're not ready for the data yet
 
-  std::string* b = NULL;
+  Buffer* b = NULL;
   pthread_mutex_lock(&m_qLock);
   if (!m_filledBuffers.empty()) {
     b = m_filledBuffers.front();
@@ -128,8 +128,10 @@ void BufferRingSource::deliverFrame() {
     return;
   }
 
-  const char* newFrameDataStart = b->data();
-  size_t newFrameSize = b->size();
+  const char* newFrameDataStart = b->payload.data();
+  size_t newFrameSize = b->payload.size();
+  // Use the PTS stamped on the buffer when it was delivered
+  memcpy(&fPresentationTime, &b->pts, sizeof(struct timeval));
 
   // Deliver the data here:
   if (newFrameSize > fMaxSize) {
@@ -138,16 +140,14 @@ void BufferRingSource::deliverFrame() {
   } else {
     fFrameSize = newFrameSize;
   }
-  gettimeofday(&fPresentationTime, NULL); // If you have a more accurate time - e.g., from an encoder - then use that instead.
-  // If the device is *not* a 'live source' (e.g., it comes instead from a file or buffer), then set "fDurationInMicroseconds" here.
   memmove(fTo, newFrameDataStart, fFrameSize);
 
-  //printf("BufferRingSource::deliverFrame(): size=%zu fNumTruncatedBytes=%u\n", fFrameSize, fNumTruncatedBytes);
+  //printf("BufferRingSource::deliverFrame() pts=%zu.%lu payloadSize=%zu fFrameSize=%u fNumTruncatedBytes=%u\n", fPresentationTime.tv_sec, fPresentationTime.tv_usec / 1000UL, newFrameSize, fFrameSize, fNumTruncatedBytes);
 
   if (fNumTruncatedBytes) {
     // Still have data left in this buffer, return it to the front of the queue for later
-    memmove(const_cast<char*>(b->data()), b->data() + (b->size() - fNumTruncatedBytes), fNumTruncatedBytes);
-    b->resize(fNumTruncatedBytes);
+    memmove(const_cast<char*>(b->payload.data()), b->payload.data() + (b->payload.size() - fNumTruncatedBytes), fNumTruncatedBytes);
+    b->payload.resize(fNumTruncatedBytes);
   }
 
   pthread_mutex_lock(&m_qLock);
@@ -163,7 +163,7 @@ void BufferRingSource::deliverFrame() {
 }
 
 // Called by an external client (and off the TaskScheduler thread) to deliver a buffer of frame data.
-void BufferRingSource::asyncDeliverFrame(TaskScheduler* taskScheduler, const char* data, size_t length) {
+void BufferRingSource::asyncDeliverFrame(TaskScheduler* taskScheduler, const char* data, size_t length, struct timeval& timestamp) {
   //printf("BufferRingSource(%p)::asyncDeliverFrame(%p, %zu)\n", this, data, length);
 
   if (data == NULL || !length)
@@ -172,7 +172,7 @@ void BufferRingSource::asyncDeliverFrame(TaskScheduler* taskScheduler, const cha
   // TODO replace the buffer pool with a single large ring buffer?
 
   pthread_mutex_lock(&m_qLock);
-  std::string* b = NULL;
+  Buffer* b = NULL;
 
   if (!m_emptyBuffers.empty()) {
     b = m_emptyBuffers.front();
@@ -183,14 +183,16 @@ void BufferRingSource::asyncDeliverFrame(TaskScheduler* taskScheduler, const cha
     b = m_filledBuffers.front();
     m_filledBuffers.pop_front();
 
-    if (!m_buffersOverflowing) {
-      printf("BufferRingSource::asyncDeliverFrame: Buffer queue is full and old buffers are being overwritten\n");
-    }
-    m_buffersOverflowing = true;
+    //if (!m_buffersOverflowing) {
+    printf("BufferRingSource::asyncDeliverFrame: Buffer queue is full and old buffers are being overwritten. Droppping a buffer with PTS=%zu.%lu\n", b->pts.tv_sec, b->pts.tv_usec/1000UL);
+    //}
+    //m_buffersOverflowing = true;
   }
 
-  b->resize(length);
-  memcpy(const_cast<char*>(b->data()), data, length);
+  b->payload.resize(length);
+  memcpy(const_cast<char*>(b->payload.data()), data, length);
+  memcpy(&b->pts, &timestamp, sizeof(struct timeval));
+  //printf("Encoder asyncDeliverFrame() pts=%zu.%lu size=%zu emptyBuffers=%zu filledBuffers=%zu\n", b->pts.tv_sec, b->pts.tv_usec / 1000UL, length, m_emptyBuffers.size(), m_filledBuffers.size());
   m_filledBuffers.push_back(b);
 
   pthread_mutex_unlock(&m_qLock);
