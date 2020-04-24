@@ -16,6 +16,7 @@
 #include "NvVideoEncoder.h"
 #include "NvVideoConverter.h"
 #include "NvUtils.h"
+#include "nvgldemo.h"
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 
@@ -33,6 +34,8 @@ NvEncSession::NvEncSession() : m_width(0), m_height(0), m_bitsPerSecond(8000000)
   pthread_mutex_init(&m_stateLock, NULL);
   pthread_mutex_init(&m_callbackLock, NULL);
 
+  pthread_mutex_init(&m_gpuSubmissionQueueLock, NULL);
+  pthread_cond_init(&m_gpuSubmissionQueueCond, NULL);
   pthread_mutex_init(&m_encoderOutputPlaneBufferQueueLock, NULL);
   pthread_cond_init(&m_encoderOutputPlaneBufferQueueCond, NULL);
   pthread_mutex_init(&m_conv0OutputPlaneBufferQueueLock, NULL);
@@ -48,6 +51,8 @@ NvEncSession::~NvEncSession() {
   pthread_mutex_destroy(&m_stateLock);
   pthread_mutex_destroy(&m_callbackLock);
 
+  pthread_mutex_destroy(&m_gpuSubmissionQueueLock);
+  pthread_cond_destroy(&m_gpuSubmissionQueueCond);
   pthread_mutex_destroy(&m_encoderOutputPlaneBufferQueueLock);
   pthread_cond_destroy(&m_encoderOutputPlaneBufferQueueCond);
   pthread_mutex_destroy(&m_conv0OutputPlaneBufferQueueLock);
@@ -172,126 +177,173 @@ bool NvEncSession::submitSurface(RHISurface::ptr surface, bool blockIfQueueFull)
   assert(usingGPUFrameSubmission());
   assert(m_rhiSurfaces[m_currentSurfaceIndex] == surface);
 
-  m_currentSurfaceIndex++;
-  if (m_currentSurfaceIndex >= m_rhiSurfaces.size())
-    m_currentSurfaceIndex = 0;
+  bool res = true;
 
-  pthread_mutex_lock(&m_conv0OutputPlaneBufferQueueLock);
-  while (m_conv0OutputPlaneBufferQueue.empty()) {
-    if (!blockIfQueueFull) {
-      pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
-      pthread_mutex_unlock(&m_stateLock);
-      return false; // frame dropped
-    }
-
-    pthread_cond_wait(&m_conv0OutputPlaneBufferQueueCond, &m_conv0OutputPlaneBufferQueueLock);
+  pthread_mutex_lock(&m_gpuSubmissionQueueLock);
+  if (m_gpuSubmissionQueue.size() >= m_rhiSurfaces.size()) {
+    printf("NvEncSession::submitSurface: queue is full\n");
+    res = false; // queue is full
+  } else {
+    m_gpuSubmissionQueue.push(m_currentSurfaceIndex);
+    m_currentSurfaceIndex++;
+    if (m_currentSurfaceIndex >= m_rhiSurfaces.size())
+      m_currentSurfaceIndex = 0;
   }
-
-  NvBuffer *buffer = m_conv0OutputPlaneBufferQueue.front();
-  m_conv0OutputPlaneBufferQueue.pop();
-  pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
-
-
-  struct v4l2_buffer v4l2_buf;
-  struct v4l2_plane planes[MAX_PLANES];
-
-  memset(&v4l2_buf, 0, sizeof(v4l2_buf));
-  memset(planes, 0, sizeof(planes));
-
-  v4l2_buf.index = buffer->index;
-  v4l2_buf.m.planes = planes;
-  gettimeofday(&v4l2_buf.timestamp, NULL);
-
-  assert(buffer->n_planes == 1); // only support a single RGB plane
-  buffer->planes[0].bytesused = buffer->planes[0].fmt.stride * buffer->planes[0].fmt.height;
-
-  // Map the EGLImage for the dmabuf fd for CUDA write access
-  EGLImageKHR img = NvEGLImageFromFd(renderEGLDisplay(), buffer->planes[0].fd);
-
-  CUgraphicsResource pWriteResource = NULL;
-  CUresult status = cuGraphicsEGLRegisterImage(&pWriteResource, img, CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD);
-  if (status != CUDA_SUCCESS)
-    die("cuGraphicsEGLRegisterImage failed: %d\n", status);
-
-  CUeglFrame eglFrame;
-  status = cuGraphicsResourceGetMappedEglFrame(&eglFrame, pWriteResource, 0, 0);
-  if (status != CUDA_SUCCESS) {
-    die("cuGraphicsSubResourceGetMappedArray failed: %d\n", status);
-  }
-
-  //status = cuCtxSynchronize();
-  //if (status != CUDA_SUCCESS) {
-  //  die("cuCtxSynchronize failed: %d\n", status);
-  //}
-
-  // Map the GL surface for CUDA read access
-  RHISurfaceGL* glSurface = static_cast<RHISurfaceGL*>(surface.get());
-
-  CUgraphicsResource pReadResource = NULL;
-  status = cuGraphicsGLRegisterImage(&pReadResource, glSurface->glId(), glSurface->glTarget(), CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY);
-  if (status != CUDA_SUCCESS) {
-    die("cuGraphicsGLRegisterImage() failed: %d\n", status);
-  }
-
-  status = cuGraphicsMapResources(1, &pReadResource, 0);
-  if (status != CUDA_SUCCESS) {
-    die("cuGraphicsMapResources() failed: %d\n", status);
-  }
-
-  CUmipmappedArray pReadMip = NULL;
-  status = cuGraphicsResourceGetMappedMipmappedArray(&pReadMip, pReadResource);
-  if (status != CUDA_SUCCESS) {
-    die("cuGraphicsResourceGetMappedMipmappedArray() failed: %d\n", status);
-  }
-
-  CUarray pReadArray = NULL;
-  status = cuMipmappedArrayGetLevel(&pReadArray, pReadMip, 0);
-  if (status != CUDA_SUCCESS) {
-    die("cuMipmappedArrayGetLevel() failed: %d\n", status);
-  }
-
-  // for debugging
-  CUDA_ARRAY_DESCRIPTOR readArrayDescriptor;
-  status = cuArrayGetDescriptor(&readArrayDescriptor, pReadArray);
-  if (status != CUDA_SUCCESS) {
-    die("cuArrayGetDescriptor() failed: %d\n", status);
-  }
-
-  CUDA_MEMCPY2D copyDescriptor;
-  memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
-  copyDescriptor.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-  copyDescriptor.srcArray = pReadArray;
-
-#if 0
-  // this might work for CU_EGL_FRAME_TYPE_ARRAY? untested.
-  copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
-  copyDescriptor.dstArray = eglFrame.frame.pArray[0];
-#else
-  // CU_EGL_FRAME_TYPE_PITCH destination
-  assert(eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH);
-  copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-  copyDescriptor.dstDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
-  copyDescriptor.dstPitch = eglFrame.pitch;
-#endif
-
-  copyDescriptor.WidthInBytes = buffer->planes[0].fmt.width * buffer->planes[0].fmt.bytesperpixel;
-  copyDescriptor.Height = buffer->planes[0].fmt.height;
-  status = cuMemcpy2D(&copyDescriptor);
-  if (status != CUDA_SUCCESS) {
-    die("cuMemcpy2D() failed\n");
-  }
-
-  cuGraphicsUnmapResources(1, &pReadResource, 0);
-  cuGraphicsUnregisterResource(pReadResource);
-  cuGraphicsUnregisterResource(pWriteResource);
-  NvDestroyEGLImage(renderEGLDisplay(), img);
-
-  int ret = m_conv0->output_plane.qBuffer(v4l2_buf, NULL);
-  if (ret < 0)
-    die("Error while queueing buffer at output plane");
+  pthread_cond_broadcast(&m_gpuSubmissionQueueCond);
+  pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
 
   pthread_mutex_unlock(&m_stateLock);
-  return true;
+  return res;
+}
+
+void NvEncSession::cudaWorker() {
+  // Setup an EGL share context
+  EGLContext eglCtx = NvGlDemoCreateShareContext();
+  if (!eglCtx) {
+    die("rtspServerThreadEntryPoint: unable to create EGL share context\n");
+  }
+
+  bool res = eglMakeCurrent(renderEGLDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, eglCtx);
+  if (!res) {
+    die("rtspServerThreadEntryPoint: eglMakeCurrent() failed\n");
+  }
+
+  // use the default global CUDA context
+  cuCtxSetCurrent(cudaContext);
+
+  while (true) {
+    // Wait for next surface index in gpu submission queue
+    pthread_mutex_lock(&m_gpuSubmissionQueueLock);
+    while (m_gpuSubmissionQueue.empty()) {
+      pthread_cond_wait(&m_gpuSubmissionQueueCond, &m_gpuSubmissionQueueLock);
+    }
+    ssize_t surfaceIdx = m_gpuSubmissionQueue.front();
+    m_gpuSubmissionQueue.pop();
+    pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
+
+    if (surfaceIdx < 0) {
+      // Thread stop requested
+      break;
+    }
+    RHISurface::ptr surface = m_rhiSurfaces[surfaceIdx];
+
+
+    pthread_mutex_lock(&m_conv0OutputPlaneBufferQueueLock);
+    while (m_conv0OutputPlaneBufferQueue.empty()) {
+      //if (!blockIfQueueFull) {
+      //  pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
+      //  pthread_mutex_unlock(&m_stateLock);
+      //  return false; // frame dropped
+      //}
+
+      pthread_cond_wait(&m_conv0OutputPlaneBufferQueueCond, &m_conv0OutputPlaneBufferQueueLock);
+    }
+
+    NvBuffer *buffer = m_conv0OutputPlaneBufferQueue.front();
+    m_conv0OutputPlaneBufferQueue.pop();
+    pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
+
+
+    struct v4l2_buffer v4l2_buf;
+    struct v4l2_plane planes[MAX_PLANES];
+
+    memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+    memset(planes, 0, sizeof(planes));
+
+    v4l2_buf.index = buffer->index;
+    v4l2_buf.m.planes = planes;
+    gettimeofday(&v4l2_buf.timestamp, NULL);
+
+    assert(buffer->n_planes == 1); // only support a single RGB plane
+    buffer->planes[0].bytesused = buffer->planes[0].fmt.stride * buffer->planes[0].fmt.height;
+
+    // Map the EGLImage for the dmabuf fd for CUDA write access
+    EGLImageKHR img = NvEGLImageFromFd(renderEGLDisplay(), buffer->planes[0].fd);
+
+    CUgraphicsResource pWriteResource = NULL;
+    CUresult status = cuGraphicsEGLRegisterImage(&pWriteResource, img, CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD);
+    if (status != CUDA_SUCCESS)
+      die("cuGraphicsEGLRegisterImage failed: %d\n", status);
+
+    CUeglFrame eglFrame;
+    status = cuGraphicsResourceGetMappedEglFrame(&eglFrame, pWriteResource, 0, 0);
+    if (status != CUDA_SUCCESS) {
+      die("cuGraphicsSubResourceGetMappedArray failed: %d\n", status);
+    }
+
+    //status = cuCtxSynchronize();
+    //if (status != CUDA_SUCCESS) {
+    //  die("cuCtxSynchronize failed: %d\n", status);
+    //}
+
+    // Map the GL surface for CUDA read access
+    RHISurfaceGL* glSurface = static_cast<RHISurfaceGL*>(surface.get());
+
+    CUgraphicsResource pReadResource = NULL;
+    status = cuGraphicsGLRegisterImage(&pReadResource, glSurface->glId(), glSurface->glTarget(), CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY);
+    if (status != CUDA_SUCCESS) {
+      die("cuGraphicsGLRegisterImage() failed: %d\n", status);
+    }
+
+    status = cuGraphicsMapResources(1, &pReadResource, 0);
+    if (status != CUDA_SUCCESS) {
+      die("cuGraphicsMapResources() failed: %d\n", status);
+    }
+
+    CUmipmappedArray pReadMip = NULL;
+    status = cuGraphicsResourceGetMappedMipmappedArray(&pReadMip, pReadResource);
+    if (status != CUDA_SUCCESS) {
+      die("cuGraphicsResourceGetMappedMipmappedArray() failed: %d\n", status);
+    }
+
+    CUarray pReadArray = NULL;
+    status = cuMipmappedArrayGetLevel(&pReadArray, pReadMip, 0);
+    if (status != CUDA_SUCCESS) {
+      die("cuMipmappedArrayGetLevel() failed: %d\n", status);
+    }
+
+    // for debugging
+    CUDA_ARRAY_DESCRIPTOR readArrayDescriptor;
+    status = cuArrayGetDescriptor(&readArrayDescriptor, pReadArray);
+    if (status != CUDA_SUCCESS) {
+      die("cuArrayGetDescriptor() failed: %d\n", status);
+    }
+
+    CUDA_MEMCPY2D copyDescriptor;
+    memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
+    copyDescriptor.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+    copyDescriptor.srcArray = pReadArray;
+
+  #if 0
+    // this might work for CU_EGL_FRAME_TYPE_ARRAY? untested.
+    copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
+    copyDescriptor.dstArray = eglFrame.frame.pArray[0];
+  #else
+    // CU_EGL_FRAME_TYPE_PITCH destination
+    assert(eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH);
+    copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+    copyDescriptor.dstDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
+    copyDescriptor.dstPitch = eglFrame.pitch;
+  #endif
+
+    copyDescriptor.WidthInBytes = buffer->planes[0].fmt.width * buffer->planes[0].fmt.bytesperpixel;
+    copyDescriptor.Height = buffer->planes[0].fmt.height;
+    status = cuMemcpy2D(&copyDescriptor);
+    if (status != CUDA_SUCCESS) {
+      die("cuMemcpy2D() failed\n");
+    }
+
+    cuGraphicsUnmapResources(1, &pReadResource, 0);
+    cuGraphicsUnregisterResource(pReadResource);
+    cuGraphicsUnregisterResource(pWriteResource);
+    NvDestroyEGLImage(renderEGLDisplay(), img);
+
+    int ret = m_conv0->output_plane.qBuffer(v4l2_buf, NULL);
+    if (ret < 0)
+      die("Error while queueing buffer at output plane");
+  }
+
+  eglDestroyContext(renderEGLDisplay(), eglCtx);
 }
 
 void NvEncSession::start() {
@@ -484,6 +536,15 @@ void NvEncSession::start() {
     printf("NvEncSession::start(): Input frame %zu bytes total\n", m_inputFrameSize);
   }
 
+  if (usingGPUFrameSubmission()) {
+    // Start the CUDA worker thread
+    while (!m_gpuSubmissionQueue.empty())
+      m_gpuSubmissionQueue.pop();
+
+    pthread_create(&m_cudaWorkerThread, NULL, cudaWorker_thunk, this);
+  }
+
+  printf("NvEncSession: started.\n");
   pthread_mutex_unlock(&m_stateLock);
 }
 
@@ -504,6 +565,17 @@ void NvEncSession::stop() {
   // Submit EOS
   submitFrame(NULL, 0, true);
 
+  if (usingGPUFrameSubmission()) {
+    // Stop the CUDA worker thread
+    pthread_mutex_lock(&m_gpuSubmissionQueueLock);
+    m_gpuSubmissionQueue.push(-1);
+    pthread_cond_broadcast(&m_gpuSubmissionQueueCond);
+    pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
+
+    pthread_join(m_cudaWorkerThread, NULL);
+    printf("NvEncSession: CUDA worker stopped\n");
+  }
+
   // Wait till capture plane DQ Thread finishes
   // i.e. all the capture plane buffers are dequeued
   m_conv0->waitForIdle(2000);
@@ -517,6 +589,7 @@ void NvEncSession::stop() {
   while (!m_conv0OutputPlaneBufferQueue.empty()) m_conv0OutputPlaneBufferQueue.pop();
 
   m_inputFrameSize = 0;
+  printf("NvEncSession: stopped.\n");
   pthread_mutex_unlock(&m_stateLock);
 }
 
@@ -716,5 +789,10 @@ bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_bu
 
 /*static*/ bool NvEncSession::encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer *v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void *arg) {
   return reinterpret_cast<NvEncSession*>(arg)->encoder_capture_plane_dq_callback(v4l2_buf, buffer, shared_buffer);
+}
+
+/*static*/ void* NvEncSession::cudaWorker_thunk(void* arg) {
+  reinterpret_cast<NvEncSession*>(arg)->cudaWorker();
+  return NULL;
 }
 

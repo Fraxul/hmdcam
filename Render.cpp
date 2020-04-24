@@ -510,6 +510,7 @@ void renderHMDFrame() {
           rhi()->blitTex(eyeTex[0], 0);
 
           rhi()->endRenderPass(rt);
+          rhi()->flush();
           nvencSession->submitSurface(srf);
         }
 #endif

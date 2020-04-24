@@ -20,6 +20,11 @@ typedef void* EGLContext;
 EGLDisplay renderEGLDisplay();
 EGLContext renderEGLContext();
 
+typedef int CUdevice;
+typedef struct CUctx_st *CUcontext;
+extern CUdevice cudaDevice;
+extern CUcontext cudaContext;
+
 struct NDCClippedQuadUniformBlock {
   glm::mat4 modelViewProjection;
   glm::vec2 minUV;

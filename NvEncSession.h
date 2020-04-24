@@ -73,6 +73,11 @@ protected:
   size_t m_currentSurfaceIndex;
   std::vector<RHISurface::ptr> m_rhiSurfaces;
 
+  std::queue<ssize_t> m_gpuSubmissionQueue;
+  pthread_mutex_t m_gpuSubmissionQueueLock;
+  pthread_cond_t m_gpuSubmissionQueueCond;
+  pthread_t m_cudaWorkerThread;
+
   std::queue<NvBuffer*> m_encoderOutputPlaneBufferQueue;
   pthread_mutex_t m_encoderOutputPlaneBufferQueueLock;
   pthread_cond_t m_encoderOutputPlaneBufferQueueCond;
@@ -83,11 +88,14 @@ protected:
 
   static bool conv0_capture_dqbuf_thread_callback_thunk(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void* arg);
   static bool encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void *arg);
+  static void* cudaWorker_thunk(void*);
 
   bool conv0_capture_dqbuf_thread_callback(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer);
   bool encoder_capture_plane_dq_callback(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer);
   bool encoder_output_plane_dq();
   bool conv0_output_plane_dq();
+
+  void cudaWorker();
 
 private:
   // noncopyable
