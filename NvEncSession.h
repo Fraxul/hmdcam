@@ -4,6 +4,7 @@
 #include <queue>
 #include <pthread.h>
 #include <stdint.h>
+#include "rhi/RHISurface.h"
 
 class NvBuffer;
 class NvVideoConverter;
@@ -31,8 +32,16 @@ public:
   size_t registerEncodedFrameDeliveryCallback(const std::function<void(const char*, size_t, struct timeval&)>& cb);
   void unregisterEncodedFrameDeliveryCallback(size_t cbId);
 
+  void setUseGPUFrameSubmission(bool value);
+  bool usingGPUFrameSubmission() const { return m_usingGPUFrameSubmission; }
+
+  // CPU frame submission
   size_t inputFrameSize() const { return m_inputFrameSize; }
   bool submitFrame(char* data, size_t length, bool blockIfQueueFull);
+
+  // GPU frame submission
+  RHISurface::ptr acquireSurface();
+  bool submitSurface(RHISurface::ptr, bool blockIfQueueFull = false);
 
   bool isRunning() const { return m_startCount > 0; }
 
@@ -46,6 +55,7 @@ protected:
   uint32_t m_framerateNumerator, m_framerateDenominator;
   uint32_t m_encoderPixfmt;
   InputFormat m_inputFormat;
+  bool m_usingGPUFrameSubmission;
 
   std::map<size_t, std::function<void(const char*, size_t, struct timeval&)> > m_encodedFrameDeliveryCallbacks;
   size_t m_encodedFrameDeliveryCallbackIdGen;
@@ -59,6 +69,9 @@ protected:
   NvVideoEncoder* m_enc;
   NvVideoConverter* m_conv0;
   size_t m_inputFrameSize;
+
+  size_t m_currentSurfaceIndex;
+  std::vector<RHISurface::ptr> m_rhiSurfaces;
 
   std::queue<NvBuffer*> m_encoderOutputPlaneBufferQueue;
   pthread_mutex_t m_encoderOutputPlaneBufferQueueLock;

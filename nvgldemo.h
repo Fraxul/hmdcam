@@ -121,6 +121,7 @@ int NvGlDemoInitializeEGL(int depthbits, int stencilbits);
 int NvGlDemoDisplayInit(void);
 void NvGlDemoDisplayTerm(void);
 void NvGlDemoShutdown(void);
+EGLContext NvGlDemoCreateShareContext(void);
 
 // Window system specific functions
 int

@@ -104,6 +104,18 @@ static void NvGlDemoTermEglDeviceExt(void)
     demoState.nativeDisplay = EGL_NO_DISPLAY;
 }
 
+EGLContext NvGlDemoCreateShareContext(void) {
+  EGLint ctxAttrs[] = {
+    EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE
+  };
+
+  EGLContext context = eglCreateContext(demoState.display, demoState.config, demoState.context, ctxAttrs);
+  if (!context) {
+    NvGlDemoLog("NvGlDemoCreateShareContext(): eglCreateContext failed.\n");
+  }
+  return context;
+}
+
 // Start up, initializing native window system and EGL after nvgldemo
 //   options have been parsed. (Still need argc/argv for window system
 //   options.)

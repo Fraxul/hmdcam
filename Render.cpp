@@ -13,6 +13,7 @@
 #include "BasicUsageEnvironment.hh"
 #include "BufferRingSource.h"
 #include "H264VideoNvEncSessionServerMediaSubsession.h"
+#include <cuda.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
@@ -79,6 +80,10 @@ float stereoSeparationScale = 2.0f; // TODO: why? some of the Vive projection ma
 
 NvGlDemoOptions demoOptions;
 
+// CUDA
+CUdevice cudaDevice;
+CUcontext cudaContext;
+
 // Streaming server / NvEnc state
 
 NvEncSession* nvencSession;
@@ -94,6 +99,8 @@ uint64_t rtspRenderIntervalNs = 33333333; // 30fps
 
 // -----------
 
+#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
+
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -102,7 +109,22 @@ static inline uint64_t currentTimeNs() {
 
 void* rtspServerThreadEntryPoint(void* arg) {
   printf("Starting RTSP server event loop\n");
+  EGLContext eglCtx = NvGlDemoCreateShareContext();
+  if (!eglCtx) {
+    die("rtspServerThreadEntryPoint: unable to create EGL share context\n");
+  }
+
+  bool res = eglMakeCurrent(demoState.display, EGL_NO_SURFACE, EGL_NO_SURFACE, eglCtx);
+  if (!res) {
+    die("rtspServerThreadEntryPoint: eglMakeCurrent() failed\n");
+  }
+
+  cuCtxSetCurrent(cudaContext);
+
   rtspEnv->taskScheduler().doEventLoop();
+
+  eglDestroyContext(demoState.display, eglCtx);
+
   return NULL;
 }
 
@@ -125,6 +147,20 @@ bool RenderInit() {
   printf("%s\n", glGetString(GL_RENDERER));
   printf("%s\n", glGetString(GL_VERSION));
   printf("%s\n", glGetString(GL_EXTENSIONS));
+
+  // CUDA init
+  {
+    cuInit(0);
+
+    cuDeviceGet(&cudaDevice, 0);
+    char devName[512];
+    cuDeviceGetName(devName, 511, cudaDevice);
+    devName[511] = '\0';
+    printf("CUDA device: %s\n", devName);
+
+    cuDevicePrimaryCtxRetain(&cudaContext, cudaDevice);
+    cuCtxSetCurrent(cudaContext);
+  }
 
   initRHIGL();
 
@@ -274,9 +310,10 @@ bool RenderInit() {
     nvencSession = new NvEncSession();
     nvencSession->setDimensions(eye_width, eye_height);
     nvencSession->setInputFormat(NvEncSession::kInputFormatRGBX8);
+    nvencSession->setUseGPUFrameSubmission(true);
     //nvencSession->setBitrate(bitrate);
     //nvencSession->setFramerate(fps_n, fps_d);
-    nvencSession->setFramerate(90, 1); // TODO derive this from the screen's framerate.
+    nvencSession->setFramerate(30, 1); // TODO derive this from the screen's framerate.
     
 
     // Begin by setting up our usage environment:
@@ -449,12 +486,33 @@ void renderHMDFrame() {
       if (lastFrameSubmissionTimeNs + rtspRenderIntervalNs <= now) {
         lastFrameSubmissionTimeNs = now;
 
+#if 0
         size_t frameSize = eye_width * eye_height * 4;
         char* frameBuffer = new char[frameSize];
         rhi()->readbackTexture(eyeTex[0], 0, kVertexElementTypeUByte4N, frameBuffer);
         nvencSession->submitFrame(frameBuffer, frameSize, /*block=*/false);
 
         delete[] frameBuffer;
+#else
+
+        RHISurface::ptr srf = nvencSession->acquireSurface();
+        if (srf) { // srf can be NULL if the encoder i
+          RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({srf}));
+          rhi()->beginRenderPass(rt, kLoadInvalidate);
+
+/*
+          // in the future we'll probably want to do a distinct render for this view
+          RHIRect leftRect = RHIRect::xywh(0, 0, rt->width() / 2, rt->height());
+          RHIRect rightRect = RHIRect::xywh(rt->width() / 2, 0, rt->width() / 2, rt->height());
+          rhi()->blitTex(
+*/
+          // for now, just copy the left-eye texture
+          rhi()->blitTex(eyeTex[0], 0);
+
+          rhi()->endRenderPass(rt);
+          nvencSession->submitSurface(srf);
+        }
+#endif
       }
     }
   }

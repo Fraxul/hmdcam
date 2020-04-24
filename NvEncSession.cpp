@@ -1,5 +1,12 @@
 #include "NvEncSession.h"
+#include "Render.h"
+#include "rhi/RHI.h"
+#include "rhi/gl/RHISurfaceGL.h"
 #include <cassert>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <cudaEGL.h>
+#include <cudaGL.h>
 #include <linux/videodev2.h>
 #include <linux/v4l2-controls.h>
 #include <stdio.h>
@@ -16,10 +23,12 @@ NvEncSession::NvEncSession() : m_width(0), m_height(0), m_bitsPerSecond(8000000)
   m_framerateNumerator(30), m_framerateDenominator(1),
   m_encoderPixfmt(V4L2_PIX_FMT_H264),
   m_inputFormat(kInputFormatNV12),
+  m_usingGPUFrameSubmission(false),
   m_encodedFrameDeliveryCallbackIdGen(0),
   m_startCount(0),
   m_inShutdown(false),
-  m_inputFrameSize(0) {
+  m_inputFrameSize(0),
+  m_currentSurfaceIndex(0) {
 
   pthread_mutex_init(&m_stateLock, NULL);
   pthread_mutex_init(&m_callbackLock, NULL);
@@ -62,13 +71,22 @@ void NvEncSession::unregisterEncodedFrameDeliveryCallback(size_t cbId) {
   pthread_mutex_unlock(&m_callbackLock);
 }
 
-bool NvEncSession::submitFrame(char* data, size_t length, bool blockIfQueueFull) {
+void NvEncSession::setUseGPUFrameSubmission(bool value) {
+  assert(!isRunning());
+  m_usingGPUFrameSubmission = value;
+}
 
+bool NvEncSession::submitFrame(char* data, size_t length, bool blockIfQueueFull) {
   if (inputFrameSize() == 0)
     return false; // Reject frames submitted before startup is finished
 
   if (m_inShutdown && length != 0)
     return false; // Reject frames submitted during shutdown
+
+  if (length != 0) {
+    assert(!usingGPUFrameSubmission()); // This interface shouldn't be used to submit normal frames if GPU frame submission is enabled
+  }
+
 
   if (!((length == 0 && m_inShutdown) || length == inputFrameSize())) {
     printf("NvEncSession::submitFrame(): short frame submitted, length %zu (require %zu)\n", length, inputFrameSize());
@@ -126,6 +144,153 @@ bool NvEncSession::submitFrame(char* data, size_t length, bool blockIfQueueFull)
   if (ret < 0)
     die("Error while queueing buffer at output plane");
 
+  return true;
+}
+
+RHISurface::ptr NvEncSession::acquireSurface() {
+  assert(usingGPUFrameSubmission());
+  if (pthread_mutex_trylock(&m_stateLock) != 0)
+    return RHISurface::ptr();
+
+  RHISurface::ptr res;
+  if (!m_rhiSurfaces.empty())
+    res =m_rhiSurfaces[m_currentSurfaceIndex];
+
+  pthread_mutex_unlock(&m_stateLock);
+  return res;
+}
+
+bool NvEncSession::submitSurface(RHISurface::ptr surface, bool blockIfQueueFull) {
+  if (pthread_mutex_trylock(&m_stateLock) != 0)
+    return false;
+
+  if (m_inShutdown) {
+    pthread_mutex_unlock(&m_stateLock);
+    return false;
+  }
+
+  assert(usingGPUFrameSubmission());
+  assert(m_rhiSurfaces[m_currentSurfaceIndex] == surface);
+
+  m_currentSurfaceIndex++;
+  if (m_currentSurfaceIndex >= m_rhiSurfaces.size())
+    m_currentSurfaceIndex = 0;
+
+  pthread_mutex_lock(&m_conv0OutputPlaneBufferQueueLock);
+  while (m_conv0OutputPlaneBufferQueue.empty()) {
+    if (!blockIfQueueFull) {
+      pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
+      pthread_mutex_unlock(&m_stateLock);
+      return false; // frame dropped
+    }
+
+    pthread_cond_wait(&m_conv0OutputPlaneBufferQueueCond, &m_conv0OutputPlaneBufferQueueLock);
+  }
+
+  NvBuffer *buffer = m_conv0OutputPlaneBufferQueue.front();
+  m_conv0OutputPlaneBufferQueue.pop();
+  pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
+
+
+  struct v4l2_buffer v4l2_buf;
+  struct v4l2_plane planes[MAX_PLANES];
+
+  memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+  memset(planes, 0, sizeof(planes));
+
+  v4l2_buf.index = buffer->index;
+  v4l2_buf.m.planes = planes;
+  gettimeofday(&v4l2_buf.timestamp, NULL);
+
+  assert(buffer->n_planes == 1); // only support a single RGB plane
+  buffer->planes[0].bytesused = buffer->planes[0].fmt.stride * buffer->planes[0].fmt.height;
+
+  // Map the EGLImage for the dmabuf fd for CUDA write access
+  EGLImageKHR img = NvEGLImageFromFd(renderEGLDisplay(), buffer->planes[0].fd);
+
+  CUgraphicsResource pWriteResource = NULL;
+  CUresult status = cuGraphicsEGLRegisterImage(&pWriteResource, img, CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD);
+  if (status != CUDA_SUCCESS)
+    die("cuGraphicsEGLRegisterImage failed: %d\n", status);
+
+  CUeglFrame eglFrame;
+  status = cuGraphicsResourceGetMappedEglFrame(&eglFrame, pWriteResource, 0, 0);
+  if (status != CUDA_SUCCESS) {
+    die("cuGraphicsSubResourceGetMappedArray failed: %d\n", status);
+  }
+
+  //status = cuCtxSynchronize();
+  //if (status != CUDA_SUCCESS) {
+  //  die("cuCtxSynchronize failed: %d\n", status);
+  //}
+
+  // Map the GL surface for CUDA read access
+  RHISurfaceGL* glSurface = static_cast<RHISurfaceGL*>(surface.get());
+
+  CUgraphicsResource pReadResource = NULL;
+  status = cuGraphicsGLRegisterImage(&pReadResource, glSurface->glId(), glSurface->glTarget(), CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY);
+  if (status != CUDA_SUCCESS) {
+    die("cuGraphicsGLRegisterImage() failed: %d\n", status);
+  }
+
+  status = cuGraphicsMapResources(1, &pReadResource, 0);
+  if (status != CUDA_SUCCESS) {
+    die("cuGraphicsMapResources() failed: %d\n", status);
+  }
+
+  CUmipmappedArray pReadMip = NULL;
+  status = cuGraphicsResourceGetMappedMipmappedArray(&pReadMip, pReadResource);
+  if (status != CUDA_SUCCESS) {
+    die("cuGraphicsResourceGetMappedMipmappedArray() failed: %d\n", status);
+  }
+
+  CUarray pReadArray = NULL;
+  status = cuMipmappedArrayGetLevel(&pReadArray, pReadMip, 0);
+  if (status != CUDA_SUCCESS) {
+    die("cuMipmappedArrayGetLevel() failed: %d\n", status);
+  }
+
+  // for debugging
+  CUDA_ARRAY_DESCRIPTOR readArrayDescriptor;
+  status = cuArrayGetDescriptor(&readArrayDescriptor, pReadArray);
+  if (status != CUDA_SUCCESS) {
+    die("cuArrayGetDescriptor() failed: %d\n", status);
+  }
+
+  CUDA_MEMCPY2D copyDescriptor;
+  memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
+  copyDescriptor.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+  copyDescriptor.srcArray = pReadArray;
+
+#if 0
+  // this might work for CU_EGL_FRAME_TYPE_ARRAY? untested.
+  copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
+  copyDescriptor.dstArray = eglFrame.frame.pArray[0];
+#else
+  // CU_EGL_FRAME_TYPE_PITCH destination
+  assert(eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH);
+  copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+  copyDescriptor.dstDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
+  copyDescriptor.dstPitch = eglFrame.pitch;
+#endif
+
+  copyDescriptor.WidthInBytes = buffer->planes[0].fmt.width * buffer->planes[0].fmt.bytesperpixel;
+  copyDescriptor.Height = buffer->planes[0].fmt.height;
+  status = cuMemcpy2D(&copyDescriptor);
+  if (status != CUDA_SUCCESS) {
+    die("cuMemcpy2D() failed\n");
+  }
+
+  cuGraphicsUnmapResources(1, &pReadResource, 0);
+  cuGraphicsUnregisterResource(pReadResource);
+  cuGraphicsUnregisterResource(pWriteResource);
+  NvDestroyEGLImage(renderEGLDisplay(), img);
+
+  int ret = m_conv0->output_plane.qBuffer(v4l2_buf, NULL);
+  if (ret < 0)
+    die("Error while queueing buffer at output plane");
+
+  pthread_mutex_unlock(&m_stateLock);
   return true;
 }
 
@@ -204,9 +369,23 @@ void NvEncSession::start() {
   // Insert VUI so that the RTSP server can pull framerate information out of it
   //m_enc->setInsertVuiEnabled(true);
 
-  // REQBUF, EXPORT and MAP conv0 output plane buffers
-  ret = m_conv0->output_plane.setupPlane(V4L2_MEMORY_USERPTR, 6, false, true);
-  if (ret < 0) die("Error while setting up output plane for conv0");
+  if (usingGPUFrameSubmission()) {
+    // REQBUF and EXPORT conv0 output plane buffers
+    size_t nbufs = 6;
+    ret = m_conv0->output_plane.setupPlane(V4L2_MEMORY_MMAP, nbufs, false, false);
+    if (ret < 0) die("Error while setting up output plane for conv0");
+    // setup matching rendertarget pool
+    m_rhiSurfaces.clear();
+    m_currentSurfaceIndex = 0;
+    for (size_t i = 0; i < nbufs; ++i) {
+      RHISurface::ptr srf = rhi()->newTexture2D(m_width, m_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+      m_rhiSurfaces.push_back(srf);
+    }
+  } else {
+    // REQBUF, EXPORT and MAP conv0 output plane buffers
+    ret = m_conv0->output_plane.setupPlane(V4L2_MEMORY_USERPTR, 6, false, true);
+    if (ret < 0) die("Error while setting up output plane for conv0");
+  }
 
   // REQBUF and EXPORT conv0 capture plane buffers
   // No need to MAP since buffer will be shared to next component
