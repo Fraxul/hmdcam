@@ -10,6 +10,7 @@ class NvBuffer;
 class NvVideoConverter;
 class NvVideoEncoder;
 struct v4l2_buffer;
+typedef void* EGLSyncKHR;
 
 class NvEncSession {
 public:
@@ -73,7 +74,7 @@ protected:
   size_t m_currentSurfaceIndex;
   std::vector<RHISurface::ptr> m_rhiSurfaces;
 
-  std::queue<ssize_t> m_gpuSubmissionQueue;
+  std::queue<std::pair<ssize_t, EGLSyncKHR> > m_gpuSubmissionQueue;
   pthread_mutex_t m_gpuSubmissionQueueLock;
   pthread_cond_t m_gpuSubmissionQueueCond;
   pthread_t m_cudaWorkerThread;

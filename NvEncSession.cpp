@@ -184,7 +184,7 @@ bool NvEncSession::submitSurface(RHISurface::ptr surface, bool blockIfQueueFull)
     printf("NvEncSession::submitSurface: queue is full\n");
     res = false; // queue is full
   } else {
-    m_gpuSubmissionQueue.push(m_currentSurfaceIndex);
+    m_gpuSubmissionQueue.push(std::make_pair(m_currentSurfaceIndex, eglCreateSync(renderEGLDisplay(), EGL_SYNC_FENCE, NULL)));
     m_currentSurfaceIndex++;
     if (m_currentSurfaceIndex >= m_rhiSurfaces.size())
       m_currentSurfaceIndex = 0;
@@ -217,7 +217,8 @@ void NvEncSession::cudaWorker() {
     while (m_gpuSubmissionQueue.empty()) {
       pthread_cond_wait(&m_gpuSubmissionQueueCond, &m_gpuSubmissionQueueLock);
     }
-    ssize_t surfaceIdx = m_gpuSubmissionQueue.front();
+    ssize_t surfaceIdx = m_gpuSubmissionQueue.front().first;
+    EGLSyncKHR surfaceSync = m_gpuSubmissionQueue.front().second;
     m_gpuSubmissionQueue.pop();
     pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
 
@@ -275,6 +276,20 @@ void NvEncSession::cudaWorker() {
     //if (status != CUDA_SUCCESS) {
     //  die("cuCtxSynchronize failed: %d\n", status);
     //}
+
+    CUevent hEvent;
+    status = cuEventCreateFromEGLSync(&hEvent, surfaceSync, CU_EVENT_BLOCKING_SYNC); // CU_EVENT_DEFAULT);
+    if (status != CUDA_SUCCESS) {
+      die("cuEventCreateFromEGLSync() failed: %d\n", status);
+    }
+
+    status = cuEventSynchronize(hEvent);
+    if (status != CUDA_SUCCESS) {
+      die("cuEventSynchronize() failed: %d\n", status);
+    }
+
+    cuEventDestroy(hEvent);
+    eglDestroySync(renderEGLDisplay(), surfaceSync);
 
     // Map the GL surface for CUDA read access
     RHISurfaceGL* glSurface = static_cast<RHISurfaceGL*>(surface.get());
@@ -568,7 +583,7 @@ void NvEncSession::stop() {
   if (usingGPUFrameSubmission()) {
     // Stop the CUDA worker thread
     pthread_mutex_lock(&m_gpuSubmissionQueueLock);
-    m_gpuSubmissionQueue.push(-1);
+    m_gpuSubmissionQueue.push(std::make_pair(-1, EGL_NO_SYNC));
     pthread_cond_broadcast(&m_gpuSubmissionQueueCond);
     pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
 
