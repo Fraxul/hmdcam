@@ -38,8 +38,7 @@
 // Size parameters for sensor mode selection.
 // Note that changing the sensor mode will invalidate the calibration
 // (Pixel coordinates are baked into the calibration data)
-size_t s_cameraWidth = 1280, s_cameraHeight = 720;
-//const size_t s_cameraWidth = 1920, s_cameraHeight = 1080;
+size_t s_cameraWidth, s_cameraHeight;
 
 // Requested capture rate for the camera. This should be the framerate of the display device, with as much precision as possible.
 // TODO: autodetect this. (current value pulled from running `fbset`)
@@ -108,6 +107,8 @@ int main(int argc, char* argv[]) {
   stereoCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), {LEFT_CAMERA_INDEX, RIGHT_CAMERA_INDEX}, s_cameraFramerate);
   s_cameraWidth = stereoCamera->streamWidth();
   s_cameraHeight = stereoCamera->streamHeight();
+
+  renderSetDebugSurfaceSize(s_cameraWidth * 2, s_cameraHeight);
 
   // Generate derived data for calibration
   initCalibration();
@@ -399,6 +400,54 @@ int main(int argc, char* argv[]) {
         }
 
         rhi()->endRenderPass(eyeRT[eyeIdx]);
+      }
+
+      // Debug feedback rendering
+      {
+        RHISurface::ptr debugSurface = renderAcquireDebugSurface();
+        if (debugSurface) {
+          RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({debugSurface}));
+          rhi()->beginRenderPass(rt, kLoadInvalidate);
+
+          // render each distortion-corrected camera view to half of the debug surface
+          RHIRect leftRect = RHIRect::xywh(0, 0, debugSurface->width() / 2, debugSurface->height());
+          RHIRect rightRect = RHIRect::xywh(debugSurface->width() / 2, 0, debugSurface->width() / 2, debugSurface->height());
+
+          for (int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
+            rhi()->setViewport(cameraIdx == 0 ? leftRect : rightRect);
+
+            rhi()->bindRenderPipeline(camUndistortMaskPipeline);
+            rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+            rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
+            rhi()->loadTexture(ksMaskTex, useMask ? cameraMask[cameraIdx] : disabledMaskTex, linearClampSampler);
+
+            NDCClippedQuadUniformBlock ub;
+            ub.modelViewProjection = glm::mat4(1.0f); // identity
+            ub.minUV = glm::vec2(0.0f);
+            ub.maxUV = glm::vec2(1.0f);
+
+            rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+            rhi()->drawNDCQuad();
+          }
+
+          if (drawUI) {
+            // Draw the UI on the center-bottom of the debug surface
+            RHIRect uiDestRect = RHIRect::xywh((debugSurface->width() / 2) - (guiTex->width() / 2), debugSurface->height() - guiTex->height(), guiTex->width(), guiTex->height());
+            rhi()->setViewport(uiDestRect);
+
+            rhi()->bindBlendState(standardAlphaOverBlendState);
+            rhi()->bindRenderPipeline(uiLayerPipeline);
+            rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
+            UILayerUniformBlock uiLayerBlock;
+            uiLayerBlock.modelViewProjection = glm::mat4(1.0f);
+
+            rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
+            rhi()->drawNDCQuad();
+          }
+
+          rhi()->endRenderPass(rt);
+          renderSubmitDebugSurface(debugSurface);
+        }
       }
 
       renderHMDFrame();

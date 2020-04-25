@@ -308,7 +308,7 @@ bool RenderInit() {
   // RTSP server and NvEnc setup
   {
     nvencSession = new NvEncSession();
-    nvencSession->setDimensions(eye_width, eye_height);
+    nvencSession->setDimensions(1920, 1080); // should be overwritten by renderSetDebugSurfaceSize
     nvencSession->setInputFormat(NvEncSession::kInputFormatRGBX8);
     nvencSession->setUseGPUFrameSubmission(true);
     //nvencSession->setBitrate(bitrate);
@@ -480,46 +480,31 @@ void renderHMDFrame() {
 
   rhi()->endRenderPass(windowRenderTarget);
 
-  {
-    // RTSP server rendering
-    // TODO need to rework the frame handoff so the GPU does the buffer copy
-    static uint64_t lastFrameSubmissionTimeNs = 0;
-    if (nvencSession->isRunning()) {
-      uint64_t now = currentTimeNs();
-      if (lastFrameSubmissionTimeNs + rtspRenderIntervalNs <= now) {
-        lastFrameSubmissionTimeNs = now;
+  rhi()->swapBuffers(windowRenderTarget);
+}
 
-#if 0
-        size_t frameSize = eye_width * eye_height * 4;
-        char* frameBuffer = new char[frameSize];
-        rhi()->readbackTexture(eyeTex[0], 0, kVertexElementTypeUByte4N, frameBuffer);
-        nvencSession->submitFrame(frameBuffer, frameSize, /*block=*/false);
 
-        delete[] frameBuffer;
-#else
+void renderSetDebugSurfaceSize(size_t x, size_t y) {
+  nvencSession->setDimensions(x, y);
+}
 
-        RHISurface::ptr srf = nvencSession->acquireSurface();
-        if (srf) { // srf can be NULL if the encoder i
-          RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({srf}));
-          rhi()->beginRenderPass(rt, kLoadInvalidate);
+RHISurface::ptr renderAcquireDebugSurface() {
+  // RTSP server rendering
+  // TODO need to rework the frame handoff so the GPU does the buffer copy
+  static uint64_t lastFrameSubmissionTimeNs = 0;
+  if (nvencSession->isRunning()) {
+    uint64_t now = currentTimeNs();
+    if (lastFrameSubmissionTimeNs + rtspRenderIntervalNs <= now) {
+      lastFrameSubmissionTimeNs = now;
 
-/*
-          // in the future we'll probably want to do a distinct render for this view
-          RHIRect leftRect = RHIRect::xywh(0, 0, rt->width() / 2, rt->height());
-          RHIRect rightRect = RHIRect::xywh(rt->width() / 2, 0, rt->width() / 2, rt->height());
-          rhi()->blitTex(
-*/
-          // for now, just copy the left-eye texture
-          rhi()->blitTex(eyeTex[0], 0);
-
-          rhi()->endRenderPass(rt);
-          nvencSession->submitSurface(srf);
-        }
-#endif
-      }
+      return nvencSession->acquireSurface(); // might be NULL anyway if the encoder isn't ready
     }
   }
 
-  rhi()->swapBuffers(windowRenderTarget);
+  return RHISurface::ptr();
+}
+
+void renderSubmitDebugSurface(RHISurface::ptr debugSurface) {
+  nvencSession->submitSurface(debugSurface);
 }
 

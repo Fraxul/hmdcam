@@ -1,4 +1,5 @@
 #include "Calibration.h"
+#include "Render.h"
 #include <set>
 #include <vector>
 #include <iostream>
@@ -29,7 +30,6 @@ extern glm::mat4 eyeProjection[2];
 
 extern float scaleFactor;
 extern float stereoSeparationScale;
-extern RHIRenderTarget::ptr windowRenderTarget;
 extern FxAtomicString ksImageTex;
 extern FxAtomicString ksLeftCameraTex;
 extern FxAtomicString ksRightCameraTex;
@@ -46,17 +46,6 @@ extern RHIRenderPipeline::ptr camOverlayStereoUndistortPipeline;
 extern RHIRenderPipeline::ptr camUndistortMaskPipeline;
 extern RHIRenderPipeline::ptr camGreyscalePipeline;
 extern RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
-
-struct NDCQuadUniformBlock {
-  glm::mat4 modelViewProjection;
-};
-extern FxAtomicString ksNDCQuadUniformBlock;
-struct NDCClippedQuadUniformBlock {
-  glm::mat4 modelViewProjection;
-  glm::vec2 minUV;
-  glm::vec2 maxUV;
-};
-extern FxAtomicString ksNDCClippedQuadUniformBlock;
 
 // Camera info/state
 extern ArgusCamera* stereoCamera;
@@ -85,16 +74,11 @@ const float s_charucoBoardMarkerSideLengthMeters = 0.045f;
 static cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary;
 static cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 
-
-static bool calibrationMonoscopicFeedback = false;
-
 // ----
 
 
 cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, bool undistort);
 void drawStatusLines(cv::Mat& image, const std::vector<std::string> lines);
-
-void renderHMDFrame();
 
 // ----
 
@@ -222,10 +206,6 @@ retryIntrinsicCalibration:
         // Calibration finished
         break;
       }
-      if (testButton(kButtonLeft)) {
-        calibrationMonoscopicFeedback = !calibrationMonoscopicFeedback;
-      }
-
       bool found = false;
 
       stereoCamera->readFrame();
@@ -297,52 +277,59 @@ retryIntrinsicCalibration:
         allCharucoIds.push_back(currentCharucoIds);
       }
 
-      if (calibrationMonoscopicFeedback) {
+      // Draw camera stream and feedback overlay to both eye RTs
+
+      for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
+        rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
         rhi()->bindRenderPipeline(camOverlayPipeline);
         rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
         rhi()->loadTexture(ksOverlayTex, feedbackTex, linearClampSampler);
 
-        // Don't need a projection, just fill the screen with the feedback quad.
-        glm::mat4 mvp = glm::mat4(1.0f);
+        // coordsys right now: -X = left, -Z = into screen
+        // (camera is at the origin)
+        const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+        const float scaleFactor = 5.0f;
+        glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
+        glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
         NDCQuadUniformBlock ub;
         ub.modelViewProjection = mvp;
         rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+
         rhi()->drawNDCQuad();
 
-        rhi()->endRenderPass(windowRenderTarget);
-        rhi()->swapBuffers(windowRenderTarget);
-      } else {
-        // Draw camera stream and feedback overlay to both eye RTs
+        rhi()->endRenderPass(eyeRT[eyeIndex]);
+      }
 
-        for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+      // Debug stream rendering
+      {
+        RHISurface::ptr debugSurface = renderAcquireDebugSurface();
+        if (debugSurface) {
           rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-          rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+          RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({debugSurface}));
+          rhi()->beginRenderPass(rt, kLoadClear);
+
+          // Center the feedback on the debug surface, which should be twice as wide as the camera view.
+          RHIRect vp = RHIRect::xywh(debugSurface->width() / 4, 0, debugSurface->width() / 2, debugSurface->height());
+          rhi()->setViewport(vp);
 
           rhi()->bindRenderPipeline(camOverlayPipeline);
           rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
           rhi()->loadTexture(ksOverlayTex, feedbackTex, linearClampSampler);
 
-          // coordsys right now: -X = left, -Z = into screen
-          // (camera is at the origin)
-          const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
-          const float scaleFactor = 5.0f;
-          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
-          glm::mat4 mvp = eyeProjection[eyeIndex] * model;
-
           NDCQuadUniformBlock ub;
-          ub.modelViewProjection = mvp;
+          ub.modelViewProjection = glm::mat4(1.0f);
           rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
-
           rhi()->drawNDCQuad();
 
-          rhi()->endRenderPass(eyeRT[eyeIndex]);
+          rhi()->endRenderPass(rt);
+          renderSubmitDebugSurface(debugSurface);
         }
-        renderHMDFrame();
       }
+
+      renderHMDFrame();
 
     }
 
@@ -385,11 +372,6 @@ retryIntrinsicCalibration:
 
     // Show a preview of the intrinsic calibration and give the option to retry or continue
     {
-      RHISurface::ptr tempMask = rhi()->newTexture2D(4, 4, RHISurfaceDescriptor(kSurfaceFormat_R8));
-      uint8_t tempMaskData[16];
-      memset(tempMaskData, 0xff, 16);
-      rhi()->loadTextureData(tempMask, kVertexElementTypeUByte1N, tempMaskData);
-
       while (!want_quit) {
         if (testButton(kButtonLeft)) {
           goto retryIntrinsicCalibration;
@@ -408,7 +390,7 @@ retryIntrinsicCalibration:
           rhi()->bindRenderPipeline(camUndistortMaskPipeline);
           rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
           rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
-          rhi()->loadTexture(ksMaskTex, tempMask, linearClampSampler);
+          rhi()->loadTexture(ksMaskTex, disabledMaskTex, linearClampSampler);
 
           // coordsys right now: -X = left, -Z = into screen
           // (camera is at the origin)
@@ -428,6 +410,38 @@ retryIntrinsicCalibration:
 
           rhi()->endRenderPass(eyeRT[eyeIndex]);
         }
+
+        // Debug stream rendering
+        {
+          RHISurface::ptr debugSurface = renderAcquireDebugSurface();
+          if (debugSurface) {
+            rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({debugSurface}));
+            rhi()->beginRenderPass(rt, kLoadClear);
+
+            // Center the feedback on the debug surface, which should be twice as wide as the camera view.
+            RHIRect vp = RHIRect::xywh(debugSurface->width() / 4, 0, debugSurface->width() / 2, debugSurface->height());
+            rhi()->setViewport(vp);
+
+            rhi()->bindRenderPipeline(camUndistortMaskPipeline);
+            rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+            rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
+            rhi()->loadTexture(ksMaskTex, disabledMaskTex, linearClampSampler);
+
+            NDCClippedQuadUniformBlock ub;
+            ub.modelViewProjection = glm::mat4(1.0f);
+            ub.minUV = glm::vec2(0.0f);
+            ub.maxUV = glm::vec2(1.0f);
+
+            rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+
+            rhi()->drawNDCQuad();
+
+            rhi()->endRenderPass(rt);
+            renderSubmitDebugSurface(debugSurface);
+          }
+        }
+
         renderHMDFrame();
       } // Preview rendering
     }
@@ -465,9 +479,6 @@ retryStereoCalibration:
     if (testButton(kButtonDown)) {
       // Calibration finished
       break;
-    }
-    if (testButton(kButtonLeft)) {
-      calibrationMonoscopicFeedback = !calibrationMonoscopicFeedback;
     }
 
     stereoCamera->readFrame();
@@ -605,10 +616,11 @@ retryStereoCalibration:
     rhi()->loadTextureData(feedbackTex[0], kVertexElementTypeUByte4N, feedbackView[0].ptr(0));
     rhi()->loadTextureData(feedbackTex[1], kVertexElementTypeUByte4N, feedbackView[1].ptr(0));
 
+    // Draw camera stream and feedback overlay to both eye RTs
 
-    if (calibrationMonoscopicFeedback) {
+    for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
       rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-      rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
+      rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
 
       rhi()->bindRenderPipeline(camOverlayStereoUndistortPipeline);
       rhi()->loadTexture(ksLeftCameraTex, stereoCamera->rgbTexture(0), linearClampSampler);
@@ -618,8 +630,12 @@ retryStereoCalibration:
       rhi()->loadTexture(ksLeftDistortionMap, cameraDistortionMap[0], linearClampSampler);
       rhi()->loadTexture(ksRightDistortionMap, cameraDistortionMap[1], linearClampSampler);
 
-      // Don't need a projection, just fill the screen with the feedback quad.
-      glm::mat4 mvp = glm::mat4(1.0f);
+      // coordsys right now: -X = left, -Z = into screen
+      // (camera is at the origin)
+      const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
+      const float scaleFactor = 2.5f;
+      glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth*2) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
+      glm::mat4 mvp = eyeProjection[eyeIndex] * model;
 
       NDCQuadUniformBlock ub;
       ub.modelViewProjection = mvp;
@@ -627,14 +643,16 @@ retryStereoCalibration:
 
       rhi()->drawNDCQuad();
 
-      rhi()->endRenderPass(windowRenderTarget);
-      rhi()->swapBuffers(windowRenderTarget);
-    } else {
-      // Draw camera stream and feedback overlay to both eye RTs
+      rhi()->endRenderPass(eyeRT[eyeIndex]);
+    }
 
-      for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+    // Debug stream rendering
+    {
+      RHISurface::ptr debugSurface = renderAcquireDebugSurface();
+      if (debugSurface) {
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        rhi()->beginRenderPass(eyeRT[eyeIndex], kLoadClear);
+        RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({debugSurface}));
+        rhi()->beginRenderPass(rt, kLoadClear);
 
         rhi()->bindRenderPipeline(camOverlayStereoUndistortPipeline);
         rhi()->loadTexture(ksLeftCameraTex, stereoCamera->rgbTexture(0), linearClampSampler);
@@ -644,23 +662,19 @@ retryStereoCalibration:
         rhi()->loadTexture(ksLeftDistortionMap, cameraDistortionMap[0], linearClampSampler);
         rhi()->loadTexture(ksRightDistortionMap, cameraDistortionMap[1], linearClampSampler);
 
-        // coordsys right now: -X = left, -Z = into screen
-        // (camera is at the origin)
-        const glm::vec3 tx = glm::vec3(0.0f, 0.0f, -7.0f);
-        const float scaleFactor = 2.5f;
-        glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(s_cameraWidth*2) / static_cast<float>(s_cameraHeight)), scaleFactor, 1.0f)); // TODO
-        glm::mat4 mvp = eyeProjection[eyeIndex] * model;
-
         NDCQuadUniformBlock ub;
-        ub.modelViewProjection = mvp;
+        // Don't need a projection, just fill the surface with the feedback quad.
+        ub.modelViewProjection = glm::mat4(1.0f);
         rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
 
         rhi()->drawNDCQuad();
 
-        rhi()->endRenderPass(eyeRT[eyeIndex]);
+        rhi()->endRenderPass(rt);
+        renderSubmitDebugSurface(debugSurface);
       }
-      renderHMDFrame();
     }
+
+    renderHMDFrame();
 
   } // Stereo calibration sample-gathering loop
 

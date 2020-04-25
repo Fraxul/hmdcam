@@ -12,6 +12,10 @@ extern RHIRenderTarget::ptr windowRenderTarget;
 bool RenderInit();
 void RenderShutdown();
 void renderHMDFrame();
+void renderSetDebugSurfaceSize(size_t x, size_t y);
+RHISurface::ptr renderAcquireDebugSurface();
+void renderSubmitDebugSurface(RHISurface::ptr);
+
 void recomputeHMDParameters();
 
 typedef void* EGLDisplay;
