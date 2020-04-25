@@ -20,7 +20,7 @@
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 
-NvEncSession::NvEncSession() : m_width(0), m_height(0), m_bitsPerSecond(8000000),
+NvEncSession::NvEncSession() : m_width(0), m_height(0), m_bitsPerSecond(40000000),
   m_framerateNumerator(30), m_framerateDenominator(1),
   m_encoderPixfmt(V4L2_PIX_FMT_H264),
   m_inputFormat(kInputFormatNV12),
@@ -432,7 +432,9 @@ void NvEncSession::start() {
 
   // Set up for streaming -- insert SPS and PPS every 60 frames so the decoder can sync to an in-progress stream.
   m_enc->setInsertSpsPpsAtIdrEnabled(true);
-  m_enc->setIDRInterval(60 /*frames*/);
+  m_enc->setIDRInterval(10 /*frames*/);
+  m_enc->setMaxPerfMode(1);
+  m_enc->setNumBFrames(0); // Disable B-frames for low latency
   // Insert VUI so that the RTSP server can pull framerate information out of it
   //m_enc->setInsertVuiEnabled(true);
 

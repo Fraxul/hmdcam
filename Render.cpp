@@ -336,6 +336,9 @@ bool RenderInit() {
 
     char* urlTmp = rtspServer->rtspURL(rtspMediaSession);
     printf("RTSP server is listening at %s\n", urlTmp);
+    printf("Recommended client configuration for low-latency streaming:\n");
+    printf("  ffplay -fflags nobuffer -flags low_delay -framedrop %s\n", urlTmp);
+
     rtspURL = std::string(urlTmp);
     delete[] urlTmp;
 
