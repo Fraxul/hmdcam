@@ -509,3 +509,7 @@ void renderSubmitDebugSurface(RHISurface::ptr debugSurface) {
   nvencSession->submitSurface(debugSurface);
 }
 
+const std::string& renderDebugURL() {
+  return rtspURL;
+}
+

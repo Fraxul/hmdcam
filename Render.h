@@ -15,6 +15,7 @@ void renderHMDFrame();
 void renderSetDebugSurfaceSize(size_t x, size_t y);
 RHISurface::ptr renderAcquireDebugSurface();
 void renderSubmitDebugSurface(RHISurface::ptr);
+const std::string& renderDebugURL();
 
 void recomputeHMDParameters();
 

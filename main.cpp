@@ -61,6 +61,7 @@ float stereoOffset = 0.0f;
 bool renderSBS = true;
 bool useMask = true;
 int sbsSeparatorWidth = 4;
+bool debugUseDistortion = true;
 
 // Camera info/state
 ArgusCamera* stereoCamera;
@@ -280,6 +281,10 @@ int main(int argc, char* argv[]) {
         if (renderSBS) {
           ImGui::SliderInt("Separator Width", (int*) &sbsSeparatorWidth, 0, 32);
         }
+
+        ImGui::Checkbox("Debug output: Distortion correction", &debugUseDistortion);
+        ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
+
         {
           const auto& meta = stereoCamera->frameMetadata(0);
           ImGui::Text("Exp=1/%usec %uISO DGain=%f AGain=%f",
@@ -416,17 +421,27 @@ int main(int argc, char* argv[]) {
           for (int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
             rhi()->setViewport(cameraIdx == 0 ? leftRect : rightRect);
 
-            rhi()->bindRenderPipeline(camUndistortMaskPipeline);
-            rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
-            rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
-            rhi()->loadTexture(ksMaskTex, useMask ? cameraMask[cameraIdx] : disabledMaskTex, linearClampSampler);
+            if (debugUseDistortion) {
+              // Distortion-corrected view
+              rhi()->bindRenderPipeline(camUndistortMaskPipeline);
+              rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+              rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
+              rhi()->loadTexture(ksMaskTex, useMask ? cameraMask[cameraIdx] : disabledMaskTex, linearClampSampler);
 
-            NDCClippedQuadUniformBlock ub;
-            ub.modelViewProjection = glm::mat4(1.0f); // identity
-            ub.minUV = glm::vec2(0.0f);
-            ub.maxUV = glm::vec2(1.0f);
+              NDCClippedQuadUniformBlock ub;
+              ub.modelViewProjection = glm::mat4(1.0f); // identity
+              ub.minUV = glm::vec2(0.0f);
+              ub.maxUV = glm::vec2(1.0f);
+              rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+            } else {
+              // No-distortion / direct passthrough
+              rhi()->bindRenderPipeline(camTexturedQuadPipeline);
+              rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+              NDCQuadUniformBlock ub;
+              ub.modelViewProjection = glm::mat4(1.0f); // identity
+              rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+            }
 
-            rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
             rhi()->drawNDCQuad();
           }
 
