@@ -279,8 +279,9 @@ bool RenderInit() {
     // Grab some fixed parameters
     ohmd_device_geti(hmdDevice, OHMD_SCREEN_HORIZONTAL_RESOLUTION, (int*) &hmd_width);
     ohmd_device_geti(hmdDevice, OHMD_SCREEN_VERTICAL_RESOLUTION, (int*) &hmd_height);
-    eye_width = hmd_width / 2;
-    eye_height = hmd_height;
+    // Eye target dimensions are twice the per-eye screen resolution (which is hmd_width/2 x hmd_height), rounded up to the next 16 pixel block
+    eye_width = (hmd_width + 0xf) & ~0xfUL;
+    eye_height = ((2 * hmd_height) + 0xf) & ~0xfUL;
     printf("HMD dimensions: %u x %u\n", hmd_width, hmd_height);
   }
 
