@@ -412,7 +412,16 @@ void NvEncSession::start() {
   ret = m_enc->setOutputPlaneFormat(V4L2_PIX_FMT_YUV420M, m_width, m_height);
   if (ret < 0) die("Could not set output plane format");
 
-  ret = m_enc->setBitrate(m_bitsPerSecond);
+  ret = m_enc->setHWPresetType(V4L2_ENC_HW_PRESET_MEDIUM);
+  if (ret < 0) die("Could not set encoder hardware quality preset");
+
+  ret = m_enc->setRateControlMode(V4L2_MPEG_VIDEO_BITRATE_MODE_VBR);
+  if (ret < 0) die("Could not set rate control mode");
+
+  ret = m_enc->setBitrate(m_bitsPerSecond/2);
+  if (ret < 0) die("Could not set bitrate");
+
+  ret = m_enc->setPeakBitrate(m_bitsPerSecond);
   if (ret < 0) die("Could not set bitrate");
 
   if (m_encoderPixfmt == V4L2_PIX_FMT_H264) {
