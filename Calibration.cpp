@@ -148,21 +148,13 @@ void updateCameraDistortionMap(size_t cameraIdx, bool useStereoCalibration)  {
   cv::Size imageSize = cv::Size(s_cameraWidth, s_cameraHeight);
   float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels
   cv::Mat map1, map2;
-  cameraOptimizedMatrix[cameraIdx] = cv::getOptimalNewCameraMatrix(cameraIntrinsicMatrix[cameraIdx], distCoeffs[cameraIdx], imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
-  cv::initUndistortRectifyMap(cameraIntrinsicMatrix[cameraIdx], distCoeffs[cameraIdx], cv::noArray(), cameraOptimizedMatrix[cameraIdx], imageSize, CV_32F, map1, map2);
-
   if (useStereoCalibration) {
-    cv::Mat stereo_map1, stereo_map2;
-
-    // Compute the stereo remap and apply it on top of the intrinsic distortion remap layer
-    cv::initUndistortRectifyMap(cameraOptimizedMatrix[cameraIdx], distCoeffs[cameraIdx], stereoRectification[cameraIdx], stereoProjection[cameraIdx], imageSize, CV_32F, stereo_map1, stereo_map2);
-
-    cv::Mat remap1, remap2;
-    cv::remap(map1, remap1, stereo_map1, stereo_map2, cv::INTER_LINEAR);
-    cv::remap(map2, remap2, stereo_map1, stereo_map2, cv::INTER_LINEAR);
-
-    map1 = remap1;
-    map2 = remap2;
+    // Stereo remap -- apply both distortion correction and stereo rectification/projection
+    cv::initUndistortRectifyMap(cameraIntrinsicMatrix[cameraIdx], distCoeffs[cameraIdx], stereoRectification[cameraIdx], stereoProjection[cameraIdx], imageSize, CV_32F, map1, map2);
+  } else {
+    // Intrinic-only remap -- no rectification transform, using optimized matrix
+    cameraOptimizedMatrix[cameraIdx] = cv::getOptimalNewCameraMatrix(cameraIntrinsicMatrix[cameraIdx], distCoeffs[cameraIdx], imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
+    cv::initUndistortRectifyMap(cameraIntrinsicMatrix[cameraIdx], distCoeffs[cameraIdx], cv::noArray(), cameraOptimizedMatrix[cameraIdx], imageSize, CV_32F, map1, map2);
   }
 
   // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc)
