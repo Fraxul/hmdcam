@@ -193,6 +193,7 @@ retryIntrinsicCalibration:
     std::vector<cv::Mat> allCharucoCorners;
     std::vector<cv::Mat> allCharucoIds;
 
+    clearButtons();
     while (!want_quit) {
       if (testButton(kButtonDown)) {
         // Calibration finished
@@ -364,6 +365,7 @@ retryIntrinsicCalibration:
 
     // Show a preview of the intrinsic calibration and give the option to retry or continue
     {
+      clearButtons();
       while (!want_quit) {
         if (testButton(kButtonLeft)) {
           goto retryIntrinsicCalibration;
@@ -467,6 +469,7 @@ retryStereoCalibration:
   std::vector<std::vector<cv::Point3f> > objectPoints; // Points from the board definition for the relevant corners each frame
   std::vector<std::vector<cv::Point2f> > calibrationPoints[2]; // Points in image space for the 2 views for the relevant corners each frame
 
+  clearButtons();
   while (!want_quit) {
     if (testButton(kButtonDown)) {
       // Calibration finished

@@ -26,6 +26,12 @@ bool testButton(EButton button) {
   return buttonState[button].exchange(false);
 }
 
+void clearButtons() {
+  for (size_t i = 0; i < kButtonCount; ++i) {
+    buttonState[i].exchange(false);
+  }
+}
+
 void udevProcessDevice(struct udev_device* dev) {
   if (!dev)
     return;

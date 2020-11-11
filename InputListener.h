@@ -19,5 +19,6 @@ enum EButton {
 // Returns true once per button press.
 // (pressing the button sets a latch, calling testButton() releases that latch)
 bool testButton(EButton);
+void clearButtons();
 
 void startInputListenerThread();
