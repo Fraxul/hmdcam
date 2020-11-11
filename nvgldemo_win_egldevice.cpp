@@ -820,7 +820,7 @@ static bool NvGlDemoSetDrmOutputMode( void )
     sizeX = demoOptions.windowSize[0];
     sizeY = demoOptions.windowSize[1];
 
-    nvGlDrmDev->curConnIndx = demoState.platform->curConnIndx;
+    nvGlDrmDev->curConnIndx = demoState.platform->curConnIndx = nvGlDrmDev->connDefault;
     // If a specific screen was requested, use it
     if ((nvGlDrmDev->curConnIndx >= nvGlDrmDev->res->count_connectors) ||
             !nvGlDrmDev->connInfo[nvGlDrmDev->curConnIndx].valid) {
@@ -1023,7 +1023,7 @@ static bool NvGlDemoSetDrmOutputMode( void )
     if (planeIndex == nvGlDrmDev->planes->count_planes) {
         NvGlDemoLog("ERROR: Layer ID %d is not valid on display %d.\n",
                      demoOptions.displayLayer,
-                     demoOptions.displayNumber);
+                     demoState.platform->curConnIndx);
         NvGlDemoLog("Range of available Layer IDs: [0, %d]",
                     currPlaneIndex - 1);
         goto NvGlDemoSetDrmLayer_fail;
@@ -1229,7 +1229,7 @@ int NvGlDemoDisplayInit(void)
     }
 
     demoState.platform->curDevIndx = 0;
-    demoState.platform->curConnIndx = demoOptions.displayNumber;
+    demoState.platform->curConnIndx = 0;
 
     if(NvGlDemoInitEglDevice()) {
         if(NvGlDemoInitDrmDevice()) {

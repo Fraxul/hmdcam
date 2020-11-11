@@ -161,7 +161,6 @@ typedef struct {
     float displayAlpha;                     // Display constant blending alpha
     int msaa;                               // Multi-sampling
     int csaa;                               // Coverage sampling
-    int displayNumber;                      // Display output number
     int nFifo;                              // FIFO mode for eglstreams. 0 -> mailbox
 } NvGlDemoOptions;
 
