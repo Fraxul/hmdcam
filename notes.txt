@@ -41,11 +41,23 @@ HandleHibernateKey=ignore
 HandleLidSwitch=ignore
 HandleLidSwitchDocked=ignore
 
-then sudo systemctl restart systemd-logind
+then sudo systemctl restart systemd-logind #(NOTE: this will kill your login session!)
 
 Disabling the desktop environment:
-sudo systemctl disable gdm3
-sudo systemctl set-default multi-user.target
-sudo systemctl stop gdm3
-killall gdm-x-session
+sudo systemctl isolate multi-user.target            # takes effect immediately
+sudo systemctl set-default multi-user.target        # to persist across reboots
+
+Reenabling the desktop environment
+sudo systemctl isolate graphical.target             # takes effect immediately
+sudo systemctl set-default graphical.target         # to persist across reboots
+
+
+
+Camera ISP settings are stored at /var/nvidia/nvcam/settings/camera_overrides.isp
+The vendor ISP settings may be adjusted to improve flicker correction. These settings have been found to work well for capturing at 90fps and correcting for 60hz flicker:
+flicker.ConfidenceThreshold = 32;
+flicker.SuccessFrameCount = 8;
+flicker.FailureFrameCount = 3;
+flicker.CorrectionFreqListEntries = 4;
+flicker.CorrectionFreqList = {60, 90, 100, 120};
 
