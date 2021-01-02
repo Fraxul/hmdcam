@@ -13,6 +13,7 @@
 #include <boost/accumulators/statistics/max.hpp>
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/mean.hpp>
+#include <boost/scoped_ptr.hpp>
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
@@ -21,6 +22,7 @@
 #include "rhi/RHIResources.h"
 
 #include "ArgusCamera.h"
+#include "CameraSystem.h"
 #include "InputListener.h"
 #include "Render.h"
 
@@ -30,7 +32,6 @@
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
 
-#include "Calibration.h"
 
 //#define LATENCY_DEBUG
 
@@ -44,29 +45,17 @@ size_t s_cameraWidth, s_cameraHeight;
 // TODO: autodetect this. (current value pulled from running `fbset`)
 const double s_cameraFramerate = 89.527;
 
-// #define SWAP_CAMERA_EYES
-
-// Mapping of libargus camera device ID to index 0 (left) and 1 (right).
-#ifdef SWAP_CAMERA_EYES
-  #define LEFT_CAMERA_INDEX 1
-  #define RIGHT_CAMERA_INDEX 0
-#else
-  #define LEFT_CAMERA_INDEX 0
-  #define RIGHT_CAMERA_INDEX 1
-#endif
-
 // Camera render parameters
 float scaleFactor = 1.0f;
 float stereoOffset = 0.0f;
-bool renderSBS = true;
+bool renderSBS = false;
 bool useMask = true;
 int sbsSeparatorWidth = 4;
 bool debugUseDistortion = true;
 
 // Camera info/state
-ArgusCamera* stereoCamera;
-RHISurface::ptr cameraDistortionMap[2];
-RHISurface::ptr cameraMask[2];
+ArgusCamera* argusCamera;
+CameraSystem* cameraSystem;
 
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
@@ -82,6 +71,52 @@ static void signal_handler(int) {
   signal(SIGINT,  SIG_DFL);
   signal(SIGTERM, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
+}
+
+
+const size_t DRAW_FLAGS_USE_MASK = 0x01;
+
+void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortionMap, RHISurface::ptr overlayTexture /*can be null*/, glm::mat4 modelViewProjection, float minU = 0.0f, float maxU = 1.0f) {
+
+  bool useClippedQuadUB = false;
+
+  if (overlayTexture) {
+    assert(!distortionMap); // distortion+overlay not used/supported
+
+    rhi()->bindRenderPipeline(camOverlayPipeline);
+    rhi()->loadTexture(ksOverlayTex, overlayTexture, linearClampSampler);
+
+  } else if (!distortionMap) {
+    // no distortion or overlay
+    rhi()->bindRenderPipeline(camTexturedQuadPipeline);
+      
+  } else {
+    rhi()->bindRenderPipeline(camUndistortMaskPipeline);
+    useClippedQuadUB = true;
+    rhi()->loadTexture(ksDistortionMap, distortionMap);
+    if (flags & DRAW_FLAGS_USE_MASK) {
+      rhi()->loadTexture(ksMaskTex, cameraSystem->cameraAtIndex(cameraIdx).mask);
+    } else {
+      rhi()->loadTexture(ksMaskTex, disabledMaskTex, linearClampSampler);
+    }
+  }
+
+  rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(cameraIdx), linearClampSampler);
+
+  if (useClippedQuadUB) {
+    NDCClippedQuadUniformBlock ub;
+    ub.modelViewProjection = modelViewProjection;
+    ub.minUV = glm::vec2(minU, 0.0f);
+    ub.maxUV = glm::vec2(maxU, 1.0f);
+
+    rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+  } else {
+    NDCQuadUniformBlock ub;
+    ub.modelViewProjection = modelViewProjection;
+
+    rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+  }
+  rhi()->drawNDCQuad();
 }
 
 int main(int argc, char* argv[]) {
@@ -105,52 +140,41 @@ int main(int argc, char* argv[]) {
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f);
 
   // Open the cameras
-  stereoCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), {LEFT_CAMERA_INDEX, RIGHT_CAMERA_INDEX}, s_cameraFramerate);
-  s_cameraWidth = stereoCamera->streamWidth();
-  s_cameraHeight = stereoCamera->streamHeight();
+  // TODO have ArgusCamera autodetect indices of and open all CSI cameras
+  argusCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), {0, 1}, s_cameraFramerate);
+  s_cameraWidth = argusCamera->streamWidth();
+  s_cameraHeight = argusCamera->streamHeight();
 
   renderSetDebugSurfaceSize(s_cameraWidth * 2, s_cameraHeight);
 
-  // Generate derived data for calibration
-  initCalibration();
+  cameraSystem = new CameraSystem(argusCamera);
+  // Load whatever calibration we have (may be nothing)
+  cameraSystem->loadCalibrationData();
+
+  if (cameraSystem->views() == 0) {
+    printf("No calibration data, creating a stub\n");
+    if (cameraSystem->cameras() == 1) {
+      cameraSystem->createMonoView(0);
+    } else {
+      cameraSystem->createStereoView(0, 1);
+    }
+    cameraSystem->saveCalibrationData();
+  }
+
 
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
 
-  // Calibration mode
-  {
-    // Try reading calibration data from the file
-    readCalibrationData();
 
-    // Calibrate individual cameras
-    if (!haveIntrinsicCalibration()) {
-      doIntrinsicCalibration();
+  // Load masks. 
+#if 1
+  // TODO move mask loading to CameraSystem
+  for (size_t cameraIdx = 0; cameraIdx < cameraSystem->cameras(); ++cameraIdx) {
+    cameraSystem->cameraAtIndex(cameraIdx).mask = disabledMaskTex;
+  }
 
-      if (want_quit)
-        goto quit;
-
-      // Incrementally save intrinsic calibration data if it was updated this run
-      saveCalibrationData(); 
-    }
-
-    if (!haveStereoCalibration()) {
-      doStereoCalibration();
-      saveCalibrationData();
-    }
-
-    if (want_quit)
-      goto quit;
-
-    generateCalibrationDerivedData();
-
-    // Compute new distortion maps with the now-valid stereo calibration.
-    updateCameraDistortionMap(0, true);
-    updateCameraDistortionMap(1, true);
-
-  } // Calibration mode
-
-  // Load masks.
+#else
   {
     for (size_t cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
       cameraMask[cameraIdx] = rhi()->newTexture2D(s_cameraWidth, s_cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
@@ -173,13 +197,13 @@ int main(int argc, char* argv[]) {
         maskData = (uint8_t*) malloc(x * y);
 
         // Save a snapshot from this camera as a template.
-        stereoCamera->readFrame();
+        argusCamera->readFrame();
 
         RHIRenderTarget::ptr snapRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({cameraMask[cameraIdx]}));
         rhi()->beginRenderPass(snapRT, kLoadInvalidate);
         // This pipeline flips the Y axis for OpenCV's coordinate system, which is the same as the PNG coordinate system
         rhi()->bindRenderPipeline(camGreyscalePipeline);
-        rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+        rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(cameraIdx), linearClampSampler);
         rhi()->drawNDCQuad();
         rhi()->endRenderPass(snapRT);
 
@@ -207,9 +231,10 @@ int main(int argc, char* argv[]) {
       free(maskData);
     }
   }
+#endif
 
   {
-    stereoCamera->setRepeatCapture(true);
+    argusCamera->setRepeatCapture(true);
 
     // Camera rendering mode
     uint64_t frameCounter = 0;
@@ -248,6 +273,7 @@ int main(int argc, char* argv[]) {
     double currentCaptureIntervalMs = 0.0;
 
     bool drawUI = false;
+    boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
 
     while (!want_quit) {
       if (testButton(kButtonPower)) {
@@ -260,33 +286,70 @@ int main(int argc, char* argv[]) {
 
       ++frameCounter;
 
-      stereoCamera->readFrame();
+      // Only use repeating captures if we're not in calibration. The variable CPU-side delays for calibration image processing usually end up crashing libargus.
+      argusCamera->setRepeatCapture(!((bool) calibrationContext));
+
+      argusCamera->readFrame();
 
       if (previousCaptureTimestamp) {
-        currentCaptureIntervalMs = static_cast<double>(stereoCamera->frameSensorTimestamp(0) - previousCaptureTimestamp) / 1000000.0;
+        currentCaptureIntervalMs = static_cast<double>(argusCamera->frameSensorTimestamp(0) - previousCaptureTimestamp) / 1000000.0;
         captureInterval(currentCaptureIntervalMs);
       }
-      previousCaptureTimestamp = stereoCamera->frameSensorTimestamp(0);
+      previousCaptureTimestamp = argusCamera->frameSensorTimestamp(0);
+
+      if (calibrationContext && calibrationContext->finished()) {
+        calibrationContext.reset();
+      }
+
+      if (calibrationContext) {
+        calibrationContext->processFrame();
+      }
 
 
-      if (drawUI) {
+      if (calibrationContext || drawUI) {
         // GUI support
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
         ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-        //ImGui::Text("Config");
-        ImGui::Checkbox("SBS", &renderSBS);
-        ImGui::Checkbox("Mask", &useMask);
-        ImGui::SliderFloat("Scale", &scaleFactor, 0.5f, 2.0f);
-        ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
-        if (renderSBS) {
-          ImGui::SliderInt("Separator Width", (int*) &sbsSeparatorWidth, 0, 32);
+
+        if (calibrationContext) {
+
+          calibrationContext->processUI();
+
+        } else {
+          //ImGui::Text("Config");
+          ImGui::Checkbox("SBS", &renderSBS);
+          ImGui::Checkbox("Mask", &useMask);
+          ImGui::SliderFloat("Scale", &scaleFactor, 0.5f, 2.0f);
+          ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
+          if (renderSBS) {
+            ImGui::SliderInt("Separator Width", (int*) &sbsSeparatorWidth, 0, 32);
+          }
+
+          for (size_t cameraIdx = 0; cameraIdx < cameraSystem->cameras(); ++cameraIdx) {
+            char caption[64];
+            sprintf(caption, "Calibrate camera %zu", cameraIdx);
+            if (ImGui::Button(caption)) {
+              calibrationContext.reset(cameraSystem->calibrationContextForCamera(cameraIdx));
+            }
+          }
+          for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+            CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+            if (v.isStereo) {
+              char caption[64];
+              sprintf(caption, "Calibrate stereo view %zu", viewIdx);
+              if (ImGui::Button(caption)) {
+                calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
+              }
+            }
+          }
         }
+
 
         ImGui::Checkbox("Debug output: Distortion correction", &debugUseDistortion);
         ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
 
         {
-          const auto& meta = stereoCamera->frameMetadata(0);
+          const auto& meta = argusCamera->frameMetadata(0);
           ImGui::Text("Exp=1/%usec %uISO DGain=%f AGain=%f",
             (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs/1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
         }
@@ -335,53 +398,79 @@ int main(int argc, char* argv[]) {
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
         rhi()->beginRenderPass(eyeRT[eyeIdx], kLoadClear);
 
-        for (int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
-          if (renderSBS == false && (cameraIdx != eyeIdx))
-            continue;
+        for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+          CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
 
-          rhi()->bindRenderPipeline(camUndistortMaskPipeline);
-          rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
-          rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
-          rhi()->loadTexture(ksMaskTex, useMask ? cameraMask[cameraIdx] : disabledMaskTex, linearClampSampler);
 
-          // coordsys right now: -X = left, -Z = into screen
-          // (camera is at the origin)
-          float stereoOffsetSign = (cameraIdx == 0 ? -1.0f : 1.0f);
-          const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -3.0f);
-          glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(stereoCamera->streamWidth()) / static_cast<float>(stereoCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
-          // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
-          glm::mat4 mvp = eyeProjection[eyeIdx] * eyeView[eyeIdx] * model;
 
-          float uClipFrac = 0.75f;
-  #if 1
-          // Compute the clipping parameters to cut the views off at the centerline of the view (x=0 in model space)
-          {
-            glm::vec3 worldP0 = glm::vec3(model * glm::vec4(-1.0f, 0.0f, 0.0f, 1.0f));
-            glm::vec3 worldP1 = glm::vec3(model * glm::vec4( 1.0f, 0.0f, 0.0f, 1.0f));
+          for (int viewEyeIdx = 0; viewEyeIdx < (v.isStereo ? 2 : 1); ++viewEyeIdx) {
+            if (renderSBS == false && v.isStereo && (viewEyeIdx != eyeIdx))
+              continue;
 
-            float xLen = fabs(worldP0.x - worldP1.x);
-            // the coordinate that's closest to X0 will be the one we want to clip
-            float xOver = std::min<float>(fabs(worldP0.x), fabs(worldP1.x));
+            // coordsys right now: -X = left, -Z = into screen
+            // (camera is at the origin)
+            float stereoOffsetSign = v.isStereo ? ((viewEyeIdx == 0 ? -1.0f : 1.0f)) : 0.0f;
+            const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -3.0f);
+            glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(argusCamera->streamWidth()) / static_cast<float>(argusCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
+            // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
+            glm::mat4 mvp = eyeProjection[eyeIdx] * eyeView[eyeIdx] * model;
 
-            uClipFrac = (xLen - xOver)/xLen;
-          }
-  #endif
+            RHISurface::ptr overlayTex, distortionTex;
+            size_t drawFlags = 0;
+            if (calibrationContext && calibrationContext->isViewContext() && calibrationContext->getCameraOrViewIndex() == viewIdx) {
+              // Calibrating a stereo view that includes this camera
+              overlayTex = calibrationContext->overlaySurfaceAtIndex(viewEyeIdx);
+              distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
 
-          NDCClippedQuadUniformBlock ub;
-          ub.modelViewProjection = mvp;
-          if (cameraIdx == 0) { // left
-            ub.minUV = glm::vec2(0.0f,  0.0f);
-            ub.maxUV = glm::vec2(uClipFrac, 1.0f);
-          } else { // right
-            ub.minUV = glm::vec2(1.0f - uClipFrac, 0.0f);
-            ub.maxUV = glm::vec2(1.0f,  1.0f);
-          }
+            } else if (calibrationContext && calibrationContext->isCameraContext() && calibrationContext->getCameraOrViewIndex() == v.cameraIndices[viewEyeIdx]) {
+              // Calibrating this camera's intrinsic distortion
+              overlayTex = calibrationContext->overlaySurfaceAtIndex(0);
 
-          rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+            } else if (v.isStereo) {
+              // Drawing this camera as part of a stereo pair
+              distortionTex = v.stereoDistortionMap[viewEyeIdx];
+              drawFlags = DRAW_FLAGS_USE_MASK;
 
-          rhi()->drawNDCQuad();
-        } // camera loop
+            } else {
+              // Drawing this camera as a mono view
+              distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
+              drawFlags = DRAW_FLAGS_USE_MASK;
 
+            }
+            
+
+            renderDrawCamera(v.cameraIndices[viewEyeIdx], drawFlags, distortionTex, overlayTex, mvp);
+
+  /*
+            float uClipFrac = 0.75f;
+    #if 1
+            // Compute the clipping parameters to cut the views off at the centerline of the view (x=0 in model space)
+            {
+              glm::vec3 worldP0 = glm::vec3(model * glm::vec4(-1.0f, 0.0f, 0.0f, 1.0f));
+              glm::vec3 worldP1 = glm::vec3(model * glm::vec4( 1.0f, 0.0f, 0.0f, 1.0f));
+
+              float xLen = fabs(worldP0.x - worldP1.x);
+              // the coordinate that's closest to X0 will be the one we want to clip
+              float xOver = std::min<float>(fabs(worldP0.x), fabs(worldP1.x));
+
+              uClipFrac = (xLen - xOver)/xLen;
+            }
+    #endif
+
+            if (cameraIdx == 0) { // left
+              ub.minUV = glm::vec2(0.0f,  0.0f);
+              ub.maxUV = glm::vec2(uClipFrac, 1.0f);
+            } else { // right
+              ub.minUV = glm::vec2(1.0f - uClipFrac, 0.0f);
+              ub.maxUV = glm::vec2(1.0f,  1.0f);
+            }
+  */
+
+          } // camera loop
+
+        } // view loop
+
+/*
         if (renderSBS && sbsSeparatorWidth) {
           rhi()->bindRenderPipeline(solidQuadPipeline);
           SolidQuadUniformBlock ub;
@@ -391,9 +480,10 @@ int main(int argc, char* argv[]) {
           rhi()->loadUniformBlockImmediate(ksSolidQuadUniformBlock, &ub, sizeof(SolidQuadUniformBlock));
           rhi()->drawNDCQuad();
         }
+*/
 
         // UI overlay
-        if (drawUI) {
+        if (drawUI || calibrationContext) {
           rhi()->bindBlendState(standardAlphaOverBlendState);
           rhi()->bindRenderPipeline(uiLayerPipeline);
           rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
@@ -418,15 +508,16 @@ int main(int argc, char* argv[]) {
           RHIRect leftRect = RHIRect::xywh(0, 0, debugSurface->width() / 2, debugSurface->height());
           RHIRect rightRect = RHIRect::xywh(debugSurface->width() / 2, 0, debugSurface->width() / 2, debugSurface->height());
 
+          // TODO split up debug view for more than 2 cameras
           for (int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
             rhi()->setViewport(cameraIdx == 0 ? leftRect : rightRect);
 
             if (debugUseDistortion) {
               // Distortion-corrected view
               rhi()->bindRenderPipeline(camUndistortMaskPipeline);
-              rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
-              rhi()->loadTexture(ksDistortionMap, cameraDistortionMap[cameraIdx], linearClampSampler);
-              rhi()->loadTexture(ksMaskTex, useMask ? cameraMask[cameraIdx] : disabledMaskTex, linearClampSampler);
+              rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(cameraIdx), linearClampSampler);
+              rhi()->loadTexture(ksDistortionMap, cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap, linearClampSampler);
+              rhi()->loadTexture(ksMaskTex, useMask ? cameraSystem->cameraAtIndex(cameraIdx).mask : disabledMaskTex, linearClampSampler);
 
               NDCClippedQuadUniformBlock ub;
               ub.modelViewProjection = glm::mat4(1.0f); // identity
@@ -436,7 +527,7 @@ int main(int argc, char* argv[]) {
             } else {
               // No-distortion / direct passthrough
               rhi()->bindRenderPipeline(camTexturedQuadPipeline);
-              rhi()->loadTexture(ksImageTex, stereoCamera->rgbTexture(cameraIdx), linearClampSampler);
+              rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(cameraIdx), linearClampSampler);
               NDCQuadUniformBlock ub;
               ub.modelViewProjection = glm::mat4(1.0f); // identity
               rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
@@ -445,7 +536,7 @@ int main(int argc, char* argv[]) {
             rhi()->drawNDCQuad();
           }
 
-          if (drawUI) {
+          if (drawUI || calibrationContext) {
             // Draw the UI on the center-bottom of the debug surface
             RHIRect uiDestRect = RHIRect::xywh((debugSurface->width() / 2) - (guiTex->width() / 2), debugSurface->height() - guiTex->height(), guiTex->width(), guiTex->height());
             rhi()->setViewport(uiDestRect);
@@ -478,21 +569,22 @@ int main(int argc, char* argv[]) {
           // Update the target capture interval periodically
 #if 0
           if ((frameCounter & 0x1f) == 0x1f) {
-            stereoCamera->setTargetCaptureIntervalNs(boost::accumulators::rolling_mean(frameInterval));
+            argusCamera->setTargetCaptureIntervalNs(boost::accumulators::rolling_mean(frameInterval));
           }
 #endif
 
           io.DeltaTime = static_cast<double>(interval / 1000000000.0);
         }
 
-        currentCaptureLatencyMs = static_cast<double>(thisFrameTimestamp - stereoCamera->frameSensorTimestamp(0)) / 1000000.0;
+        currentCaptureLatencyMs = static_cast<double>(thisFrameTimestamp - argusCamera->frameSensorTimestamp(0)) / 1000000.0;
         captureLatency(currentCaptureLatencyMs);
 
         previousFrameTimestamp = thisFrameTimestamp;
       }
     } // Camera rendering loop
   }
-quit:
+
+
   // Restore signal handlers
   signal(SIGINT,  SIG_DFL);
   signal(SIGTERM, SIG_DFL);
@@ -503,8 +595,8 @@ quit:
   rhi()->endRenderPass(windowRenderTarget);
   rhi()->swapBuffers(windowRenderTarget);
 
-  stereoCamera->stop();
-  delete stereoCamera;
+  argusCamera->stop();
+  delete argusCamera;
 
   RenderShutdown();
 
