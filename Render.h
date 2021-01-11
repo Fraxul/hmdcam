@@ -61,9 +61,8 @@ extern FxAtomicString ksMaskTex;
 
 extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
 extern RHIRenderPipeline::ptr camOverlayPipeline;
-extern RHIRenderPipeline::ptr camOverlayStereoPipeline;
-extern RHIRenderPipeline::ptr camOverlayStereoUndistortPipeline;
 extern RHIRenderPipeline::ptr camUndistortMaskPipeline;
+extern RHIRenderPipeline::ptr camUndistortOverlayPipeline;
 extern RHIRenderPipeline::ptr camGreyscalePipeline;
 extern RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 extern RHIRenderPipeline::ptr solidQuadPipeline;

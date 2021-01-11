@@ -79,6 +79,9 @@ public:
     virtual bool isViewContext() { return false; }
     virtual size_t getCameraOrViewIndex() = 0;
 
+    virtual bool involvesCamera(size_t cameraIdx) = 0;
+    virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) = 0;
+
   protected:
     CalibrationContext(CameraSystem*);
     CameraSystem* cameraSystem() const { return m_cameraSystem; }
@@ -139,6 +142,8 @@ public:
     virtual bool isCameraContext() { return true; }
     virtual size_t getCameraOrViewIndex() { return m_cameraIdx; }
 
+    virtual bool involvesCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx; }
+    virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx ? 0 : -1; }
 
   protected:
     virtual void renderStatusUI();
@@ -173,6 +178,21 @@ public:
 
     virtual bool isViewContext() { return true; }
     virtual size_t getCameraOrViewIndex() { return m_viewIdx; }
+
+    virtual bool involvesCamera(size_t cameraIdx) {
+      View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+      return (cameraIdx == v.cameraIndices[0] || cameraIdx == v.cameraIndices[1]);
+    }
+
+    virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) {
+      View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+      if (cameraIdx == v.cameraIndices[0])
+        return 0;
+      else if (cameraIdx == v.cameraIndices[1])
+        return 1;
+      else
+        return -1;
+    }
 
   protected:
     virtual void renderStatusUI();

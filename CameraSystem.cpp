@@ -766,6 +766,8 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
     printf("RMS error reported by stereoCalibrate: %g\n", rms);
     std::cout << " Per-view error: " << std::endl << perViewErrors << std::endl;
 
+    cameraSystem()->updateViewStereoDistortionParameters(m_viewIdx);
+
     return true;
   } catch (const std::exception& ex) {
     printf("Stereo calibration failed: %s\n", ex.what());
@@ -787,6 +789,9 @@ void CameraSystem::StereoCalibrationContext::didRejectCalibrationPreview() {
 void CameraSystem::StereoCalibrationContext::didCancelCalibrationSession() {
   // Restore previously saved calibration snapshot
   cameraSystem()->viewAtIndex(m_viewIdx) = m_previousViewData;
+
+  if (cameraSystem()->viewAtIndex(m_viewIdx).haveStereoCalibration())
+    cameraSystem()->updateViewStereoDistortionParameters(m_viewIdx);
 }
 
 bool CameraSystem::StereoCalibrationContext::requiresStereoRendering() const {

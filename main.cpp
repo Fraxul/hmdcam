@@ -81,9 +81,13 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
   bool useClippedQuadUB = false;
 
   if (overlayTexture) {
-    assert(!distortionMap); // distortion+overlay not used/supported
+    if (distortionMap) {
+      rhi()->bindRenderPipeline(camUndistortOverlayPipeline);
+      rhi()->loadTexture(ksDistortionMap, distortionMap);
+    } else {
+      rhi()->bindRenderPipeline(camOverlayPipeline);
+    }
 
-    rhi()->bindRenderPipeline(camOverlayPipeline);
     rhi()->loadTexture(ksOverlayTex, overlayTexture, linearClampSampler);
 
   } else if (!distortionMap) {
@@ -515,28 +519,26 @@ int main(int argc, char* argv[]) {
           for (int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
             rhi()->setViewport(cameraIdx == 0 ? leftRect : rightRect);
 
-            if (debugUseDistortion) {
-              // Distortion-corrected view
-              rhi()->bindRenderPipeline(camUndistortMaskPipeline);
-              rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(cameraIdx), linearClampSampler);
-              rhi()->loadTexture(ksDistortionMap, cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap, linearClampSampler);
-              rhi()->loadTexture(ksMaskTex, useMask ? cameraSystem->cameraAtIndex(cameraIdx).mask : disabledMaskTex, linearClampSampler);
+            RHISurface::ptr overlayTex, distortionTex;
+            distortionTex = cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap;
 
-              NDCClippedQuadUniformBlock ub;
-              ub.modelViewProjection = glm::mat4(1.0f); // identity
-              ub.minUV = glm::vec2(0.0f);
-              ub.maxUV = glm::vec2(1.0f);
-              rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+            if (calibrationContext && calibrationContext->involvesCamera(cameraIdx)) {
+              if (calibrationContext->isViewContext()) {
+                // Calibrating a stereo view that includes this camera
+                overlayTex = calibrationContext->overlaySurfaceAtIndex(calibrationContext->overlaySurfaceIndexForCamera(cameraIdx));
+              } else {
+                // Intrinsic calibration for camera. Disable distortion correction.
+                overlayTex = calibrationContext->overlaySurfaceAtIndex(calibrationContext->overlaySurfaceIndexForCamera(cameraIdx));
+                distortionTex = RHISurface::ptr();
+              }
+            } else if (debugUseDistortion) {
+              // Distortion-corrected view
             } else {
               // No-distortion / direct passthrough
-              rhi()->bindRenderPipeline(camTexturedQuadPipeline);
-              rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(cameraIdx), linearClampSampler);
-              NDCQuadUniformBlock ub;
-              ub.modelViewProjection = glm::mat4(1.0f); // identity
-              rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+              distortionTex = RHISurface::ptr();
             }
 
-            rhi()->drawNDCQuad();
+            renderDrawCamera(cameraIdx, /*drawFlags=*/0, distortionTex, overlayTex, /*mvp=*/glm::mat4(1.0f) /*identity*/);
           }
 
           if (drawUI || calibrationContext) {
