@@ -273,6 +273,7 @@ int main(int argc, char* argv[]) {
     double currentCaptureIntervalMs = 0.0;
 
     bool drawUI = false;
+    float uiScale = 1.0f;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
 
     while (!want_quit) {
@@ -345,6 +346,7 @@ int main(int argc, char* argv[]) {
         }
 
 
+        ImGui::SliderFloat("UI Scale", &uiScale, 0.5f, 1.5f);
         ImGui::Checkbox("Debug output: Distortion correction", &debugUseDistortion);
         ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
 
@@ -410,7 +412,7 @@ int main(int argc, char* argv[]) {
             // coordsys right now: -X = left, -Z = into screen
             // (camera is at the origin)
             float stereoOffsetSign = v.isStereo ? ((viewEyeIdx == 0 ? -1.0f : 1.0f)) : 0.0f;
-            const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -3.0f);
+            const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -1.0f);
             glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(argusCamera->streamWidth()) / static_cast<float>(argusCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
             // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
             glm::mat4 mvp = eyeProjection[eyeIdx] * eyeView[eyeIdx] * model;
@@ -475,7 +477,7 @@ int main(int argc, char* argv[]) {
           rhi()->bindRenderPipeline(solidQuadPipeline);
           SolidQuadUniformBlock ub;
           // Scale to reduce the X-width of the -1...1 quad to the size requested in sbsSeparatorWidth
-          ub.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -3.0f)) * glm::scale(glm::vec3(static_cast<float>(sbsSeparatorWidth * 4) / static_cast<float>(eyeRT[eyeIdx]->width()), 1.0f, 1.0f));
+          ub.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -1.0f)) * glm::scale(glm::vec3(static_cast<float>(sbsSeparatorWidth * 4) / static_cast<float>(eyeRT[eyeIdx]->width()), 1.0f, 1.0f));
           ub.color = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
           rhi()->loadUniformBlockImmediate(ksSolidQuadUniformBlock, &ub, sizeof(SolidQuadUniformBlock));
           rhi()->drawNDCQuad();
@@ -488,7 +490,8 @@ int main(int argc, char* argv[]) {
           rhi()->bindRenderPipeline(uiLayerPipeline);
           rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
           UILayerUniformBlock uiLayerBlock;
-          uiLayerBlock.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -2.0f)) * glm::scale(glm::vec3(io.DisplaySize.x / io.DisplaySize.y, 1.0f, 1.0f));
+          float uiScaleBase = 0.15f;
+          uiLayerBlock.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -0.25f)) * glm::scale(glm::vec3(uiScaleBase * uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScaleBase * uiScale, uiScaleBase * uiScale));
 
           rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
           rhi()->drawNDCQuad();
