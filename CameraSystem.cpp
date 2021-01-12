@@ -167,6 +167,14 @@ void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
   // Intrinic-only remap -- no rectification transform, using optimized matrix
   c.optimizedMatrix = cv::getOptimalNewCameraMatrix(c.intrinsicMatrix, c.distCoeffs, imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
   cv::initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, cv::noArray(), c.optimizedMatrix, imageSize, CV_32F, map1, map2);
+
+  // Compute FOV
+  {
+    double focalLength, aspectRatio; // not valid without a real aperture size, which we don't bother providing
+    cv::Point2d principalPoint;
+
+    cv::calibrationMatrixValues(c.optimizedMatrix, cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight()), 0.0, 0.0, c.fovX, c.fovY, focalLength, principalPoint, aspectRatio);
+  }
   
   c.intrinsicDistortionMap = generateGPUDistortionMap(map1, map2);
 }
@@ -217,6 +225,14 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   printf("\n ==================== \n");
   std::cout << "View " << viewIdx << " Stereo translation:" << std::endl << v.stereoTranslation << std::endl;
   std::cout << "View " << viewIdx << " Stereo rotation matrix:" << std::endl << v.stereoRotation << std::endl;
+
+  {
+    // Compute FOV. Should be the same for stereoProjection[0] and [1], so we only keep a single value.
+    double focalLength, aspectRatio;
+    cv::Point2d principalPoint;
+
+    cv::calibrationMatrixValues(cv::Mat(v.stereoProjection[0], cv::Rect(0, 0, 3, 3)), cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight()), 0.0, 0.0, v.fovX, v.fovY, focalLength, principalPoint, aspectRatio);
+  }
 
   // Check the valid image regions for a failed stereo calibration. A bad calibration will usually result in a valid ROI for one or both views with a 0-pixel dimension.
 /*

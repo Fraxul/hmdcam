@@ -20,6 +20,7 @@ public:
     cv::Mat intrinsicMatrix; // From calibration
     cv::Mat distCoeffs;
     cv::Mat optimizedMatrix; // Computed by cv::getOptimalNewCameraMatrix from cameraIntrinsicMatrix and distCoeffs
+    double fovX, fovY; // Values for the optimized camera matrix, in degrees
 
     bool haveIntrinsicCalibration() const { return (!(intrinsicMatrix.empty() || distCoeffs.empty())); }
     bool haveIntrinsicDistortionMap() const { return (!(optimizedMatrix.empty() || intrinsicDistortionMap.get() == nullptr)); }
@@ -38,6 +39,7 @@ public:
     cv::Mat stereoDisparityToDepth;
     cv::Rect stereoValidROI[2];
     RHISurface::ptr stereoDistortionMap[2]; // Combined intrinsic and stereo distortion
+    double fovX, fovY; // Values for the stereo projection, in degrees
 
     bool haveStereoCalibration() const { return (!(stereoRotation.empty() || stereoTranslation.empty())); }
     bool haveStereoRectificationParameters() const { return (!(

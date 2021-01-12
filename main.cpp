@@ -46,7 +46,7 @@ size_t s_cameraWidth, s_cameraHeight;
 const double s_cameraFramerate = 89.527;
 
 // Camera render parameters
-float scaleFactor = 1.0f;
+float zoomFactor = 1.0f;
 float stereoOffset = 0.0f;
 bool renderSBS = false;
 bool useMask = true;
@@ -324,7 +324,7 @@ int main(int argc, char* argv[]) {
           //ImGui::Text("Config");
           ImGui::Checkbox("SBS", &renderSBS);
           ImGui::Checkbox("Mask", &useMask);
-          ImGui::SliderFloat("Scale", &scaleFactor, 0.5f, 2.0f);
+          ImGui::SliderFloat("Zoom", &zoomFactor, 0.5f, 2.0f);
           ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
           if (renderSBS) {
             ImGui::SliderInt("Separator Width", (int*) &sbsSeparatorWidth, 0, 32);
@@ -416,8 +416,16 @@ int main(int argc, char* argv[]) {
             // coordsys right now: -X = left, -Z = into screen
             // (camera is at the origin)
             float stereoOffsetSign = v.isStereo ? ((viewEyeIdx == 0 ? -1.0f : 1.0f)) : 0.0f;
-            const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -1.0f);
-            glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(scaleFactor * (static_cast<float>(argusCamera->streamWidth()) / static_cast<float>(argusCamera->streamHeight())), scaleFactor, 1.0f)); // TODO
+            float viewDepth = 10.0f;
+
+            const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -viewDepth);
+            // Compute FOV-based prescaling -- figure out the billboard size in world units based on the render depth and FOV
+            double fovX = v.isStereo ? v.fovX : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).fovX;
+            // half-width is viewDepth * tanf(0.5 * fovx). maps directly to scale factor since the quad we're rendering is two units across (NDC quad)
+            float fovScaleFactor = viewDepth * tan((fovX * 0.5) * (M_PI/180.0f));
+
+            glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(fovScaleFactor * zoomFactor, fovScaleFactor * zoomFactor * (static_cast<float>(argusCamera->streamHeight()) / static_cast<float>(argusCamera->streamWidth())) , 1.0f));
+
             // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
             glm::mat4 mvp = eyeProjection[eyeIdx] * eyeView[eyeIdx] * model;
 
