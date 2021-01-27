@@ -32,6 +32,7 @@
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
 
+#include "rdma/RDMAContext.h"
 
 //#define LATENCY_DEBUG
 
@@ -56,6 +57,9 @@ bool debugUseDistortion = true;
 // Camera info/state
 ArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
+
+
+RDMAContext* rdmaContext;
 
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
@@ -124,6 +128,12 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
 }
 
 int main(int argc, char* argv[]) {
+
+  rdmaContext = RDMAContext::createServerContext();
+
+  if (!rdmaContext) {
+    printf("RDMA server context initialization failed; RDMA service will be unavailable.\n");
+  }
 
   startInputListenerThread();
   if (!RenderInit()) {
