@@ -3,7 +3,8 @@
 #include "rhi/RHIComputePipeline.h"
 #include "rhi/RHIObject.h"
 #include "rhi/RHIRenderPipeline.h"
-#include "intTypes.h"
+#include <stddef.h>
+#include <stdint.h>
 #include <glm/glm.hpp>
 #include <boost/container/static_vector.hpp>
 #include <map>

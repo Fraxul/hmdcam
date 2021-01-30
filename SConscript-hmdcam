@@ -1,0 +1,42 @@
+Import('env')
+
+# Building on Tegra; build hmdcam application
+tegraEnv = env.Clone()
+
+# Import locally built Monado static libraries
+MONADO_BASE='/mnt/scratch/monado'
+MONADO_BUILD=MONADO_BASE + '/build-minimal'
+
+tegraEnv.Append(
+  CPPPATH=[
+    'hmdcam',
+    MONADO_BUILD + '/src/xrt/include', # Contains generated config headers
+    MONADO_BASE + '/src/xrt/include',
+    MONADO_BASE + '/src/xrt/auxiliary',
+  ]
+)
+monadoStatics = \
+    Glob(MONADO_BUILD + '/src/xrt/targets/common/*.a') + \
+    Glob(MONADO_BUILD + '/src/xrt/state_trackers/prober/*.a') + \
+    Glob(MONADO_BUILD + '/src/xrt/drivers/*.a') + \
+    Glob(MONADO_BUILD + '/src/xrt/state_trackers/oxr/*.a') + \
+    [
+      MONADO_BUILD + '/src/xrt/auxiliary/libaux_tracking.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/libaux_os.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/libaux_util.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/libaux_math.a' # Needs to be after libaux_tracking.a for symbol resolution.
+    ]
+
+
+liveMediaStatics = [
+  '#live555/libliveMedia.a',
+  '#live555/libgroupsock.a',
+  '#live555/libBasicUsageEnvironment.a',
+  '#live555/libUsageEnvironment.a']
+
+tegraEnv.Program(
+  target = '../bin/hmdcam', # relative to build/hmdcam
+  source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('imgui/*.cpp') + Glob('tegra_mmapi/*.cpp') + liveMediaStatics + monadoStatics,
+  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-libusb', 'usb-1.0', 'udev', 'nvargus', 'nvbuf_utils', 'v4l2', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'cuda', 'cudart', 'ibverbs', 'rdmacm']
+)
+

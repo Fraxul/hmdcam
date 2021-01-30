@@ -1,5 +1,6 @@
 #pragma once
-#include "intTypes.h"
+#include <stddef.h>
+#include <stdint.h>
 
 class FxAtomicString {
 public:

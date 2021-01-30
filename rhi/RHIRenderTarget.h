@@ -2,7 +2,8 @@
 #include "rhi/RHIConstants.h"
 #include "rhi/RHIObject.h"
 #include "rhi/RHISurface.h"
-#include "intTypes.h"
+#include <stddef.h>
+#include <stdint.h>
 #include <glm/glm.hpp>
 #include <initializer_list>
 #include <boost/container/static_vector.hpp>

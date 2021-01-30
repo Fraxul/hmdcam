@@ -1,5 +1,5 @@
 #include "rhi/gl/RHISurfaceGL.h"
-#include "FxMath.h"
+#include "rhi/FxMath.h"
 #include <algorithm>
 
 GLenum RHISurfaceFormatToGL(RHISurfaceFormat format) {

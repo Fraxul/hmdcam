@@ -8,7 +8,8 @@
 #include "rhi/RHIRenderTarget.h"
 #include "rhi/RHIShader.h"
 #include "rhi/RHISurface.h"
-#include "intTypes.h"
+#include <stddef.h>
+#include <stdint.h>
 #include <map>
 #include <vector>
 

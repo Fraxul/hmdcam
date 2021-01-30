@@ -1,6 +1,7 @@
 #pragma once
 #include "rhi/RHIObject.h"
-#include "intTypes.h"
+#include <stddef.h>
+#include <stdint.h>
 
 enum RHIBufferUsageMode {
   kBufferUsageCPUWriteOnly, // Contents written once by CPU

@@ -4,7 +4,8 @@
 #define EGL_EGLEXT_PROTOTYPES
 #include <glatter/glatter.h>
 
-#include "intTypes.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #ifndef NDEBUG
 #define GL(x) x; checkGLError(#x, __FILE__, __LINE__);

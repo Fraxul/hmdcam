@@ -1,5 +1,6 @@
 #pragma once
-#include "intTypes.h"
+#include <stddef.h>
+#include <stdint.h>
 
 static inline uint32_t floorLogTwo(uint32_t v) {
   uint32_t pos = 0;

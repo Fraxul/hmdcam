@@ -1,6 +1,6 @@
 #pragma once
 #include <glm/glm.hpp>
-#include "FxAtomicString.h"
+#include "rhi/FxAtomicString.h"
 #include "rhi/RHIRenderPipeline.h"
 #include "rhi/RHIRenderTarget.h"
 

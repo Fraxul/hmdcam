@@ -1,6 +1,7 @@
 #pragma once
 #include "rhi/RHIObject.h"
-#include "intTypes.h"
+#include <stddef.h>
+#include <stdint.h>
 
 // 3 bits. typed to unsigned to allow us to use a narrow bitfield.
 enum RHIDepthStencilCompareFunction : unsigned char {
