@@ -176,6 +176,20 @@ int main(int argc, char* argv[]) {
     cameraSystem->saveCalibrationData();
   }
 
+  // Create the RDMA configuration buffer
+  RDMABuffer::ptr configBuf;
+  if (rdmaContext) {
+    configBuf = rdmaContext->newManagedBuffer("config", 8192, kRDMABufferUsageWriteSource); // TODO this should be read-source once we implement read
+
+    SerializationBuffer cfg;
+    cfg.put_u32(argusCamera->streamCount());
+    cfg.put_u32(argusCamera->streamWidth());
+    cfg.put_u32(argusCamera->streamHeight());
+
+    memcpy(configBuf->data(), cfg.data(), cfg.size());
+    rdmaContext->asyncFlushWriteBuffer(configBuf);
+  }
+
 
   // Create RDMA camera buffers and render surfaces
   std::vector<RHISurface::ptr> rdmaRenderSurfaces;

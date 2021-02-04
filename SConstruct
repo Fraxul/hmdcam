@@ -17,7 +17,8 @@ else:
   env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
     CPPPATH=[],
     LIBPATH=[],
-    CUDA_SDK_PATH='/usr/local/cuda'
+    CUDA_SDK_PATH='/usr',
+    CUDA_TOOLKIT_PATH='/usr'
   )
 
 # Common env
@@ -37,4 +38,6 @@ Export('env')
 if is_tegra:
   # Only build hmdcam application on Tegra
   SConscript('SConscript-hmdcam', variant_dir = 'build/hmdcam', duplicate = 0)
+
+SConscript('SConscript-rdma-client', variant_dir = 'build/rdma-client', duplicate = 0)
 
