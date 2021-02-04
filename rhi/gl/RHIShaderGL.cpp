@@ -46,6 +46,7 @@ GLuint RHIShaderGL::compileShader(RHIShaderDescriptor::ShadingUnit type, const c
     fprintf(stderr, "Could not compile %s shader; see preceeding log. Source follows:\n\n-----\n", RHIShaderDescriptor::nameForShadingUnit(static_cast<RHIShaderDescriptor::ShadingUnit>(type)));
     RHIShaderDescriptor::dumpFormattedShaderSource(source);
     fprintf(stderr, "-----\n\n");
+    m_descriptor.debugDumpSourceMap();
     GL(glDeleteShader(shader));
 
     assert(false && "Shader compilation failed");
@@ -65,10 +66,31 @@ static void dumpShaderInfoLog(GLuint program) {
   }
 }
 
-RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), m_vertexLayout(descriptor.vertexLayout()) {
+void RHIShaderGL::internalHandleLinkFailure() {
+
+  m_descriptor.debugDumpSourceMap();
+
+  std::map<RHIShaderDescriptor::ShadingUnit, std::string> unitSources = m_descriptor.preprocessSource();
+
+  fprintf(stderr, "Dumping source of all inputs\n");
+  for (std::map<RHIShaderDescriptor::ShadingUnit, std::string>::iterator unit_it = unitSources.begin(); unit_it != unitSources.end(); ++unit_it) {
+    fprintf(stderr, " --- %s Source --- \n", RHIShaderDescriptor::nameForShadingUnit(unit_it->first));
+    RHIShaderDescriptor::dumpFormattedShaderSource(unit_it->second.c_str());
+  }
+
+  fprintf(stderr, "Shader link failed.\n");
+  dumpShaderInfoLog(m_program);
+
+  GL(glDeleteProgram(m_program));
+  m_program = 0;
+
+  assert(false && "Shader link failure");
+}
+
+RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), m_descriptor(descriptor), m_vertexLayout(descriptor.vertexLayout()) {
   m_program = GL(glCreateProgram());
 
-  std::map<RHIShaderDescriptor::ShadingUnit, std::string> unitSources = descriptor.preprocessSource();
+  std::map<RHIShaderDescriptor::ShadingUnit, std::string> unitSources = m_descriptor.preprocessSource();
 
   // Shader compilation per unit type
   for (std::map<RHIShaderDescriptor::ShadingUnit, std::string>::iterator unit_it = unitSources.begin(); unit_it != unitSources.end(); ++unit_it) {
@@ -81,19 +103,7 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
 
   GL(glGetProgramiv(m_program, GL_LINK_STATUS, &linkStatus));
   if (linkStatus != GL_TRUE) {
-    fprintf(stderr, "Dumping source of all inputs\n");
-    for (std::map<RHIShaderDescriptor::ShadingUnit, std::string>::iterator unit_it = unitSources.begin(); unit_it != unitSources.end(); ++unit_it) {
-      fprintf(stderr, " --- %s Source --- \n", RHIShaderDescriptor::nameForShadingUnit(unit_it->first));
-      RHIShaderDescriptor::dumpFormattedShaderSource(unit_it->second.c_str());
-    }
-
-    fprintf(stderr, "Shader link failed.\n");
-    dumpShaderInfoLog(m_program);
-
-    GL(glDeleteProgram(m_program));
-    m_program = 0;
-
-    assert(false && "Shader link failure");
+    internalHandleLinkFailure();
   }
 
   // (Re)Populate the uniform/varying attribute arrays
@@ -195,7 +205,7 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
           // (this can also indicate an incorrectly identified sampler attribute)
           if (attr.location >= 0) {
             fprintf(stderr, "RHIShaderGL: FATAL: Program accepts free uniform parameter \"%s\" which is no longer supported. All uniforms need to be in a uniform block.\n", buffer.get());
-            assert(false && "RHIShaderGL: Shader linking failed");
+            internalHandleLinkFailure();
           }
 
           break;

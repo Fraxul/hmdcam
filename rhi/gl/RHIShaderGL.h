@@ -23,6 +23,7 @@ protected:
   friend class RHIGL;
   RHIShaderGL(const RHIShaderDescriptor&);
   GLuint compileShader(RHIShaderDescriptor::ShadingUnit type, const char* source);
+  void internalHandleLinkFailure();
 
   struct Attribute {
     FxAtomicString name;
@@ -32,6 +33,7 @@ protected:
   };
 
   GLuint m_program;
+  RHIShaderDescriptor m_descriptor;
   RHIVertexLayout m_vertexLayout;
   std::vector<Attribute> m_varyingAttributes;
   std::vector<Attribute> m_samplerAttributes;

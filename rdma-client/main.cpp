@@ -216,14 +216,23 @@ int main(int argc, char** argv) {
           ImGui::End();
       }
 
-      for (size_t cameraIdx = 0; cameraIdx < cameraProvider->streamCount(); ++cameraIdx) {
-        char windowName[32];
-        sprintf(windowName, "Camera %zu", cameraIdx);
-        ImGui::Begin(windowName);
-        RHISurfaceGL* glSrf = static_cast<RHISurfaceGL*>(cameraProvider->rgbTexture(cameraIdx).get());
 
-        ImGui::Image((ImTextureID) static_cast<uintptr_t>(glSrf->glId()), ImVec2(glSrf->width(), glSrf->height()), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+      for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+        CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+        char windowName[64];
+        sprintf(windowName, "View %zu", viewIdx);
+        ImGui::Begin(windowName, NULL, ImGuiWindowFlags_AlwaysAutoResize);
 
+        for (size_t viewCameraIdx = 0; viewCameraIdx < v.cameraCount(); ++viewCameraIdx) {
+          if (viewCameraIdx == 1) {
+            ImGui::SameLine();
+          }
+
+          size_t cameraIdx = v.cameraIndices[viewCameraIdx];
+          RHISurfaceGL* glSrf = static_cast<RHISurfaceGL*>(cameraProvider->rgbTexture(cameraIdx).get());
+
+          ImGui::Image((ImTextureID) static_cast<uintptr_t>(glSrf->glId()), ImVec2(glSrf->width()/v.cameraCount(), glSrf->height()/v.cameraCount()), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+        }
         ImGui::End();
       }
 

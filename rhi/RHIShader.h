@@ -141,6 +141,7 @@ public:
 
   void reloadSources() const;
 
+  void setFlag(const std::string&, const char*);
   void setFlag(const std::string&, const std::string&);
   void setFlag(const std::string&, FxAtomicString);
   void setFlag(const std::string&, bool);
@@ -167,6 +168,8 @@ public:
   static void dumpFormattedShaderSource(const char*);
   const std::map<std::string, std::string>& flags() const { return m_flags; }
   std::string getMetalSource() const;
+
+  void debugDumpSourceMap() const;
 
 protected:
   std::vector<Source> m_sources;

@@ -28,6 +28,7 @@ public:
 
   struct View {
     bool isStereo;
+    size_t cameraCount() const { return isStereo ? 2 : 1; }
     unsigned short cameraIndices[2]; // if (isStereo) [0] is left, [1] is right. Otherwise, only use [0].
 
     // TODO view translation and orientation

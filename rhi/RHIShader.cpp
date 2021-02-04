@@ -82,6 +82,10 @@ void RHIShaderDescriptor::reloadSources() const {
   }
 }
 
+void RHIShaderDescriptor::setFlag(const std::string& flagName, const char* flagValue) {
+  m_flags[flagName] = flagValue;
+}
+
 void RHIShaderDescriptor::setFlag(const std::string& flagName, const std::string& flagValue) {
   m_flags[flagName] = flagValue;
 }
@@ -260,5 +264,18 @@ std::string RHIShaderDescriptor::getMetalSource() const {
     }
   }
   return res;
+}
+
+
+void RHIShaderDescriptor::debugDumpSourceMap() const {
+  fprintf(stderr, "Dumping input source map\n");
+  for (size_t sourceIdx = 0; sourceIdx < m_sources.size(); ++sourceIdx) {
+    const Source& s = m_sources[sourceIdx];
+    fprintf(stderr, "[%zu] Unit: %s Filename: %s\n", sourceIdx, nameForShadingUnit(s.unit), s.filename.size() ? s.filename.c_str() : "(inline)");
+  }
+  fprintf(stderr, "Dumping flags\n");
+  for (std::map<std::string, std::string>::const_iterator flag_it = m_flags.begin(); flag_it != m_flags.end(); ++flag_it) {
+    fprintf(stderr, "[%s] %s\n", flag_it->first.c_str(), flag_it->second.c_str());
+  }
 }
 

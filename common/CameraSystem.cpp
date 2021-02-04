@@ -54,6 +54,11 @@ CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibrat
       "shaders/camGreyscale.frag.glsl",
       ndcQuadVertexLayout);
     desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+#ifdef GLATTER_EGL_GLES_3_2 // TODO query this at use-time from the RHISurface type
+    desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
+#else
+    desc.setFlag("SAMPLER_TYPE", "sampler2D");
+#endif
     camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
@@ -63,6 +68,11 @@ CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibrat
       "shaders/camGreyscaleUndistort.frag.glsl",
       ndcQuadVertexLayout);
     desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+#ifdef GLATTER_EGL_GLES_3_2
+    desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
+#else
+    desc.setFlag("SAMPLER_TYPE", "sampler2D");
+#endif
     camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
