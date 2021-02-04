@@ -20,6 +20,7 @@
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
+#include "rhi/CudaUtil.h"
 
 #include "ArgusCamera.h"
 #include "CameraSystem.h"
@@ -613,7 +614,32 @@ int main(int argc, char* argv[]) {
       if (rdmaContext) {
         // Issue RDMA surface readbacks and write-buffer flushes
         for (size_t cameraIdx = 0; cameraIdx < rdmaRenderTargets.size(); ++cameraIdx) {
-          rhi()->readbackTexture(rdmaRenderSurfaces[cameraIdx], /*layer=*/0, kVertexElementTypeUByte4N, rdmaCameraBuffers[cameraIdx]->data());
+          CUgraphicsResource pReadResource = rdmaRenderSurfaces[cameraIdx]->cuGraphicsResource();
+          CUDA_CHECK(cuGraphicsMapResources(1, &pReadResource, 0));
+
+          CUmipmappedArray pReadMip = NULL;
+          CUDA_CHECK(cuGraphicsResourceGetMappedMipmappedArray(&pReadMip, pReadResource));
+
+          CUarray pReadArray = NULL;
+          CUDA_CHECK(cuMipmappedArrayGetLevel(&pReadArray, pReadMip, 0));
+
+          CUDA_MEMCPY2D copyDescriptor;
+          memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
+
+          copyDescriptor.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+          copyDescriptor.srcArray = pReadArray;
+
+          copyDescriptor.WidthInBytes = rdmaRenderSurfaces[cameraIdx]->width() * 4 /*bytes/pixel*/;
+          copyDescriptor.Height = rdmaRenderSurfaces[cameraIdx]->height();
+
+          copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
+          copyDescriptor.dstHost = rdmaCameraBuffers[cameraIdx]->data();
+          copyDescriptor.dstPitch = copyDescriptor.WidthInBytes;
+
+          CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+
+          cuGraphicsUnmapResources(1, &pReadResource, 0);
+
           rdmaContext->asyncFlushWriteBuffer(rdmaCameraBuffers[cameraIdx]);
         }
         // Send "buffers dirty" event
