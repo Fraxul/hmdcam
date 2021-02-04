@@ -63,8 +63,6 @@ extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
 extern RHIRenderPipeline::ptr camOverlayPipeline;
 extern RHIRenderPipeline::ptr camUndistortMaskPipeline;
 extern RHIRenderPipeline::ptr camUndistortOverlayPipeline;
-extern RHIRenderPipeline::ptr camGreyscalePipeline;
-extern RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 extern RHIRenderPipeline::ptr solidQuadPipeline;
 
 extern RHISurface::ptr disabledMaskTex;

@@ -1,4 +1,6 @@
 #pragma once
+#include <stddef.h>
+#include "rhi/RHISurface.h"
 
 class ICameraProvider {
 public:

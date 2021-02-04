@@ -37,8 +37,6 @@ RHIRenderPipeline::ptr camTexturedQuadPipeline;
 RHIRenderPipeline::ptr camOverlayPipeline;
 RHIRenderPipeline::ptr camUndistortMaskPipeline;
 RHIRenderPipeline::ptr camUndistortOverlayPipeline;
-RHIRenderPipeline::ptr camGreyscalePipeline;
-RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 RHIRenderPipeline::ptr solidQuadPipeline;
 
 RHISurface::ptr disabledMaskTex;
@@ -200,24 +198,6 @@ bool RenderInit() {
     ndcQuadVertexLayout);
     desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
     camUndistortOverlayPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
-  }
-
-  {
-    RHIShaderDescriptor desc(
-      "shaders/ndcQuad.vtx.glsl",
-      "shaders/camGreyscale.frag.glsl",
-      ndcQuadVertexLayout);
-    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
-    camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
-  }
-
-  {
-    RHIShaderDescriptor desc(
-      "shaders/ndcQuad.vtx.glsl",
-      "shaders/camGreyscaleUndistort.frag.glsl",
-      ndcQuadVertexLayout);
-    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
-    camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
   {

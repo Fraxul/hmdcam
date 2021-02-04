@@ -1,7 +1,6 @@
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
 #include "rhi/RHIResources.h"
-#include "Render.h"
 #include "imgui.h"
 #include <iostream>
 #include <set>
@@ -28,9 +27,12 @@ static cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary;
 static cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 
 
-
-
-
+// TODO move this
+#define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
+static RHIRenderPipeline::ptr camGreyscalePipeline;
+static RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
+static FxAtomicString ksDistortionMap("distortionMap");
+static FxAtomicString ksImageTex("imageTex");
 
 
 CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibration.yml"), m_cameraProvider(cam) {
@@ -43,6 +45,27 @@ CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibrat
     s_charucoBoard = cv::aruco::CharucoBoard::create(s_charucoBoardSquareCountX, s_charucoBoardSquareCountY, s_charucoBoardSquareSideLengthMeters, s_charucoBoardMarkerSideLengthMeters, s_charucoDictionary);
 
   m_cameras.resize(cameraProvider()->streamCount());
+
+
+  // Compile utility pipelines on first use
+  if (!camGreyscalePipeline) {
+    RHIShaderDescriptor desc(
+      "shaders/ndcQuad.vtx.glsl",
+      "shaders/camGreyscale.frag.glsl",
+      ndcQuadVertexLayout);
+    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+    camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
+
+  if (!camGreyscaleUndistortPipeline) {
+    RHIShaderDescriptor desc(
+      "shaders/ndcQuad.vtx.glsl",
+      "shaders/camGreyscaleUndistort.frag.glsl",
+      ndcQuadVertexLayout);
+    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
+    camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
+
 
 }
 

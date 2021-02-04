@@ -6,6 +6,8 @@
 
 #include "rdma/RDMAContext.h"
 #include "rdma/RDMABuffer.h"
+#include "RDMACameraProvider.h"
+#include "common/CameraSystem.h"
 
 #include "rhi/RHI.h"
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
@@ -27,16 +29,15 @@ protected:
 CUdevice cudaDevice;
 CUcontext cudaContext;
 RDMAContext* rdmaContext;
+RDMACameraProvider* cameraProvider;
+CameraSystem* cameraSystem;
 
 RDMABuffer::ptr configBuffer;
-std::vector<RDMABuffer::ptr> cameraRDMABuffers;
-std::vector<RHISurface::ptr> cameraSurfaces;
 
-bool cameraBuffersDirty = false;
 void rdmaUserEventCallback(RDMAContext*, uint32_t userEventID, SerializationBuffer payload) {
   switch (userEventID) {
     case 1:
-      cameraBuffersDirty = true;
+      cameraProvider->flagRDMABuffersDirty();
       break;
 
     default:
@@ -105,11 +106,8 @@ int main(int argc, char** argv) {
     cuCtxSetCurrent(cudaContext);
   }
 
-  // Create camera RDMA buffers
-
   // Read RDMA config from server
   RDMABuffer::ptr configBuf = rdmaContext->newManagedBuffer("config", 8192, kRDMABufferUsageWriteDestination); // TODO should be read source / use RDMA read instead of relying on push
-  uint32_t cameraCount, cameraWidth, cameraHeight;
 
   printf("Waiting to read config...");
   fflush(stdout);
@@ -118,11 +116,10 @@ int main(int argc, char** argv) {
     fflush(stdout);
 
     SerializationBuffer cfg(configBuf->data(), configBuf->size());
-    cameraCount = cfg.get_u32();
-    cameraWidth = cfg.get_u32();
-    cameraHeight = cfg.get_u32();
-    if (cameraCount && cameraWidth && cameraHeight) {
-      printf(" Done.\nReceived config: %u cameras @ %ux%u\n", cameraCount, cameraWidth, cameraHeight);
+    if (cfg.get_u32()) { // cameraCount
+      cameraProvider = new RDMACameraProvider(rdmaContext, cfg);
+
+      printf(" Done.\nReceived config: %zu cameras @ %ux%u\n", cameraProvider->streamCount(), cameraProvider->streamWidth(), cameraProvider->streamHeight());
       break;
     }
 
@@ -134,17 +131,8 @@ int main(int argc, char** argv) {
     sleep(1); // TODO messy
   }
 
-  size_t cameraRowStride = cameraWidth * 4; // TODO not sure if this will always be correct
-
-  for (size_t cameraIdx = 0; cameraIdx < cameraCount; ++cameraIdx) {
-    char key[32];
-    sprintf(key, "camera%zu", cameraIdx);
-    cameraRDMABuffers.push_back(rdmaContext->newManagedBuffer(std::string(key), cameraRowStride * cameraHeight, kRDMABufferUsageWriteDestination));
-
-    cameraSurfaces.push_back(rhi()->newTexture2D(cameraWidth, cameraHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8)));
-  }
-
-
+  cameraSystem = new CameraSystem(cameraProvider);
+  cameraSystem->loadCalibrationData();
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
@@ -187,14 +175,8 @@ int main(int argc, char** argv) {
 
       // Service RDMA context
       rdmaContext->fireUserEvents();
+      cameraProvider->updateSurfaces();
 
-      if (cameraBuffersDirty) {
-        for (size_t cameraIdx = 0; cameraIdx < cameraRDMABuffers.size(); ++cameraIdx) {
-          rhi()->loadTextureData(cameraSurfaces[cameraIdx], kVertexElementTypeUByte4N, cameraRDMABuffers[cameraIdx]->data());
-        }
-
-        cameraBuffersDirty = false;
-      }
 
       // Start the Dear ImGui frame
       ImGui_ImplOpenGL3_NewFrame();
@@ -234,11 +216,11 @@ int main(int argc, char** argv) {
           ImGui::End();
       }
 
-      for (size_t cameraIdx = 0; cameraIdx < cameraSurfaces.size(); ++cameraIdx) {
+      for (size_t cameraIdx = 0; cameraIdx < cameraProvider->streamCount(); ++cameraIdx) {
         char windowName[32];
         sprintf(windowName, "Camera %zu", cameraIdx);
         ImGui::Begin(windowName);
-        RHISurfaceGL* glSrf = static_cast<RHISurfaceGL*>(cameraSurfaces[cameraIdx].get());
+        RHISurfaceGL* glSrf = static_cast<RHISurfaceGL*>(cameraProvider->rgbTexture(cameraIdx).get());
 
         ImGui::Image((ImTextureID) static_cast<uintptr_t>(glSrf->glId()), ImVec2(glSrf->width(), glSrf->height()), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
 
