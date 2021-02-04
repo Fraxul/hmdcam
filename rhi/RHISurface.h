@@ -2,6 +2,9 @@
 #include "rhi/RHIObject.h"
 #include <glm/glm.hpp>
 
+// Forward decl borrowed from <cuda.h>
+typedef struct CUgraphicsResource_st *CUgraphicsResource; /**< CUDA graphics interop resource */
+
 enum RHISamplerWrapMode : unsigned char {
   kWrapClamp,
   kWrapRepeat,
@@ -85,6 +88,8 @@ public:
   virtual uint32_t samples() const = 0;
   virtual uint32_t mipLevels() const = 0;
   virtual bool isArray() const = 0;
+
+  virtual CUgraphicsResource& cuGraphicsResource() const = 0;
 
   bool isMultisampled() const { return samples() > 1; }
   bool hasMipLevels() const { return mipLevels() > 1; }

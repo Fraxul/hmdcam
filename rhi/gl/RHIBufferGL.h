@@ -12,9 +12,12 @@ public:
   virtual void map(RHIBufferMapMode);
   virtual void unmap();
 
+  virtual CUgraphicsResource& cuGraphicsResource() const;
+
   GLuint glId() const { return m_buffer; }
   void bufferData(const void*, size_t);
 protected:
   GLuint m_buffer;
+  mutable CUgraphicsResource m_cuGraphicsResource;
 };
 

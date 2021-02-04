@@ -1,6 +1,9 @@
 #include "rhi/gl/RHISurfaceGL.h"
 #include "rhi/FxMath.h"
 #include <algorithm>
+#include <cuda.h>
+#include <cudaGL.h>
+#include "CudaUtil.h"
 
 GLenum RHISurfaceFormatToGL(RHISurfaceFormat format) {
   switch (format) {
@@ -69,12 +72,15 @@ RHISamplerGL::~RHISamplerGL() {
   glDeleteSamplers(1, &m_glId);
 }
 
-RHISurfaceGL::RHISurfaceGL() : m_glId(0), m_glTarget(0), m_glInternalFormat(0), m_width(0), m_height(0), m_depth(0), m_layers(1), m_samples(1), m_levels(1), m_rhiFormat(kSurfaceFormat_Invalid), m_isArrayTexture(false) {
+RHISurfaceGL::RHISurfaceGL() : m_glId(0), m_glTarget(0), m_glInternalFormat(0), m_width(0), m_height(0), m_depth(0), m_layers(1), m_samples(1), m_levels(1), m_rhiFormat(kSurfaceFormat_Invalid), m_isArrayTexture(false), m_cuGraphicsResource(NULL) {
 
 }
 
 RHISurfaceGL::~RHISurfaceGL() {
   if (m_glId) {
+    if (m_cuGraphicsResource)
+      cuGraphicsUnregisterResource(m_cuGraphicsResource);
+
     if (m_glTarget == GL_RENDERBUFFER) {
       glDeleteRenderbuffers(1, &m_glId);
     } else {
@@ -231,5 +237,13 @@ uint32_t RHISurfaceGL::mipLevels() const {
 
 bool RHISurfaceGL::isArray() const {
   return m_isArrayTexture;
+}
+
+CUgraphicsResource& RHISurfaceGL::cuGraphicsResource() const {
+  if (!m_cuGraphicsResource) {
+    CUDA_CHECK(cuGraphicsGLRegisterImage(&m_cuGraphicsResource, glId(), glTarget(), CU_GRAPHICS_REGISTER_FLAGS_NONE));
+  }
+
+  return m_cuGraphicsResource;
 }
 

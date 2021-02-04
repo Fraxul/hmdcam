@@ -33,6 +33,8 @@ public:
   virtual uint32_t mipLevels() const;
   virtual bool isArray() const;
 
+  virtual CUgraphicsResource& cuGraphicsResource() const;
+
   static RHISurfaceGL* newTexture2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&);
   static RHISurfaceGL* newTexture3D(uint32_t width, uint32_t height, uint32_t depth, const RHISurfaceDescriptor&);
   static RHISurfaceGL* newRenderbuffer2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&);
@@ -54,4 +56,5 @@ protected:
   uint32_t m_layers, m_samples, m_levels;
   RHISurfaceFormat m_rhiFormat;
   bool m_isArrayTexture;
+  mutable CUgraphicsResource m_cuGraphicsResource;
 };
