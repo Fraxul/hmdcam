@@ -2,7 +2,7 @@
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/gl/GLCommon.h"
-#include "rhi/gl/RHIEGLSurfaceRenderTargetGL.h"
+#include "rhi/egl/RHIEGLSurfaceRenderTargetGL.h"
 
 #include "nvgldemo.h"
 

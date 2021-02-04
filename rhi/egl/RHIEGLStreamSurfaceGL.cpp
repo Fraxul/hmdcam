@@ -1,4 +1,4 @@
-#include "rhi/gl/RHIEGLStreamSurfaceGL.h"
+#include "rhi/egl/RHIEGLStreamSurfaceGL.h"
 
 RHIEGLStreamSurfaceGL::~RHIEGLStreamSurfaceGL() {
 

@@ -1,4 +1,4 @@
-#include "rhi/gl/RHIEGLSurfaceRenderTargetGL.h"
+#include "rhi/egl/RHIEGLSurfaceRenderTargetGL.h"
 
 RHIEGLSurfaceRenderTargetGL::RHIEGLSurfaceRenderTargetGL(EGLDisplay display_, EGLSurface surface_) : m_display(display_), m_surface(surface_) {
 

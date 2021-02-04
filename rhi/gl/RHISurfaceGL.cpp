@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cuda.h>
 #include <cudaGL.h>
-#include "CudaUtil.h"
+#include "rhi/CudaUtil.h"
 
 GLenum RHISurfaceFormatToGL(RHISurfaceFormat format) {
   switch (format) {
@@ -22,7 +22,14 @@ GLenum RHISurfaceFormatToGL(RHISurfaceFormat format) {
     case kSurfaceFormat_R16f: return GL_R16F;
     case kSurfaceFormat_R32f: return GL_R32F;
     case kSurfaceFormat_RG32f: return GL_RG32F;
+#ifndef GL_RGB16_SNORM_EXT
+#define GL_RGB16_SNORM_EXT GL_RGB16_SNORM
+#endif
     case kSurfaceFormat_RGB16s: return GL_RGB16_SNORM_EXT;
+
+#ifndef GL_RGBA16_SNORM_EXT
+#define GL_RGBA16_SNORM_EXT GL_RGBA16_SNORM
+#endif
     case kSurfaceFormat_RGBA16s: return GL_RGBA16_SNORM_EXT;
 
     case kSurfaceFormat_Depth32f: return GL_DEPTH_COMPONENT32F;

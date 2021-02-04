@@ -2,7 +2,7 @@
 #include <vector>
 #include <EGL/egl.h>
 #include <Argus/Argus.h>
-#include "rhi/gl/RHIEGLStreamSurfaceGL.h"
+#include "rhi/egl/RHIEGLStreamSurfaceGL.h"
 
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/stats.hpp>

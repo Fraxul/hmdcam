@@ -55,8 +55,17 @@ RHIGL::RHIGL() : m_clearColor(glm::vec4(0.0f)), m_clearDepth(1.0f), m_clearStenc
   m_immediateScratchBufferWriteOffset = 0;
   glGenBuffers(1, &m_immediateScratchBufferId);
   glBindBuffer(GL_UNIFORM_BUFFER, m_immediateScratchBufferId);
+#ifndef GL_MAP_PERSISTENT_BIT_EXT
+#define GL_MAP_PERSISTENT_BIT_EXT GL_MAP_PERSISTENT_BIT
+#endif
+#ifndef GL_MAP_COHERENT_BIT_EXT
+#define GL_MAP_COHERENT_BIT_EXT GL_MAP_COHERENT_BIT
+#endif
   GLenum mapFlags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT;
 
+#ifndef glBufferStorageEXT
+#define glBufferStorageEXT glBufferStorage
+#endif
   GL(glBufferStorageEXT(GL_UNIFORM_BUFFER, m_immediateScratchBufferSize, NULL, mapFlags));
   GL(m_immediateScratchBufferData = static_cast<char*>(glMapBufferRange(GL_UNIFORM_BUFFER, 0, m_immediateScratchBufferSize, mapFlags | GL_MAP_INVALIDATE_BUFFER_BIT)));
   if (!m_immediateScratchBufferData) {
@@ -755,6 +764,10 @@ void RHIGL::internalSetupRenderPipelineState() {
 }
 
 void RHIGL::drawPrimitives(uint32_t vertexStart, uint32_t vertexCount, uint32_t instanceCount, uint32_t baseInstance) {
+#ifndef glDrawArraysInstancedBaseInstanceEXT
+#define glDrawArraysInstancedBaseInstanceEXT glDrawArraysInstancedBaseInstance
+#endif
+
   internalSetupRenderPipelineState();
   if (instanceCount > 1) {
     GL(glDrawArraysInstancedBaseInstanceEXT(convertPrimitiveTopology(m_activeRenderPipeline->descriptor().primitiveTopology), vertexStart, vertexCount, instanceCount, baseInstance));
@@ -769,7 +782,9 @@ void RHIGL::drawPrimitivesIndirect(RHIBuffer::ptr indirectBuffer, uint32_t indir
   GL(glBindBuffer(GL_DRAW_INDIRECT_BUFFER, glBuf->glId()));
 
   void* offset = reinterpret_cast<void*>(indirectCommandArrayOffset * 16);
-
+#ifndef glMultiDrawArraysIndirectEXT
+#define glMultiDrawArraysIndirectEXT glMultiDrawArraysIndirect
+#endif
   if (indirectCommandCount == 1) {
     GL(glDrawArraysIndirect(convertPrimitiveTopology(m_activeRenderPipeline->descriptor().primitiveTopology), offset));
   } else {
@@ -795,6 +810,10 @@ void RHIGL::drawIndexedPrimitives(RHIBuffer::ptr indexBuffer, RHIIndexBufferType
 
   RHIBufferGL* glIndexBuffer = static_cast<RHIBufferGL*>(indexBuffer.get());
   GL(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glIndexBuffer->glId()));
+
+#ifndef glDrawElementsInstancedBaseInstanceEXT
+#define glDrawElementsInstancedBaseInstanceEXT glDrawElementsInstancedBaseInstance
+#endif
 
   if (instanceCount > 1) {
     GL(glDrawElementsInstancedBaseInstanceEXT(convertPrimitiveTopology(m_activeRenderPipeline->descriptor().primitiveTopology), indexCount, RHIIndexBufferTypeToGL(indexBufferType), reinterpret_cast<const void*>(indexOffsetElements * RHIIndexBufferTypeSize(indexBufferType)), instanceCount, baseInstance));

@@ -145,13 +145,17 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
         case GL_INT_SAMPLER_CUBE:
         case GL_INT_SAMPLER_CUBE_MAP_ARRAY:
         case GL_INT_SAMPLER_2D_MULTISAMPLE:
+#ifdef GL_INT_SAMPLER_2D_MULTISAMPLE_ARRAY_OES
         case GL_INT_SAMPLER_2D_MULTISAMPLE_ARRAY_OES:
+#endif
         case GL_UNSIGNED_INT_SAMPLER_2D:
         case GL_UNSIGNED_INT_SAMPLER_3D:
         case GL_UNSIGNED_INT_SAMPLER_CUBE:
         case GL_UNSIGNED_INT_SAMPLER_CUBE_MAP_ARRAY:
         case GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE:
+#ifdef GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ARRAY_OES
         case GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ARRAY_OES:
+#endif
         case GL_IMAGE_2D:
         case GL_IMAGE_3D:
         case GL_IMAGE_CUBE:
@@ -168,9 +172,12 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
         case GL_UNSIGNED_INT_IMAGE_2D_ARRAY:
         case GL_UNSIGNED_INT_IMAGE_CUBE_MAP_ARRAY:
 
+#ifdef GL_SAMPLER_EXTERNAL_OES
         case GL_SAMPLER_EXTERNAL_OES:
+#endif
+#ifdef GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT
         case GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT:
-
+#endif
 
           if (shader_debug) {
             printf("sampler [%d]: \"%s\"; type %x\n", attr.location, buffer.get(), attr.type);

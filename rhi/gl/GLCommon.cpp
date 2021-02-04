@@ -11,11 +11,13 @@ void checkGLError(const char* op, const char* file, int line) {
     fprintf(stderr, "after %s (%s:%d) glError (0x%x)\n", op, file, line, error);
 }
 
+#ifdef GLATTER_EGL_GLES_3_2
 void checkEGLError(const char* op, const char* file, int line) {
   GLint error = eglGetError();
   if (error)
     fprintf(stderr, "after %s (%s:%d) eglError (0x%x)\n", op, file, line, error);
 }
+#endif
 
 
 void initGL() {

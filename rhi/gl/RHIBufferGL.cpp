@@ -1,7 +1,7 @@
 #include "rhi/gl/RHIBufferGL.h"
 #include <cuda.h>
 #include <cudaGL.h>
-#include "CudaUtil.h"
+#include "rhi/CudaUtil.h"
 
 RHIBufferGL::RHIBufferGL() : m_buffer(0), m_cuGraphicsResource(NULL) {
   m_size = 0;
