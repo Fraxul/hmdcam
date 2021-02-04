@@ -176,6 +176,26 @@ int main(int argc, char* argv[]) {
   }
 
 
+  // Create RDMA camera buffers and render surfaces
+  std::vector<RHISurface::ptr> rdmaRenderSurfaces;
+  std::vector<RHIRenderTarget::ptr> rdmaRenderTargets;
+  std::vector<RDMABuffer::ptr> rdmaCameraBuffers;
+  if (rdmaContext) {
+    rdmaRenderSurfaces.resize(argusCamera->streamCount());
+    rdmaRenderTargets.resize(argusCamera->streamCount());
+    rdmaCameraBuffers.resize(argusCamera->streamCount());
+
+    for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
+      rdmaRenderSurfaces[cameraIdx] = rhi()->newTexture2D(argusCamera->streamWidth(), argusCamera->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+      rdmaRenderTargets[cameraIdx] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( {rdmaRenderSurfaces[cameraIdx] } ));
+
+      char bufferName[32];
+      sprintf(bufferName, "camera%zu", cameraIdx);
+      rdmaCameraBuffers[cameraIdx] = rdmaContext->newManagedBuffer(bufferName, argusCamera->streamWidth() * argusCamera->streamHeight() * 4, kRDMABufferUsageWriteSource);
+    }
+  }
+
+
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
@@ -311,6 +331,17 @@ int main(int argc, char* argv[]) {
         captureInterval(currentCaptureIntervalMs);
       }
       previousCaptureTimestamp = argusCamera->frameSensorTimestamp(0);
+
+
+      if (rdmaContext) {
+        // Issue renders/copies to populate RDMA surfaces
+        for (size_t cameraIdx = 0; cameraIdx < rdmaRenderTargets.size(); ++cameraIdx) {
+          rhi()->beginRenderPass(rdmaRenderTargets[cameraIdx], kLoadInvalidate);
+          renderDrawCamera(cameraIdx, /*flags=*/0, cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap, /*overlay=*/RHISurface::ptr(), /*mvp=*/glm::mat4(1.0f) /*identity*/);
+          rhi()->endRenderPass(rdmaRenderTargets[cameraIdx]);
+        }
+
+      }
 
       if (calibrationContext && calibrationContext->finished()) {
         calibrationContext.reset();
@@ -577,6 +608,16 @@ int main(int argc, char* argv[]) {
           rhi()->endRenderPass(rt);
           renderSubmitDebugSurface(debugSurface);
         }
+      }
+
+      if (rdmaContext) {
+        // Issue RDMA surface readbacks and write-buffer flushes
+        for (size_t cameraIdx = 0; cameraIdx < rdmaRenderTargets.size(); ++cameraIdx) {
+          rhi()->readbackTexture(rdmaRenderSurfaces[cameraIdx], /*layer=*/0, kVertexElementTypeUByte4N, rdmaCameraBuffers[cameraIdx]->data());
+          rdmaContext->asyncFlushWriteBuffer(rdmaCameraBuffers[cameraIdx]);
+        }
+        // Send "buffers dirty" event
+        rdmaContext->asyncSendUserEvent(1, SerializationBuffer());
       }
 
       renderHMDFrame();
