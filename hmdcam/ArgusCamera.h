@@ -3,25 +3,26 @@
 #include <EGL/egl.h>
 #include <Argus/Argus.h>
 #include "rhi/egl/RHIEGLStreamSurfaceGL.h"
+#include "common/ICameraProvider.h"
 
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/rolling_mean.hpp>
 #include <boost/accumulators/statistics/rolling_count.hpp>
 
-class ArgusCamera {
+class ArgusCamera : public ICameraProvider {
 public:
   ArgusCamera(EGLDisplay, EGLContext, std::vector<unsigned int> cameraIndices, double framerate);
-  ~ArgusCamera();
+  virtual ~ArgusCamera();
 
   bool readFrame();
 
   void stop();
 
-  size_t streamCount() const { return m_eglStreams.size(); }
-  RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
-  unsigned int streamWidth() const { return m_streamWidth; }
-  unsigned int streamHeight() const { return m_streamHeight; }
+  virtual size_t streamCount() const { return m_eglStreams.size(); }
+  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
+  virtual unsigned int streamWidth() const { return m_streamWidth; }
+  virtual unsigned int streamHeight() const { return m_streamHeight; }
 
   // Metadata accessors for the current frame
   struct FrameMetadata_t {

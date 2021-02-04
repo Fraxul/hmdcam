@@ -2,13 +2,12 @@
 #include <vector>
 #include <string>
 #include "rhi/RHI.h"
+#include "common/ICameraProvider.h"
 #include <opencv2/core.hpp>
-
-class ArgusCamera;
 
 class CameraSystem {
 public:
-  CameraSystem(ArgusCamera*);
+  CameraSystem(ICameraProvider*);
 
   bool loadCalibrationData();
   void saveCalibrationData();
@@ -87,7 +86,7 @@ public:
   protected:
     CalibrationContext(CameraSystem*);
     CameraSystem* cameraSystem() const { return m_cameraSystem; }
-    ArgusCamera* argusCamera() const { return cameraSystem()->argusCamera(); }
+    ICameraProvider* cameraProvider() const { return cameraSystem()->cameraProvider(); }
 
   private:
     CameraSystem* m_cameraSystem;
@@ -220,9 +219,9 @@ public:
   };
 
 protected:
-  ArgusCamera* argusCamera() const { return m_argusCamera; }
+  ICameraProvider* cameraProvider() const { return m_cameraProvider; }
 
-  ArgusCamera* m_argusCamera;
+  ICameraProvider* m_cameraProvider;
 
   std::vector<Camera> m_cameras;
   std::vector<View> m_views;

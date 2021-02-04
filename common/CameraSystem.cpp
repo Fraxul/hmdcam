@@ -1,5 +1,5 @@
-#include "CameraSystem.h"
-#include "ArgusCamera.h"
+#include "common/CameraSystem.h"
+#include "common/ICameraProvider.h"
 #include "rhi/RHIResources.h"
 #include "Render.h"
 #include "imgui.h"
@@ -33,7 +33,7 @@ static cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 
 
 
-CameraSystem::CameraSystem(ArgusCamera* ac) : calibrationFilename("calibration.yml"), m_argusCamera(ac) {
+CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibration.yml"), m_cameraProvider(cam) {
 
   // Initialize ChAruCo data on first use
   if (!s_charucoDictionary)
@@ -42,7 +42,7 @@ CameraSystem::CameraSystem(ArgusCamera* ac) : calibrationFilename("calibration.y
   if (!s_charucoBoard)
     s_charucoBoard = cv::aruco::CharucoBoard::create(s_charucoBoardSquareCountX, s_charucoBoardSquareCountY, s_charucoBoardSquareSideLengthMeters, s_charucoBoardMarkerSideLengthMeters, s_charucoDictionary);
 
-  m_cameras.resize(m_argusCamera->streamCount());
+  m_cameras.resize(cameraProvider()->streamCount());
 
 }
 
@@ -159,7 +159,7 @@ void CameraSystem::saveCalibrationData() {
 }
 
 void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
-  cv::Size imageSize = cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight());
+  cv::Size imageSize = cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
   float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels
   cv::Mat map1, map2;
   Camera& c = cameraAtIndex(cameraIdx);
@@ -173,14 +173,14 @@ void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
     double focalLength, aspectRatio; // not valid without a real aperture size, which we don't bother providing
     cv::Point2d principalPoint;
 
-    cv::calibrationMatrixValues(c.optimizedMatrix, cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight()), 0.0, 0.0, c.fovX, c.fovY, focalLength, principalPoint, aspectRatio);
+    cv::calibrationMatrixValues(c.optimizedMatrix, cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()), 0.0, 0.0, c.fovX, c.fovY, focalLength, principalPoint, aspectRatio);
   }
   
   c.intrinsicDistortionMap = generateGPUDistortionMap(map1, map2);
 }
 
 void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
-  cv::Size imageSize = cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight());
+  cv::Size imageSize = cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
   cv::Mat map1, map2;
   View& v = viewAtIndex(viewIdx);
   Camera& leftC = cameraAtIndex(v.cameraIndices[0]);
@@ -193,7 +193,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   cv::stereoRectify(
     leftC.optimizedMatrix, zeroDistortion,
     rightC.optimizedMatrix, zeroDistortion,
-    cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight()),
+    cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
     v.stereoRotation, v.stereoTranslation,
     v.stereoRectification[0], v.stereoRectification[1],
     v.stereoProjection[0], v.stereoProjection[1],
@@ -215,11 +215,11 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     cv::Point2d principalPoint;
 
     Camera& c = cameraAtIndex(v.cameraIndices[eyeIdx]);
-    cv::calibrationMatrixValues(c.intrinsicMatrix, cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight()), apertureSize, apertureSize, fovX, fovY, focalLength, principalPoint, aspectRatio);
+    cv::calibrationMatrixValues(c.intrinsicMatrix, cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()), apertureSize, apertureSize, fovX, fovY, focalLength, principalPoint, aspectRatio);
     printf("* Intrinsic matrix: FOV %.1f x %.1f deg, approx focal length %.2fmm\n", fovX, fovY, focalLength);
-    cv::calibrationMatrixValues(c.optimizedMatrix, cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight()), apertureSize, apertureSize, fovX, fovY, focalLength, principalPoint, aspectRatio);
+    cv::calibrationMatrixValues(c.optimizedMatrix, cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()), apertureSize, apertureSize, fovX, fovY, focalLength, principalPoint, aspectRatio);
     printf("* Optimized matrix: FOV %.1f x %.1f deg\n", fovX, fovY);
-    cv::calibrationMatrixValues(cv::Mat(v.stereoProjection[eyeIdx], cv::Rect(0, 0, 3, 3)), cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight()), apertureSize, apertureSize, fovX, fovY, focalLength, principalPoint, aspectRatio);
+    cv::calibrationMatrixValues(cv::Mat(v.stereoProjection[eyeIdx], cv::Rect(0, 0, 3, 3)), cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()), apertureSize, apertureSize, fovX, fovY, focalLength, principalPoint, aspectRatio);
     printf("* Stereo projection matrix: FOV %.1f x %.1f deg\n", fovX, fovY);
   }
   printf("\n ==================== \n");
@@ -231,7 +231,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     double focalLength, aspectRatio;
     cv::Point2d principalPoint;
 
-    cv::calibrationMatrixValues(cv::Mat(v.stereoProjection[0], cv::Rect(0, 0, 3, 3)), cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight()), 0.0, 0.0, v.fovX, v.fovY, focalLength, principalPoint, aspectRatio);
+    cv::calibrationMatrixValues(cv::Mat(v.stereoProjection[0], cv::Rect(0, 0, 3, 3)), cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()), 0.0, 0.0, v.fovX, v.fovY, focalLength, principalPoint, aspectRatio);
   }
 
   // Check the valid image regions for a failed stereo calibration. A bad calibration will usually result in a valid ROI for one or both views with a 0-pixel dimension.
@@ -370,7 +370,7 @@ cv::Mat CameraSystem::captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RH
   } else {
     rhi()->bindRenderPipeline(camGreyscalePipeline);
   }
-  rhi()->loadTexture(ksImageTex, m_argusCamera->rgbTexture(cameraIdx), linearClampSampler);
+  rhi()->loadTexture(ksImageTex, cameraProvider()->rgbTexture(cameraIdx), linearClampSampler);
   rhi()->drawNDCQuad();
   rhi()->endRenderPass(rt);
 
@@ -405,10 +405,10 @@ CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSys
   m_previousDistCoeffs = cameraSystem()->cameraAtIndex(cameraIdx).distCoeffs;
 
   // Textures and RTs we use for captures
-  m_fullGreyTex = rhi()->newTexture2D(argusCamera()->streamWidth(), argusCamera()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+  m_fullGreyTex = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
   m_fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_fullGreyTex}));
-  m_feedbackTex = rhi()->newTexture2D(argusCamera()->streamWidth(), argusCamera()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-  m_feedbackView.create(/*rows=*/ argusCamera()->streamHeight(), /*columns=*/argusCamera()->streamWidth(), CV_8UC4);
+  m_feedbackTex = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+  m_feedbackView.create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/cameraProvider()->streamWidth(), CV_8UC4);
 }
 
 CameraSystem::IntrinsicCalibrationContext::~IntrinsicCalibrationContext() {
@@ -502,7 +502,7 @@ bool CameraSystem::IntrinsicCalibrationContext::cookCalibrationDataForPreview() 
 
     cv::Mat stdDeviations, perViewErrors;
     std::vector<float> reprojErrs;
-    cv::Size imageSize(argusCamera()->streamWidth(), argusCamera()->streamHeight());
+    cv::Size imageSize(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
     float aspectRatio = 1.0f;
     int flags = cv::CALIB_FIX_PRINCIPAL_POINT | cv::CALIB_FIX_ASPECT_RATIO;
 
@@ -580,7 +580,7 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
       sprintf(filename, "calib_%zu_%02zu_overlay.png", m_cameraIdx, m_allCharucoCorners.size());
 
       // composite with the greyscale view and fix the alpha channel before writing
-      for (size_t pixelIdx = 0; pixelIdx < (argusCamera()->streamWidth() * argusCamera()->streamHeight()); ++pixelIdx) {
+      for (size_t pixelIdx = 0; pixelIdx < (cameraProvider()->streamWidth() * cameraProvider()->streamHeight()); ++pixelIdx) {
         uint8_t* p = m_feedbackView.ptr(0) + (pixelIdx * 4);
         if (!(p[0] || p[1] || p[2])) {
           p[0] = p[1] = p[2] = viewFullRes.ptr(0)[pixelIdx];
@@ -588,7 +588,7 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
         }
         p[3] = 0xff;
       }
-      stbi_write_png(filename, argusCamera()->streamWidth(), argusCamera()->streamHeight(), 4, m_feedbackView.ptr(0), /*rowBytes=*/argusCamera()->streamWidth() * 4);
+      stbi_write_png(filename, cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), 4, m_feedbackView.ptr(0), /*rowBytes=*/cameraProvider()->streamWidth() * 4);
       printf("Saved %s\n", filename);
     }
 
@@ -616,10 +616,10 @@ CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* c
 
   // Textures and RTs we use for captures
   for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-    m_fullGreyTex[eyeIdx] = rhi()->newTexture2D(argusCamera()->streamWidth(), argusCamera()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+    m_fullGreyTex[eyeIdx] = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
     m_fullGreyRT[eyeIdx] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_fullGreyTex[eyeIdx]}));
-    m_feedbackTex[eyeIdx] = rhi()->newTexture2D(argusCamera()->streamWidth(), argusCamera()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    m_feedbackView[eyeIdx].create(/*rows=*/ argusCamera()->streamHeight(), /*columns=*/argusCamera()->streamWidth(), CV_8UC4);
+    m_feedbackTex[eyeIdx] = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+    m_feedbackView[eyeIdx].create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/cameraProvider()->streamWidth(), CV_8UC4);
   }
 }
 
@@ -746,7 +746,7 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
       sprintf(filename, "calib_view_%zu_%02u_overlay.png", m_viewIdx, m_objectPoints.size());
 
       // composite with the greyscale view and fix the alpha channel before writing
-      for (size_t pixelIdx = 0; pixelIdx < (argusCamera()->streamWidth() * 2) * argusCamera()->streamHeight(); ++pixelIdx) {
+      for (size_t pixelIdx = 0; pixelIdx < (cameraProvider()->streamWidth() * 2) * cameraProvider()->streamHeight(); ++pixelIdx) {
         uint8_t* p = feedbackViewStereo.ptr(0) + (pixelIdx * 4);
         if (!(p[0] || p[1] || p[2])) {
           p[0] = p[1] = p[2] = viewFullResStereo.ptr(0)[pixelIdx];
@@ -754,7 +754,7 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
         }
         p[3] = 0xff;
       }
-      stbi_write_png(filename, argusCamera()->streamWidth()*2, argusCamera()->streamHeight(), 4, feedbackViewStereo.ptr(0), /*rowBytes=*/argusCamera()->streamWidth()*2 * 4);
+      stbi_write_png(filename, cameraProvider()->streamWidth()*2, cameraProvider()->streamHeight(), 4, feedbackViewStereo.ptr(0), /*rowBytes=*/cameraProvider()->streamWidth()*2 * 4);
       printf("Saved %s\n", filename);
     }
 #endif
@@ -776,7 +776,7 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
       m_calibrationPoints[0], m_calibrationPoints[1],
       cameraSystem()->cameraAtIndex(v.cameraIndices[0]).optimizedMatrix, zeroDistortion,
       cameraSystem()->cameraAtIndex(v.cameraIndices[1]).optimizedMatrix, zeroDistortion,
-      cv::Size(argusCamera()->streamWidth(), argusCamera()->streamHeight()),
+      cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
       v.stereoRotation, v.stereoTranslation, E, F, perViewErrors, cv::CALIB_FIX_INTRINSIC);
 
     printf("RMS error reported by stereoCalibrate: %g\n", rms);

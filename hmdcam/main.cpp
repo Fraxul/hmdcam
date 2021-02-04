@@ -23,7 +23,7 @@
 #include "rhi/CudaUtil.h"
 
 #include "ArgusCamera.h"
-#include "CameraSystem.h"
+#include "common/CameraSystem.h"
 #include "InputListener.h"
 #include "Render.h"
 
