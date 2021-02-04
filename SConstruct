@@ -6,7 +6,7 @@ is_tegra = os.access("/dev/tegra_camera_ctrl", os.F_OK)
 if is_tegra:
   # Environment setup
   env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
-    CPPPATH=['#tegra_mmapi', '#live555/include', '/usr/include/drm', '/usr/src/tegra_multimedia_api/include', '/usr/src/tegra_multimedia_api/argus/include', '/usr/local/cuda/include'],
+    CPPPATH=['#tegra_mmapi', '#live555/include', '/usr/include/drm', '/usr/src/tegra_multimedia_api/include', '/usr/src/tegra_multimedia_api/argus/include', '/usr/local/cuda/include', '/usr/local/include/opencv4'],
     LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
     CUDA_SDK_PATH='/usr/local/cuda'
   )
@@ -15,7 +15,7 @@ else:
   # Reduced environment for non-tegra
   # TODO CUDA path
   env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
-    CPPPATH=[],
+    CPPPATH=['/usr/include/opencv4'],
     LIBPATH=[],
     CUDA_SDK_PATH='/usr',
     CUDA_TOOLKIT_PATH='/usr'
@@ -23,7 +23,7 @@ else:
 
 # Common env
 env.Append(
-  CPPPATH=['#.', '#glm', '#glatter/include', '#glatter/include/glatter', '#imgui',  '/usr/local/include/opencv4'],
+  CPPPATH=['#.', '#glm', '#glatter/include', '#glatter/include/glatter', '#imgui'],
   CPPFLAGS=['-g', '-Wall'],
   CPPDEFINES=['NO_OPENSSL'],
   CXXFLAGS=['-std=c++11'],

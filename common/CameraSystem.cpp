@@ -148,9 +148,9 @@ bool CameraSystem::loadCalibrationData() {
 void CameraSystem::saveCalibrationData() {
   cv::FileStorage fs(calibrationFilename.c_str(), cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
 
-  fs.startWriteStruct("cameras", cv::FileNode::SEQ);
+  fs.startWriteStruct("cameras", cv::FileNode::SEQ, cv::String());
   for (size_t cameraIdx = 0; cameraIdx < m_cameras.size(); ++cameraIdx) {
-    fs.startWriteStruct(cv::String(), cv::FileNode::MAP);
+    fs.startWriteStruct(cv::String(), cv::FileNode::MAP, cv::String());
     Camera& c = cameraAtIndex(cameraIdx);
     if (c.haveIntrinsicCalibration()) {
       fs.write("intrinsicMatrix", c.intrinsicMatrix);
@@ -160,9 +160,9 @@ void CameraSystem::saveCalibrationData() {
   }
   fs.endWriteStruct();
 
-  fs.startWriteStruct("views", cv::FileNode::SEQ);
+  fs.startWriteStruct("views", cv::FileNode::SEQ, cv::String());
   for (size_t viewIdx = 0; viewIdx < m_views.size(); ++viewIdx) {
-    fs.startWriteStruct(cv::String(), cv::FileNode::MAP);
+    fs.startWriteStruct(cv::String(), cv::FileNode::MAP, cv::String());
     View& v = viewAtIndex(viewIdx);
     fs.write("isStereo", v.isStereo);
     if (v.isStereo) {
