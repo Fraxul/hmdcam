@@ -72,6 +72,16 @@ RHIShader::ptr RHI::compileShader(const RHIShaderDescriptor& descriptor) {
   return cacheSlot;
 }
 
+RHIRenderPipeline::ptr RHI::compileRenderPipeline(const char* vertexShaderFilename, const char* fragmentShaderFilename, const RHIVertexLayout& vertexLayout, RHIPrimitiveTopology topo) {
+  RHIShaderDescriptor d;
+  d.addSourceFile(RHIShaderDescriptor::kVertexShader, vertexShaderFilename);
+  d.addSourceFile(RHIShaderDescriptor::kFragmentShader, fragmentShaderFilename);
+  d.setVertexLayout(vertexLayout);
+  RHIRenderPipelineDescriptor rpd;
+  rpd.primitiveTopology = topo;
+  return compileRenderPipeline(compileShader(d), rpd);
+}
+
 RHIRenderPipeline::ptr RHI::compileRenderPipeline(RHIShader::ptr shader, const RHIRenderPipelineDescriptor& descriptor) {
   uint64_t descriptorHash = descriptor.hash();
   RHIRenderPipeline::ptr& cacheSlot = shader->m_renderPipelineCache[descriptorHash];

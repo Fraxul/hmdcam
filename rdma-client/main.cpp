@@ -8,8 +8,10 @@
 #include "rdma/RDMABuffer.h"
 #include "RDMACameraProvider.h"
 #include "common/CameraSystem.h"
+#include "FxCamera.h"
 
 #include "rhi/RHI.h"
+#include "rhi/RHIResources.h"
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
 #include "rhi/gl/RHISurfaceGL.h"
 
@@ -31,8 +33,16 @@ CUcontext cudaContext;
 RDMAContext* rdmaContext;
 RDMACameraProvider* cameraProvider;
 CameraSystem* cameraSystem;
-
+FxCamera* sceneCamera;
 RDMABuffer::ptr configBuffer;
+
+RHIRenderPipeline::ptr meshVertexColorPipeline;
+RHIBuffer::ptr meshQuadVBO;
+
+FxAtomicString ksMeshTransformUniformBlock("MeshTransformUniformBlock");
+struct MeshTransformUniformBlock {
+  glm::mat4 modelViewProjection;
+};
 
 void rdmaUserEventCallback(RDMAContext*, uint32_t userEventID, SerializationBuffer payload) {
   switch (userEventID) {
@@ -91,6 +101,24 @@ int main(int argc, char** argv) {
 
   initRHIGL();
   windowRenderTarget = new RHISDLWindowRenderTargetGL(window);
+  sceneCamera = new FxCamera();
+
+  meshVertexColorPipeline = rhi()->compileRenderPipeline("shaders/meshVertexColor.vtx.glsl", "shaders/meshVertexColor.frag.glsl", RHIVertexLayout({
+      RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position", 0,                 sizeof(float) * 7),
+      RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "color",    sizeof(float) * 3, sizeof(float) * 7)
+    }), kPrimitiveTopologyTriangleStrip);
+
+  {
+    static const float sampleQuadData[] = {
+    //   x      y     z     r     g     b     a
+       1.0f,  1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f,  // right-top
+       1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,  // right-bottom
+      -1.0f,  1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,  // left-top
+      -1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f}; // left-bottom
+
+    meshQuadVBO = rhi()->newBufferWithContents(sampleQuadData, sizeof(float) * 7 * 4);
+  }
+
 
   // CUDA init
   {
@@ -150,13 +178,11 @@ int main(int argc, char** argv) {
   ImGui_ImplOpenGL3_Init(glsl_version);
 
   // Our state
-  bool show_another_window = false;
   ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
   // Main loop
   bool done = false;
-  while (!done)
-  {
+  while (!done) {
 
       // Poll and handle events (inputs, window resize, etc.)
       // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
@@ -164,13 +190,44 @@ int main(int argc, char** argv) {
       // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application.
       // Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
       SDL_Event event;
-      while (SDL_PollEvent(&event))
-      {
-          ImGui_ImplSDL2_ProcessEvent(&event);
-          if (event.type == SDL_QUIT)
-              done = true;
-          if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE && event.window.windowID == SDL_GetWindowID(window))
-              done = true;
+      while (SDL_PollEvent(&event)) {
+        ImGui_ImplSDL2_ProcessEvent(&event);
+        if (event.type == SDL_QUIT)
+            done = true;
+        if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE && event.window.windowID == SDL_GetWindowID(window))
+            done = true;
+
+        if (io.WantCaptureKeyboard || io.WantCaptureMouse) {
+          // Try to avoid getting stuck in relative mouse mode
+          SDL_SetRelativeMouseMode(SDL_FALSE);
+        }
+
+        if (!io.WantCaptureKeyboard) {
+          if (event.type == SDL_KEYUP && event.key.keysym.scancode == SDL_SCANCODE_LALT) {
+            // Stop relative mouse mode on camera-drag release
+            SDL_SetRelativeMouseMode(SDL_FALSE);
+          }
+        }
+
+        if (!io.WantCaptureMouse) {
+          if (event.type == SDL_MOUSEMOTION) {
+            const uint8_t* keyState = SDL_GetKeyboardState(NULL);
+            if (keyState[SDL_SCANCODE_LALT]) {
+              // Enter relative mouse mode on first camera-drag motion
+              SDL_SetRelativeMouseMode(SDL_TRUE);
+              if (event.motion.state & SDL_BUTTON_LMASK) {
+                sceneCamera->tumble(glm::vec2(event.motion.xrel, event.motion.yrel));
+              } else if (event.motion.state & SDL_BUTTON_RMASK) {
+                sceneCamera->dolly(event.motion.xrel);
+              } else if (event.motion.state & SDL_BUTTON_MMASK) {
+                sceneCamera->track(glm::vec2(-static_cast<float>(event.motion.xrel) / static_cast<float>(io.DisplaySize.x), static_cast<float>(event.motion.yrel) / static_cast<float>(io.DisplaySize.y)));
+              }
+            } else if (event.motion.state & SDL_BUTTON_RMASK) {
+              sceneCamera->spin(glm::vec2(event.motion.xrel, event.motion.yrel));
+            }
+
+          }
+        }
       }
 
       // Service RDMA context
@@ -186,36 +243,20 @@ int main(int argc, char** argv) {
       windowRenderTarget->platformSetUpdatedWindowDimensions(io.DisplaySize.x, io.DisplaySize.y);
 
       {
-          static float f = 0.0f;
-          static int counter = 0;
+        ImGui::Begin("RDMA-Client");
 
-          ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
+        {
+          glm::vec3 p = sceneCamera->position();
+          glm::vec3 t = sceneCamera->targetPosition();
+          ImGui::Text("Camera pos: %.3f %.3f %.3f", p[0], p[1], p[2]);
+          ImGui::Text("Camera target: %.3f %.3f %.3f", t[0], t[1], t[2]);
+        }
 
-          ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-          ImGui::Checkbox("Another Window", &show_another_window);
+        ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
 
-          ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-          ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-          if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-              counter++;
-          ImGui::SameLine();
-          ImGui::Text("counter = %d", counter);
-
-          ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-          ImGui::End();
+        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+        ImGui::End();
       }
-
-      // 3. Show another simple window.
-      if (show_another_window)
-      {
-          ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-          ImGui::Text("Hello from another window!");
-          if (ImGui::Button("Close Me"))
-              show_another_window = false;
-          ImGui::End();
-      }
-
 
       for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
         CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
@@ -231,6 +272,7 @@ int main(int argc, char** argv) {
           size_t cameraIdx = v.cameraIndices[viewCameraIdx];
           RHISurfaceGL* glSrf = static_cast<RHISurfaceGL*>(cameraProvider->rgbTexture(cameraIdx).get());
 
+          // TODO apply distortion correction here
           ImGui::Image((ImTextureID) static_cast<uintptr_t>(glSrf->glId()), ImVec2(glSrf->width()/v.cameraCount(), glSrf->height()/v.cameraCount()), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
         }
         ImGui::End();
@@ -238,10 +280,31 @@ int main(int argc, char** argv) {
 
       // Rendering
       ImGui::Render();
-      glViewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);
-      glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
-      glClear(GL_COLOR_BUFFER_BIT);
+
+      FxRenderView renderView = sceneCamera->toRenderView(static_cast<float>(io.DisplaySize.x) / static_cast<float>(io.DisplaySize.y));
+
+
+
+      // Note that our camera uses reversed depth projection -- we clear to 0 and use a "greater" depth-test.
+      rhi()->setClearColor(glm::vec4(clear_color.x, clear_color.y, clear_color.z, clear_color.w));
+      rhi()->setClearDepth(0.0f);
+      rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
+      rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
+
+      { // Draw test quad
+        rhi()->bindRenderPipeline(meshVertexColorPipeline);
+        rhi()->bindStreamBuffer(0, meshQuadVBO);
+
+        MeshTransformUniformBlock ub;
+        ub.modelViewProjection = renderView.viewProjectionMatrix;
+        rhi()->loadUniformBlockImmediate(ksMeshTransformUniformBlock, &ub, sizeof(MeshTransformUniformBlock));
+        rhi()->drawPrimitives(0, 4);
+      }
+
+
+      // May modify GL state, so this should be done at the end of the renderpass.
       ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+      rhi()->endRenderPass(windowRenderTarget);
 
       rhi()->swapBuffers(windowRenderTarget);
   }

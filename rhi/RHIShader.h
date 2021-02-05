@@ -104,6 +104,9 @@ struct RHIVertexLayoutElement {
 };
 
 struct RHIVertexLayout {
+  RHIVertexLayout() {}
+  RHIVertexLayout(const std::initializer_list<RHIVertexLayoutElement>& el_) : elements(el_.begin(), el_.end()) {}
+
   boost::container::static_vector<RHIVertexLayoutElement, 16> elements;
 
   size_t hash() const;
