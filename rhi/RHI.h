@@ -78,6 +78,7 @@ public:
   virtual RHIBuffer::ptr newEmptyBuffer(size_t, RHIBufferUsageMode = kBufferUsageCPUWriteOnly) = 0;
   virtual RHIBuffer::ptr newUniformBufferWithContents(const void*, size_t) = 0;
   // virtual void clearBuffer(RHIBuffer::ptr) = 0; // Not implemented on ES3
+  virtual void loadBufferData(RHIBuffer::ptr, const void*, size_t offset = 0, size_t length = 0) = 0;
 
   virtual RHISurface::ptr newTexture2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) = 0;
   virtual RHISurface::ptr newTexture3D(uint32_t width, uint32_t height, uint32_t depth, const RHISurfaceDescriptor&) = 0;

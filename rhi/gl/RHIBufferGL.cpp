@@ -59,6 +59,15 @@ void RHIBufferGL::bufferData(const void* data, size_t size) {
   m_size = size;
 }
 
+void RHIBufferGL::bufferSubData(const void* data, size_t size, size_t offset) {
+  if (m_data)
+    unmap();
+
+  GL(glBindBuffer(GL_ARRAY_BUFFER, m_buffer));
+  GL(glBufferSubData(GL_ARRAY_BUFFER, offset, size, data));
+  m_size = size;
+}
+
 CUgraphicsResource& RHIBufferGL::cuGraphicsResource() const {
   if (!m_cuGraphicsResource) {
     CUDA_CHECK(cuGraphicsGLRegisterBuffer(&m_cuGraphicsResource, glId(), CU_GRAPHICS_REGISTER_FLAGS_NONE));

@@ -9,6 +9,7 @@
 #include "RDMACameraProvider.h"
 #include "common/CameraSystem.h"
 #include "FxCamera.h"
+#include "OpenCVProcess.h"
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -35,11 +36,14 @@ RDMACameraProvider* cameraProvider;
 CameraSystem* cameraSystem;
 FxCamera* sceneCamera;
 RDMABuffer::ptr configBuffer;
+OpenCVProcess* cvProcess;
 
 RHIRenderPipeline::ptr meshVertexColorPipeline;
+RHIRenderPipeline::ptr depthMeshPipeline;
 RHIBuffer::ptr meshQuadVBO;
 
 FxAtomicString ksMeshTransformUniformBlock("MeshTransformUniformBlock");
+static FxAtomicString ksImageTex("imageTex");
 struct MeshTransformUniformBlock {
   glm::mat4 modelViewProjection;
 };
@@ -108,6 +112,11 @@ int main(int argc, char** argv) {
       RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "color",    sizeof(float) * 3, sizeof(float) * 7)
     }), kPrimitiveTopologyTriangleStrip);
 
+  depthMeshPipeline = rhi()->compileRenderPipeline("shaders/meshTexture.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
+      RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "position",           0, sizeof(float) * 4),
+      RHIVertexLayoutElement(1, kVertexElementTypeFloat2, "textureCoordinates", 0, sizeof(float) * 2)
+    }), kPrimitiveTopologyTriangleStrip);
+
   {
     static const float sampleQuadData[] = {
     //   x      y     z     r     g     b     a
@@ -161,6 +170,10 @@ int main(int argc, char** argv) {
 
   cameraSystem = new CameraSystem(cameraProvider);
   cameraSystem->loadCalibrationData();
+
+  // CV processing init
+  cvProcess = new OpenCVProcess(cameraSystem, cameraProvider, /*viewIdx=*/0);
+  cvProcess->OpenCVAppStart();
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
@@ -233,6 +246,7 @@ int main(int argc, char** argv) {
       // Service RDMA context
       rdmaContext->fireUserEvents();
       cameraProvider->updateSurfaces();
+      cvProcess->Prerender();
 
 
       // Start the Dear ImGui frame
@@ -251,6 +265,12 @@ int main(int argc, char** argv) {
           ImGui::Text("Camera pos: %.3f %.3f %.3f", p[0], p[1], p[2]);
           ImGui::Text("Camera target: %.3f %.3f %.3f", t[0], t[1], t[2]);
         }
+
+        ImGui::InputInt("Stereo Algorithm", &cvProcess->m_iNextStereoAlgorithm);
+        ImGui::Text("Proc Frames: %d", cvProcess->m_iProcFrames);
+        if (ImGui::Button("Req SCreenshot"))
+          cvProcess->m_bScreenshotNext = true;
+
 
         ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
 
@@ -273,7 +293,7 @@ int main(int argc, char** argv) {
           RHISurfaceGL* glSrf = static_cast<RHISurfaceGL*>(cameraProvider->rgbTexture(cameraIdx).get());
 
           // TODO apply distortion correction here
-          ImGui::Image((ImTextureID) static_cast<uintptr_t>(glSrf->glId()), ImVec2(glSrf->width()/v.cameraCount(), glSrf->height()/v.cameraCount()), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+          ImGui::Image((ImTextureID) static_cast<uintptr_t>(glSrf->glId()), ImVec2(glSrf->width()/v.cameraCount(), glSrf->height()/v.cameraCount()));
         }
         ImGui::End();
       }
@@ -299,6 +319,20 @@ int main(int argc, char** argv) {
         ub.modelViewProjection = renderView.viewProjectionMatrix;
         rhi()->loadUniformBlockImmediate(ksMeshTransformUniformBlock, &ub, sizeof(MeshTransformUniformBlock));
         rhi()->drawPrimitives(0, 4);
+      }
+
+
+      { // Draw depth map from OpenCV process
+        rhi()->bindRenderPipeline(depthMeshPipeline);
+        rhi()->bindStreamBuffer(0, cvProcess->m_geoDepthMapPositionBuffer);
+        rhi()->bindStreamBuffer(1, cvProcess->m_geoDepthMapTexcoordBuffer);
+
+        MeshTransformUniformBlock ub;
+        ub.modelViewProjection = renderView.viewProjectionMatrix;
+        rhi()->loadUniformBlockImmediate(ksMeshTransformUniformBlock, &ub, sizeof(MeshTransformUniformBlock));
+        rhi()->loadTexture(ksImageTex, cvProcess->m_iTexture);
+
+        rhi()->drawIndexedPrimitives(cvProcess->m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, cvProcess->m_geoDepthMapTristripIndexCount);
       }
 
 

@@ -16,6 +16,7 @@ public:
 
   GLuint glId() const { return m_buffer; }
   void bufferData(const void*, size_t);
+  void bufferSubData(const void*, size_t length, size_t offset = 0);
 protected:
   GLuint m_buffer;
   mutable CUgraphicsResource m_cuGraphicsResource;

@@ -1,6 +1,7 @@
 #include "RDMACameraProvider.h"
 #include "rdma/RDMAContext.h"
 #include "rhi/RHI.h"
+#include <opencv2/core/mat.hpp>
 
 
 RDMACameraProvider::RDMACameraProvider(RDMAContext* ctx, SerializationBuffer cfg) : m_rdmaContext(ctx), m_rdmaBuffersDirty(true) {
@@ -35,5 +36,9 @@ void RDMACameraProvider::updateSurfaces() {
   for (size_t streamIdx = 0; streamIdx < m_cameraRDMABuffers.size(); ++streamIdx) {
     rhi()->loadTextureData(m_cameraSurfaces[streamIdx], kVertexElementTypeUByte4N, m_cameraRDMABuffers[streamIdx]->data());
   }
+}
+
+cv::Mat RDMACameraProvider::cvMat(size_t sensorIdx) const {
+  return cv::Mat(m_streamHeight, m_streamWidth, CV_8UC4, m_cameraRDMABuffers[sensorIdx]->data());
 }
 

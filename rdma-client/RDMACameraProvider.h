@@ -4,6 +4,7 @@
 #include "rdma/SerializationBuffer.h"
 #include "rhi/RHISurface.h"
 #include <vector>
+#include <opencv2/core/mat.hpp>
 
 class RDMAContext;
 
@@ -16,6 +17,7 @@ public:
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_cameraSurfaces[sensorIndex]; }
+  cv::Mat cvMat(size_t sensorIndex) const;
 
   void flagRDMABuffersDirty() { m_rdmaBuffersDirty = true; }
   void updateSurfaces();

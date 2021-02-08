@@ -222,10 +222,9 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   // Compute rectification/projection transforms from the stereo calibration data
   float alpha = -1.0f;  //0.25;
 
-  // Using the optimized camera matrix and zero distortion matrix again to create a rectification remap that can be layered on top of the intrinsic distortion remap
   cv::stereoRectify(
-    leftC.optimizedMatrix, zeroDistortion,
-    rightC.optimizedMatrix, zeroDistortion,
+    leftC.intrinsicMatrix, leftC.distCoeffs,
+    rightC.intrinsicMatrix, rightC.distCoeffs,
     cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
     v.stereoRotation, v.stereoTranslation,
     v.stereoRectification[0], v.stereoRectification[1],

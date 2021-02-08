@@ -23,6 +23,7 @@ public:
   virtual RHIBuffer::ptr newEmptyBuffer(size_t, RHIBufferUsageMode);
   virtual RHIBuffer::ptr newUniformBufferWithContents(const void*, size_t);
   virtual void clearBuffer(RHIBuffer::ptr);
+  virtual void loadBufferData(RHIBuffer::ptr, const void*, size_t offset, size_t length);
 
   virtual RHISurface::ptr newTexture2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&);
   virtual RHISurface::ptr newTexture3D(uint32_t width, uint32_t height, uint32_t depth, const RHISurfaceDescriptor&);

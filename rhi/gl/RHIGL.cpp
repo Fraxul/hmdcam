@@ -124,6 +124,19 @@ static GLenum RHIBufferUsageModeToGL(RHIBufferUsageMode mode) {
   };
 }
 
+void RHIGL::loadBufferData(RHIBuffer::ptr buf, const void* data, size_t offset, size_t length) {
+  RHIBufferGL* bufferGL = static_cast<RHIBufferGL*>(buf.get());
+  assert(offset < bufferGL->size());
+  if (!length) {
+    length = bufferGL->size() - offset;
+  }
+  if (offset == 0 && length == bufferGL->size()) {
+    bufferGL->bufferData(data, bufferGL->size());
+  } else {
+    bufferGL->bufferSubData(data, length, offset);
+  }
+}
+
 RHIBuffer::ptr RHIGL::newBufferWithContents(const void* data, size_t size, RHIBufferUsageMode usageMode) {
   GLuint buffer;
   GL(glGenBuffers(1, &buffer));
