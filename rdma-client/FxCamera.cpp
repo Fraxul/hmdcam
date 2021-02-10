@@ -20,10 +20,10 @@ static float hmd_worldUnitsPerMeter = 100.0f;
 static bool hmd_pitchLock = true;
 
 FxCamera::FxCamera() :
-  m_position(glm::vec3(0, 0, -15)),
-  m_targetPosition(glm::vec3(0, 0, 0)),
+  m_position(glm::vec3(0, 0, 0)),
+  m_targetPosition(glm::vec3(0, 0, -15)),
   m_upVec(glm::vec3(0, 1, 0)),
-  m_fovX(45.0f),
+  m_fovX(65.0f),
   m_zNear(1.0f), m_zFar(10000.0f),
   m_useHMDControl(false) {
 

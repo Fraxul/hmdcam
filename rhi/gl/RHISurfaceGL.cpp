@@ -19,6 +19,7 @@ GLenum RHISurfaceFormatToGL(RHISurfaceFormat format) {
 
     case kSurfaceFormat_RGB10_A2: return GL_RGB10_A2;
     case kSurfaceFormat_R8: return GL_R8;
+    case kSurfaceFormat_R16: return GL_R16;
     case kSurfaceFormat_R16f: return GL_R16F;
     case kSurfaceFormat_R32f: return GL_R32F;
     case kSurfaceFormat_RG32f: return GL_RG32F;

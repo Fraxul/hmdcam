@@ -5,7 +5,6 @@
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
-#// include "common_hello.h"
 #include <time.h>
 #include <sys/time.h>
 #include <thread>
@@ -14,7 +13,7 @@
 
 #include "stb/stb_image_write.h"
 
-#define NUM_DISP 96 //Max disparity.
+#define NUM_DISP 128 //Max disparity.
 
 inline double * CoPTr( const std::initializer_list<double>& d ) { return (double*)d.begin(); }
 #define DO_FISHEYE 1
@@ -62,9 +61,31 @@ OpenCVProcess::OpenCVProcess(CameraSystem* cs, RDMACameraProvider* cp, size_t vi
 	, m_pthread( 0 )
 	, m_bQuitThread( false )
 	, m_bScreenshotNext( 0 )
-	, m_iCurrentStereoAlgorithm( -1 )
+  , m_useDepthBlur(true)
 {
 	fNAN = nanf( "" );
+
+
+/*
+		else if ( m_iCurrentStereoAlgorithm == 2 )
+		{
+			m_stereo = cv::StereoSGBM::create( 0, NUM_DISP, 15,
+				0, 0, 0,
+				4, 5,
+				200, 1,
+				cv::StereoSGBM::MODE_SGBM );
+		}
+*/
+
+  m_didChangeSettings = false;
+  m_algorithm = 1;
+  m_blockSize = 15;
+  m_preFilterCap = 4;
+  m_uniquenessRatio = 5;
+  m_speckleWindowSize = 200;
+  m_speckleRange = 1;
+
+
 }
 
 OpenCVProcess::~OpenCVProcess()
@@ -80,10 +101,7 @@ bool OpenCVProcess::OpenCVAppStart()
 {
 #define MOGRIFY_X 4
 #define MOGRIFY_Y 4
-#define IGNORE_EDGE_DATA_PIXELS 4 
-
-#define LAGFRAMES 4
-#define DENOISE_PASSES 2
+#define IGNORE_EDGE_DATA_PIXELS 16
 
 #if 0
   // === removed members ===
@@ -299,13 +317,23 @@ bool OpenCVProcess::OpenCVAppStart()
 
   // cv::initUndistortRectifyMap( K1, D1, R1, P1, cv::Size( 960, 960 ), CV_16SC2, m_leftMap1, m_leftMap2 );
   cv::Size imageSize = cv::Size(m_cameraProvider->streamWidth(), m_cameraProvider->streamHeight());
+#if 1
   cv::initUndistortRectifyMap(cL.intrinsicMatrix, cL.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_16SC2, m_leftMap1, m_leftMap2);
   cv::initUndistortRectifyMap(cR.intrinsicMatrix, cR.distCoeffs, v.stereoRectification[1], v.stereoProjection[1], imageSize, CV_16SC2, m_rightMap1, m_rightMap2);
-
 	m_R1 = Matrix4FromCVMatrix( v.stereoRectification[0] );
 	m_R1inv = m_R1;
 	m_R1inv = m_R1inv.invert();
 	m_Q = Matrix4FromCVMatrix( v.stereoDisparityToDepth );
+#else
+	cv::Mat R1, R2, P1, P2, cvQ;
+  cv::stereoRectify( cL.intrinsicMatrix, cL.distCoeffs, cR.intrinsicMatrix, cR.distCoeffs, imageSize, v.stereoRotation, v.stereoTranslation, R1, R2, P1, P2, cvQ, cv::CALIB_ZERO_DISPARITY );
+  cv::initUndistortRectifyMap(cL.intrinsicMatrix, cL.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_16SC2, m_leftMap1, m_leftMap2);
+  cv::initUndistortRectifyMap(cR.intrinsicMatrix, cR.distCoeffs, v.stereoRectification[1], v.stereoProjection[1], imageSize, CV_16SC2, m_rightMap1, m_rightMap2);
+	m_R1 = Matrix4FromCVMatrix( R1 );
+	m_R1inv = m_R1;
+	m_R1inv = m_R1inv.invert();
+	m_Q = Matrix4FromCVMatrix( cvQ );
+#endif
 
 	m_CameraDistanceMeters = glm::length(glm::vec3(v.stereoTranslation.at<double>(0), v.stereoTranslation.at<double>(1), v.stereoTranslation.at<double>(2)));
 
@@ -328,6 +356,9 @@ bool OpenCVProcess::OpenCVAppStart()
 	m_pColorOut2 = (uint32_t*) calloc( m_iFBSideWidth * m_iFBSideHeight, sizeof( uint32_t ) );
 
   m_iTexture = rhi()->newTexture2D(m_iFBSideWidth, m_iFBSideHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+  m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R16));
+  m_leftGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+  m_rightGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
 
 
 	m_valids.resize( m_iFBAlgoHeight  * m_iFBAlgoWidth );
@@ -453,6 +484,10 @@ void OpenCVProcess::Prerender()
 		}
 
     rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, m_pColorOut2); //If you want to debug m_pColorOut, you can select that here.
+    rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeUShort1N, m_pDisparity);
+    rhi()->loadTextureData(m_leftGray, kVertexElementTypeUByte1N, resizedLeftGray.data);
+    rhi()->loadTextureData(m_rightGray, kVertexElementTypeUByte1N, resizedRightGray.data);
+
 		PROFILE( "[GL] Updating output texture" )
     rhi()->loadBufferData(m_geoDepthMapPositionBuffer, m_geoDepthMapPositions.data(), 0, m_geoDepthMapPositions.size() * sizeof(float));
 		PROFILE( "[GL] Updating output verts" )
@@ -517,28 +552,26 @@ void OpenCVProcess::ConvertToGray( cv::InputArray src, cv::OutputArray dst )
 	if ( 1 )
 	{
 		cv::cvtColor( src, dst, cv::COLOR_BGR2GRAY );
+    cv::equalizeHist(dst, dst);
 	}
 	else
 	{
 		cv::Mat msrc( src.getMat() );
 		cv::Mat mdst( dst.getMat() );
-		int wd = mdst.cols;
+
 		int w = msrc.cols;
 		int h = msrc.rows;
-		uint32_t * indata = (uint32_t*)msrc.data;
-		uint8_t * outdata;
-		int x, y;
-		for ( y = 0; y < h; y++ )
-		{
-			outdata = ((uint8_t*)mdst.data) + y * wd + NUM_DISP;
-			for ( x = 0; x < w; x++ )
-			{
-				uint32_t inx = *(indata++);
+
+		for (int y = 0; y < h; y++ ) {
+
+			for (int x = 0; x < w; x++ ) {
+				uint32_t inx = msrc.at<uint32_t>(y, x);
+
 				int r = (inx >> 0) & 0xff;
 				int g = (inx >> 8) & 0xff;
 				int b = (inx >> 16) & 0xff;
-				//*(outdata++) = inx >> (chan * 8);
-				*(outdata++) = (uint8_t)((r + g + b) / 3);
+        mdst.at<uint8_t>(y, x) = (uint8_t)((r + g + b) / 3);
+
 			}
 		}
 	}
@@ -661,39 +694,30 @@ void OpenCVProcess::OpenCVAppUpdate()
 {
 	double Start = OGGetAbsoluteTime();
 
-	if ( m_iCurrentStereoAlgorithm != m_iNextStereoAlgorithm)
-	{
-		if ( m_iNextStereoAlgorithm >= 3 ) m_iNextStereoAlgorithm = 0;
-		m_iCurrentStereoAlgorithm = m_iNextStereoAlgorithm;
+  if ((!m_stereo) || m_didChangeSettings) {
+    m_blockSize |= 1; // enforce odd blockSize
 
-		if ( m_iCurrentStereoAlgorithm == 0 )
-		{
-			m_stereo = cv::StereoSGBM::create( 0, NUM_DISP, 7,
-				0, 0, 0,
-				4, 55,
-				25, 4,
-				cv::StereoSGBM::MODE_SGBM );
-		}
-		else if ( m_iCurrentStereoAlgorithm == 1 )
-		{
-			m_stereo = cv::StereoSGBM::create( 0, NUM_DISP, 2,
-				0, 0, 0,
-				4, 35,
-				10, 3,
-				cv::StereoSGBM::MODE_SGBM );
-		}
-		else if ( m_iCurrentStereoAlgorithm == 2 )
-		{
-			m_stereo = cv::StereoSGBM::create( 0, NUM_DISP, 15,
-				0, 0, 0,
-				4, 5,
-				200, 1,
-				cv::StereoSGBM::MODE_SGBM );
-		}
-	}
+    switch (m_algorithm) {
+      default:
+        m_algorithm = 0;
+      case 0:
+        m_stereo = cv::StereoSGBM::create(0, NUM_DISP, m_blockSize,
+          0, 0, 0,
+          m_preFilterCap, m_uniquenessRatio,
+          m_speckleWindowSize, m_speckleRange,
+          cv::StereoSGBM::MODE_SGBM );
+        break;
+      case 1: {
+        m_stereo = cv::StereoBM::create(NUM_DISP, m_blockSize);
+      } break;
+
+    };
+    
+
+
+  }
 
 	// origStereoPair = cv::Mat( m_iFBSideHeight, m_iFBSideWidth * 2, CV_8UC4, m_pFrameBuffer );
-  // TODO these are inverted on the Y axis
 	origLeft  = m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]);
 	origRight = m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]);
 
@@ -715,19 +739,11 @@ void OpenCVProcess::OpenCVAppUpdate()
 
 	{
 		m_stereo->compute( resizedLeftGray, resizedRightGray, mdisparity_expanded );
-		uint32_t x, y;
-		int wd = mdisparity.cols;
-		int w = mdisparity_expanded.cols;
-		//int h = mdisparity_expanded.rows;
 
-		for ( y = 0; y < m_iFBAlgoHeight; y++ )
-		{
-			uint16_t * indata = ((uint16_t*)mdisparity_expanded.data) + (y * w) + NUM_DISP;
-			uint16_t * outdata = ((uint16_t*)mdisparity.data) + (y * wd);
-			for ( x = 0; x < m_iFBAlgoWidth; x++ )
-			{
-				*(outdata++) = *(indata++);
-			}
+		for (uint32_t y = 0; y < m_iFBAlgoHeight; y++) {
+			uchar* indata = mdisparity_expanded.ptr(y);
+			uchar* outdata = mdisparity.ptr(y);
+      memcpy(outdata, indata, sizeof(uint16_t) * m_iFBAlgoWidth);
 		}
 	}
 
@@ -808,12 +824,15 @@ void OpenCVProcess::OpenCVAppUpdate()
 	PROFILE( "[OP] Emit Dots")
 #endif
 
-	if ( 1 )
-	{
+
+
+	if ( m_useDepthBlur) {
 		BlurDepths(  );
 	}
 	PROFILE( "[OP] Blur" )
 
+
+#if 1
 	if ( rframe == 0 && 1 ) //Process Output
 	{
 		uint32_t x, y;
@@ -856,6 +875,26 @@ void OpenCVProcess::OpenCVAppUpdate()
 			}
 		}
 	}
+#else
+
+  {
+    cv::Mat outImage(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_32FC3);
+    cv::reprojectImageTo3D(mdisparity, outImage, m_cameraSystem->viewAtIndex(m_viewIdx).stereoDisparityToDepth, /*handleMissingValues=*/true);
+    for (size_t y = 0; y < m_iFBAlgoHeight; ++y) {
+      for (size_t x = 0; x < m_iFBAlgoWidth; ++x) {
+				size_t idx = (y * m_iFBAlgoWidth) + x;
+        float* p = (float*) (outImage.ptr(y, x));
+        m_geoDepthMapPositions[(idx * 4) + 0] = p[0];
+        m_geoDepthMapPositions[(idx * 4) + 1] = p[1];
+        m_geoDepthMapPositions[(idx * 4) + 2] = p[2];
+        m_geoDepthMapPositions[(idx * 4) + 3] = 1.0f;
+      }
+    }
+
+  }
+
+#endif
+
 	m_iDoneFrameOutput = 1;
 
 	PROFILE( "[OP] Process" )

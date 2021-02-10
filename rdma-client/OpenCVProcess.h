@@ -34,7 +34,7 @@ public:
 	// vr::HmdMatrix34_t  m_headFromCamera[2];
 	cv::Mat m_leftMap1, m_leftMap2, m_rightMap1, m_rightMap2;
 	Matrix4 m_R1, m_R1inv, m_Q, m_Qinv;
-	cv::Ptr< cv::StereoSGBM > m_stereo;
+	cv::Ptr< cv::StereoMatcher > m_stereo;
 
 	CameraSystem* m_cameraSystem;
   size_t m_viewIdx;
@@ -57,6 +57,8 @@ public:
 	double    m_dTimeOfLastFPS;
 
   RHISurface::ptr m_iTexture;
+  RHISurface::ptr m_disparityTexture;
+  RHISurface::ptr m_leftGray, m_rightGray;
 
   std::vector<float> m_geoDepthMapPositions; // CPU staging for m_geoDepthMapPositionBuffer
   RHIBuffer::ptr m_geoDepthMapPositionBuffer;
@@ -76,13 +78,23 @@ public:
 	// vr::CameraVideoStreamFrameHeader_t m_lastFrameHeader;
 	Matrix4 m_lastFrameHeaderMatrix;
 	float m_CameraDistanceMeters;
-	cv::Mat m_cvQ;
 	std::thread * m_pthread;
 	bool m_bQuitThread;
 	float fNAN;
 
 	bool m_bScreenshotNext;
-	int m_iCurrentStereoAlgorithm;
+
+  // Algorithm settings. Only committed on m_didChangeSettings = true.
+  bool m_didChangeSettings;
+  int m_algorithm;
+  int m_blockSize;
+  int m_preFilterCap;
+  int m_uniquenessRatio;
+  int m_speckleWindowSize;
+  int m_speckleRange;
+
+
+  bool m_useDepthBlur;
 
 	//Matrices used in the stereo computation.
 	cv::Mat origLeft;

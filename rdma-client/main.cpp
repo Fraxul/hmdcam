@@ -48,6 +48,14 @@ struct MeshTransformUniformBlock {
   glm::mat4 modelViewProjection;
 };
 
+static FxAtomicString ksDisparityScaleUniformBlock("DisparityScaleUniformBlock");
+struct DisparityScaleUniformBlock {
+  float disparityScale;
+  float pad2;
+  float pad3;
+  float pad4;
+};
+
 void rdmaUserEventCallback(RDMAContext*, uint32_t userEventID, SerializationBuffer payload) {
   switch (userEventID) {
     case 1:
@@ -58,6 +66,10 @@ void rdmaUserEventCallback(RDMAContext*, uint32_t userEventID, SerializationBuff
       printf("rdmaUserEventCallback: unhandled userEventID %u\n", userEventID);
       break;
   };
+}
+
+void ImGui_Image(RHISurface::ptr img, const ImVec2& uv0 = ImVec2(0,0), const ImVec2& uv1 = ImVec2(1,1)) {
+  ImGui::Image((ImTextureID) static_cast<uintptr_t>(static_cast<RHISurfaceGL*>(img.get())->glId()), ImVec2(img->width(), img->height()), uv0, uv1);
 }
 
 
@@ -127,6 +139,10 @@ int main(int argc, char** argv) {
 
     meshQuadVBO = rhi()->newBufferWithContents(sampleQuadData, sizeof(float) * 7 * 4);
   }
+
+  RHISurface::ptr disparityScaleSurface;
+  RHIRenderTarget::ptr disparityScaleTarget;
+  RHIRenderPipeline::ptr disparityScalePipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
 
 
   // CUDA init
@@ -262,11 +278,29 @@ int main(int argc, char** argv) {
         {
           glm::vec3 p = sceneCamera->position();
           glm::vec3 t = sceneCamera->targetPosition();
-          ImGui::Text("Camera pos: %.3f %.3f %.3f", p[0], p[1], p[2]);
-          ImGui::Text("Camera target: %.3f %.3f %.3f", t[0], t[1], t[2]);
+          if (ImGui::InputFloat3("Camera Position", &p[0]))
+            sceneCamera->setPosition(p);
+
+          if (ImGui::InputFloat3("Camera Target", &t[0]))
+            sceneCamera->setTargetPosition(t);
+
         }
 
-        ImGui::InputInt("Stereo Algorithm", &cvProcess->m_iNextStereoAlgorithm);
+        cvProcess->m_didChangeSettings |= ImGui::RadioButton("SGBM", &cvProcess->m_algorithm, 0);
+        cvProcess->m_didChangeSettings |= ImGui::RadioButton("BM", &cvProcess->m_algorithm, 1);
+        //cvProcess->m_didChangeSettings |= ImGui::RadioButton("BP", &cvProcess->m_algorithm, 1);
+
+        cvProcess->m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &cvProcess->m_blockSize, /*step=*/2);
+
+        if (cvProcess->m_algorithm == 0) {
+          cvProcess->m_didChangeSettings |= ImGui::SliderInt("preFilterCap", &cvProcess->m_preFilterCap, 0, 15);
+          cvProcess->m_didChangeSettings |= ImGui::SliderInt("uniquenessRatio", &cvProcess->m_uniquenessRatio, 5, 15);
+          cvProcess->m_didChangeSettings |= ImGui::SliderInt("speckleWindowSize", &cvProcess->m_speckleWindowSize, 50, 200);
+          cvProcess->m_didChangeSettings |= ImGui::SliderInt("speckleRange", &cvProcess->m_speckleRange, 0, 3);
+        }
+
+        ImGui::Checkbox("Depth blur", &cvProcess->m_useDepthBlur);
+
         ImGui::Text("Proc Frames: %d", cvProcess->m_iProcFrames);
         if (ImGui::Button("Req SCreenshot"))
           cvProcess->m_bScreenshotNext = true;
@@ -285,18 +319,46 @@ int main(int argc, char** argv) {
         ImGui::Begin(windowName, NULL, ImGuiWindowFlags_AlwaysAutoResize);
 
         for (size_t viewCameraIdx = 0; viewCameraIdx < v.cameraCount(); ++viewCameraIdx) {
+/*
           if (viewCameraIdx == 1) {
             ImGui::SameLine();
           }
+*/
 
           size_t cameraIdx = v.cameraIndices[viewCameraIdx];
-          RHISurfaceGL* glSrf = static_cast<RHISurfaceGL*>(cameraProvider->rgbTexture(cameraIdx).get());
-
           // TODO apply distortion correction here
-          ImGui::Image((ImTextureID) static_cast<uintptr_t>(glSrf->glId()), ImVec2(glSrf->width()/v.cameraCount(), glSrf->height()/v.cameraCount()));
+          ImGui_Image(cameraProvider->rgbTexture(cameraIdx));
         }
         ImGui::End();
       }
+
+      {
+        ImGui::Begin("Internals");
+        static int disparityScale = 16;
+        ImGui::SliderInt("Disparity Scale", &disparityScale, 1, 128);
+
+        if (!disparityScaleTarget) {
+          disparityScaleSurface = rhi()->newTexture2D(cvProcess->m_disparityTexture->width(), cvProcess->m_disparityTexture->height(), kSurfaceFormat_RGBA8);
+          disparityScaleTarget = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ disparityScaleSurface }));
+        }
+
+        rhi()->beginRenderPass(disparityScaleTarget, kLoadInvalidate);
+        rhi()->bindRenderPipeline(disparityScalePipeline);
+        rhi()->loadTexture(ksImageTex, cvProcess->m_disparityTexture);
+        DisparityScaleUniformBlock ub;
+        ub.disparityScale = (((float) disparityScale) * 16.0f); // scale for fixed-point disparity texture with 4 subpixel bits
+        rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
+        rhi()->drawFullscreenPass();
+        rhi()->endRenderPass(disparityScaleTarget);
+
+        ImGui_Image(disparityScaleSurface);
+        ImGui_Image(cvProcess->m_leftGray);
+        ImGui_Image(cvProcess->m_rightGray);
+
+
+        ImGui::End();
+      }
+
 
       // Rendering
       ImGui::Render();
@@ -311,6 +373,7 @@ int main(int argc, char** argv) {
       rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
       rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
 
+#if 0
       { // Draw test quad
         rhi()->bindRenderPipeline(meshVertexColorPipeline);
         rhi()->bindStreamBuffer(0, meshQuadVBO);
@@ -320,6 +383,7 @@ int main(int argc, char** argv) {
         rhi()->loadUniformBlockImmediate(ksMeshTransformUniformBlock, &ub, sizeof(MeshTransformUniformBlock));
         rhi()->drawPrimitives(0, 4);
       }
+#endif
 
 
       { // Draw depth map from OpenCV process

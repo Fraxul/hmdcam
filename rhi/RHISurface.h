@@ -33,6 +33,7 @@ enum RHISurfaceFormat : unsigned char {
   kSurfaceFormat_RGBA16f,
   kSurfaceFormat_RGB10_A2,
   kSurfaceFormat_R8,
+  kSurfaceFormat_R16,
   kSurfaceFormat_R16f,
   kSurfaceFormat_R32f,
   kSurfaceFormat_RG32f,

@@ -196,6 +196,12 @@ static void rhiVertexElementTypeToGLPackFormat(RHIVertexElementType rhiFormat, G
       unpackFormat = GL_RG; unpackType = GL_HALF_FLOAT; return;
     case kVertexElementTypeHalf4:
       unpackFormat = GL_RGBA; unpackType = GL_HALF_FLOAT; return;
+    case kVertexElementTypeUShort1N:
+      unpackFormat = GL_RED; unpackType = GL_UNSIGNED_SHORT; return;
+    case kVertexElementTypeUShort2N:
+      unpackFormat = GL_RG; unpackType = GL_UNSIGNED_SHORT; return;
+    case kVertexElementTypeUShort4N:
+      unpackFormat = GL_RGBA; unpackType = GL_UNSIGNED_SHORT; return;
     case kVertexElementTypeShort1N:
       unpackFormat = GL_RED; unpackType = GL_SHORT; return;
     case kVertexElementTypeShort2N:
