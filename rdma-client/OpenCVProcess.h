@@ -40,11 +40,6 @@ public:
   size_t m_viewIdx;
   RDMACameraProvider* m_cameraProvider;
 
-	uint8_t * m_pFBSides[2];
-	uint32_t * m_pFBSidesColor[2];
-	uint16_t * m_pDisparity;
-	uint32_t * m_pColorOut;
-	uint32_t * m_pColorOut2;
 	uint32_t  m_iFBSideWidth;
 	uint32_t  m_iFBSideHeight;
 	std::vector< float > m_valids;

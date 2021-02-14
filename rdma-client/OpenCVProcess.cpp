@@ -258,16 +258,19 @@ bool OpenCVProcess::OpenCVAppStart()
 	m_iFBAlgoWidth = m_iFBSideWidth / MOGRIFY_X;
 	m_iFBAlgoHeight = m_iFBSideHeight / MOGRIFY_Y;
 
-	m_pDisparity = (uint16_t*)malloc( m_iFBAlgoWidth * m_iFBAlgoHeight * 2 );
 
-	for ( int side = 0; side < 2; side++ )
-	{
-		m_pFBSides[side] = (uint8_t*)malloc( (m_iFBAlgoWidth+ NUM_DISP)* m_iFBAlgoHeight * 1 );
-		m_pFBSidesColor[side] = (uint32_t*)malloc( m_iFBAlgoWidth * m_iFBAlgoHeight * 4 );
-	}
+  // Setup/allocate CV mats
+  rectLeft = cv::Mat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
+  rectRight = cv::Mat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
 
-	m_pColorOut = (uint32_t*) calloc( m_iFBAlgoWidth * m_iFBAlgoHeight, sizeof( uint32_t ) );
-	m_pColorOut2 = (uint32_t*) calloc( m_iFBSideWidth * m_iFBSideHeight, sizeof( uint32_t ) );
+	resizedLeft = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
+	resizedRight = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
+
+	resizedLeftGray = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+	resizedRightGray = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+	mdisparity = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
+
+
 
 	glBindTexture( GL_TEXTURE_2D, m_parent->m_iTexture );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
@@ -344,17 +347,6 @@ bool OpenCVProcess::OpenCVAppStart()
 	m_iFBAlgoWidth = m_iFBSideWidth / MOGRIFY_X;
 	m_iFBAlgoHeight = m_iFBSideHeight / MOGRIFY_Y;
 
-	m_pDisparity = (uint16_t*)malloc( m_iFBAlgoWidth * m_iFBAlgoHeight * 2 );
-
-	for ( int side = 0; side < 2; side++ )
-	{
-		m_pFBSides[side] = (uint8_t*)malloc( (m_iFBAlgoWidth+ NUM_DISP)* m_iFBAlgoHeight * 1 );
-		m_pFBSidesColor[side] = (uint32_t*)malloc( m_iFBAlgoWidth * m_iFBAlgoHeight * 4 );
-	}
-
-	m_pColorOut = (uint32_t*) calloc( m_iFBAlgoWidth * m_iFBAlgoHeight, sizeof( uint32_t ) );
-	m_pColorOut2 = (uint32_t*) calloc( m_iFBSideWidth * m_iFBSideHeight, sizeof( uint32_t ) );
-
   m_iTexture = rhi()->newTexture2D(m_iFBSideWidth, m_iFBSideHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
   m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R16));
   m_leftGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
@@ -366,6 +358,7 @@ bool OpenCVProcess::OpenCVAppStart()
 	m_depths.resize( m_iFBAlgoHeight  * m_iFBAlgoWidth );
 
 	//Set up what matrices we can to prevent dynamic memory allocation.
+	mdisparity = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S );
 	mdisparity_expanded = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_16S );
 
 
@@ -483,8 +476,8 @@ void OpenCVProcess::Prerender()
 			m_iFramesSinceFPS = 0;			
 		}
 
-    rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, m_pColorOut2); //If you want to debug m_pColorOut, you can select that here.
-    rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeUShort1N, m_pDisparity);
+    rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
+    rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeUShort1N, mdisparity.data);
     rhi()->loadTextureData(m_leftGray, kVertexElementTypeUByte1N, resizedLeftGray.data);
     rhi()->loadTextureData(m_rightGray, kVertexElementTypeUByte1N, resizedRightGray.data);
 
@@ -612,8 +605,8 @@ void OpenCVProcess::BlurDepths()
 	{
 		for ( unsigned x = 0; x < m_iFBAlgoWidth; x++ )
 		{
+      uint16_t pxi = mdisparity.at<uint16_t>(y,x);
 			int idx = (y * m_iFBAlgoWidth) + x;
-			uint16_t pxi = m_pDisparity[idx];
 			if ( pxi == 0 || pxi >= m_iFBAlgoWidth * 16 )
 			{
 				//If we don't know the depth, then we just discard it.  We could handle that here.  Additionally,
@@ -667,21 +660,21 @@ void OpenCVProcess::BlurDepths()
 			if ( x < 1 || x >= m_iFBAlgoWidth - 1 )
 			{
 				//Must throw out edges.
-				m_pDisparity[idx] = 0xfff0;
+        mdisparity.at<uint16_t>(y,x) = 0xfff0;
 				continue;
 			}
-			uint16_t pxi = m_pDisparity[idx];
+			uint16_t pxi = mdisparity.at<uint16_t>(y,x);
 			if ( pxi == 0 || pxi >= m_iFBAlgoWidth * 16 )
 			{
 				if ( m_valids[idx] < .00005 )
 				{
 					m_valids[idx] = 0;
 					m_depths[idx] = 0;
-					m_pDisparity[idx] = 0xfff0;
+          mdisparity.at<uint16_t>(y,x) = 0xfff0;
 				}
 				else
 				{
-					m_pDisparity[idx] = (uint16_t)(m_depths[idx] / m_valids[idx]);
+					mdisparity.at<uint16_t>(y,x) = (uint16_t)(m_depths[idx] / m_valids[idx]);
 				}
 			}
 			m_valids[idx] *= .9f;
@@ -717,21 +710,14 @@ void OpenCVProcess::OpenCVAppUpdate()
 
   }
 
-	// origStereoPair = cv::Mat( m_iFBSideHeight, m_iFBSideWidth * 2, CV_8UC4, m_pFrameBuffer );
 	origLeft  = m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]);
 	origRight = m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]);
 
 	cv::remap( origLeft, rectLeft, m_leftMap1, m_leftMap2, CV_INTER_LINEAR, cv::BORDER_CONSTANT );
 	cv::remap( origRight, rectRight, m_rightMap1, m_rightMap2, CV_INTER_LINEAR, cv::BORDER_CONSTANT );
 
-	resizedLeft = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4, m_pFBSidesColor[0] );
-	resizedRight = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4, m_pFBSidesColor[1] );
 	cv::resize( rectLeft, resizedLeft, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ) );
 	cv::resize( rectRight, resizedRight, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ) );
-
-	resizedLeftGray = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U, m_pFBSides[0] );
-	resizedRightGray = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U, m_pFBSides[1] );
-	mdisparity = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S, m_pDisparity );
 
 	ConvertToGray( resizedLeft, resizedLeftGray );
 	ConvertToGray( resizedRight, resizedRightGray );
@@ -758,21 +744,6 @@ void OpenCVProcess::OpenCVAppUpdate()
 	static int rframe;
 	//For frame decimation
 	//rframe++;	if ( rframe == 10 ) rframe = 0;
-
-	if ( rframe == 0 )
-	{
-		int x, y;
-		for ( y = 0; y < (int)m_iFBSideHeight; y++ )
-		{
-			uint32_t * pdsp = &((uint32_t*)rectLeft.data)[y*m_iFBSideWidth];
-			uint32_t * outlines = &m_pColorOut2[y*m_iFBSideWidth];
-			for ( x = 0; x < (int)m_iFBSideWidth; x++ )
-			{
-				outlines[x] = pdsp[x];// ((*(uint32_t*)(&pxdl[x * 4 + 0])) & 0xff) | ((*(uint32_t*)(&pxdr[x * 4 + 0])) & 0xff00);
-			}
-		}
-	}
-	PROFILE( "[OP] Outlines update" )
 
 #if 0
 	//Potentially emit dots.
@@ -838,16 +809,16 @@ void OpenCVProcess::OpenCVAppUpdate()
 		uint32_t x, y;
 		for ( y = 0; y < m_iFBAlgoHeight; y++ )
 		{
-			uint16_t * pxin = &m_pDisparity[y*m_iFBAlgoWidth];
-			uint32_t * pxout = &m_pColorOut[y*m_iFBAlgoWidth];
+			// uint16_t * pxin = &m_pDisparity[y*m_iFBAlgoWidth];
 			for ( x = IGNORE_EDGE_DATA_PIXELS; x < m_iFBAlgoWidth - IGNORE_EDGE_DATA_PIXELS; x++ )
 			{
-				uint32_t pxo = pxin[x];
+        uint16_t pxo = mdisparity.at<uint16_t>(y, x);
+				// uint32_t pxo = pxin[x];
 				int idx = y * m_iFBAlgoWidth + x;
 
 				if ( pxo >= 0xfff0 )
 				{
-					pxo = 0x202020;// (x > m_iFBAlgoWidth / 2) ? 0 : 129;
+					pxo = 0x2020;// (x > m_iFBAlgoWidth / 2) ? 0 : 129;
 					m_geoDepthMapPositions[idx * 4 + 0] = fNAN;
 					m_geoDepthMapPositions[idx * 4 + 1] = fNAN;
 					m_geoDepthMapPositions[idx * 4 + 2] = fNAN;
@@ -859,17 +830,11 @@ void OpenCVProcess::OpenCVAppUpdate()
 					if ( 1 )
 					{
 						//Update depth geometry.
-						Vector4 Worldspace = TransformToWorldSpace( (float)x, (float)y, pxin[x] );
+						Vector4 Worldspace = TransformToWorldSpace( (float)x, (float)y, mdisparity.at<uint16_t>(y,x) );
 						m_geoDepthMapPositions[idx * 4 + 0] = Worldspace[0];
 						m_geoDepthMapPositions[idx * 4 + 1] = Worldspace[1];
 						m_geoDepthMapPositions[idx * 4 + 2] = Worldspace[2];
 						m_geoDepthMapPositions[idx * 4 + 3] = m_valids[idx];
-					}
-
-					//OPTIONAL: Write the color buffer out.
-					if ( 1 )
-					{
-						pxout[x] = pxin[x];
 					}
 				}
 			}
