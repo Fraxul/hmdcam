@@ -286,20 +286,37 @@ int main(int argc, char** argv) {
 
         }
 
-        cvProcess->m_didChangeSettings |= ImGui::RadioButton("SGBM", &cvProcess->m_algorithm, 0);
-        cvProcess->m_didChangeSettings |= ImGui::RadioButton("BM", &cvProcess->m_algorithm, 1);
-        //cvProcess->m_didChangeSettings |= ImGui::RadioButton("BP", &cvProcess->m_algorithm, 1);
+        cvProcess->m_didChangeSettings |= ImGui::RadioButton("BM", &cvProcess->m_algorithm, 0);
+        cvProcess->m_didChangeSettings |= ImGui::RadioButton("BeliefPropagation", &cvProcess->m_algorithm, 1);
+        cvProcess->m_didChangeSettings |= ImGui::RadioButton("ConstantSpaceBeliefPropagation", &cvProcess->m_algorithm, 2);
+        cvProcess->m_didChangeSettings |= ImGui::RadioButton("SGM", &cvProcess->m_algorithm, 3);
 
-        cvProcess->m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &cvProcess->m_blockSize, /*step=*/2);
+        switch (cvProcess->m_algorithm) {
+          case 0: // StereoBM
+            cvProcess->m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &cvProcess->m_sbmBlockSize, /*step=*/2);
+            break;
+          case 2: // StereoConstantSpaceBP
+            cvProcess->m_didChangeSettings |= ImGui::SliderInt("nr_plane", &cvProcess->m_scsbpNrPlane, 1, 16);
+            // fallthrough for shared parameters
+          case 1: // StereoBeliefPropagation
+            cvProcess->m_didChangeSettings |= ImGui::SliderInt("SBP Iterations", &cvProcess->m_sbpIterations, 1, 8);
+            cvProcess->m_didChangeSettings |= ImGui::SliderInt("SBP Levels", &cvProcess->m_sbpLevels, 1, 8);
+            break;
+          case 3: // StereoSGM
+            cvProcess->m_didChangeSettings |= ImGui::SliderInt("SGM P1", &cvProcess->m_sgmP1, 1, 255);
+            cvProcess->m_didChangeSettings |= ImGui::SliderInt("SGM P2", &cvProcess->m_sgmP2, 1, 255);
+            cvProcess->m_didChangeSettings |= ImGui::SliderInt("SGM Uniqueness Ratio", &cvProcess->m_sgmUniquenessRatio, 5, 15);
+            break;
+        };
 
-        if (cvProcess->m_algorithm == 0) {
-          cvProcess->m_didChangeSettings |= ImGui::SliderInt("preFilterCap", &cvProcess->m_preFilterCap, 0, 15);
-          cvProcess->m_didChangeSettings |= ImGui::SliderInt("uniquenessRatio", &cvProcess->m_uniquenessRatio, 5, 15);
-          cvProcess->m_didChangeSettings |= ImGui::SliderInt("speckleWindowSize", &cvProcess->m_speckleWindowSize, 50, 200);
-          cvProcess->m_didChangeSettings |= ImGui::SliderInt("speckleRange", &cvProcess->m_speckleRange, 0, 3);
+        cvProcess->m_didChangeSettings |= ImGui::Checkbox("Disparity filter (GPU)", &cvProcess->m_useDisparityFilter);
+
+        if (cvProcess->m_useDisparityFilter) {
+          cvProcess->m_didChangeSettings |= ImGui::SliderInt("Filter Radius (odd)", &cvProcess->m_disparityFilterRadius, 1, 9);
+          cvProcess->m_didChangeSettings |= ImGui::SliderInt("Filter Iterations", &cvProcess->m_disparityFilterIterations, 1, 8);
         }
 
-        ImGui::Checkbox("Depth blur", &cvProcess->m_useDepthBlur);
+        ImGui::Checkbox("Depth blur (CPU)", &cvProcess->m_useDepthBlur);
 
         ImGui::Text("Proc Frames: %d", cvProcess->m_iProcFrames);
         if (ImGui::Button("Req SCreenshot"))

@@ -7,6 +7,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudawarping.hpp>
+#include <opencv2/cudastereo.hpp>
 #include <time.h>
 #include <sys/time.h>
 #include <thread>
@@ -15,7 +16,7 @@
 
 #include "stb/stb_image_write.h"
 
-#define NUM_DISP 128 //Max disparity.
+#define NUM_DISP 128 //Max disparity. Must be in {64, 128, 256} for CUDA algorithms.
 
 inline double * CoPTr( const std::initializer_list<double>& d ) { return (double*)d.begin(); }
 #define DO_FISHEYE 1
@@ -63,7 +64,8 @@ OpenCVProcess::OpenCVProcess(CameraSystem* cs, RDMACameraProvider* cp, size_t vi
 	, m_pthread( 0 )
 	, m_bQuitThread( false )
 	, m_bScreenshotNext( 0 )
-  , m_useDepthBlur(true)
+  , m_useDepthBlur(false)
+  , m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING)
 {
 	fNAN = nanf( "" );
 
@@ -80,12 +82,25 @@ OpenCVProcess::OpenCVProcess(CameraSystem* cs, RDMACameraProvider* cp, size_t vi
 */
 
   m_didChangeSettings = false;
-  m_algorithm = 1;
-  m_blockSize = 15;
-  m_preFilterCap = 4;
-  m_uniquenessRatio = 5;
-  m_speckleWindowSize = 200;
-  m_speckleRange = 1;
+  m_algorithm = 2;
+  m_useDisparityFilter = true;
+  m_disparityFilterRadius = 3;
+  m_disparityFilterIterations = 1;
+
+  // cuda::StereoBM
+  m_sbmBlockSize = 19; // must be odd
+
+  // cuda::StereoBeliefPropagation
+  m_sbpIterations = 5;
+  m_sbpLevels = 5;
+
+  // cuda::StereoConstantSpaceBP
+  m_scsbpNrPlane = 4;
+
+  // cuda::StereoSGM
+  m_sgmP1 = 10;
+  m_sgmP2 = 120;
+  m_sgmUniquenessRatio = 5; // 5-15
 
 
 }
@@ -176,11 +191,8 @@ bool OpenCVProcess::OpenCVAppStart()
   resizedEqualizedLeftGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
   resizedEqualizedRightGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
 
-  resizedLeftGray = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
-  resizedRightGray = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
-
 	mdisparity = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S );
-	mdisparity_expanded = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_16S );
+	mdisparity_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S );
 
 
   // Set up geometry depth map data
@@ -296,7 +308,12 @@ void OpenCVProcess::Prerender()
 		}
 
     rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
-    rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeUShort1N, mdisparity.data);
+    rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeShort1N, mdisparity.data);
+
+    // TODO gpu copy, or just eliminate since this is debug info
+    cv::Mat resizedLeftGray, resizedRightGray;
+    resizedEqualizedLeftGray_gpu.download(resizedLeftGray);
+    resizedEqualizedRightGray_gpu.download(resizedRightGray);
     rhi()->loadTextureData(m_leftGray, kVertexElementTypeUByte1N, resizedLeftGray.data);
     rhi()->loadTextureData(m_rightGray, kVertexElementTypeUByte1N, resizedRightGray.data);
 
@@ -390,6 +407,7 @@ void OpenCVProcess::ConvertToGray( cv::InputArray src, cv::OutputArray dst )
 Vector4 OpenCVProcess::TransformToLocalSpace( float x, float y, int disp )
 {
 	float fDisp = ( float ) disp / 16.f; //  16-bit fixed-point disparity map (where each disparity value has 4 fractional bits)
+
 	float lz = m_Q[11] * m_CameraDistanceMeters / ( fDisp * MOGRIFY_X );
 	float ly = -(y * MOGRIFY_Y + m_Q[7]) / m_Q[11];
 	float lx = (x * MOGRIFY_X + m_Q[3]) / m_Q[11];
@@ -422,9 +440,9 @@ void OpenCVProcess::BlurDepths()
 	{
 		for ( unsigned x = 0; x < m_iFBAlgoWidth; x++ )
 		{
-      uint16_t pxi = mdisparity.at<uint16_t>(y,x);
+      int16_t pxi = mdisparity.at<int16_t>(y,x);
 			int idx = (y * m_iFBAlgoWidth) + x;
-			if ( pxi == 0 || pxi >= m_iFBAlgoWidth * 16 )
+			if ( pxi <= 0 || pxi >= m_iFBAlgoWidth * 16 )
 			{
 				//If we don't know the depth, then we just discard it.  We could handle that here.  Additionally,
 				//if we wanted, we could emit fake dots where we believe the floor to be.
@@ -505,59 +523,78 @@ void OpenCVProcess::OpenCVAppUpdate()
 	double Start = OGGetAbsoluteTime();
 
   if ((!m_stereo) || m_didChangeSettings) {
-    m_blockSize |= 1; // enforce odd blockSize
+    m_sbmBlockSize |= 1; // enforce odd blockSize
+    m_disparityFilterRadius |= 1; // enforce odd filter size
 
     switch (m_algorithm) {
       default:
         m_algorithm = 0;
       case 0:
-        m_stereo = cv::StereoSGBM::create(0, NUM_DISP, m_blockSize,
-          0, 0, 0,
-          m_preFilterCap, m_uniquenessRatio,
-          m_speckleWindowSize, m_speckleRange,
-          cv::StereoSGBM::MODE_SGBM );
+        // uses CV_8UC1 disparity
+        m_stereo = cv::cuda::createStereoBM(NUM_DISP, m_sbmBlockSize);
         break;
-      case 1: {
-        m_stereo = cv::StereoBM::create(NUM_DISP, m_blockSize);
+      case 1:
+        m_stereo = cv::cuda::createStereoBeliefPropagation(NUM_DISP, m_sbpIterations, m_sbpLevels);
+        break;
+      case 2: {
+        if (m_sbpLevels > 4) // more than 4 levels seems to trigger an internal crash
+          m_sbpLevels = 4;
+        m_stereo = cv::cuda::createStereoConstantSpaceBP(NUM_DISP, m_sbpIterations, m_sbpLevels, m_scsbpNrPlane);
       } break;
-
+      case 3:
+        m_stereo = cv::cuda::createStereoSGM(0, NUM_DISP, m_sgmP1, m_sgmP2, m_sgmUniquenessRatio, cv::cuda::StereoSGM::MODE_HH4);
+        break;
     };
-    
 
-
+    if (m_useDisparityFilter) {
+      m_disparityFilter = cv::cuda::createDisparityBilateralFilter(NUM_DISP, m_disparityFilterRadius, m_disparityFilterIterations);
+    }
   }
 
-	origLeft_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]));
-	origRight_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]));
+	origLeft_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]), m_leftStream);
+	origRight_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]), m_rightStream);
 
-	cv::cuda::remap( origLeft_gpu, rectLeft_gpu, m_leftMap1_gpu, m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT );
-	cv::cuda::remap( origRight_gpu, rectRight_gpu, m_rightMap1_gpu, m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT );
-  rectLeft_gpu.download(rectLeft);
+	cv::cuda::remap( origLeft_gpu, rectLeft_gpu, m_leftMap1_gpu, m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_leftStream);
+	cv::cuda::remap( origRight_gpu, rectRight_gpu, m_rightMap1_gpu, m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_rightStream);
+  rectLeft_gpu.download(rectLeft, m_leftStream);
 
-	cv::cuda::resize( rectLeft_gpu, resizedLeft_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ) );
-	cv::cuda::resize( rectRight_gpu, resizedRight_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ) );
+	cv::cuda::resize( rectLeft_gpu, resizedLeft_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ), 0, 0, cv::INTER_LINEAR, m_leftStream);
+	cv::cuda::resize( rectRight_gpu, resizedRight_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ), 0, 0, cv::INTER_LINEAR, m_rightStream);
 
-  cv::cuda::cvtColor( resizedLeft_gpu, resizedLeftGray_gpu, cv::COLOR_BGRA2GRAY );
-  cv::cuda::cvtColor( resizedRight_gpu, resizedRightGray_gpu, cv::COLOR_BGRA2GRAY );
+  cv::cuda::cvtColor( resizedLeft_gpu, resizedLeftGray_gpu, cv::COLOR_BGRA2GRAY, 0, m_leftStream);
+  cv::cuda::cvtColor( resizedRight_gpu, resizedRightGray_gpu, cv::COLOR_BGRA2GRAY, 0, m_rightStream);
 
-  cv::cuda::equalizeHist(resizedLeftGray_gpu, resizedEqualizedLeftGray_gpu);
-  cv::cuda::equalizeHist(resizedRightGray_gpu, resizedEqualizedRightGray_gpu);
+  cv::cuda::equalizeHist(resizedLeftGray_gpu, resizedEqualizedLeftGray_gpu, m_leftStream);
+  cv::cuda::equalizeHist(resizedRightGray_gpu, resizedEqualizedRightGray_gpu, m_rightStream);
 
-  resizedEqualizedLeftGray_gpu.download(resizedLeftGray);
-  resizedEqualizedRightGray_gpu.download(resizedRightGray);
+  m_leftRightJoinEvent.record(m_rightStream);
+  m_leftStream.waitEvent(m_leftRightJoinEvent);
+  m_leftStream.waitForCompletion();
 
 	//ConvertToGray( resizedLeft, resizedLeftGray );
 	//ConvertToGray( resizedRight, resizedRightGray );
 	PROFILE( "[OP] Setup" )
 
 	{
-		m_stereo->compute( resizedLeftGray, resizedRightGray, mdisparity_expanded );
+		m_stereo->compute( resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu );
 
-		for (uint32_t y = 0; y < m_iFBAlgoHeight; y++) {
-			uchar* indata = mdisparity_expanded.ptr(y);
-			uchar* outdata = mdisparity.ptr(y);
-      memcpy(outdata, indata, sizeof(uint16_t) * m_iFBAlgoWidth);
-		}
+    if (m_useDisparityFilter) {
+      m_disparityFilter->apply(mdisparity_gpu, resizedLeftGray_gpu, mdisparity_filtered_gpu);
+      mdisparity_gpu.swap(mdisparity_filtered_gpu);
+    }
+
+    if (m_algorithm == 0) {
+      // Match type for switching between cuda::StereoBM (8UC1) and everything else (16UC1)
+      mdisparity_8uc1.create(mdisparity_gpu.rows, mdisparity_gpu.cols, mdisparity_gpu.type());
+      mdisparity_gpu.download(mdisparity_8uc1);
+      for (size_t y = 0; y < mdisparity_8uc1.rows; ++y) {
+        for (size_t x = 0; x < mdisparity_8uc1.cols; ++x) {
+          mdisparity.at<uint16_t>(y,x) = mdisparity_8uc1.at<uint8_t>(y,x);
+        }
+      }
+    } else {
+      mdisparity_gpu.download(mdisparity);
+    }
 	}
 
 	if ( m_bScreenshotNext )
@@ -650,6 +687,11 @@ void OpenCVProcess::TakeScreenshot( )
 	std::string nowstr = timebuffer;
   cv::Mat rectRight;
   rectRight_gpu.download(rectRight);
+
+  cv::Mat resizedLeftGray, resizedRightGray;
+  resizedEqualizedLeftGray_gpu.download(resizedLeftGray);
+  resizedEqualizedRightGray_gpu.download(resizedRightGray);
+
 
 	//Make the alpha channel of the RGB maps solid.
 	int sidepix = m_iFBSideWidth * m_iFBSideHeight;

@@ -5,6 +5,7 @@
 #include "opencv2/core/affine.hpp"
 #include <opencv2/core/cuda.hpp>
 #include "opencv2/calib3d.hpp"
+#include <opencv2/cudastereo.hpp>
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
 #include <thread>
@@ -36,6 +37,7 @@ public:
 	cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
 	Matrix4 m_R1, m_R1inv, m_Q, m_Qinv;
 	cv::Ptr< cv::StereoMatcher > m_stereo;
+  cv::Ptr<cv::cuda::DisparityBilateralFilter> m_disparityFilter;
 
 	CameraSystem* m_cameraSystem;
   size_t m_viewIdx;
@@ -83,12 +85,24 @@ public:
   // Algorithm settings. Only committed on m_didChangeSettings = true.
   bool m_didChangeSettings;
   int m_algorithm;
-  int m_blockSize;
-  int m_preFilterCap;
-  int m_uniquenessRatio;
-  int m_speckleWindowSize;
-  int m_speckleRange;
+  bool m_useDisparityFilter;
+  int m_disparityFilterRadius;
+  int m_disparityFilterIterations;
 
+  // cuda::StereoBM
+  int m_sbmBlockSize;
+
+  // cuda::StereoBeliefPropagation
+  int m_sbpIterations;
+  int m_sbpLevels;
+
+  // cuda::StereoConstantSpaceBP (shares parameters with StereoBeliefPropagation)
+  int m_scsbpNrPlane;
+
+  // cuda::StereoSGM
+  int m_sgmP1;
+  int m_sgmP2;
+  int m_sgmUniquenessRatio;
 
   bool m_useDepthBlur;
 
@@ -105,9 +119,11 @@ public:
 	cv::cuda::GpuMat resizedEqualizedLeftGray_gpu;
 	cv::cuda::GpuMat resizedEqualizedRightGray_gpu;
 
-
-	cv::Mat resizedLeftGray;
-	cv::Mat resizedRightGray;
+	cv::cuda::GpuMat mdisparity_gpu;
+	cv::cuda::GpuMat mdisparity_filtered_gpu;
+	cv::Mat mdisparity_8uc1; // for StereoBM only
 	cv::Mat mdisparity;
-	cv::Mat mdisparity_expanded;
+
+  cv::cuda::Stream m_leftStream, m_rightStream;
+  cv::cuda::Event m_leftRightJoinEvent;
 };
