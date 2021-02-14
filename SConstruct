@@ -15,10 +15,10 @@ else:
   # Reduced environment for non-tegra
   # TODO CUDA path
   env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
-    CPPPATH=['/usr/include/opencv4'],
-    LIBPATH=[],
-    CUDA_SDK_PATH='/usr',
-    CUDA_TOOLKIT_PATH='/usr'
+    CPPPATH=['/usr/local/include/opencv4', '/usr/local/cuda/include'],
+    LIBPATH=['/usr/local/lib', '/usr/local/cuda/lib64'],
+    CUDA_SDK_PATH='/usr/local/cuda',
+    CUDA_TOOLKIT_PATH='/usr/local/cuda'
   )
 
 # Common env

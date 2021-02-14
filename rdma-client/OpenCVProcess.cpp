@@ -5,6 +5,8 @@
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/cudaimgproc.hpp>
+#include <opencv2/cudawarping.hpp>
 #include <time.h>
 #include <sys/time.h>
 #include <thread>
@@ -113,8 +115,14 @@ bool OpenCVProcess::OpenCVAppStart()
   // cv::initUndistortRectifyMap( K1, D1, R1, P1, cv::Size( 960, 960 ), CV_16SC2, m_leftMap1, m_leftMap2 );
   cv::Size imageSize = cv::Size(m_cameraProvider->streamWidth(), m_cameraProvider->streamHeight());
 #if 1
-  cv::initUndistortRectifyMap(cL.intrinsicMatrix, cL.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_16SC2, m_leftMap1, m_leftMap2);
-  cv::initUndistortRectifyMap(cR.intrinsicMatrix, cR.distCoeffs, v.stereoRectification[1], v.stereoProjection[1], imageSize, CV_16SC2, m_rightMap1, m_rightMap2);
+  {
+    cv::Mat m1, m2;
+    cv::initUndistortRectifyMap(cL.intrinsicMatrix, cL.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_32F, m1, m2);
+    m_leftMap1_gpu.upload(m1); m_leftMap2_gpu.upload(m2);
+    cv::initUndistortRectifyMap(cR.intrinsicMatrix, cR.distCoeffs, v.stereoRectification[1], v.stereoProjection[1], imageSize, CV_32F, m1, m2);
+    m_rightMap1_gpu.upload(m1); m_rightMap2_gpu.upload(m2);
+    
+  }
 	m_R1 = Matrix4FromCVMatrix( v.stereoRectification[0] );
 	m_R1inv = m_R1;
 	m_R1inv = m_R1inv.invert();
@@ -149,7 +157,28 @@ bool OpenCVProcess::OpenCVAppStart()
 	m_valids.assign( m_valids.size(), 1 );
 	m_depths.resize( m_iFBAlgoHeight  * m_iFBAlgoWidth );
 
-	//Set up what matrices we can to prevent dynamic memory allocation.
+  //Set up what matrices we can to prevent dynamic memory allocation.
+
+  origLeft_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
+  origRight_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
+
+  rectLeft = cv::Mat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
+
+  rectLeft_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
+  rectRight_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
+
+  resizedLeft_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
+  resizedRight_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
+
+  resizedLeftGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+  resizedRightGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+
+  resizedEqualizedLeftGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+  resizedEqualizedRightGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+
+  resizedLeftGray = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+  resizedRightGray = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+
 	mdisparity = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S );
 	mdisparity_expanded = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_16S );
 
@@ -334,8 +363,6 @@ void OpenCVProcess::ConvertToGray( cv::InputArray src, cv::OutputArray dst )
 	//You can do this the OpenCV way, but my alternative transform seems more successful.
 	if ( 1 )
 	{
-		cv::cvtColor( src, dst, cv::COLOR_BGR2GRAY );
-    cv::equalizeHist(dst, dst);
 	}
 	else
 	{
@@ -500,17 +527,27 @@ void OpenCVProcess::OpenCVAppUpdate()
 
   }
 
-	origLeft  = m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]);
-	origRight = m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]);
+	origLeft_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]));
+	origRight_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]));
 
-	cv::remap( origLeft, rectLeft, m_leftMap1, m_leftMap2, CV_INTER_LINEAR, cv::BORDER_CONSTANT );
-	cv::remap( origRight, rectRight, m_rightMap1, m_rightMap2, CV_INTER_LINEAR, cv::BORDER_CONSTANT );
+	cv::cuda::remap( origLeft_gpu, rectLeft_gpu, m_leftMap1_gpu, m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT );
+	cv::cuda::remap( origRight_gpu, rectRight_gpu, m_rightMap1_gpu, m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT );
+  rectLeft_gpu.download(rectLeft);
 
-	cv::resize( rectLeft, resizedLeft, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ) );
-	cv::resize( rectRight, resizedRight, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ) );
+	cv::cuda::resize( rectLeft_gpu, resizedLeft_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ) );
+	cv::cuda::resize( rectRight_gpu, resizedRight_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ) );
 
-	ConvertToGray( resizedLeft, resizedLeftGray );
-	ConvertToGray( resizedRight, resizedRightGray );
+  cv::cuda::cvtColor( resizedLeft_gpu, resizedLeftGray_gpu, cv::COLOR_BGRA2GRAY );
+  cv::cuda::cvtColor( resizedRight_gpu, resizedRightGray_gpu, cv::COLOR_BGRA2GRAY );
+
+  cv::cuda::equalizeHist(resizedLeftGray_gpu, resizedEqualizedLeftGray_gpu);
+  cv::cuda::equalizeHist(resizedRightGray_gpu, resizedEqualizedRightGray_gpu);
+
+  resizedEqualizedLeftGray_gpu.download(resizedLeftGray);
+  resizedEqualizedRightGray_gpu.download(resizedRightGray);
+
+	//ConvertToGray( resizedLeft, resizedLeftGray );
+	//ConvertToGray( resizedRight, resizedRightGray );
 	PROFILE( "[OP] Setup" )
 
 	{
@@ -611,6 +648,8 @@ void OpenCVProcess::TakeScreenshot( )
 	char timebuffer[128];
 	std::strftime( timebuffer, sizeof( timebuffer ), "%Y%m%d %H%M%S", &timeinfo );
 	std::string nowstr = timebuffer;
+  cv::Mat rectRight;
+  rectRight_gpu.download(rectRight);
 
 	//Make the alpha channel of the RGB maps solid.
 	int sidepix = m_iFBSideWidth * m_iFBSideHeight;

@@ -3,6 +3,7 @@
 #include "opencv2/core.hpp"
 #include "opencv2/features2d.hpp"
 #include "opencv2/core/affine.hpp"
+#include <opencv2/core/cuda.hpp>
 #include "opencv2/calib3d.hpp"
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
@@ -32,7 +33,7 @@ public:
 	// vr::TrackedCameraHandle_t m_pCamera;
 
 	// vr::HmdMatrix34_t  m_headFromCamera[2];
-	cv::Mat m_leftMap1, m_leftMap2, m_rightMap1, m_rightMap2;
+	cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
 	Matrix4 m_R1, m_R1inv, m_Q, m_Qinv;
 	cv::Ptr< cv::StereoMatcher > m_stereo;
 
@@ -92,14 +93,21 @@ public:
   bool m_useDepthBlur;
 
 	//Matrices used in the stereo computation.
-	cv::Mat origLeft;
-	cv::Mat origRight;
+	cv::cuda::GpuMat origLeft_gpu;
+	cv::cuda::GpuMat origRight_gpu;
 	cv::Mat rectLeft;
-	cv::Mat rectRight;
+	cv::cuda::GpuMat rectLeft_gpu;
+	cv::cuda::GpuMat rectRight_gpu;
+	cv::cuda::GpuMat resizedLeft_gpu;
+	cv::cuda::GpuMat resizedRight_gpu;
+	cv::cuda::GpuMat resizedLeftGray_gpu;
+	cv::cuda::GpuMat resizedRightGray_gpu;
+	cv::cuda::GpuMat resizedEqualizedLeftGray_gpu;
+	cv::cuda::GpuMat resizedEqualizedRightGray_gpu;
+
+
 	cv::Mat resizedLeftGray;
 	cv::Mat resizedRightGray;
-	cv::Mat resizedLeft;
-	cv::Mat resizedRight;
 	cv::Mat mdisparity;
 	cv::Mat mdisparity_expanded;
 };
