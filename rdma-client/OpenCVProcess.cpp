@@ -1,3 +1,4 @@
+#include "imgui.h"
 #include "OpenCVProcess.h"
 #include "common/CameraSystem.h"
 #include "RDMACameraProvider.h"
@@ -23,7 +24,7 @@ inline double * CoPTr( const std::initializer_list<double>& d ) { return (double
 
 #define DO_PROFILE 1
 #if DO_PROFILE
-#define PROFILE( x ) { double Now = OGGetAbsoluteTime(); printf("\x1b[2K%27s: %.3fms\n", x, (Now-Start)*1000.0); Start = Now; }
+#define PROFILE( x ) { double Now = OGGetAbsoluteTime(); ImGui::TextUnformatted(x); ImGui::NextColumn(); ImGui::Text("%.3fms", (Now-Start)*1000.0); ImGui::NextColumn(); Start = Now; }
 #else
 #define PROFILE( x )
 #endif
@@ -59,27 +60,11 @@ OpenCVProcess::OpenCVProcess(CameraSystem* cs, RDMACameraProvider* cp, size_t vi
 	, m_iProcFrames( 0 )
 	, m_iFramesSinceFPS( 0 )
 	, m_dTimeOfLastFPS( 0 ) 
-	, m_iHasFrameForUpdate( 0 )
-	, m_iDoneFrameOutput( 0 )
-	, m_pthread( 0 )
-	, m_bQuitThread( false )
-	, m_bScreenshotNext( 0 )
   , m_useDepthBlur(false)
   , m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING)
 {
 	fNAN = nanf( "" );
 
-
-/*
-		else if ( m_iCurrentStereoAlgorithm == 2 )
-		{
-			m_stereo = cv::StereoSGBM::create( 0, NUM_DISP, 15,
-				0, 0, 0,
-				4, 5,
-				200, 1,
-				cv::StereoSGBM::MODE_SGBM );
-		}
-*/
 
   m_didChangeSettings = false;
   m_algorithm = 2;
@@ -107,11 +92,6 @@ OpenCVProcess::OpenCVProcess(CameraSystem* cs, RDMACameraProvider* cp, size_t vi
 
 OpenCVProcess::~OpenCVProcess()
 {
-	m_bQuitThread = true;
-	if ( m_pthread )
-	{
-		m_pthread->join();
-	}
 }
 
 bool OpenCVProcess::OpenCVAppStart()
@@ -270,109 +250,7 @@ bool OpenCVProcess::OpenCVAppStart()
     }
 	}
 
-  // Start background processing thread
-	m_pthread = new std::thread( &OpenCVProcess::Thread, this );
-
   return true;
-}
-
-void OpenCVProcess::Thread()
-{
-	while ( !m_bQuitThread )
-	{
-		if ( m_iHasFrameForUpdate == 2 )
-		{
-      OpenCVAppUpdate();
-			m_iHasFrameForUpdate = 0;
-		}
-		OGUSleep( 1000 );
-	}
-}
-
-void OpenCVProcess::Prerender()
-{
-	if ( m_iDoneFrameOutput )
-	{
-		m_iProcFrames++;
-		m_iFramesSinceFPS++;
-
-		double Start = OGGetAbsoluteTime();
-		if ( Start >= m_dTimeOfLastFPS + 1 )
-		{
-			if ( Start - m_dTimeOfLastFPS < 4 )
-				m_dTimeOfLastFPS++;
-			else
-				m_dTimeOfLastFPS = Start;
-			m_iFPS = m_iFramesSinceFPS;
-			m_iFramesSinceFPS = 0;			
-		}
-
-    rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
-    rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeShort1N, mdisparity.data);
-
-    // TODO gpu copy, or just eliminate since this is debug info
-    cv::Mat resizedLeftGray, resizedRightGray;
-    resizedEqualizedLeftGray_gpu.download(resizedLeftGray);
-    resizedEqualizedRightGray_gpu.download(resizedRightGray);
-    rhi()->loadTextureData(m_leftGray, kVertexElementTypeUByte1N, resizedLeftGray.data);
-    rhi()->loadTextureData(m_rightGray, kVertexElementTypeUByte1N, resizedRightGray.data);
-
-		PROFILE( "[GL] Updating output texture" )
-    rhi()->loadBufferData(m_geoDepthMapPositionBuffer, m_geoDepthMapPositions.data(), 0, m_geoDepthMapPositions.size() * sizeof(float));
-		PROFILE( "[GL] Updating output verts" )
-		m_iDoneFrameOutput = 0;
-	}
-
-	if ( m_iHasFrameForUpdate == 1 )
-	{
-#if 0 // OLD readback
-		double Start = OGGetAbsoluteTime();
-		glBindBuffer( GL_PIXEL_PACK_BUFFER, m_iPBOids[0] );
-		m_pFrameBuffer = (GLubyte*)glMapBuffer( GL_PIXEL_PACK_BUFFER, GL_READ_ONLY );
-		glBindBuffer( GL_PIXEL_PACK_BUFFER, 0 );
-		PROFILE( "[GL] Readback" )
-#endif
-		m_iHasFrameForUpdate = 2;
-	}
-
-	if ( m_iHasFrameForUpdate == 0 )
-	{
-		//double Start = OGGetAbsoluteTime();
-
-#if DO_PROFILE
-		printf("\x1b[1;1f" );
-		printf("\x1b[2K\x1b[34mFrames: %5d; %3d FPS\x1b[0m\n", m_iProcFrames, m_iFPS );
-		printf("\x1b[32mGreen FG Test\x1b[0m\n" );
-		printf("\x1b[31mRed FG Test\x1b[0m\n" );
-		printf("\x1b[0m" );
-#endif
-
-#if 0 // OLD readback
-		//This uses OpenGL to read back the pixels.  It seems to be MUCH faster than the DX alternative inside SteamVR.
-		vr::EVRTrackedCameraError ce = vr::VRTrackedCamera()->GetVideoStreamTextureGL( m_pCamera, DO_FISHEYE ? vr::VRTrackedCameraFrameType_Distorted : vr::VRTrackedCameraFrameType_Undistorted, &m_iGLimback, &m_lastFrameHeader, sizeof( m_lastFrameHeader ) );
-		m_lastFrameHeaderMatrix = ConvertSteamVRMatrixToMatrix4( m_lastFrameHeader.trackedDevicePose.mDeviceToAbsoluteTracking );
-
-		PROFILE( "[GL] GetVideoStreamTexture" )
-		glFinish();
-		PROFILE( "[GL] Flush" )
-
-		glBindFramebuffer( GL_FRAMEBUFFER, m_iGLfrback );
-		glFramebufferTexture( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_iGLimback, 0 );
-		glBindBuffer( GL_PIXEL_PACK_BUFFER, m_iPBOids[0] );
-		if ( m_pFrameBuffer ) glUnmapBuffer( GL_PIXEL_PACK_BUFFER );
-		glReadPixels( 0, 0, m_lastFrameHeader.nWidth, m_lastFrameHeader.nHeight, GL_RGBA, GL_UNSIGNED_BYTE, 0 );
-		glBindBuffer( GL_PIXEL_PACK_BUFFER, 0 );
-		glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-		PROFILE( "[GL] PBO read is setup." )
-#else
-		//m_lastFrameHeaderMatrix = glm::mat4(1.0f); // identity matrix; TODO actual transform
-		m_lastFrameHeaderMatrix.identity(); // identity matrix; TODO actual transform
-#endif
-
-    m_iHasFrameForUpdate = 1;
-	}
-
-
 }
 
 void OpenCVProcess::ConvertToGray( cv::InputArray src, cv::OutputArray dst )
@@ -420,11 +298,15 @@ Vector4 OpenCVProcess::TransformToLocalSpace( float x, float y, int disp )
 Vector4 OpenCVProcess::TransformToWorldSpace( float x, float y, int disp )
 {
 	Vector4 local = TransformToLocalSpace( x, y, disp );
-
+#if 0
 	Matrix4 mlefteye = m_lastFrameHeaderMatrix;
 	Vector4 placerelview( local );
 	Vector4 Worldview = mlefteye * (placerelview);
 	return Worldview;
+#else
+  // No local-to-world transform required, since we don't have a global tracking matrix.
+  return local;
+#endif
 }
 
 void OpenCVProcess::BlurDepths()
@@ -520,7 +402,27 @@ void OpenCVProcess::BlurDepths()
 
 void OpenCVProcess::OpenCVAppUpdate()
 {
+#if DO_PROFILE
+  ImGui::Begin("CV Profile");
+
+  m_iProcFrames++;
+  m_iFramesSinceFPS++;
+
 	double Start = OGGetAbsoluteTime();
+  if ( Start >= m_dTimeOfLastFPS + 1 )
+  {
+    if ( Start - m_dTimeOfLastFPS < 4 )
+      m_dTimeOfLastFPS++;
+    else
+      m_dTimeOfLastFPS = Start;
+    m_iFPS = m_iFramesSinceFPS;
+    m_iFramesSinceFPS = 0;
+  }
+  ImGui::Text("Frames: %5d; %3d FPS", m_iProcFrames, m_iFPS );
+
+  ImGui::Columns(2);
+#endif
+
 
   if ((!m_stereo) || m_didChangeSettings) {
     m_sbmBlockSize |= 1; // enforce odd blockSize
@@ -597,12 +499,6 @@ void OpenCVProcess::OpenCVAppUpdate()
     }
 	}
 
-	if ( m_bScreenshotNext )
-	{
-		TakeScreenshot();
-		m_bScreenshotNext = false;
-	}
-
 	PROFILE( "[OP] Stereo Computation")
 
 	if ( m_useDepthBlur) {
@@ -667,11 +563,26 @@ void OpenCVProcess::OpenCVAppUpdate()
 
 #endif
 
-	m_iDoneFrameOutput = 1;
-
 	PROFILE( "[OP] Process" )
 
 
+  rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
+  rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeShort1N, mdisparity.data);
+
+  // TODO gpu copy, or just eliminate since this is debug info
+  cv::Mat resizedLeftGray, resizedRightGray;
+  resizedEqualizedLeftGray_gpu.download(resizedLeftGray);
+  resizedEqualizedRightGray_gpu.download(resizedRightGray);
+  rhi()->loadTextureData(m_leftGray, kVertexElementTypeUByte1N, resizedLeftGray.data);
+  rhi()->loadTextureData(m_rightGray, kVertexElementTypeUByte1N, resizedRightGray.data);
+
+  PROFILE( "[GL] Updating output texture" )
+  rhi()->loadBufferData(m_geoDepthMapPositionBuffer, m_geoDepthMapPositions.data(), 0, m_geoDepthMapPositions.size() * sizeof(float));
+  PROFILE( "[GL] Updating output verts" )
+
+#if DO_PROFILE
+  ImGui::End();
+#endif
 }
 
 

@@ -22,8 +22,6 @@ public:
 	~OpenCVProcess();
 	bool OpenCVAppStart();
 	void OpenCVAppUpdate();
-	void Thread();
-	void Prerender();
 	void TakeScreenshot();
 
 	void ConvertToGray( cv::InputArray src, cv::OutputArray dst );
@@ -66,21 +64,13 @@ public:
   size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount;
 
 
-  int m_iNextStereoAlgorithm;
-
-  
-
 	int m_iHasFrameForUpdate;
 	int m_iDoneFrameOutput;
 
 	// vr::CameraVideoStreamFrameHeader_t m_lastFrameHeader;
-	Matrix4 m_lastFrameHeaderMatrix;
+	// Matrix4 m_lastFrameHeaderMatrix;
 	float m_CameraDistanceMeters;
-	std::thread * m_pthread;
-	bool m_bQuitThread;
 	float fNAN;
-
-	bool m_bScreenshotNext;
 
   // Algorithm settings. Only committed on m_didChangeSettings = true.
   bool m_didChangeSettings;

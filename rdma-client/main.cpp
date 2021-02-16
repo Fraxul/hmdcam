@@ -259,18 +259,18 @@ int main(int argc, char** argv) {
         }
       }
 
-      // Service RDMA context
-      rdmaContext->fireUserEvents();
-      cameraProvider->updateSurfaces();
-      cvProcess->Prerender();
-
-
       // Start the Dear ImGui frame
       ImGui_ImplOpenGL3_NewFrame();
       ImGui_ImplSDL2_NewFrame(window);
       ImGui::NewFrame();
 
       windowRenderTarget->platformSetUpdatedWindowDimensions(io.DisplaySize.x, io.DisplaySize.y);
+
+
+      // Service RDMA context
+      rdmaContext->fireUserEvents();
+      cameraProvider->updateSurfaces();
+      cvProcess->OpenCVAppUpdate();
 
       {
         ImGui::Begin("RDMA-Client");
@@ -319,9 +319,6 @@ int main(int argc, char** argv) {
         ImGui::Checkbox("Depth blur (CPU)", &cvProcess->m_useDepthBlur);
 
         ImGui::Text("Proc Frames: %d", cvProcess->m_iProcFrames);
-        if (ImGui::Button("Req SCreenshot"))
-          cvProcess->m_bScreenshotNext = true;
-
 
         ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
 
