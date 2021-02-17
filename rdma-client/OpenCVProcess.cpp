@@ -482,17 +482,33 @@ void OpenCVProcess::OpenCVAppUpdate()
 
   m_leftRightJoinEvent.record(m_rightStream);
   m_leftStream.waitEvent(m_leftRightJoinEvent);
-  m_leftStream.waitForCompletion();
+  //m_leftStream.waitForCompletion();
 
 	//ConvertToGray( resizedLeft, resizedLeftGray );
 	//ConvertToGray( resizedRight, resizedRightGray );
 	PROFILE( "[OP] Setup" )
 
 	{
-		m_stereo->compute( resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu );
+    // workaround for no common base interface between CUDA stereo remapping algorithms that can handle the CUstream parameter to compute()
+    switch (m_algorithm) {
+      case 0:
+        static_cast<cv::cuda::StereoBM*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
+        break;
+      case 1:
+        static_cast<cv::cuda::StereoBeliefPropagation*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
+        break;
+      case 2:
+        static_cast<cv::cuda::StereoConstantSpaceBP*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
+        break;
+      case 3:
+        static_cast<cv::cuda::StereoSGM*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
+        break;
+    };
+
+		//m_stereo->compute( resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu );
 
     if (m_useDisparityFilter) {
-      m_disparityFilter->apply(mdisparity_gpu, resizedLeftGray_gpu, mdisparity_filtered_gpu);
+      m_disparityFilter->apply(mdisparity_gpu, resizedLeftGray_gpu, mdisparity_filtered_gpu, m_leftStream);
       mdisparity_gpu.swap(mdisparity_filtered_gpu);
     }
 /*  XXX TODO FIX
@@ -558,14 +574,16 @@ void OpenCVProcess::OpenCVAppUpdate()
 	}
 #endif
 
-  RHICUDA::copyGpuMatToSurface(rectLeft_gpu, m_iTexture, /*CUstream*/ 0);
-  RHICUDA::copyGpuMatToSurface(mdisparity_gpu, m_disparityTexture, /*CUstream*/ 0);
+  RHICUDA::copyGpuMatToSurface(rectLeft_gpu, m_iTexture, (CUstream) m_leftStream.cudaPtr());
+  RHICUDA::copyGpuMatToSurface(mdisparity_gpu, m_disparityTexture, (CUstream) m_leftStream.cudaPtr());
 
   //rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
   //rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeShort1N, mdisparity.data);
 
-  RHICUDA::copyGpuMatToSurface(resizedEqualizedLeftGray_gpu, m_leftGray);
-  RHICUDA::copyGpuMatToSurface(resizedEqualizedRightGray_gpu, m_rightGray);
+  RHICUDA::copyGpuMatToSurface(resizedEqualizedLeftGray_gpu, m_leftGray, (CUstream) m_leftStream.cudaPtr());
+  RHICUDA::copyGpuMatToSurface(resizedEqualizedRightGray_gpu, m_rightGray, (CUstream) m_leftStream.cudaPtr());
+  m_leftStream.waitForCompletion();
+
 
 /*
   // TODO gpu copy, or just eliminate since this is debug info
