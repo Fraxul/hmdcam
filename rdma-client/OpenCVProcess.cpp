@@ -3,6 +3,7 @@
 #include "common/CameraSystem.h"
 #include "RDMACameraProvider.h"
 #include "rhi/RHI.h"
+#include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
@@ -18,6 +19,21 @@
 #include "Vectors.h"
 
 #include "stb/stb_image_write.h"
+
+
+RHIRenderPipeline::ptr disparityDepthMapPipeline;
+FxAtomicString ksMeshDisparityDepthMapUniformBlock("MeshDisparityDepthMapUniformBlock");
+static FxAtomicString ksDisparityTex("disparityTex");
+static FxAtomicString ksImageTex("imageTex");
+struct MeshDisparityDepthMapUniformBlock {
+  glm::mat4 modelViewProjection;
+  glm::mat4 R1inv;
+  float Q3, Q7, Q11;
+  float CameraDistanceMeters;
+
+  glm::vec2 mogrify;
+  float pad3, pad4;
+};
 
 #define NUM_DISP 128 //Max disparity. Must be in {64, 128, 256} for CUDA algorithms.
 
@@ -65,6 +81,12 @@ OpenCVProcess::OpenCVProcess(CameraSystem* cs, RDMACameraProvider* cp, size_t vi
   , m_useDepthBlur(false)
   , m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING)
 {
+  if (!disparityDepthMapPipeline) {
+    disparityDepthMapPipeline = rhi()->compileRenderPipeline("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
+        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
+      }), kPrimitiveTopologyTriangleStrip);
+  }
+
 	fNAN = nanf( "" );
 
 
@@ -176,35 +198,23 @@ bool OpenCVProcess::OpenCVAppStart()
 
 
   // Set up geometry depth map data
-  m_geoDepthMapPositions.resize(m_iFBAlgoWidth  * m_iFBAlgoHeight * 4);
-  m_geoDepthMapPositionBuffer = rhi()->newEmptyBuffer(m_geoDepthMapPositions.size() * sizeof(float), kBufferUsageCPUWriteOnly);
 
   // Set up geometry map texcoord and index buffers
   // (borrowed from camera_app.cpp)
 	{
     { // Texcoord and position buffers
-      std::vector<float>& depth_vc = m_geoDepthMapPositions;
       std::vector<float> depth_tc;
       int uiDepthVertCount = m_iFBAlgoWidth * m_iFBAlgoHeight;
-      depth_tc.resize( uiDepthVertCount * 2 );
-      depth_vc.resize( uiDepthVertCount * 4 );
+      depth_tc.resize( uiDepthVertCount * 4);
       for ( int y = 0; y < m_iFBAlgoHeight; y++ ) {
         for ( int x = 0; x < m_iFBAlgoWidth; x++ ) {
-          depth_tc[(x + y * m_iFBAlgoWidth) * 2 + 0] = 1.0f * x / (m_iFBAlgoWidth - 1);
-          depth_tc[(x + y * m_iFBAlgoWidth) * 2 + 1] = 1.0f * y / (m_iFBAlgoHeight - 1);
-
-          float cx = 10.0f * x / (m_iFBAlgoWidth - 1) - 5;
-          float cy = 10.0f * y / (m_iFBAlgoHeight - 1) - 5;
-          float sincR = sqrt( cx * cx + cy * cy );
-          float sinc = sin( sincR ) / sincR;
-          depth_vc[(x + y * m_iFBAlgoWidth) * 4 + 0] = 2.0f * x / (m_iFBAlgoHeight - 1) - 1.0f;
-          depth_vc[(x + y * m_iFBAlgoWidth) * 4 + 1] = 1 ? nanf( "" ) : sinc;
-          depth_vc[(x + y * m_iFBAlgoWidth) * 4 + 2] = 2.0f * y / (m_iFBAlgoHeight - 1) - 1.0f;
-          depth_vc[(x + y * m_iFBAlgoWidth) * 4 + 3] = 1.0;
+          depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 0] = 1.0f * x / (m_iFBAlgoWidth - 1);
+          depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 1] = 1.0f * y / (m_iFBAlgoHeight - 1);
+          depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 2] = x;
+          depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 3] = y;
         }
       }
       m_geoDepthMapTexcoordBuffer = rhi()->newBufferWithContents(depth_tc.data(), depth_tc.size() * sizeof(float), kBufferUsageCPUWriteOnly);
-      m_geoDepthMapPositionBuffer = rhi()->newBufferWithContents(depth_vc.data(), depth_vc.size() * sizeof(float), kBufferUsageCPUWriteOnly);
     }
 
 
@@ -309,6 +319,7 @@ Vector4 OpenCVProcess::TransformToWorldSpace( float x, float y, int disp )
 #endif
 }
 
+#if 0
 void OpenCVProcess::BlurDepths()
 {
 	//This does an actual blurring function. 
@@ -399,6 +410,7 @@ void OpenCVProcess::BlurDepths()
 		}
 	}
 }
+#endif
 
 void OpenCVProcess::OpenCVAppUpdate()
 {
@@ -483,7 +495,7 @@ void OpenCVProcess::OpenCVAppUpdate()
       m_disparityFilter->apply(mdisparity_gpu, resizedLeftGray_gpu, mdisparity_filtered_gpu);
       mdisparity_gpu.swap(mdisparity_filtered_gpu);
     }
-
+/*  XXX TODO FIX
     if (m_algorithm == 0) {
       // Match type for switching between cuda::StereoBM (8UC1) and everything else (16UC1)
       mdisparity_8uc1.create(mdisparity_gpu.rows, mdisparity_gpu.cols, mdisparity_gpu.type());
@@ -493,20 +505,22 @@ void OpenCVProcess::OpenCVAppUpdate()
           mdisparity.at<uint16_t>(y,x) = mdisparity_8uc1.at<uint8_t>(y,x);
         }
       }
-    } else {
-      mdisparity_gpu.download(mdisparity);
     }
+*/
+
 	}
 
 	PROFILE( "[OP] Stereo Computation")
 
+#if 0
 	if ( m_useDepthBlur) {
 		BlurDepths(  );
 	}
 	PROFILE( "[OP] Blur" )
+#endif
 
 
-#if 1
+#if 0
 	{ //Process Output
 		uint32_t x, y;
 		for ( y = 0; y < m_iFBAlgoHeight; y++ )
@@ -542,47 +556,58 @@ void OpenCVProcess::OpenCVAppUpdate()
 			}
 		}
 	}
-#else
-
-  {
-    cv::Mat outImage(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_32FC3);
-    cv::reprojectImageTo3D(mdisparity, outImage, m_cameraSystem->viewAtIndex(m_viewIdx).stereoDisparityToDepth, /*handleMissingValues=*/true);
-    for (size_t y = 0; y < m_iFBAlgoHeight; ++y) {
-      for (size_t x = 0; x < m_iFBAlgoWidth; ++x) {
-				size_t idx = (y * m_iFBAlgoWidth) + x;
-        float* p = (float*) (outImage.ptr(y, x));
-        m_geoDepthMapPositions[(idx * 4) + 0] = p[0];
-        m_geoDepthMapPositions[(idx * 4) + 1] = p[1];
-        m_geoDepthMapPositions[(idx * 4) + 2] = p[2];
-        m_geoDepthMapPositions[(idx * 4) + 3] = 1.0f;
-      }
-    }
-
-  }
-
 #endif
 
-	PROFILE( "[OP] Process" )
-
   RHICUDA::copyGpuMatToSurface(rectLeft_gpu, m_iTexture, /*CUstream*/ 0);
+  RHICUDA::copyGpuMatToSurface(mdisparity_gpu, m_disparityTexture, /*CUstream*/ 0);
 
   //rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
-  rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeShort1N, mdisparity.data);
+  //rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeShort1N, mdisparity.data);
 
+  RHICUDA::copyGpuMatToSurface(resizedEqualizedLeftGray_gpu, m_leftGray);
+  RHICUDA::copyGpuMatToSurface(resizedEqualizedRightGray_gpu, m_rightGray);
+
+/*
   // TODO gpu copy, or just eliminate since this is debug info
   cv::Mat resizedLeftGray, resizedRightGray;
   resizedEqualizedLeftGray_gpu.download(resizedLeftGray);
   resizedEqualizedRightGray_gpu.download(resizedRightGray);
   rhi()->loadTextureData(m_leftGray, kVertexElementTypeUByte1N, resizedLeftGray.data);
   rhi()->loadTextureData(m_rightGray, kVertexElementTypeUByte1N, resizedRightGray.data);
+*/
 
-  PROFILE( "[GL] Updating output texture" )
-  rhi()->loadBufferData(m_geoDepthMapPositionBuffer, m_geoDepthMapPositions.data(), 0, m_geoDepthMapPositions.size() * sizeof(float));
-  PROFILE( "[GL] Updating output verts" )
+  PROFILE( "[GL] Texture copies" )
+  //rhi()->loadBufferData(m_geoDepthMapPositionBuffer, m_geoDepthMapPositions.data(), 0, m_geoDepthMapPositions.size() * sizeof(float));
+  //PROFILE( "[GL] Updating output verts" )
 
 #if DO_PROFILE
   ImGui::End();
 #endif
+}
+
+void OpenCVProcess::DrawDisparityDepthMap(const FxRenderView& renderView) {
+  rhi()->bindRenderPipeline(disparityDepthMapPipeline);
+  rhi()->bindStreamBuffer(0, m_geoDepthMapTexcoordBuffer);
+
+  MeshDisparityDepthMapUniformBlock ub;
+  ub.modelViewProjection = renderView.viewProjectionMatrix;
+  for (size_t y = 0; y < 4; ++y) {
+    for (size_t x = 0; x < 4; ++x) {
+      ub.R1inv[y][x] = m_R1inv[(y*4) + x];
+    }
+  }
+
+  ub.Q3 = m_Q[3];
+  ub.Q7 = m_Q[7];
+  ub.Q11 = m_Q[11];
+  ub.CameraDistanceMeters = m_CameraDistanceMeters;
+  ub.mogrify = glm::vec2(MOGRIFY_X, MOGRIFY_Y);
+
+  rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
+  rhi()->loadTexture(ksImageTex, m_iTexture);
+  rhi()->loadTexture(ksDisparityTex, m_disparityTexture);
+
+  rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
 }
 
 

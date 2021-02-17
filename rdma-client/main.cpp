@@ -39,7 +39,6 @@ RDMABuffer::ptr configBuffer;
 OpenCVProcess* cvProcess;
 
 RHIRenderPipeline::ptr meshVertexColorPipeline;
-RHIRenderPipeline::ptr depthMeshPipeline;
 RHIBuffer::ptr meshQuadVBO;
 
 FxAtomicString ksMeshTransformUniformBlock("MeshTransformUniformBlock");
@@ -47,6 +46,7 @@ static FxAtomicString ksImageTex("imageTex");
 struct MeshTransformUniformBlock {
   glm::mat4 modelViewProjection;
 };
+
 
 static FxAtomicString ksDisparityScaleUniformBlock("DisparityScaleUniformBlock");
 struct DisparityScaleUniformBlock {
@@ -122,11 +122,6 @@ int main(int argc, char** argv) {
   meshVertexColorPipeline = rhi()->compileRenderPipeline("shaders/meshVertexColor.vtx.glsl", "shaders/meshVertexColor.frag.glsl", RHIVertexLayout({
       RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position", 0,                 sizeof(float) * 7),
       RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "color",    sizeof(float) * 3, sizeof(float) * 7)
-    }), kPrimitiveTopologyTriangleStrip);
-
-  depthMeshPipeline = rhi()->compileRenderPipeline("shaders/meshTexture.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
-      RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "position",           0, sizeof(float) * 4),
-      RHIVertexLayoutElement(1, kVertexElementTypeFloat2, "textureCoordinates", 0, sizeof(float) * 2)
     }), kPrimitiveTopologyTriangleStrip);
 
   {
@@ -399,19 +394,8 @@ int main(int argc, char** argv) {
       }
 #endif
 
+      cvProcess->DrawDisparityDepthMap(renderView);
 
-      { // Draw depth map from OpenCV process
-        rhi()->bindRenderPipeline(depthMeshPipeline);
-        rhi()->bindStreamBuffer(0, cvProcess->m_geoDepthMapPositionBuffer);
-        rhi()->bindStreamBuffer(1, cvProcess->m_geoDepthMapTexcoordBuffer);
-
-        MeshTransformUniformBlock ub;
-        ub.modelViewProjection = renderView.viewProjectionMatrix;
-        rhi()->loadUniformBlockImmediate(ksMeshTransformUniformBlock, &ub, sizeof(MeshTransformUniformBlock));
-        rhi()->loadTexture(ksImageTex, cvProcess->m_iTexture);
-
-        rhi()->drawIndexedPrimitives(cvProcess->m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, cvProcess->m_geoDepthMapTristripIndexCount);
-      }
 
 
       // May modify GL state, so this should be done at the end of the renderpass.

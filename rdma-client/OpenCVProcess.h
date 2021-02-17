@@ -11,6 +11,7 @@
 #include <thread>
 #include "Matrices.h"
 #include "Vectors.h"
+#include "FxRenderView.h"
 
 class CameraSystem;
 class RDMACameraProvider;
@@ -22,6 +23,7 @@ public:
 	~OpenCVProcess();
 	bool OpenCVAppStart();
 	void OpenCVAppUpdate();
+  void DrawDisparityDepthMap(const FxRenderView& renderView);
 	void TakeScreenshot();
 
 	void ConvertToGray( cv::InputArray src, cv::OutputArray dst );
@@ -56,8 +58,6 @@ public:
   RHISurface::ptr m_disparityTexture;
   RHISurface::ptr m_leftGray, m_rightGray;
 
-  std::vector<float> m_geoDepthMapPositions; // CPU staging for m_geoDepthMapPositionBuffer
-  RHIBuffer::ptr m_geoDepthMapPositionBuffer;
   RHIBuffer::ptr m_geoDepthMapTexcoordBuffer;
   RHIBuffer::ptr m_geoDepthMapTristripIndexBuffer;
   RHIBuffer::ptr m_geoDepthMapLineIndexBuffer;
