@@ -99,7 +99,6 @@ public:
 	//Matrices used in the stereo computation.
 	cv::cuda::GpuMat origLeft_gpu;
 	cv::cuda::GpuMat origRight_gpu;
-	cv::Mat rectLeft;
 	cv::cuda::GpuMat rectLeft_gpu;
 	cv::cuda::GpuMat rectRight_gpu;
 	cv::cuda::GpuMat resizedLeft_gpu;

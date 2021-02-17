@@ -3,12 +3,14 @@
 #include "common/CameraSystem.h"
 #include "RDMACameraProvider.h"
 #include "rhi/RHI.h"
+#include "rhi/cuda/RHICVInterop.h"
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudawarping.hpp>
 #include <opencv2/cudastereo.hpp>
+#include <cuda.h>
 #include <time.h>
 #include <sys/time.h>
 #include <thread>
@@ -156,8 +158,6 @@ bool OpenCVProcess::OpenCVAppStart()
 
   origLeft_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
   origRight_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
-
-  rectLeft = cv::Mat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
 
   rectLeft_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
   rectRight_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
@@ -458,7 +458,6 @@ void OpenCVProcess::OpenCVAppUpdate()
 
 	cv::cuda::remap( origLeft_gpu, rectLeft_gpu, m_leftMap1_gpu, m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_leftStream);
 	cv::cuda::remap( origRight_gpu, rectRight_gpu, m_rightMap1_gpu, m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_rightStream);
-  rectLeft_gpu.download(rectLeft, m_leftStream);
 
 	cv::cuda::resize( rectLeft_gpu, resizedLeft_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ), 0, 0, cv::INTER_LINEAR, m_leftStream);
 	cv::cuda::resize( rectRight_gpu, resizedRight_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ), 0, 0, cv::INTER_LINEAR, m_rightStream);
@@ -565,8 +564,9 @@ void OpenCVProcess::OpenCVAppUpdate()
 
 	PROFILE( "[OP] Process" )
 
+  RHICUDA::copyGpuMatToSurface(rectLeft_gpu, m_iTexture, /*CUstream*/ 0);
 
-  rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
+  //rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
   rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeShort1N, mdisparity.data);
 
   // TODO gpu copy, or just eliminate since this is debug info
@@ -596,7 +596,8 @@ void OpenCVProcess::TakeScreenshot( )
 	char timebuffer[128];
 	std::strftime( timebuffer, sizeof( timebuffer ), "%Y%m%d %H%M%S", &timeinfo );
 	std::string nowstr = timebuffer;
-  cv::Mat rectRight;
+  cv::Mat rectLeft, rectRight;
+  rectLeft_gpu.download(rectLeft);
   rectRight_gpu.download(rectRight);
 
   cv::Mat resizedLeftGray, resizedRightGray;
