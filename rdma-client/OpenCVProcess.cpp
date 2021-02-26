@@ -40,13 +40,6 @@ struct MeshDisparityDepthMapUniformBlock {
 inline double * CoPTr( const std::initializer_list<double>& d ) { return (double*)d.begin(); }
 #define DO_FISHEYE 1
 
-#define DO_PROFILE 1
-#if DO_PROFILE
-#define PROFILE( x ) { double Now = OGGetAbsoluteTime(); ImGui::TextUnformatted(x); ImGui::NextColumn(); ImGui::Text("%.3fms", (Now-Start)*1000.0); ImGui::NextColumn(); Start = Now; }
-#else
-#define PROFILE( x )
-#endif
-
 static void OGUSleep( int ius ) {
   usleep( ius );
 }
@@ -80,6 +73,7 @@ OpenCVProcess::OpenCVProcess(CameraSystem* cs, RDMACameraProvider* cp, size_t vi
   , m_dTimeOfLastFPS( 0 )
   , m_useDepthBlur(false)
   , m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING)
+  , m_enableProfiling(false)
 {
   if (!disparityDepthMapPipeline) {
     disparityDepthMapPipeline = rhi()->compileRenderPipeline("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
@@ -414,9 +408,6 @@ void OpenCVProcess::BlurDepths()
 
 void OpenCVProcess::OpenCVAppUpdate()
 {
-#if DO_PROFILE
-  ImGui::Begin("CV Profile");
-
   m_iProcFrames++;
   m_iFramesSinceFPS++;
 
@@ -430,10 +421,6 @@ void OpenCVProcess::OpenCVAppUpdate()
     m_iFPS = m_iFramesSinceFPS;
     m_iFramesSinceFPS = 0;
   }
-  ImGui::Text("Frames: %5d; %3d FPS", m_iProcFrames, m_iFPS );
-
-  ImGui::Columns(2);
-#endif
 
 
   if ((!m_stereo) || m_didChangeSettings) {
@@ -468,6 +455,10 @@ void OpenCVProcess::OpenCVAppUpdate()
   origLeft_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]), m_leftStream);
   origRight_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]), m_rightStream);
 
+  if (m_enableProfiling) {
+    m_setupStartEvent.record(m_leftStream);
+  }
+
   cv::cuda::remap( origLeft_gpu, rectLeft_gpu, m_leftMap1_gpu, m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_leftStream);
   cv::cuda::remap( origRight_gpu, rectRight_gpu, m_rightMap1_gpu, m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_rightStream);
 
@@ -482,11 +473,16 @@ void OpenCVProcess::OpenCVAppUpdate()
 
   m_leftRightJoinEvent.record(m_rightStream);
   m_leftStream.waitEvent(m_leftRightJoinEvent);
+
+  if (m_enableProfiling) {
+    m_algoStartEvent.record(m_leftStream);
+  }
+
   //m_leftStream.waitForCompletion();
 
   //ConvertToGray( resizedLeft, resizedLeftGray );
   //ConvertToGray( resizedRight, resizedRightGray );
-  PROFILE( "[OP] Setup" )
+  //PROFILE( "[OP] Setup" )
 
   {
     // workaround for no common base interface between CUDA stereo remapping algorithms that can handle the CUstream parameter to compute()
@@ -507,6 +503,10 @@ void OpenCVProcess::OpenCVAppUpdate()
 
     //m_stereo->compute( resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu );
 
+    if (m_enableProfiling) {
+      m_filterStartEvent.record(m_leftStream);
+    }
+   
     if (m_useDisparityFilter) {
       m_disparityFilter->apply(mdisparity_gpu, resizedLeftGray_gpu, mdisparity_filtered_gpu, m_leftStream);
       mdisparity_gpu.swap(mdisparity_filtered_gpu);
@@ -526,13 +526,13 @@ void OpenCVProcess::OpenCVAppUpdate()
 
   }
 
-  PROFILE( "[OP] Stereo Computation")
+  //PROFILE( "[OP] Stereo Computation")
 
 #if 0
   if ( m_useDepthBlur) {
     BlurDepths(  );
   }
-  PROFILE( "[OP] Blur" )
+  //PROFILE( "[OP] Blur" )
 #endif
 
 
@@ -574,6 +574,10 @@ void OpenCVProcess::OpenCVAppUpdate()
   }
 #endif
 
+  if (m_enableProfiling) {
+    m_copyStartEvent.record(m_leftStream);
+  }
+
   RHICUDA::copyGpuMatToSurface(rectLeft_gpu, m_iTexture, (CUstream) m_leftStream.cudaPtr());
   RHICUDA::copyGpuMatToSurface(mdisparity_gpu, m_disparityTexture, (CUstream) m_leftStream.cudaPtr());
 
@@ -582,6 +586,10 @@ void OpenCVProcess::OpenCVAppUpdate()
 
   RHICUDA::copyGpuMatToSurface(resizedEqualizedLeftGray_gpu, m_leftGray, (CUstream) m_leftStream.cudaPtr());
   RHICUDA::copyGpuMatToSurface(resizedEqualizedRightGray_gpu, m_rightGray, (CUstream) m_leftStream.cudaPtr());
+  if (m_enableProfiling) {
+    m_processingFinishedEvent.record(m_leftStream);
+  }
+
   m_leftStream.waitForCompletion();
 
 
@@ -594,13 +602,10 @@ void OpenCVProcess::OpenCVAppUpdate()
   rhi()->loadTextureData(m_rightGray, kVertexElementTypeUByte1N, resizedRightGray.data);
 */
 
-  PROFILE( "[GL] Texture copies" )
+  //PROFILE( "[GL] Texture copies" )
   //rhi()->loadBufferData(m_geoDepthMapPositionBuffer, m_geoDepthMapPositions.data(), 0, m_geoDepthMapPositions.size() * sizeof(float));
   //PROFILE( "[GL] Updating output verts" )
 
-#if DO_PROFILE
-  ImGui::End();
-#endif
 }
 
 void OpenCVProcess::DrawDisparityDepthMap(const FxRenderView& renderView) {
@@ -711,8 +716,15 @@ void OpenCVProcess::DrawUI() {
   }
 
   //ImGui::Checkbox("Depth blur (CPU)", &m_useDepthBlur);
+  ImGui::Checkbox("CUDA Profiling", &m_enableProfiling);
+  if ((m_iProcFrames > 1) && m_enableProfiling) {
+    ImGui::Text("Setup: %.3fms", cv::cuda::Event::elapsedTime(m_setupStartEvent, m_algoStartEvent));
+    ImGui::Text("Algo: %.3fms", cv::cuda::Event::elapsedTime(m_algoStartEvent, m_filterStartEvent));
+    ImGui::Text("Filter: %.3fms", cv::cuda::Event::elapsedTime(m_filterStartEvent, m_copyStartEvent));
+    ImGui::Text("Copy: %.3fms", cv::cuda::Event::elapsedTime(m_copyStartEvent, m_processingFinishedEvent));
+  }
 
-  ImGui::Text("Proc Frames: %d", m_iProcFrames);
+  ImGui::Text("Frames: %5d; %3d FPS", m_iProcFrames, m_iFPS );
 
   ImGui::PopID();
 }

@@ -65,9 +65,6 @@ public:
   size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount;
 
 
-  int m_iHasFrameForUpdate;
-  int m_iDoneFrameOutput;
-
   // vr::CameraVideoStreamFrameHeader_t m_lastFrameHeader;
   // Matrix4 m_lastFrameHeaderMatrix;
   float m_CameraDistanceMeters;
@@ -116,4 +113,13 @@ public:
 
   cv::cuda::Stream m_leftStream, m_rightStream;
   cv::cuda::Event m_leftRightJoinEvent;
+
+  // Profiling events and data
+  bool m_enableProfiling;
+  cv::cuda::Event m_setupStartEvent;
+  cv::cuda::Event m_algoStartEvent;
+  cv::cuda::Event m_filterStartEvent;
+  cv::cuda::Event m_copyStartEvent;
+  cv::cuda::Event m_processingFinishedEvent;
+
 };
