@@ -15,8 +15,6 @@
 #include <time.h>
 #include <sys/time.h>
 #include <thread>
-#include "Matrices.h"
-#include "Vectors.h"
 
 #include "stb/stb_image_write.h"
 
@@ -43,15 +41,14 @@ static double OGGetAbsoluteTime() {
   return ((double)tv.tv_usec)/1000000. + (tv.tv_sec);
 }
 
-Matrix4 Matrix4FromCVMatrix( cv::Mat matin )
+glm::mat4 Matrix4FromCVMatrix( cv::Mat matin )
 {
-  Matrix4 out;
-  out.identity();
+  glm::mat4 out(1.0f);
   for ( int y = 0; y < matin.rows; y++ )
   {
     for ( int x = 0; x < matin.cols; x++ )
     {
-      out[x + y * 4] = (float)matin.at<double>( y, x );
+      out[y][x] = (float)matin.at<double>( y, x );
     }
   }
   return out;
@@ -129,8 +126,7 @@ bool OpenCVProcess::OpenCVAppStart()
 
   }
   m_R1 = Matrix4FromCVMatrix( v.stereoRectification[0] );
-  m_R1inv = m_R1;
-  m_R1inv = m_R1inv.invert();
+  m_R1inv = glm::inverse(m_R1);
   m_Q = Matrix4FromCVMatrix( v.stereoDisparityToDepth );
 #else
   cv::Mat R1, R2, P1, P2, cvQ;
@@ -440,15 +436,11 @@ void OpenCVProcess::DrawDisparityDepthMap(const FxRenderView& renderView) {
 
   MeshDisparityDepthMapUniformBlock ub;
   ub.modelViewProjection = renderView.viewProjectionMatrix;
-  for (size_t y = 0; y < 4; ++y) {
-    for (size_t x = 0; x < 4; ++x) {
-      ub.R1inv[y][x] = m_R1inv[(y*4) + x];
-    }
-  }
+  ub.R1inv = m_R1inv;
 
-  ub.Q3 = m_Q[3];
-  ub.Q7 = m_Q[7];
-  ub.Q11 = m_Q[11];
+  ub.Q3 = m_Q[0][3];
+  ub.Q7 = m_Q[1][3];
+  ub.Q11 = m_Q[2][3];
   ub.CameraDistanceMeters = m_CameraDistanceMeters;
   ub.mogrify = glm::vec2(MOGRIFY_X, MOGRIFY_Y);
 

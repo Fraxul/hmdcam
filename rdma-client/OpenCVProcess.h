@@ -9,8 +9,6 @@
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
 #include <thread>
-#include "Matrices.h"
-#include "Vectors.h"
 #include "FxRenderView.h"
 
 class CameraSystem;
@@ -33,7 +31,7 @@ public:
 
   // vr::HmdMatrix34_t  m_headFromCamera[2];
   cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
-  Matrix4 m_R1, m_R1inv, m_Q, m_Qinv;
+  glm::mat4 m_R1, m_R1inv, m_Q, m_Qinv;
   cv::Ptr< cv::StereoMatcher > m_stereo;
   cv::Ptr<cv::cuda::DisparityBilateralFilter> m_disparityFilter;
 
