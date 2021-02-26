@@ -28,9 +28,6 @@ public:
   void TakeScreenshot();
 
   void ConvertToGray( cv::InputArray src, cv::OutputArray dst );
-  void BlurDepths();
-  Vector4 TransformToWorldSpace( float x, float y, int disp );
-  Vector4 TransformToLocalSpace( float x, float y, int disp );
 
   // vr::TrackedCameraHandle_t m_pCamera;
 
@@ -46,8 +43,6 @@ public:
 
   uint32_t  m_iFBSideWidth;
   uint32_t  m_iFBSideHeight;
-  std::vector< float > m_valids;
-  std::vector< float > m_depths;
 
   uint32_t  m_iFBAlgoWidth;
   uint32_t  m_iFBAlgoHeight;
@@ -91,8 +86,6 @@ public:
   int m_sgmP1;
   int m_sgmP2;
   int m_sgmUniquenessRatio;
-
-  bool m_useDepthBlur;
 
   //Matrices used in the stereo computation.
   cv::cuda::GpuMat origLeft_gpu;

@@ -37,13 +37,6 @@ struct MeshDisparityDepthMapUniformBlock {
 
 #define NUM_DISP 128 //Max disparity. Must be in {64, 128, 256} for CUDA algorithms.
 
-inline double * CoPTr( const std::initializer_list<double>& d ) { return (double*)d.begin(); }
-#define DO_FISHEYE 1
-
-static void OGUSleep( int ius ) {
-  usleep( ius );
-}
-
 static double OGGetAbsoluteTime() {
   struct timeval tv;
   gettimeofday( &tv, 0 );
@@ -71,7 +64,6 @@ OpenCVProcess::OpenCVProcess(CameraSystem* cs, RDMACameraProvider* cp, size_t vi
   , m_iProcFrames( 0 )
   , m_iFramesSinceFPS( 0 )
   , m_dTimeOfLastFPS( 0 )
-  , m_useDepthBlur(false)
   , m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING)
   , m_enableProfiling(false)
 {
@@ -164,11 +156,6 @@ bool OpenCVProcess::OpenCVAppStart()
   m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R16));
   m_leftGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
   m_rightGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
-
-
-  m_valids.resize( m_iFBAlgoHeight  * m_iFBAlgoWidth );
-  m_valids.assign( m_valids.size(), 1 );
-  m_depths.resize( m_iFBAlgoHeight  * m_iFBAlgoWidth );
 
   //Set up what matrices we can to prevent dynamic memory allocation.
 
@@ -286,6 +273,7 @@ void OpenCVProcess::ConvertToGray( cv::InputArray src, cv::OutputArray dst )
   }
 }
 
+/*
 Vector4 OpenCVProcess::TransformToLocalSpace( float x, float y, int disp )
 {
   float fDisp = ( float ) disp / 16.f; //  16-bit fixed-point disparity map (where each disparity value has 4 fractional bits)
@@ -298,113 +286,7 @@ Vector4 OpenCVProcess::TransformToLocalSpace( float x, float y, int disp )
   lz *= -1;
   return m_R1inv * Vector4( lx, ly, lz, 1.0 );
 }
-
-Vector4 OpenCVProcess::TransformToWorldSpace( float x, float y, int disp )
-{
-  Vector4 local = TransformToLocalSpace( x, y, disp );
-#if 0
-  Matrix4 mlefteye = m_lastFrameHeaderMatrix;
-  Vector4 placerelview( local );
-  Vector4 Worldview = mlefteye * (placerelview);
-  return Worldview;
-#else
-  // No local-to-world transform required, since we don't have a global tracking matrix.
-  return local;
-#endif
-}
-
-#if 0
-void OpenCVProcess::BlurDepths()
-{
-  //This does an actual blurring function.
-#define RIGHT_EDGE_NO_TRUST 24
-
-  std::vector< float > validsback( m_iFBAlgoHeight  * m_iFBAlgoWidth );
-  std::vector< float > depthsback( m_iFBAlgoHeight  * m_iFBAlgoWidth );
-
-  //Initialize the data for this frame
-  for ( unsigned y = 0; y < m_iFBAlgoHeight; y++ )
-  {
-    for ( unsigned x = 0; x < m_iFBAlgoWidth; x++ )
-    {
-      int16_t pxi = mdisparity.at<int16_t>(y,x);
-      int idx = (y * m_iFBAlgoWidth) + x;
-      if ( pxi <= 0 || pxi >= m_iFBAlgoWidth * 16 )
-      {
-        //If we don't know the depth, then we just discard it.  We could handle that here.  Additionally,
-        //if we wanted, we could emit fake dots where we believe the floor to be.
-        //Right now, we do nothing.
-      }
-      else
-      {
-        m_valids[idx] = 1.0;
-        m_depths[idx] = pxi;
-      }
-
-      //Never trust the right side of the screen.
-      if ( x >= m_iFBAlgoWidth - RIGHT_EDGE_NO_TRUST )
-      {
-        m_valids[idx] = 0;
-        m_depths[idx] = 0;
-      }
-    }
-  }
-  for ( int iter = 0; iter < 10; iter++ )
-  {
-    for ( unsigned y = 4; y < m_iFBAlgoHeight - 4; y++ )
-    {
-      for ( unsigned x = 4; x < m_iFBAlgoWidth - 4; x++ )
-      {
-        int idx = (y * m_iFBAlgoWidth) + x;
-        float tval = 0;
-        float tdepths = 0;
-        for ( int ly = -1; ly <= 1; ly++ )
-          for ( int lx = -1; lx <= 1; lx++ )
-          {
-            int idxx = (y+ly) * m_iFBAlgoWidth + x+lx;
-            tval += m_valids[idxx];
-            tdepths += m_depths[idxx];
-          }
-        validsback[idx] = tval / 9;
-        depthsback[idx] = tdepths / 9;
-      }
-    }
-    memcpy( &m_valids[0], &validsback[0], sizeof( float ) * validsback.size() );
-    memcpy( &m_depths[0], &depthsback[0], sizeof( float ) * depthsback.size() );
-
-  }
-
-  for ( unsigned y = 0; y < m_iFBAlgoHeight; y++ )
-  {
-    for ( unsigned x = 0; x < m_iFBAlgoWidth; x++ )
-    {
-      int idx = y * m_iFBAlgoWidth + x;
-      if ( x < 1 || x >= m_iFBAlgoWidth - 1 )
-      {
-        //Must throw out edges.
-        mdisparity.at<uint16_t>(y,x) = 0xfff0;
-        continue;
-      }
-      uint16_t pxi = mdisparity.at<uint16_t>(y,x);
-      if ( pxi == 0 || pxi >= m_iFBAlgoWidth * 16 )
-      {
-        if ( m_valids[idx] < .00005 )
-        {
-          m_valids[idx] = 0;
-          m_depths[idx] = 0;
-          mdisparity.at<uint16_t>(y,x) = 0xfff0;
-        }
-        else
-        {
-          mdisparity.at<uint16_t>(y,x) = (uint16_t)(m_depths[idx] / m_valids[idx]);
-        }
-      }
-      m_valids[idx] *= .9f;
-      m_depths[idx] *= .9f;
-    }
-  }
-}
-#endif
+*/
 
 void OpenCVProcess::OpenCVAppUpdate()
 {
@@ -528,52 +410,6 @@ void OpenCVProcess::OpenCVAppUpdate()
 
   //PROFILE( "[OP] Stereo Computation")
 
-#if 0
-  if ( m_useDepthBlur) {
-    BlurDepths(  );
-  }
-  //PROFILE( "[OP] Blur" )
-#endif
-
-
-#if 0
-  { //Process Output
-    uint32_t x, y;
-    for ( y = 0; y < m_iFBAlgoHeight; y++ )
-    {
-      // uint16_t * pxin = &m_pDisparity[y*m_iFBAlgoWidth];
-      for ( x = IGNORE_EDGE_DATA_PIXELS; x < m_iFBAlgoWidth - IGNORE_EDGE_DATA_PIXELS; x++ )
-      {
-        uint16_t pxo = mdisparity.at<uint16_t>(y, x);
-        // uint32_t pxo = pxin[x];
-        int idx = y * m_iFBAlgoWidth + x;
-
-        if ( pxo >= 0xfff0 )
-        {
-          pxo = 0x2020;// (x > m_iFBAlgoWidth / 2) ? 0 : 129;
-          m_geoDepthMapPositions[idx * 4 + 0] = fNAN;
-          m_geoDepthMapPositions[idx * 4 + 1] = fNAN;
-          m_geoDepthMapPositions[idx * 4 + 2] = fNAN;
-          m_geoDepthMapPositions[idx * 4 + 3] = 0;
-        }
-        else
-        {
-          //depths[x + y * m_iFBAlgoWidth] = pxin[x];
-          if ( 1 )
-          {
-            //Update depth geometry.
-            Vector4 Worldspace = TransformToWorldSpace( (float)x, (float)y, mdisparity.at<uint16_t>(y,x) );
-            m_geoDepthMapPositions[idx * 4 + 0] = Worldspace[0];
-            m_geoDepthMapPositions[idx * 4 + 1] = Worldspace[1];
-            m_geoDepthMapPositions[idx * 4 + 2] = Worldspace[2];
-            m_geoDepthMapPositions[idx * 4 + 3] = m_valids[idx];
-          }
-        }
-      }
-    }
-  }
-#endif
-
   if (m_enableProfiling) {
     m_copyStartEvent.record(m_leftStream);
   }
@@ -591,16 +427,6 @@ void OpenCVProcess::OpenCVAppUpdate()
   }
 
   m_leftStream.waitForCompletion();
-
-
-/*
-  // TODO gpu copy, or just eliminate since this is debug info
-  cv::Mat resizedLeftGray, resizedRightGray;
-  resizedEqualizedLeftGray_gpu.download(resizedLeftGray);
-  resizedEqualizedRightGray_gpu.download(resizedRightGray);
-  rhi()->loadTextureData(m_leftGray, kVertexElementTypeUByte1N, resizedLeftGray.data);
-  rhi()->loadTextureData(m_rightGray, kVertexElementTypeUByte1N, resizedRightGray.data);
-*/
 
   //PROFILE( "[GL] Texture copies" )
   //rhi()->loadBufferData(m_geoDepthMapPositionBuffer, m_geoDepthMapPositions.data(), 0, m_geoDepthMapPositions.size() * sizeof(float));
@@ -715,7 +541,6 @@ void OpenCVProcess::DrawUI() {
     m_didChangeSettings |= ImGui::SliderInt("Filter Iterations", &m_disparityFilterIterations, 1, 8);
   }
 
-  //ImGui::Checkbox("Depth blur (CPU)", &m_useDepthBlur);
   ImGui::Checkbox("CUDA Profiling", &m_enableProfiling);
   if ((m_iProcFrames > 1) && m_enableProfiling) {
     ImGui::Text("Setup: %.3fms", cv::cuda::Event::elapsedTime(m_setupStartEvent, m_algoStartEvent));
