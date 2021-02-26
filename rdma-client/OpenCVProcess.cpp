@@ -675,3 +675,45 @@ void OpenCVProcess::TakeScreenshot( )
 	delete[] disp_px;
 }
 #endif
+
+void OpenCVProcess::DrawUI() {
+  ImGui::PushID(this);
+
+  ImGui::Text("Stereo Algorithm");
+  m_didChangeSettings |= ImGui::RadioButton("BM", &m_algorithm, 0);
+  m_didChangeSettings |= ImGui::RadioButton("BeliefPropagation", &m_algorithm, 1);
+  m_didChangeSettings |= ImGui::RadioButton("ConstantSpaceBeliefPropagation", &m_algorithm, 2);
+  m_didChangeSettings |= ImGui::RadioButton("SGM", &m_algorithm, 3);
+
+  switch (m_algorithm) {
+    case 0: // StereoBM
+      m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &m_sbmBlockSize, /*step=*/2);
+      break;
+    case 2: // StereoConstantSpaceBP
+      m_didChangeSettings |= ImGui::SliderInt("nr_plane", &m_scsbpNrPlane, 1, 16);
+      // fallthrough for shared parameters
+    case 1: // StereoBeliefPropagation
+      m_didChangeSettings |= ImGui::SliderInt("SBP Iterations", &m_sbpIterations, 1, 8);
+      m_didChangeSettings |= ImGui::SliderInt("SBP Levels", &m_sbpLevels, 1, 8);
+      break;
+    case 3: // StereoSGM
+      m_didChangeSettings |= ImGui::SliderInt("SGM P1", &m_sgmP1, 1, 255);
+      m_didChangeSettings |= ImGui::SliderInt("SGM P2", &m_sgmP2, 1, 255);
+      m_didChangeSettings |= ImGui::SliderInt("SGM Uniqueness Ratio", &m_sgmUniquenessRatio, 5, 15);
+      break;
+  };
+
+  m_didChangeSettings |= ImGui::Checkbox("Disparity filter (GPU)", &m_useDisparityFilter);
+
+  if (m_useDisparityFilter) {
+    m_didChangeSettings |= ImGui::SliderInt("Filter Radius (odd)", &m_disparityFilterRadius, 1, 9);
+    m_didChangeSettings |= ImGui::SliderInt("Filter Iterations", &m_disparityFilterIterations, 1, 8);
+  }
+
+  //ImGui::Checkbox("Depth blur (CPU)", &m_useDepthBlur);
+
+  ImGui::Text("Proc Frames: %d", m_iProcFrames);
+
+  ImGui::PopID();
+}
+

@@ -24,6 +24,7 @@ public:
 	bool OpenCVAppStart();
 	void OpenCVAppUpdate();
   void DrawDisparityDepthMap(const FxRenderView& renderView);
+  void DrawUI();
 	void TakeScreenshot();
 
 	void ConvertToGray( cv::InputArray src, cv::OutputArray dst );
