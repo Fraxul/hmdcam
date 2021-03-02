@@ -286,6 +286,22 @@ Vector4 OpenCVProcess::TransformToLocalSpace( float x, float y, int disp )
 
 void OpenCVProcess::OpenCVAppUpdate()
 {
+  m_setupTimeMs = 0;
+  m_algoTimeMs = 0;
+  m_filterTimeMs = 0;
+  m_copyTimeMs = 0;
+
+  if (m_enableProfiling) {
+    try {
+      m_setupTimeMs = cv::cuda::Event::elapsedTime(m_setupStartEvent, m_algoStartEvent);
+      m_algoTimeMs = cv::cuda::Event::elapsedTime(m_algoStartEvent, m_filterStartEvent);
+      m_filterTimeMs = cv::cuda::Event::elapsedTime(m_filterStartEvent, m_copyStartEvent);
+      m_copyTimeMs = cv::cuda::Event::elapsedTime(m_copyStartEvent, m_processingFinishedEvent);
+    } catch (...) {
+      // cv::cuda::Event::elapsedTime will throw if the event is not ready; just skip reading the event timers in that case.
+    }
+  }
+
   m_iProcFrames++;
   m_iFramesSinceFPS++;
 
@@ -535,10 +551,14 @@ void OpenCVProcess::DrawUI() {
 
   ImGui::Checkbox("CUDA Profiling", &m_enableProfiling);
   if ((m_iProcFrames > 1) && m_enableProfiling) {
-    ImGui::Text("Setup: %.3fms", cv::cuda::Event::elapsedTime(m_setupStartEvent, m_algoStartEvent));
-    ImGui::Text("Algo: %.3fms", cv::cuda::Event::elapsedTime(m_algoStartEvent, m_filterStartEvent));
-    ImGui::Text("Filter: %.3fms", cv::cuda::Event::elapsedTime(m_filterStartEvent, m_copyStartEvent));
-    ImGui::Text("Copy: %.3fms", cv::cuda::Event::elapsedTime(m_copyStartEvent, m_processingFinishedEvent));
+    // TODO use cuEventElapsedTime and skip if the return is not CUDA_SUCCESS --
+    // cv::cuda::Event::elapsedTime throws an exception on CUDA_ERROR_NOT_READY
+    //float f;
+    //if (cuEventElapsedTime(&f, m_setupStartEvent.event
+    ImGui::Text("Setup: %.3fms", m_setupTimeMs);
+    ImGui::Text("Algo: %.3fms", m_algoTimeMs);
+    ImGui::Text("Filter: %.3fms", m_filterTimeMs);
+    ImGui::Text("Copy: %.3fms", m_copyTimeMs);
   }
 
   ImGui::Text("Frames: %5d; %3d FPS", m_iProcFrames, m_iFPS );

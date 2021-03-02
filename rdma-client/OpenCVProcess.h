@@ -113,4 +113,6 @@ public:
   cv::cuda::Event m_copyStartEvent;
   cv::cuda::Event m_processingFinishedEvent;
 
+  float m_setupTimeMs, m_algoTimeMs, m_filterTimeMs, m_copyTimeMs;
+
 };
