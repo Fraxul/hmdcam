@@ -1,7 +1,7 @@
 #include "imgui.h"
 #include "OpenCVProcess.h"
 #include "common/CameraSystem.h"
-#include "RDMACameraProvider.h"
+#include "common/ICameraProvider.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
@@ -54,10 +54,9 @@ glm::mat4 Matrix4FromCVMatrix( cv::Mat matin )
   return out;
 }
 
-OpenCVProcess::OpenCVProcess(CameraSystem* cs, RDMACameraProvider* cp, size_t viewIdx) :
+OpenCVProcess::OpenCVProcess(CameraSystem* cs, size_t viewIdx) :
     m_cameraSystem(cs)
   , m_viewIdx(viewIdx)
-  , m_cameraProvider(cp)
   , m_iProcFrames( 0 )
   , m_iFramesSinceFPS( 0 )
   , m_dTimeOfLastFPS( 0 )
@@ -115,7 +114,7 @@ bool OpenCVProcess::OpenCVAppStart()
   // TODO validate CameraSystem:::updateViewStereoDistortionParameters against the distortion map initialization code above
 
   // cv::initUndistortRectifyMap( K1, D1, R1, P1, cv::Size( 960, 960 ), CV_16SC2, m_leftMap1, m_leftMap2 );
-  cv::Size imageSize = cv::Size(m_cameraProvider->streamWidth(), m_cameraProvider->streamHeight());
+  cv::Size imageSize = cv::Size(m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight());
 #if 1
   {
     cv::Mat m1, m2;
@@ -142,8 +141,8 @@ bool OpenCVProcess::OpenCVAppStart()
   m_CameraDistanceMeters = glm::length(glm::vec3(v.stereoTranslation.at<double>(0), v.stereoTranslation.at<double>(1), v.stereoTranslation.at<double>(2)));
 
 
-  m_iFBSideWidth = m_cameraProvider->streamWidth();
-  m_iFBSideHeight = m_cameraProvider->streamHeight();
+  m_iFBSideWidth = m_cameraSystem->cameraProvider()->streamWidth();
+  m_iFBSideHeight = m_cameraSystem->cameraProvider()->streamHeight();
 
   m_iFBAlgoWidth = m_iFBSideWidth / MOGRIFY_X;
   m_iFBAlgoHeight = m_iFBSideHeight / MOGRIFY_Y;
@@ -346,8 +345,8 @@ void OpenCVProcess::OpenCVAppUpdate()
     }
   }
 
-  origLeft_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]), m_leftStream);
-  origRight_gpu.upload(m_cameraProvider->cvMat(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]), m_rightStream);
+  RHICUDA::copySurfaceToGpuMat(m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]), origLeft_gpu/*, m_leftStream*/);
+  RHICUDA::copySurfaceToGpuMat(m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]), origRight_gpu/*, m_rightStream*/);
 
   if (m_enableProfiling) {
     m_setupStartEvent.record(m_leftStream);
@@ -426,14 +425,14 @@ void OpenCVProcess::OpenCVAppUpdate()
     m_copyStartEvent.record(m_leftStream);
   }
 
-  RHICUDA::copyGpuMatToSurface(rectLeft_gpu, m_iTexture, (CUstream) m_leftStream.cudaPtr());
-  RHICUDA::copyGpuMatToSurface(mdisparity_gpu, m_disparityTexture, (CUstream) m_leftStream.cudaPtr());
+  RHICUDA::copyGpuMatToSurface(rectLeft_gpu, m_iTexture, m_leftStream);
+  RHICUDA::copyGpuMatToSurface(mdisparity_gpu, m_disparityTexture, m_leftStream);
 
   //rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
   //rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeShort1N, mdisparity.data);
 
-  RHICUDA::copyGpuMatToSurface(resizedEqualizedLeftGray_gpu, m_leftGray, (CUstream) m_leftStream.cudaPtr());
-  RHICUDA::copyGpuMatToSurface(resizedEqualizedRightGray_gpu, m_rightGray, (CUstream) m_leftStream.cudaPtr());
+  RHICUDA::copyGpuMatToSurface(resizedEqualizedLeftGray_gpu, m_leftGray, m_leftStream);
+  RHICUDA::copyGpuMatToSurface(resizedEqualizedRightGray_gpu, m_rightGray, m_leftStream);
   if (m_enableProfiling) {
     m_processingFinishedEvent.record(m_leftStream);
   }

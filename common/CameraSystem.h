@@ -219,9 +219,9 @@ public:
 
   };
 
-protected:
   ICameraProvider* cameraProvider() const { return m_cameraProvider; }
 
+protected:
   ICameraProvider* m_cameraProvider;
 
   std::vector<Camera> m_cameras;

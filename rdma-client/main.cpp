@@ -183,7 +183,7 @@ int main(int argc, char** argv) {
   cameraSystem->loadCalibrationData();
 
   // CV processing init
-  cvProcess = new OpenCVProcess(cameraSystem, cameraProvider, /*viewIdx=*/0);
+  cvProcess = new OpenCVProcess(cameraSystem, /*viewIdx=*/0);
   cvProcess->OpenCVAppStart();
 
   // Setup Dear ImGui context

@@ -12,12 +12,10 @@
 #include "FxRenderView.h"
 
 class CameraSystem;
-class RDMACameraProvider;
-
 
 class OpenCVProcess {
 public:
-  OpenCVProcess(CameraSystem*, RDMACameraProvider*, size_t viewIdx);
+  OpenCVProcess(CameraSystem*, size_t viewIdx);
   ~OpenCVProcess();
   bool OpenCVAppStart();
   void OpenCVAppUpdate();
@@ -37,7 +35,6 @@ public:
 
   CameraSystem* m_cameraSystem;
   size_t m_viewIdx;
-  RDMACameraProvider* m_cameraProvider;
 
   uint32_t  m_iFBSideWidth;
   uint32_t  m_iFBSideHeight;
