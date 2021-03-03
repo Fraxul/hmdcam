@@ -13,21 +13,20 @@
 
 class CameraSystem;
 
-class OpenCVProcess {
+class DepthMapGenerator {
 public:
-  OpenCVProcess(CameraSystem*, size_t viewIdx);
-  ~OpenCVProcess();
-  bool OpenCVAppStart();
-  void OpenCVAppUpdate();
-  void DrawDisparityDepthMap(const FxRenderView& renderView);
-  void DrawUI();
-  void TakeScreenshot();
+  DepthMapGenerator(CameraSystem*, size_t viewIdx);
+  ~DepthMapGenerator();
 
-  void ConvertToGray( cv::InputArray src, cv::OutputArray dst );
+  void processFrame();
+  void renderDisparityDepthMap(const FxRenderView& renderView);
+  void renderIMGUI();
 
-  // vr::TrackedCameraHandle_t m_pCamera;
+  RHISurface::ptr disparitySurface() const { return m_disparityTexture; }
+  RHISurface::ptr leftGrayscale() const { return m_leftGray; }
+  RHISurface::ptr rightGrayscale() const { return m_rightGray; }
 
-  // vr::HmdMatrix34_t  m_headFromCamera[2];
+protected:
   cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
   glm::mat4 m_R1, m_R1inv, m_Q, m_Qinv;
   cv::Ptr< cv::StereoMatcher > m_stereo;
@@ -58,7 +57,6 @@ public:
   // vr::CameraVideoStreamFrameHeader_t m_lastFrameHeader;
   // Matrix4 m_lastFrameHeaderMatrix;
   float m_CameraDistanceMeters;
-  float fNAN;
 
   // Algorithm settings. Only committed on m_didChangeSettings = true.
   bool m_didChangeSettings;

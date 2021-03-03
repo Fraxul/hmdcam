@@ -9,7 +9,7 @@
 #include "RDMACameraProvider.h"
 #include "common/CameraSystem.h"
 #include "FxCamera.h"
-#include "OpenCVProcess.h"
+#include "DepthMapGenerator.h"
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -36,7 +36,7 @@ RDMACameraProvider* cameraProvider;
 CameraSystem* cameraSystem;
 FxCamera* sceneCamera;
 RDMABuffer::ptr configBuffer;
-OpenCVProcess* cvProcess;
+DepthMapGenerator* depthMapGenerator;
 
 RHIRenderPipeline::ptr meshVertexColorPipeline;
 RHIBuffer::ptr meshQuadVBO;
@@ -183,8 +183,7 @@ int main(int argc, char** argv) {
   cameraSystem->loadCalibrationData();
 
   // CV processing init
-  cvProcess = new OpenCVProcess(cameraSystem, /*viewIdx=*/0);
-  cvProcess->OpenCVAppStart();
+  depthMapGenerator = new DepthMapGenerator(cameraSystem, /*viewIdx=*/0);
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
@@ -265,7 +264,7 @@ int main(int argc, char** argv) {
       // Service RDMA context
       rdmaContext->fireUserEvents();
       cameraProvider->updateSurfaces();
-      cvProcess->OpenCVAppUpdate();
+      depthMapGenerator->processFrame();
 
       {
         ImGui::Begin("RDMA-Client");
@@ -281,7 +280,7 @@ int main(int argc, char** argv) {
 
         }
 
-        cvProcess->DrawUI();
+        depthMapGenerator->renderIMGUI();
 
         ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
 
@@ -315,13 +314,13 @@ int main(int argc, char** argv) {
         ImGui::SliderInt("Disparity Scale", &disparityScale, 1, 128);
 
         if (!disparityScaleTarget) {
-          disparityScaleSurface = rhi()->newTexture2D(cvProcess->m_disparityTexture->width(), cvProcess->m_disparityTexture->height(), kSurfaceFormat_RGBA8);
+          disparityScaleSurface = rhi()->newTexture2D(depthMapGenerator->disparitySurface()->width(), depthMapGenerator->disparitySurface()->height(), kSurfaceFormat_RGBA8);
           disparityScaleTarget = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ disparityScaleSurface }));
         }
 
         rhi()->beginRenderPass(disparityScaleTarget, kLoadInvalidate);
         rhi()->bindRenderPipeline(disparityScalePipeline);
-        rhi()->loadTexture(ksImageTex, cvProcess->m_disparityTexture);
+        rhi()->loadTexture(ksImageTex, depthMapGenerator->disparitySurface());
         DisparityScaleUniformBlock ub;
         ub.disparityScale = (((float) disparityScale) * 16.0f); // scale for fixed-point disparity texture with 4 subpixel bits
         rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
@@ -329,8 +328,8 @@ int main(int argc, char** argv) {
         rhi()->endRenderPass(disparityScaleTarget);
 
         ImGui_Image(disparityScaleSurface);
-        ImGui_Image(cvProcess->m_leftGray);
-        ImGui_Image(cvProcess->m_rightGray);
+        ImGui_Image(depthMapGenerator->leftGrayscale());
+        ImGui_Image(depthMapGenerator->rightGrayscale());
 
 
         ImGui::End();
@@ -362,7 +361,7 @@ int main(int argc, char** argv) {
       }
 #endif
 
-      cvProcess->DrawDisparityDepthMap(renderView);
+      depthMapGenerator->renderDisparityDepthMap(renderView);
 
 
 

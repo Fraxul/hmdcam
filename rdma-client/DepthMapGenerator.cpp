@@ -1,5 +1,5 @@
 #include "imgui.h"
-#include "OpenCVProcess.h"
+#include "DepthMapGenerator.h"
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
 #include "rhi/RHI.h"
@@ -18,6 +18,11 @@
 
 #include "stb/stb_image_write.h"
 
+#define NUM_DISP 128 //Max disparity. Must be in {64, 128, 256} for CUDA algorithms.
+#define MOGRIFY_X 4
+#define MOGRIFY_Y 4
+
+
 
 RHIRenderPipeline::ptr disparityDepthMapPipeline;
 FxAtomicString ksMeshDisparityDepthMapUniformBlock("MeshDisparityDepthMapUniformBlock");
@@ -33,44 +38,33 @@ struct MeshDisparityDepthMapUniformBlock {
   float pad3, pad4;
 };
 
-#define NUM_DISP 128 //Max disparity. Must be in {64, 128, 256} for CUDA algorithms.
-
 static double OGGetAbsoluteTime() {
   struct timeval tv;
-  gettimeofday( &tv, 0 );
+  gettimeofday(&tv, 0);
   return ((double)tv.tv_usec)/1000000. + (tv.tv_sec);
 }
 
-glm::mat4 Matrix4FromCVMatrix( cv::Mat matin )
-{
+glm::mat4 Matrix4FromCVMatrix(cv::Mat matin) {
   glm::mat4 out(1.0f);
-  for ( int y = 0; y < matin.rows; y++ )
-  {
-    for ( int x = 0; x < matin.cols; x++ )
-    {
-      out[y][x] = (float)matin.at<double>( y, x );
+  for (int y = 0; y < matin.rows; y++) {
+    for (int x = 0; x < matin.cols; x++) {
+      out[y][x] = (float)matin.at<double>(y, x);
     }
   }
   return out;
 }
 
-OpenCVProcess::OpenCVProcess(CameraSystem* cs, size_t viewIdx) :
-    m_cameraSystem(cs)
-  , m_viewIdx(viewIdx)
-  , m_iProcFrames( 0 )
-  , m_iFramesSinceFPS( 0 )
-  , m_dTimeOfLastFPS( 0 )
-  , m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING)
-  , m_enableProfiling(false)
-{
+DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, size_t viewIdx) :
+    m_cameraSystem(cs), m_viewIdx(viewIdx), m_iProcFrames(0), m_iFramesSinceFPS(0), m_dTimeOfLastFPS(0), m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING), m_enableProfiling(false) {
+
   if (!disparityDepthMapPipeline) {
     disparityDepthMapPipeline = rhi()->compileRenderPipeline("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
         RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
       }), kPrimitiveTopologyTriangleStrip);
   }
 
-  fNAN = nanf( "" );
 
+  // Initial algorithm settings
 
   m_didChangeSettings = false;
   m_algorithm = 2;
@@ -94,28 +88,14 @@ OpenCVProcess::OpenCVProcess(CameraSystem* cs, size_t viewIdx) :
   m_sgmUniquenessRatio = 5; // 5-15
 
 
-}
-
-OpenCVProcess::~OpenCVProcess()
-{
-}
-
-bool OpenCVProcess::OpenCVAppStart()
-{
-#define MOGRIFY_X 4
-#define MOGRIFY_Y 4
-#define IGNORE_EDGE_DATA_PIXELS 16
-
 
   CameraSystem::View& v = m_cameraSystem->viewAtIndex(m_viewIdx);
   CameraSystem::Camera& cL = m_cameraSystem->cameraAtIndex(v.cameraIndices[0]);
   CameraSystem::Camera& cR = m_cameraSystem->cameraAtIndex(v.cameraIndices[1]);
 
-  // TODO validate CameraSystem:::updateViewStereoDistortionParameters against the distortion map initialization code above
-
-  // cv::initUndistortRectifyMap( K1, D1, R1, P1, cv::Size( 960, 960 ), CV_16SC2, m_leftMap1, m_leftMap2 );
+  // TODO validate CameraSystem:::updateViewStereoDistortionParameters against the distortion map initialization code here
   cv::Size imageSize = cv::Size(m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight());
-#if 1
+
   {
     cv::Mat m1, m2;
     cv::initUndistortRectifyMap(cL.intrinsicMatrix, cL.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_32F, m1, m2);
@@ -124,19 +104,9 @@ bool OpenCVProcess::OpenCVAppStart()
     m_rightMap1_gpu.upload(m1); m_rightMap2_gpu.upload(m2);
 
   }
-  m_R1 = Matrix4FromCVMatrix( v.stereoRectification[0] );
+  m_R1 = Matrix4FromCVMatrix(v.stereoRectification[0]);
   m_R1inv = glm::inverse(m_R1);
-  m_Q = Matrix4FromCVMatrix( v.stereoDisparityToDepth );
-#else
-  cv::Mat R1, R2, P1, P2, cvQ;
-  cv::stereoRectify( cL.intrinsicMatrix, cL.distCoeffs, cR.intrinsicMatrix, cR.distCoeffs, imageSize, v.stereoRotation, v.stereoTranslation, R1, R2, P1, P2, cvQ, cv::CALIB_ZERO_DISPARITY );
-  cv::initUndistortRectifyMap(cL.intrinsicMatrix, cL.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_16SC2, m_leftMap1, m_leftMap2);
-  cv::initUndistortRectifyMap(cR.intrinsicMatrix, cR.distCoeffs, v.stereoRectification[1], v.stereoProjection[1], imageSize, CV_16SC2, m_rightMap1, m_rightMap2);
-  m_R1 = Matrix4FromCVMatrix( R1 );
-  m_R1inv = m_R1;
-  m_R1inv = m_R1inv.invert();
-  m_Q = Matrix4FromCVMatrix( cvQ );
-#endif
+  m_Q = Matrix4FromCVMatrix(v.stereoDisparityToDepth);
 
   m_CameraDistanceMeters = glm::length(glm::vec3(v.stereoTranslation.at<double>(0), v.stereoTranslation.at<double>(1), v.stereoTranslation.at<double>(2)));
 
@@ -160,17 +130,17 @@ bool OpenCVProcess::OpenCVAppStart()
   rectLeft_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
   rectRight_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
 
-  resizedLeft_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
-  resizedRight_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
+  resizedLeft_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
+  resizedRight_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
 
-  resizedLeftGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
-  resizedRightGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+  resizedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+  resizedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
 
-  resizedEqualizedLeftGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
-  resizedEqualizedRightGray_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+  resizedEqualizedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+  resizedEqualizedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
 
-  mdisparity = cv::Mat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S );
-  mdisparity_gpu = cv::cuda::GpuMat( m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S );
+  mdisparity = cv::Mat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
+  mdisparity_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
 
 
   // Set up geometry depth map data
@@ -181,9 +151,9 @@ bool OpenCVProcess::OpenCVAppStart()
     { // Texcoord and position buffers
       std::vector<float> depth_tc;
       int uiDepthVertCount = m_iFBAlgoWidth * m_iFBAlgoHeight;
-      depth_tc.resize( uiDepthVertCount * 4);
-      for ( int y = 0; y < m_iFBAlgoHeight; y++ ) {
-        for ( int x = 0; x < m_iFBAlgoWidth; x++ ) {
+      depth_tc.resize(uiDepthVertCount * 4);
+      for (int y = 0; y < m_iFBAlgoHeight; y++) {
+        for (int x = 0; x < m_iFBAlgoWidth; x++) {
           depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 0] = 1.0f * x / (m_iFBAlgoWidth - 1);
           depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 1] = 1.0f * y / (m_iFBAlgoHeight - 1);
           depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 2] = x;
@@ -199,12 +169,10 @@ bool OpenCVProcess::OpenCVAppStart()
     { // Tristrip indices
       //From https://github.com/cnlohr/spreadgine/blob/master/src/spreadgine_util.c:216
       std::vector<uint32_t> depth_ia;
-      depth_ia.resize( m_iFBAlgoWidth * dmym1 * 2 );
+      depth_ia.resize(m_iFBAlgoWidth * dmym1 * 2);
       //int uiDepthIndexCount = (unsigned int)depth_ia.size();
-      for ( int y = 0; y < dmym1; y++ )
-      {
-        for ( int x = 0; x < m_iFBAlgoWidth; x++ )
-        {
+      for (int y = 0; y < dmym1; y++) {
+        for (int x = 0; x < m_iFBAlgoWidth; x++) {
           int sq = (x + y * dmxm1) * 2;
           depth_ia[sq + 0] = x + y * (m_iFBAlgoWidth);
           depth_ia[sq + 1] = (x)+(y + 1) * (m_iFBAlgoWidth);
@@ -217,13 +185,11 @@ bool OpenCVProcess::OpenCVAppStart()
 
     { // Line indices
       std::vector<uint32_t> depth_ia_lines;
-      depth_ia_lines.resize( m_iFBAlgoWidth * dmym1 * 2 );
+      depth_ia_lines.resize(m_iFBAlgoWidth * dmym1 * 2);
       //int uiDepthIndexCountLines = (unsigned int)depth_ia_lines.size();
 
-      for ( int y = 0; y < dmym1; y++ )
-      {
-        for ( int x = 0; x < m_iFBAlgoWidth; x += 2 )
-        {
+      for (int y = 0; y < dmym1; y++) {
+        for (int x = 0; x < m_iFBAlgoWidth; x += 2) {
           int sq = (x + y * dmxm1) * 2;
           depth_ia_lines[sq + 0] = x + y * (m_iFBAlgoWidth);
           depth_ia_lines[sq + 1] = (x + 1) + (y) * (m_iFBAlgoWidth);
@@ -235,56 +201,48 @@ bool OpenCVProcess::OpenCVAppStart()
       m_geoDepthMapLineIndexCount = depth_ia_lines.size();
     }
   }
-
-  return true;
 }
 
-void OpenCVProcess::ConvertToGray( cv::InputArray src, cv::OutputArray dst )
-{
+DepthMapGenerator::~DepthMapGenerator() {
+}
+
+void ConvertToGray(cv::InputArray src, cv::OutputArray dst) {
   //You can do this the OpenCV way, but my alternative transform seems more successful.
-  if ( 1 )
-  {
-  }
-  else
-  {
-    cv::Mat msrc( src.getMat() );
-    cv::Mat mdst( dst.getMat() );
+  cv::Mat msrc(src.getMat());
+  cv::Mat mdst(dst.getMat());
 
-    int w = msrc.cols;
-    int h = msrc.rows;
+  int w = msrc.cols;
+  int h = msrc.rows;
 
-    for (int y = 0; y < h; y++ ) {
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      uint32_t inx = msrc.at<uint32_t>(y, x);
 
-      for (int x = 0; x < w; x++ ) {
-        uint32_t inx = msrc.at<uint32_t>(y, x);
+      int r = (inx >> 0) & 0xff;
+      int g = (inx >> 8) & 0xff;
+      int b = (inx >> 16) & 0xff;
+      mdst.at<uint8_t>(y, x) = (uint8_t)((r + g + b) / 3);
 
-        int r = (inx >> 0) & 0xff;
-        int g = (inx >> 8) & 0xff;
-        int b = (inx >> 16) & 0xff;
-        mdst.at<uint8_t>(y, x) = (uint8_t)((r + g + b) / 3);
-
-      }
     }
   }
 }
 
 /*
-Vector4 OpenCVProcess::TransformToLocalSpace( float x, float y, int disp )
+Vector4 DepthMapGenerator::TransformToLocalSpace(float x, float y, int disp)
 {
-  float fDisp = ( float ) disp / 16.f; //  16-bit fixed-point disparity map (where each disparity value has 4 fractional bits)
+  float fDisp = (float) disp / 16.f; //  16-bit fixed-point disparity map (where each disparity value has 4 fractional bits)
 
-  float lz = m_Q[11] * m_CameraDistanceMeters / ( fDisp * MOGRIFY_X );
+  float lz = m_Q[11] * m_CameraDistanceMeters / (fDisp * MOGRIFY_X);
   float ly = -(y * MOGRIFY_Y + m_Q[7]) / m_Q[11];
   float lx = (x * MOGRIFY_X + m_Q[3]) / m_Q[11];
   lx *= lz;
   ly *= lz;
   lz *= -1;
-  return m_R1inv * Vector4( lx, ly, lz, 1.0 );
+  return m_R1inv * Vector4(lx, ly, lz, 1.0);
 }
 */
 
-void OpenCVProcess::OpenCVAppUpdate()
-{
+void DepthMapGenerator::processFrame() {
   m_setupTimeMs = 0;
   m_algoTimeMs = 0;
   m_filterTimeMs = 0;
@@ -305,9 +263,8 @@ void OpenCVProcess::OpenCVAppUpdate()
   m_iFramesSinceFPS++;
 
   double Start = OGGetAbsoluteTime();
-  if ( Start >= m_dTimeOfLastFPS + 1 )
-  {
-    if ( Start - m_dTimeOfLastFPS < 4 )
+  if (Start >= m_dTimeOfLastFPS + 1) {
+    if (Start - m_dTimeOfLastFPS < 4)
       m_dTimeOfLastFPS++;
     else
       m_dTimeOfLastFPS = Start;
@@ -345,6 +302,8 @@ void OpenCVProcess::OpenCVAppUpdate()
     }
   }
 
+  // Setup: Copy input camera surfaces to CV GpuMats, resize/grayscale/normalize
+
   RHICUDA::copySurfaceToGpuMat(m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]), origLeft_gpu/*, m_leftStream*/);
   RHICUDA::copySurfaceToGpuMat(m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]), origRight_gpu/*, m_rightStream*/);
 
@@ -352,14 +311,14 @@ void OpenCVProcess::OpenCVAppUpdate()
     m_setupStartEvent.record(m_leftStream);
   }
 
-  cv::cuda::remap( origLeft_gpu, rectLeft_gpu, m_leftMap1_gpu, m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_leftStream);
-  cv::cuda::remap( origRight_gpu, rectRight_gpu, m_rightMap1_gpu, m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_rightStream);
+  cv::cuda::remap(origLeft_gpu, rectLeft_gpu, m_leftMap1_gpu, m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_leftStream);
+  cv::cuda::remap(origRight_gpu, rectRight_gpu, m_rightMap1_gpu, m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_rightStream);
 
-  cv::cuda::resize( rectLeft_gpu, resizedLeft_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ), 0, 0, cv::INTER_LINEAR, m_leftStream);
-  cv::cuda::resize( rectRight_gpu, resizedRight_gpu, cv::Size( m_iFBAlgoWidth, m_iFBAlgoHeight ), 0, 0, cv::INTER_LINEAR, m_rightStream);
+  cv::cuda::resize(rectLeft_gpu, resizedLeft_gpu, cv::Size(m_iFBAlgoWidth, m_iFBAlgoHeight), 0, 0, cv::INTER_LINEAR, m_leftStream);
+  cv::cuda::resize(rectRight_gpu, resizedRight_gpu, cv::Size(m_iFBAlgoWidth, m_iFBAlgoHeight), 0, 0, cv::INTER_LINEAR, m_rightStream);
 
-  cv::cuda::cvtColor( resizedLeft_gpu, resizedLeftGray_gpu, cv::COLOR_BGRA2GRAY, 0, m_leftStream);
-  cv::cuda::cvtColor( resizedRight_gpu, resizedRightGray_gpu, cv::COLOR_BGRA2GRAY, 0, m_rightStream);
+  cv::cuda::cvtColor(resizedLeft_gpu, resizedLeftGray_gpu, cv::COLOR_BGRA2GRAY, 0, m_leftStream);
+  cv::cuda::cvtColor(resizedRight_gpu, resizedRightGray_gpu, cv::COLOR_BGRA2GRAY, 0, m_rightStream);
 
   cv::cuda::equalizeHist(resizedLeftGray_gpu, resizedEqualizedLeftGray_gpu, m_leftStream);
   cv::cuda::equalizeHist(resizedRightGray_gpu, resizedEqualizedRightGray_gpu, m_rightStream);
@@ -371,11 +330,7 @@ void OpenCVProcess::OpenCVAppUpdate()
     m_algoStartEvent.record(m_leftStream);
   }
 
-  //m_leftStream.waitForCompletion();
-
-  //ConvertToGray( resizedLeft, resizedLeftGray );
-  //ConvertToGray( resizedRight, resizedRightGray );
-  //PROFILE( "[OP] Setup" )
+  // Disparity computation
 
   {
     // workaround for no common base interface between CUDA stereo remapping algorithms that can handle the CUstream parameter to compute()
@@ -394,7 +349,7 @@ void OpenCVProcess::OpenCVAppUpdate()
         break;
     };
 
-    //m_stereo->compute( resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu );
+    //m_stereo->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu);
 
     if (m_enableProfiling) {
       m_filterStartEvent.record(m_leftStream);
@@ -419,17 +374,14 @@ void OpenCVProcess::OpenCVAppUpdate()
 
   }
 
-  //PROFILE( "[OP] Stereo Computation")
-
   if (m_enableProfiling) {
     m_copyStartEvent.record(m_leftStream);
   }
 
+  // Copy results to render surfaces
+
   RHICUDA::copyGpuMatToSurface(rectLeft_gpu, m_iTexture, m_leftStream);
   RHICUDA::copyGpuMatToSurface(mdisparity_gpu, m_disparityTexture, m_leftStream);
-
-  //rhi()->loadTextureData(m_iTexture, kVertexElementTypeUByte4N, rectLeft.data);
-  //rhi()->loadTextureData(m_disparityTexture, kVertexElementTypeShort1N, mdisparity.data);
 
   RHICUDA::copyGpuMatToSurface(resizedEqualizedLeftGray_gpu, m_leftGray, m_leftStream);
   RHICUDA::copyGpuMatToSurface(resizedEqualizedRightGray_gpu, m_rightGray, m_leftStream);
@@ -438,14 +390,9 @@ void OpenCVProcess::OpenCVAppUpdate()
   }
 
   m_leftStream.waitForCompletion();
-
-  //PROFILE( "[GL] Texture copies" )
-  //rhi()->loadBufferData(m_geoDepthMapPositionBuffer, m_geoDepthMapPositions.data(), 0, m_geoDepthMapPositions.size() * sizeof(float));
-  //PROFILE( "[GL] Updating output verts" )
-
 }
 
-void OpenCVProcess::DrawDisparityDepthMap(const FxRenderView& renderView) {
+void DepthMapGenerator::renderDisparityDepthMap(const FxRenderView& renderView) {
   rhi()->bindRenderPipeline(disparityDepthMapPipeline);
   rhi()->bindStreamBuffer(0, m_geoDepthMapTexcoordBuffer);
 
@@ -466,55 +413,7 @@ void OpenCVProcess::DrawDisparityDepthMap(const FxRenderView& renderView) {
   rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
 }
 
-
-#if 1
-void OpenCVProcess::TakeScreenshot( )
-{
-  struct tm timeinfo;
-  time_t rawtime;
-  time( &rawtime );
-  localtime_r( &rawtime, &timeinfo );
-  char timebuffer[128];
-  std::strftime( timebuffer, sizeof( timebuffer ), "%Y%m%d %H%M%S", &timeinfo );
-  std::string nowstr = timebuffer;
-  cv::Mat rectLeft, rectRight;
-  rectLeft_gpu.download(rectLeft);
-  rectRight_gpu.download(rectRight);
-
-  cv::Mat resizedLeftGray, resizedRightGray;
-  resizedEqualizedLeftGray_gpu.download(resizedLeftGray);
-  resizedEqualizedRightGray_gpu.download(resizedRightGray);
-
-
-  //Make the alpha channel of the RGB maps solid.
-  int sidepix = m_iFBSideWidth * m_iFBSideHeight;
-  for ( int i = 0; i < sidepix; i++ )
-  {
-    //((uint32_t*)origLeft.data)[i] |= 0xff000000;
-    //((uint32_t*)origRight.data)[i] |= 0xff000000;
-    ((uint32_t*)rectLeft.data)[i] |= 0xff000000;
-    ((uint32_t*)rectRight.data)[i] |= 0xff000000;
-  }
-
-  //stbi_write_png( (nowstr + "_Orig_RGB0.png").c_str(), m_iFBSideWidth, m_iFBSideHeight, 4, origLeft.data, m_iFBSideWidth * 4 );
-  //stbi_write_png( (nowstr + "_Orig_RGB1.png").c_str(), m_iFBSideWidth, m_iFBSideHeight, 4, origRight.data, m_iFBSideWidth * 4 );
-  stbi_write_png( (nowstr + "_RGB0.png").c_str(), m_iFBSideWidth, m_iFBSideHeight, 4, rectLeft.data, m_iFBSideWidth * 4 );
-  stbi_write_png( (nowstr + "_RGB1.png").c_str(), m_iFBSideWidth, m_iFBSideHeight, 4, rectRight.data, m_iFBSideWidth * 4 );
-  stbi_write_png( (nowstr + "_Gray0.png").c_str(), m_iFBAlgoWidth, m_iFBAlgoHeight, 1, resizedLeftGray.data, m_iFBAlgoWidth );
-  stbi_write_png( (nowstr + "_Gray1.png").c_str(), m_iFBAlgoWidth, m_iFBAlgoHeight, 1, resizedRightGray.data, m_iFBAlgoWidth );
-
-  int pxl = m_iFBAlgoWidth * m_iFBAlgoHeight;
-  uint8_t * disp_px = new uint8_t[pxl];
-  for ( int i = 0; i < pxl; i++ )
-  {
-    disp_px[i] = (uint8_t)(((uint16_t*)(mdisparity.data))[i] / 16);
-  }
-  stbi_write_png( (nowstr + "_Disp.png").c_str(), m_iFBAlgoWidth, m_iFBAlgoHeight, 1, disp_px, m_iFBAlgoWidth );
-  delete[] disp_px;
-}
-#endif
-
-void OpenCVProcess::DrawUI() {
+void DepthMapGenerator::renderIMGUI() {
   ImGui::PushID(this);
 
   ImGui::Text("Stereo Algorithm");
@@ -560,7 +459,7 @@ void OpenCVProcess::DrawUI() {
     ImGui::Text("Copy: %.3fms", m_copyTimeMs);
   }
 
-  ImGui::Text("Frames: %5d; %3d FPS", m_iProcFrames, m_iFPS );
+  ImGui::Text("Frames: %5d; %3d FPS", m_iProcFrames, m_iFPS);
 
   ImGui::PopID();
 }
