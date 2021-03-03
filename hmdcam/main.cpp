@@ -352,7 +352,10 @@ int main(int argc, char* argv[]) {
         // Issue renders/copies to populate RDMA surfaces
         for (size_t cameraIdx = 0; cameraIdx < rdmaRenderTargets.size(); ++cameraIdx) {
           rhi()->beginRenderPass(rdmaRenderTargets[cameraIdx], kLoadInvalidate);
-          renderDrawCamera(cameraIdx, /*flags=*/0, /*distortion=*/RHISurface::ptr(), /*overlay=*/RHISurface::ptr(), /*mvp=*/glm::mat4(1.0f) /*identity*/);
+          // flip Y on MVP to fix coordinate system orientation
+          glm::mat4 mvp = glm::mat4(1.0f);
+          mvp[1][1] = -1.0f;
+          renderDrawCamera(cameraIdx, /*flags=*/0, /*distortion=*/RHISurface::ptr(), /*overlay=*/RHISurface::ptr(), mvp);
           rhi()->endRenderPass(rdmaRenderTargets[cameraIdx]);
         }
 
