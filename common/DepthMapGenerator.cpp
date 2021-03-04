@@ -67,7 +67,7 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, size_t viewIdx) :
   // Initial algorithm settings
 
   m_didChangeSettings = false;
-  m_algorithm = 2;
+  m_algorithm = 1;
   m_useDisparityFilter = true;
   m_disparityFilterRadius = 3;
   m_disparityFilterIterations = 1;
@@ -75,11 +75,9 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, size_t viewIdx) :
   // cuda::StereoBM
   m_sbmBlockSize = 19; // must be odd
 
-  // cuda::StereoBeliefPropagation
+  // cuda::StereoConstantSpaceBP
   m_sbpIterations = 5;
   m_sbpLevels = 5;
-
-  // cuda::StereoConstantSpaceBP
   m_scsbpNrPlane = 4;
 
   // cuda::StereoSGM
@@ -284,15 +282,12 @@ void DepthMapGenerator::processFrame() {
         // uses CV_8UC1 disparity
         m_stereo = cv::cuda::createStereoBM(NUM_DISP, m_sbmBlockSize);
         break;
-      case 1:
-        m_stereo = cv::cuda::createStereoBeliefPropagation(NUM_DISP, m_sbpIterations, m_sbpLevels);
-        break;
-      case 2: {
+      case 1: {
         if (m_sbpLevels > 4) // more than 4 levels seems to trigger an internal crash
           m_sbpLevels = 4;
         m_stereo = cv::cuda::createStereoConstantSpaceBP(NUM_DISP, m_sbpIterations, m_sbpLevels, m_scsbpNrPlane);
       } break;
-      case 3:
+      case 2:
         m_stereo = cv::cuda::createStereoSGM(0, NUM_DISP, m_sgmP1, m_sgmP2, m_sgmUniquenessRatio, cv::cuda::StereoSGM::MODE_HH4);
         break;
     };
@@ -375,12 +370,9 @@ void DepthMapGenerator::processFrame() {
         static_cast<cv::cuda::StereoBM*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
         break;
       case 1:
-        static_cast<cv::cuda::StereoBeliefPropagation*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
-        break;
-      case 2:
         static_cast<cv::cuda::StereoConstantSpaceBP*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
         break;
-      case 3:
+      case 2:
         static_cast<cv::cuda::StereoSGM*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
         break;
     };
@@ -457,22 +449,19 @@ void DepthMapGenerator::renderIMGUI() {
 
   ImGui::Text("Stereo Algorithm");
   m_didChangeSettings |= ImGui::RadioButton("BM", &m_algorithm, 0);
-  m_didChangeSettings |= ImGui::RadioButton("BeliefPropagation", &m_algorithm, 1);
-  m_didChangeSettings |= ImGui::RadioButton("ConstantSpaceBeliefPropagation", &m_algorithm, 2);
-  m_didChangeSettings |= ImGui::RadioButton("SGM", &m_algorithm, 3);
+  m_didChangeSettings |= ImGui::RadioButton("ConstantSpaceBeliefPropagation", &m_algorithm, 1);
+  m_didChangeSettings |= ImGui::RadioButton("SGM", &m_algorithm, 2);
 
   switch (m_algorithm) {
     case 0: // StereoBM
       m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &m_sbmBlockSize, /*step=*/2);
       break;
-    case 2: // StereoConstantSpaceBP
+    case 1: // StereoConstantSpaceBP
       m_didChangeSettings |= ImGui::SliderInt("nr_plane", &m_scsbpNrPlane, 1, 16);
-      // fallthrough for shared parameters
-    case 1: // StereoBeliefPropagation
       m_didChangeSettings |= ImGui::SliderInt("SBP Iterations", &m_sbpIterations, 1, 8);
       m_didChangeSettings |= ImGui::SliderInt("SBP Levels", &m_sbpLevels, 1, 8);
       break;
-    case 3: // StereoSGM
+    case 2: // StereoSGM
       m_didChangeSettings |= ImGui::SliderInt("SGM P1", &m_sgmP1, 1, 255);
       m_didChangeSettings |= ImGui::SliderInt("SGM P2", &m_sgmP2, 1, 255);
       m_didChangeSettings |= ImGui::SliderInt("SGM Uniqueness Ratio", &m_sgmUniquenessRatio, 5, 15);
