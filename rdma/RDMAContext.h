@@ -34,6 +34,9 @@ public:
   void asyncSendUserEvent(uint32_t userEventID, SerializationBuffer payload);
 
 
+  bool hasPeerConnections() const { return !(m_peerConnections.empty()); }
+
+
   void fireUserEvents(); // Call from whatever thread the event callback function needs to run on
 
   void setUserEventCallback(std::function<void(RDMAContext*, uint32_t, SerializationBuffer)> callbackFn) { m_userEventCallbackFn = callbackFn; }

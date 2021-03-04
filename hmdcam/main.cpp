@@ -367,7 +367,7 @@ int main(int argc, char* argv[]) {
       previousCaptureTimestamp = argusCamera->frameSensorTimestamp(0);
 
 
-      if (rdmaContext) {
+      if (rdmaContext && rdmaContext->hasPeerConnections()) {
         // Issue renders/copies to populate RDMA surfaces
         for (size_t cameraIdx = 0; cameraIdx < rdmaRenderTargets.size(); ++cameraIdx) {
           rhi()->beginRenderPass(rdmaRenderTargets[cameraIdx], kLoadInvalidate);
@@ -381,7 +381,7 @@ int main(int argc, char* argv[]) {
       }
 
       // TODO move this inside CameraSystem
-      if (!calibrationContext) {
+      if (!calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
           if (cameraSystem->viewAtIndex(viewIdx).depthMapGenerator) {
             cameraSystem->viewAtIndex(viewIdx).depthMapGenerator->processFrame();
@@ -497,7 +497,7 @@ int main(int argc, char* argv[]) {
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
           CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
 
-          if (debugModeSwitch && v.isStereo && v.depthMapGenerator && !calibrationContext) {
+          if (debugModeSwitch && v.isStereo && v.depthMapGenerator && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
             FxRenderView renderView;
             // TODO actual camera setup here. renderDisparityDepthMap only uses the viewProjection matrix.
             renderView.viewMatrix = eyeView[eyeIdx];
