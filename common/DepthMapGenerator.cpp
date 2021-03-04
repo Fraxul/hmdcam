@@ -425,7 +425,10 @@ void DepthMapGenerator::processFrame() {
     m_processingFinishedEvent.record(m_leftStream);
   }
 
-  //m_leftStream.waitForCompletion();
+#ifndef GLATTER_EGL_GLES_3_2
+  // stupid workaround for profiling on desktop RDMAclient
+  m_leftStream.waitForCompletion();
+#endif
 }
 
 void DepthMapGenerator::renderDisparityDepthMap(const FxRenderView& renderView) {
