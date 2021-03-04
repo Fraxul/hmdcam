@@ -81,6 +81,11 @@ protected:
   int m_sgmUniquenessRatio;
 
   //Matrices used in the stereo computation.
+  RHISurface::ptr origLeftBlitSrf;
+  RHISurface::ptr origRightBlitSrf;
+  RHIRenderTarget::ptr origLeftBlitRT;
+  RHIRenderTarget::ptr origRightBlitRT;
+
   cv::cuda::GpuMat origLeft_gpu;
   cv::cuda::GpuMat origRight_gpu;
   cv::cuda::GpuMat rectLeft_gpu;

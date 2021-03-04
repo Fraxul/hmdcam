@@ -20,6 +20,8 @@
 #define MOGRIFY_X 4
 #define MOGRIFY_Y 4
 
+extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
+extern FxAtomicString ksNDCQuadUniformBlock;
 
 
 RHIRenderPipeline::ptr disparityDepthMapPipeline;
@@ -302,8 +304,44 @@ void DepthMapGenerator::processFrame() {
 
   // Setup: Copy input camera surfaces to CV GpuMats, resize/grayscale/normalize
 
+#ifdef GLATTER_EGL_GLES_3_2
+  // Workaround for rgbTexture() on tegra being an EGLStream-backed texture, which doesn't work correctly with cuda-gl interop mapping
+  if (!origLeftBlitRT) {
+    origLeftBlitSrf = rhi()->newTexture2D(m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+    origRightBlitSrf = rhi()->newTexture2D(m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+    origLeftBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { origLeftBlitSrf } ));
+    origRightBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { origRightBlitSrf } ));
+  }
+
+  {
+    glm::mat4 ub = glm::mat4(1.0f);
+    ub[1][1] = -1.0f; // flip Y for coordsys fix
+    {
+      rhi()->beginRenderPass(origLeftBlitRT, kLoadInvalidate);
+      rhi()->bindRenderPipeline(camTexturedQuadPipeline);
+      rhi()->loadTexture(ksImageTex, m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]), linearClampSampler);
+      rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(glm::mat4));
+      rhi()->drawNDCQuad();
+      rhi()->endRenderPass(origLeftBlitRT);
+    }
+    {
+      rhi()->beginRenderPass(origRightBlitRT, kLoadInvalidate);
+      rhi()->bindRenderPipeline(camTexturedQuadPipeline);
+      rhi()->loadTexture(ksImageTex, m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]), linearClampSampler);
+      rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(glm::mat4));
+      rhi()->drawNDCQuad();
+      rhi()->endRenderPass(origRightBlitRT);
+    }
+  }
+
+  RHICUDA::copySurfaceToGpuMat(origLeftBlitSrf, origLeft_gpu/*, m_leftStream*/);
+  RHICUDA::copySurfaceToGpuMat(origRightBlitSrf, origRight_gpu/*, m_rightStream*/);
+
+
+#else
   RHICUDA::copySurfaceToGpuMat(m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[0]), origLeft_gpu/*, m_leftStream*/);
   RHICUDA::copySurfaceToGpuMat(m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(m_viewIdx).cameraIndices[1]), origRight_gpu/*, m_rightStream*/);
+#endif
 
   if (m_enableProfiling) {
     m_setupStartEvent.record(m_leftStream);
@@ -387,7 +425,7 @@ void DepthMapGenerator::processFrame() {
     m_processingFinishedEvent.record(m_leftStream);
   }
 
-  m_leftStream.waitForCompletion();
+  //m_leftStream.waitForCompletion();
 }
 
 void DepthMapGenerator::renderDisparityDepthMap(const FxRenderView& renderView) {

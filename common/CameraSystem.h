@@ -5,6 +5,8 @@
 #include "common/ICameraProvider.h"
 #include <opencv2/core.hpp>
 
+class DepthMapGenerator;
+
 class CameraSystem {
 public:
   CameraSystem(ICameraProvider*);
@@ -27,6 +29,10 @@ public:
   };
 
   struct View {
+    View() : depthMapGenerator(NULL), isStereo(false) {}
+
+    DepthMapGenerator* depthMapGenerator;
+
     bool isStereo;
     size_t cameraCount() const { return isStereo ? 2 : 1; }
     unsigned short cameraIndices[2]; // if (isStereo) [0] is left, [1] is right. Otherwise, only use [0].

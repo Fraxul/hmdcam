@@ -24,6 +24,7 @@
 
 #include "ArgusCamera.h"
 #include "common/CameraSystem.h"
+#include "common/DepthMapGenerator.h"
 #include "InputListener.h"
 #include "Render.h"
 
@@ -176,6 +177,16 @@ int main(int argc, char* argv[]) {
     cameraSystem->saveCalibrationData();
   }
 
+
+  // TODO move this depth map generator init to CameraSystem
+  {
+    CameraSystem::View& v = cameraSystem->viewAtIndex(0);
+    if (v.isStereo) {
+      v.depthMapGenerator = new DepthMapGenerator(cameraSystem, 0);
+    }
+  }
+
+
   // Create the RDMA configuration buffer
   RDMABuffer::ptr configBuf;
   if (rdmaContext) {
@@ -322,12 +333,20 @@ int main(int argc, char* argv[]) {
     double currentCaptureIntervalMs = 0.0;
 
     bool drawUI = false;
+    bool debugModeSwitch = true;
     float uiScale = 1.0f;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
 
     while (!want_quit) {
       if (testButton(kButtonPower)) {
         drawUI = !drawUI;
+      }
+
+      if (!drawUI) {
+        // calling testButton eats the inputs, so only do that if we're not drawing the UI.
+        if (testButton(kButtonDown)) {
+          debugModeSwitch = !debugModeSwitch;
+        }
       }
 
       ImGui_ImplOpenGL3_NewFrame();
@@ -359,6 +378,15 @@ int main(int argc, char* argv[]) {
           rhi()->endRenderPass(rdmaRenderTargets[cameraIdx]);
         }
 
+      }
+
+      // TODO move this inside CameraSystem
+      if (!calibrationContext) {
+        for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+          if (cameraSystem->viewAtIndex(viewIdx).depthMapGenerator) {
+            cameraSystem->viewAtIndex(viewIdx).depthMapGenerator->processFrame();
+          }
+        }
       }
 
       if (calibrationContext && calibrationContext->finished()) {
@@ -404,6 +432,9 @@ int main(int argc, char* argv[]) {
               if (ImGui::Button(caption)) {
                 calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
               }
+            }
+            if (v.depthMapGenerator) {
+              v.depthMapGenerator->renderIMGUI();
             }
           }
         }
@@ -466,80 +497,89 @@ int main(int argc, char* argv[]) {
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
           CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
 
+          if (debugModeSwitch && v.isStereo && v.depthMapGenerator && !calibrationContext) {
+            FxRenderView renderView;
+            // TODO actual camera setup here. renderDisparityDepthMap only uses the viewProjection matrix.
+            renderView.viewMatrix = eyeView[eyeIdx];
+            renderView.projectionMatrix = eyeProjection[eyeIdx];
+            renderView.viewProjectionMatrix = renderView.projectionMatrix * renderView.viewMatrix; 
 
+            v.depthMapGenerator->renderDisparityDepthMap(renderView);
 
-          for (int viewEyeIdx = 0; viewEyeIdx < (v.isStereo ? 2 : 1); ++viewEyeIdx) {
-            if (renderSBS == false && v.isStereo && (viewEyeIdx != eyeIdx))
-              continue;
+          } else {
+            for (int viewEyeIdx = 0; viewEyeIdx < (v.isStereo ? 2 : 1); ++viewEyeIdx) {
+              if (renderSBS == false && v.isStereo && (viewEyeIdx != eyeIdx))
+                continue;
 
-            // coordsys right now: -X = left, -Z = into screen
-            // (camera is at the origin)
-            float stereoOffsetSign = v.isStereo ? ((viewEyeIdx == 0 ? -1.0f : 1.0f)) : 0.0f;
-            float viewDepth = 10.0f;
+              // coordsys right now: -X = left, -Z = into screen
+              // (camera is at the origin)
+              float stereoOffsetSign = v.isStereo ? ((viewEyeIdx == 0 ? -1.0f : 1.0f)) : 0.0f;
+              float viewDepth = 10.0f;
 
-            const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -viewDepth);
-            // Compute FOV-based prescaling -- figure out the billboard size in world units based on the render depth and FOV
-            double fovX = v.isStereo ? v.fovX : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).fovX;
-            // half-width is viewDepth * tanf(0.5 * fovx). maps directly to scale factor since the quad we're rendering is two units across (NDC quad)
-            float fovScaleFactor = viewDepth * tan((fovX * 0.5) * (M_PI/180.0f));
+              const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -viewDepth);
+              // Compute FOV-based prescaling -- figure out the billboard size in world units based on the render depth and FOV
+              double fovX = v.isStereo ? v.fovX : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).fovX;
+              // half-width is viewDepth * tanf(0.5 * fovx). maps directly to scale factor since the quad we're rendering is two units across (NDC quad)
+              float fovScaleFactor = viewDepth * tan((fovX * 0.5) * (M_PI/180.0f));
 
-            glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(fovScaleFactor * zoomFactor, fovScaleFactor * zoomFactor * (static_cast<float>(argusCamera->streamHeight()) / static_cast<float>(argusCamera->streamWidth())) , 1.0f));
+              glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(fovScaleFactor * zoomFactor, fovScaleFactor * zoomFactor * (static_cast<float>(argusCamera->streamHeight()) / static_cast<float>(argusCamera->streamWidth())) , 1.0f));
 
-            // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
-            glm::mat4 mvp = eyeProjection[eyeIdx] * eyeView[eyeIdx] * model;
+              // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
+              glm::mat4 mvp = eyeProjection[eyeIdx] * eyeView[eyeIdx] * model;
 
-            RHISurface::ptr overlayTex, distortionTex;
-            size_t drawFlags = 0;
-            if (calibrationContext && calibrationContext->isViewContext() && calibrationContext->getCameraOrViewIndex() == viewIdx) {
-              // Calibrating a stereo view that includes this camera
-              overlayTex = calibrationContext->overlaySurfaceAtIndex(viewEyeIdx);
-              distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
+              RHISurface::ptr overlayTex, distortionTex;
+              size_t drawFlags = 0;
+              if (calibrationContext && calibrationContext->isViewContext() && calibrationContext->getCameraOrViewIndex() == viewIdx) {
+                // Calibrating a stereo view that includes this camera
+                overlayTex = calibrationContext->overlaySurfaceAtIndex(viewEyeIdx);
+                distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
 
-            } else if (calibrationContext && calibrationContext->isCameraContext() && calibrationContext->getCameraOrViewIndex() == v.cameraIndices[viewEyeIdx]) {
-              // Calibrating this camera's intrinsic distortion
-              overlayTex = calibrationContext->overlaySurfaceAtIndex(0);
+              } else if (calibrationContext && calibrationContext->isCameraContext() && calibrationContext->getCameraOrViewIndex() == v.cameraIndices[viewEyeIdx]) {
+                // Calibrating this camera's intrinsic distortion
+                overlayTex = calibrationContext->overlaySurfaceAtIndex(0);
 
-            } else if (v.isStereo) {
-              // Drawing this camera as part of a stereo pair
-              distortionTex = v.stereoDistortionMap[viewEyeIdx];
-              drawFlags = DRAW_FLAGS_USE_MASK;
+              } else if (v.isStereo) {
+                // Drawing this camera as part of a stereo pair
+                distortionTex = v.stereoDistortionMap[viewEyeIdx];
+                drawFlags = DRAW_FLAGS_USE_MASK;
 
-            } else {
-              // Drawing this camera as a mono view
-              distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
-              drawFlags = DRAW_FLAGS_USE_MASK;
+              } else {
+                // Drawing this camera as a mono view
+                distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
+                drawFlags = DRAW_FLAGS_USE_MASK;
 
-            }
-            
+              }
+              
 
-            renderDrawCamera(v.cameraIndices[viewEyeIdx], drawFlags, distortionTex, overlayTex, mvp);
+              renderDrawCamera(v.cameraIndices[viewEyeIdx], drawFlags, distortionTex, overlayTex, mvp);
 
-  /*
-            float uClipFrac = 0.75f;
-    #if 1
-            // Compute the clipping parameters to cut the views off at the centerline of the view (x=0 in model space)
-            {
-              glm::vec3 worldP0 = glm::vec3(model * glm::vec4(-1.0f, 0.0f, 0.0f, 1.0f));
-              glm::vec3 worldP1 = glm::vec3(model * glm::vec4( 1.0f, 0.0f, 0.0f, 1.0f));
+    /*
+              float uClipFrac = 0.75f;
+      #if 1
+              // Compute the clipping parameters to cut the views off at the centerline of the view (x=0 in model space)
+              {
+                glm::vec3 worldP0 = glm::vec3(model * glm::vec4(-1.0f, 0.0f, 0.0f, 1.0f));
+                glm::vec3 worldP1 = glm::vec3(model * glm::vec4( 1.0f, 0.0f, 0.0f, 1.0f));
 
-              float xLen = fabs(worldP0.x - worldP1.x);
-              // the coordinate that's closest to X0 will be the one we want to clip
-              float xOver = std::min<float>(fabs(worldP0.x), fabs(worldP1.x));
+                float xLen = fabs(worldP0.x - worldP1.x);
+                // the coordinate that's closest to X0 will be the one we want to clip
+                float xOver = std::min<float>(fabs(worldP0.x), fabs(worldP1.x));
 
-              uClipFrac = (xLen - xOver)/xLen;
-            }
-    #endif
+                uClipFrac = (xLen - xOver)/xLen;
+              }
+      #endif
 
-            if (cameraIdx == 0) { // left
-              ub.minUV = glm::vec2(0.0f,  0.0f);
-              ub.maxUV = glm::vec2(uClipFrac, 1.0f);
-            } else { // right
-              ub.minUV = glm::vec2(1.0f - uClipFrac, 0.0f);
-              ub.maxUV = glm::vec2(1.0f,  1.0f);
-            }
-  */
+              if (cameraIdx == 0) { // left
+                ub.minUV = glm::vec2(0.0f,  0.0f);
+                ub.maxUV = glm::vec2(uClipFrac, 1.0f);
+              } else { // right
+                ub.minUV = glm::vec2(1.0f - uClipFrac, 0.0f);
+                ub.maxUV = glm::vec2(1.0f,  1.0f);
+              }
+    */
 
-          } // camera loop
+            } // view-eye loop
+          }
 
         } // view loop
 
