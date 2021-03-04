@@ -1,5 +1,5 @@
 #pragma once
-#include "FxRenderView.h"
+#include "common/FxRenderView.h"
 #include <glm/glm.hpp>
 #include <vector>
 

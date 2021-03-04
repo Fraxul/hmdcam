@@ -9,7 +9,7 @@
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
 #include <thread>
-#include "FxRenderView.h"
+#include "common/FxRenderView.h"
 
 class CameraSystem;
 

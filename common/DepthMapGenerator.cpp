@@ -1,5 +1,5 @@
 #include "imgui.h"
-#include "DepthMapGenerator.h"
+#include "common/DepthMapGenerator.h"
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
 #include "rhi/RHI.h"
@@ -15,8 +15,6 @@
 #include <time.h>
 #include <sys/time.h>
 #include <thread>
-
-#include "stb/stb_image_write.h"
 
 #define NUM_DISP 128 //Max disparity. Must be in {64, 128, 256} for CUDA algorithms.
 #define MOGRIFY_X 4

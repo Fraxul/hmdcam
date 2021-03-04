@@ -8,8 +8,8 @@
 #include "rdma/RDMABuffer.h"
 #include "RDMACameraProvider.h"
 #include "common/CameraSystem.h"
-#include "FxCamera.h"
-#include "DepthMapGenerator.h"
+#include "common/FxCamera.h"
+#include "common/DepthMapGenerator.h"
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"

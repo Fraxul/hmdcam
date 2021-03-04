@@ -1,4 +1,4 @@
-#include "FxCamera.h"
+#include "common/FxCamera.h"
 #include "glm_util.h"
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/rotate_vector.hpp>

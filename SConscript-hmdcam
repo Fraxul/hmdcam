@@ -37,7 +37,7 @@ liveMediaStatics = [
 
 tegraEnv.Program(
   target = '../bin/hmdcam', # relative to build/hmdcam
-  source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('common/*.cpp') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/egl/*.cpp') + Glob('imgui/*.cpp') + Glob('tegra_mmapi/*.cpp') + liveMediaStatics + monadoStatics,
-  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-libusb', 'usb-1.0', 'udev', 'nvargus', 'nvbuf_utils', 'v4l2', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'cuda', 'cudart', 'ibverbs', 'rdmacm']
+  source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('common/*.cpp') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/egl/*.cpp') + Glob('imgui/*.cpp') + Glob('tegra_mmapi/*.cpp') + liveMediaStatics + monadoStatics,
+  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'GLESv2', 'EGL', 'dl', 'pthread', 'hidapi-libusb', 'usb-1.0', 'udev', 'nvargus', 'nvbuf_utils', 'v4l2', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudastereo', 'opencv_cudaimgproc', 'opencv_cudawarping', 'cuda', 'cudart', 'ibverbs', 'rdmacm']
 )
 
