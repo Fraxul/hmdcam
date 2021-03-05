@@ -6,19 +6,18 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   float Q3, Q7, Q11;
   float CameraDistanceMeters;
   vec2 mogrify;
+  float disparityPrescale;
 };
 
 layout(location = 0) in vec4 position;
 layout(location = 1) in vec4 textureCoordinates;
 
-uniform sampler2D disparityTex;
+uniform highp isampler2D disparityTex;
 
 out vec2 v2fTexCoord;
 out vec4 v2fPosition;
 
-vec4 TransformToLocalSpace( float x, float y, float disp ) {
-
-	float fDisp = disp / 16.f; //  16-bit fixed-point disparity map (where each disparity value has 4 fractional bits)
+vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
 
 	float lz = Q11 * CameraDistanceMeters / (fDisp * mogrify.x);
 	float ly = -((y * mogrify.y) + Q7) / Q11;
@@ -33,8 +32,7 @@ void main()
 {
 	v2fPosition = position;
 	v2fTexCoord = textureCoordinates.xy;
-  // multiplying by 32767 is a workaround for uploading an int16_t texture as unsigned-normalized
-  float disparity = (texelFetch(disparityTex, ivec2(textureCoordinates.zw), 0).r * 32767.0f);
+  float disparity = (float(abs(texelFetch(disparityTex, ivec2(textureCoordinates.zw), 0).r)) * disparityPrescale);
   vec4 p = TransformToLocalSpace(textureCoordinates.z, textureCoordinates.w, disparity);
 
 	gl_Position = modelViewProjection * p;

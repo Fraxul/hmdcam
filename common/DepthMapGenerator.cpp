@@ -35,7 +35,8 @@ struct MeshDisparityDepthMapUniformBlock {
   float CameraDistanceMeters;
 
   glm::vec2 mogrify;
-  float pad3, pad4;
+  float disparityPrescale;
+  float pad4;
 };
 
 static double OGGetAbsoluteTime() {
@@ -116,7 +117,7 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, size_t viewIdx) :
   m_iFBAlgoHeight = m_iFBSideHeight / MOGRIFY_Y;
 
   m_iTexture = rhi()->newTexture2D(m_iFBSideWidth, m_iFBSideHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-  m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R16));
+  // m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R16i));
   m_leftGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
   m_rightGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
 
@@ -137,7 +138,6 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, size_t viewIdx) :
   resizedEqualizedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
   resizedEqualizedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
 
-  mdisparity = cv::Mat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
   mdisparity_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
 
 
@@ -295,6 +295,19 @@ void DepthMapGenerator::processFrame() {
     if (m_useDisparityFilter) {
       m_disparityFilter = cv::cuda::createDisparityBilateralFilter(NUM_DISP, m_disparityFilterRadius, m_disparityFilterIterations);
     }
+
+
+    if (m_algorithm == 0) {
+      // CV_8uc1 disparity map type for StereoBM
+      m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8i));
+      mdisparity_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
+      mdisparity_filtered_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
+    } else {
+      // CV_16sc1 disparity map type for everything else
+      m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R16i));
+      mdisparity_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
+      mdisparity_filtered_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
+    }
   }
 
   // Setup: Copy input camera surfaces to CV GpuMats, resize/grayscale/normalize
@@ -387,18 +400,6 @@ void DepthMapGenerator::processFrame() {
       m_disparityFilter->apply(mdisparity_gpu, resizedLeftGray_gpu, mdisparity_filtered_gpu, m_leftStream);
       mdisparity_gpu.swap(mdisparity_filtered_gpu);
     }
-/*  XXX TODO FIX
-    if (m_algorithm == 0) {
-      // Match type for switching between cuda::StereoBM (8UC1) and everything else (16UC1)
-      mdisparity_8uc1.create(mdisparity_gpu.rows, mdisparity_gpu.cols, mdisparity_gpu.type());
-      mdisparity_gpu.download(mdisparity_8uc1);
-      for (size_t y = 0; y < mdisparity_8uc1.rows; ++y) {
-        for (size_t x = 0; x < mdisparity_8uc1.cols; ++x) {
-          mdisparity.at<uint16_t>(y,x) = mdisparity_8uc1.at<uint8_t>(y,x);
-        }
-      }
-    }
-*/
 
   }
 
@@ -436,6 +437,15 @@ void DepthMapGenerator::renderDisparityDepthMap(const FxRenderView& renderView) 
   ub.Q11 = m_Q[2][3];
   ub.CameraDistanceMeters = m_CameraDistanceMeters;
   ub.mogrify = glm::vec2(MOGRIFY_X, MOGRIFY_Y);
+  switch (m_algorithm) {
+    case 0:
+      ub.disparityPrescale = 1.0f;
+      break;
+
+    default:
+      ub.disparityPrescale = 1.0f / 16.0f; // divide by 16.0f for the fixed-point representation using 4 fractional bits
+      break;
+  };
 
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksImageTex, m_iTexture);

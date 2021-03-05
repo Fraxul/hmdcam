@@ -2,7 +2,7 @@
 precision highp float;
 in vec2 fragTexCoord;
 layout(location = 0) out vec4 outColor;
-uniform sampler2D imageTex;
+uniform highp isampler2D imageTex;
 
 layout(std140) uniform DisparityScaleUniformBlock {
   float disparityScale;
@@ -12,7 +12,7 @@ layout(std140) uniform DisparityScaleUniformBlock {
 };
 
 void main() {
-  float disparity = texture(imageTex, fragTexCoord).r;
+  float disparity = float(abs(texelFetch(imageTex, ivec2(gl_FragCoord.xy), 0).r));
   outColor = vec4(vec3(disparity * disparityScale), 1.0f);
 
   // convert to luma

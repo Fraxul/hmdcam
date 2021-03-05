@@ -35,6 +35,11 @@ enum RHIVertexElementType : unsigned char {
   kVertexElementTypeUInt3,
   kVertexElementTypeUInt4,
 
+  kVertexElementTypeByte1,
+  kVertexElementTypeByte2,
+  kVertexElementTypeByte3,
+  kVertexElementTypeByte4,
+
   kVertexElementTypeUByte1,
   kVertexElementTypeUByte2,
   kVertexElementTypeUByte3,
@@ -57,6 +62,10 @@ enum RHIVertexElementType : unsigned char {
   kVertexElementTypeUShort1N,
   kVertexElementTypeUShort2N,
   kVertexElementTypeUShort4N,
+
+  kVertexElementTypeShort1,
+  kVertexElementTypeShort2,
+  kVertexElementTypeShort4,
 
   kVertexElementTypeShort1N,
   kVertexElementTypeShort2N,

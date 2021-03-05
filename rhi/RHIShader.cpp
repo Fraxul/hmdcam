@@ -207,7 +207,7 @@ std::map<RHIShaderDescriptor::ShadingUnit, std::string> RHIShaderDescriptor::pre
 
   std::map<ShadingUnit, std::string> res;
   for (std::map<ShadingUnit, std::string>::iterator unit_it = unitSources.begin(); unit_it != unitSources.end(); ++unit_it) {
-    if (~unit_it->second.empty()) {
+    if (!unit_it->second.empty()) {
       res[unit_it->first] = unit_it->second;
 
       if (rhi_dumpPreprocessedShaderSource) {

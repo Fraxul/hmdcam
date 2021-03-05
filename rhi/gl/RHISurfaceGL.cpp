@@ -36,6 +36,27 @@ GLenum RHISurfaceFormatToGL(RHISurfaceFormat format) {
 #endif
     case kSurfaceFormat_RGBA16s: return GL_RGBA16_SNORM_EXT;
 
+    case kSurfaceFormat_R8i: return GL_R8I;
+    case kSurfaceFormat_R8ui: return GL_R8UI;
+    case kSurfaceFormat_R16i: return GL_R16I;
+    case kSurfaceFormat_R16ui: return GL_R16UI;
+    case kSurfaceFormat_R32i: return GL_R32I;
+    case kSurfaceFormat_R32ui: return GL_R32UI;
+
+    case kSurfaceFormat_RG8i: return GL_RG8I;
+    case kSurfaceFormat_RG8ui: return GL_RG8UI;
+    case kSurfaceFormat_RG16i: return GL_RG16I;
+    case kSurfaceFormat_RG16ui: return GL_RG16UI;
+    case kSurfaceFormat_RG32i: return GL_RG32I;
+    case kSurfaceFormat_RG32ui: return GL_RG32UI;
+
+    case kSurfaceFormat_RGBA8i: return GL_RGBA8I;
+    case kSurfaceFormat_RGBA8ui: return GL_RGBA8UI;
+    case kSurfaceFormat_RGBA16i: return GL_RGBA16I;
+    case kSurfaceFormat_RGBA16ui: return GL_RGBA16UI;
+    case kSurfaceFormat_RGBA32i: return GL_RGBA32I;
+    case kSurfaceFormat_RGBA32ui: return GL_RGBA32UI;
+
     case kSurfaceFormat_Depth32f: return GL_DEPTH_COMPONENT32F;
     case kSurfaceFormat_Depth32f_Stencil8: return GL_DEPTH32F_STENCIL8;
     case kSurfaceFormat_Stencil8: return GL_STENCIL_INDEX8;

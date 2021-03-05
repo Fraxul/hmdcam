@@ -99,8 +99,6 @@ protected:
 
   cv::cuda::GpuMat mdisparity_gpu;
   cv::cuda::GpuMat mdisparity_filtered_gpu;
-  cv::Mat mdisparity_8uc1; // for StereoBM only
-  cv::Mat mdisparity;
 
   cv::cuda::Stream m_leftStream, m_rightStream;
   cv::cuda::Event m_leftRightJoinEvent;

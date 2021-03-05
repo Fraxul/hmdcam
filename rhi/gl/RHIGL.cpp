@@ -196,30 +196,54 @@ static void rhiVertexElementTypeToGLPackFormat(RHIVertexElementType rhiFormat, G
       unpackFormat = GL_RG; unpackType = GL_HALF_FLOAT; return;
     case kVertexElementTypeHalf4:
       unpackFormat = GL_RGBA; unpackType = GL_HALF_FLOAT; return;
+    case kVertexElementTypeUShort1:
     case kVertexElementTypeUShort1N:
       unpackFormat = GL_RED; unpackType = GL_UNSIGNED_SHORT; return;
+    case kVertexElementTypeUShort2:
     case kVertexElementTypeUShort2N:
       unpackFormat = GL_RG; unpackType = GL_UNSIGNED_SHORT; return;
+    case kVertexElementTypeUShort4:
     case kVertexElementTypeUShort4N:
       unpackFormat = GL_RGBA; unpackType = GL_UNSIGNED_SHORT; return;
+    case kVertexElementTypeShort1:
     case kVertexElementTypeShort1N:
       unpackFormat = GL_RED; unpackType = GL_SHORT; return;
+    case kVertexElementTypeShort2:
     case kVertexElementTypeShort2N:
       unpackFormat = GL_RG; unpackType = GL_SHORT; return;
+    case kVertexElementTypeShort4:
     case kVertexElementTypeShort4N:
       unpackFormat = GL_RGBA; unpackType = GL_SHORT; return;
+    case kVertexElementTypeUByte1:
     case kVertexElementTypeUByte1N:
       unpackFormat = GL_RED; unpackType = GL_UNSIGNED_BYTE; return;
+    case kVertexElementTypeUByte2:
     case kVertexElementTypeUByte2N:
       unpackFormat = GL_RG; unpackType = GL_UNSIGNED_BYTE; return;
+    case kVertexElementTypeUByte4:
     case kVertexElementTypeUByte4N:
       unpackFormat = GL_RGBA; unpackType = GL_UNSIGNED_BYTE; return;
+    case kVertexElementTypeByte1:
     case kVertexElementTypeByte1N:
       unpackFormat = GL_RED; unpackType = GL_BYTE; return;
+    case kVertexElementTypeByte2:
     case kVertexElementTypeByte2N:
       unpackFormat = GL_RG; unpackType = GL_BYTE; return;
+    case kVertexElementTypeByte4:
     case kVertexElementTypeByte4N:
       unpackFormat = GL_RGBA; unpackType = GL_BYTE; return;
+    case kVertexElementTypeUInt1:
+      unpackFormat = GL_RED; unpackType = GL_UNSIGNED_INT; return;
+    case kVertexElementTypeUInt2:
+      unpackFormat = GL_RG; unpackType = GL_UNSIGNED_INT; return;
+    case kVertexElementTypeUInt4:
+      unpackFormat = GL_RGBA; unpackType = GL_UNSIGNED_INT; return;
+    case kVertexElementTypeInt1:
+      unpackFormat = GL_RED; unpackType = GL_INT; return;
+    case kVertexElementTypeInt2:
+      unpackFormat = GL_RG; unpackType = GL_INT; return;
+    case kVertexElementTypeInt4:
+      unpackFormat = GL_RGBA; unpackType = GL_INT; return;
     default:
       assert(false && "RHIGL rhiVertexElementTypeToGLPackFormat: unimplemented sourceDataFormat");
   }
