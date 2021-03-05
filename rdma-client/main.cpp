@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
         rhi()->bindRenderPipeline(disparityScalePipeline);
         rhi()->loadTexture(ksImageTex, depthMapGenerator->disparitySurface());
         DisparityScaleUniformBlock ub;
-        ub.disparityScale = 1.0f / static_cast<float>(disparityScale);
+        ub.disparityScale = depthMapGenerator->m_disparityPrescale *  (1.0f / static_cast<float>(disparityScale));
         rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
         rhi()->drawFullscreenPass();
         rhi()->endRenderPass(disparityScaleTarget);

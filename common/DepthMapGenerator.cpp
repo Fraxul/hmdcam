@@ -281,14 +281,17 @@ void DepthMapGenerator::processFrame() {
       case 0:
         // uses CV_8UC1 disparity
         m_stereo = cv::cuda::createStereoBM(NUM_DISP, m_sbmBlockSize);
+        m_disparityPrescale = 1.0f / 16.0f;
         break;
       case 1: {
         if (m_sbpLevels > 4) // more than 4 levels seems to trigger an internal crash
           m_sbpLevels = 4;
         m_stereo = cv::cuda::createStereoConstantSpaceBP(NUM_DISP, m_sbpIterations, m_sbpLevels, m_scsbpNrPlane);
+        m_disparityPrescale = 1.0f / 16.0f;
       } break;
       case 2:
         m_stereo = cv::cuda::createStereoSGM(0, NUM_DISP, m_sgmP1, m_sgmP2, m_sgmUniquenessRatio, cv::cuda::StereoSGM::MODE_HH4);
+        m_disparityPrescale = 1.0f / 256.0f; // TODO: not sure if this is correct -- matches results from CSBP, roughly.
         break;
     };
 
@@ -437,15 +440,7 @@ void DepthMapGenerator::renderDisparityDepthMap(const FxRenderView& renderView) 
   ub.Q11 = m_Q[2][3];
   ub.CameraDistanceMeters = m_CameraDistanceMeters;
   ub.mogrify = glm::vec2(MOGRIFY_X, MOGRIFY_Y);
-  switch (m_algorithm) {
-    case 0:
-      ub.disparityPrescale = 1.0f;
-      break;
-
-    default:
-      ub.disparityPrescale = 1.0f / 16.0f; // divide by 16.0f for the fixed-point representation using 4 fractional bits
-      break;
-  };
+  ub.disparityPrescale = m_disparityPrescale;
 
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksImageTex, m_iTexture);
