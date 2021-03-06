@@ -13,11 +13,10 @@ Install prerequisite packages:
 
 sudo apt-get install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb
 
-udev permissions:
+Additional prereqs for the RDMA framework and rdma-client
+sudo apt-get install libsdl2-dev librdmacm-dev
 
-# Permissions on /dev/hidraw objects might need to be updated
-sudo chgrp plugdev /dev/hidraw*
-sudo chmod 660 /dev/hidraw*
+udev permissions:
 
 # udev rules for Vive (contents of /etc/udev/rules.d/83-hmd.rules )
 # update and run `sudo udevadm control --reload`

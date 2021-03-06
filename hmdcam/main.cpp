@@ -181,7 +181,7 @@ int main(int argc, char* argv[]) {
   // TODO move this depth map generator init to CameraSystem
   {
     CameraSystem::View& v = cameraSystem->viewAtIndex(0);
-    if (v.isStereo) {
+    if (v.isStereo && v.haveStereoRectificationParameters()) {
       v.depthMapGenerator = new DepthMapGenerator(cameraSystem, 0);
     }
   }
@@ -517,8 +517,13 @@ int main(int argc, char* argv[]) {
               float viewDepth = 10.0f;
 
               const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -viewDepth);
+              double fovX = 75.0f; // default guess if no calibration
+
               // Compute FOV-based prescaling -- figure out the billboard size in world units based on the render depth and FOV
-              double fovX = v.isStereo ? v.fovX : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).fovX;
+              if (v.isStereo ? v.haveStereoRectificationParameters() : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).haveIntrinsicCalibration()) {
+                fovX = v.isStereo ? v.fovX : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).fovX;
+              }
+
               // half-width is viewDepth * tanf(0.5 * fovx). maps directly to scale factor since the quad we're rendering is two units across (NDC quad)
               float fovScaleFactor = viewDepth * tan((fovX * 0.5) * (M_PI/180.0f));
 

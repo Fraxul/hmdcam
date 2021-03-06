@@ -16,6 +16,8 @@ public:
 
 
   struct Camera {
+    Camera() : fovX(0), fovY(0) {}
+
     RHISurface::ptr intrinsicDistortionMap;
     RHISurface::ptr mask;
     cv::Mat intrinsicMatrix; // From calibration
@@ -29,7 +31,7 @@ public:
   };
 
   struct View {
-    View() : depthMapGenerator(NULL), isStereo(false) {}
+    View() : depthMapGenerator(NULL), isStereo(false), fovX(0), fovY(0) {}
 
     DepthMapGenerator* depthMapGenerator;
 
