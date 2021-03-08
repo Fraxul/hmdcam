@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cuda.h>
 #include <cudaGL.h>
-#include "rhi/CudaUtil.h"
+#include "rhi/cuda/CudaUtil.h"
 
 GLenum RHISurfaceFormatToGL(RHISurfaceFormat format) {
   switch (format) {

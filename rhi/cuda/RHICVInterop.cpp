@@ -1,5 +1,5 @@
 #include "rhi/cuda/RHICVInterop.h"
-#include "rhi/CudaUtil.h"
+#include "rhi/cuda/CudaUtil.h"
 #include <cuda.h>
 
 namespace RHICUDA {

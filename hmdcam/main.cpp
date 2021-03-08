@@ -20,7 +20,7 @@
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
-#include "rhi/CudaUtil.h"
+#include "rhi/cuda/CudaUtil.h"
 
 #include "ArgusCamera.h"
 #include "common/CameraSystem.h"

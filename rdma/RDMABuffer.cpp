@@ -1,6 +1,6 @@
 #include "RDMABuffer.h"
 #include <cuda.h>
-#include "rhi/CudaUtil.h"
+#include "rhi/cuda/CudaUtil.h"
 
 RDMABuffer::RDMABuffer(RDMAContext* ctx, const std::string& key, char* bufferData, size_t bufferSize, RDMABufferUsage usage)
   : m_context(ctx), m_key(key), m_bufferData(bufferData), m_bufferSize(bufferSize), m_mr(NULL), m_usage(usage) {

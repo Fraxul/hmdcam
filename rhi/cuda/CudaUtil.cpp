@@ -1,6 +1,6 @@
 #include <cuda.h>
 #include <stdio.h>
-#include "CudaUtil.h"
+#include "rhi/cuda/CudaUtil.h"
 
 void checkCUresult(CUresult res, const char* op, const char* file, int line) {
   if (res != CUDA_SUCCESS) {
