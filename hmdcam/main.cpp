@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <signal.h>
+#include <dlfcn.h>
 
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
@@ -25,6 +26,7 @@
 #include "ArgusCamera.h"
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
+#include "common/DGPUWorkerControl.h"
 #include "InputListener.h"
 #include "Render.h"
 
@@ -131,6 +133,15 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
 
 int main(int argc, char* argv[]) {
 
+
+  SHMSegment<DepthMapSHM>* shm = SHMSegment<DepthMapSHM>::createSegment("cuda-dgpu-worker", 16*1024*1024);
+  printf("Waiting for DGPU worker...\n");
+  if (!spawnAndWaitForDGPUWorker(&shm->segment()->m_workerReadySem)) {
+    return 1;
+  }
+
+
+
   rdmaContext = RDMAContext::createServerContext();
 
   if (!rdmaContext) {
@@ -182,7 +193,7 @@ int main(int argc, char* argv[]) {
   {
     CameraSystem::View& v = cameraSystem->viewAtIndex(0);
     if (v.isStereo && v.haveStereoRectificationParameters()) {
-      v.depthMapGenerator = new DepthMapGenerator(cameraSystem, 0);
+      v.depthMapGenerator = new DepthMapGenerator(cameraSystem, shm, 0);
     }
   }
 
@@ -333,7 +344,7 @@ int main(int argc, char* argv[]) {
     double currentCaptureIntervalMs = 0.0;
 
     bool drawUI = false;
-    bool debugModeSwitch = true;
+    bool debugEnableDepthMapGenerator = true;
     float uiScale = 1.0f;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
 
@@ -345,7 +356,7 @@ int main(int argc, char* argv[]) {
       if (!drawUI) {
         // calling testButton eats the inputs, so only do that if we're not drawing the UI.
         if (testButton(kButtonDown)) {
-          debugModeSwitch = !debugModeSwitch;
+          debugEnableDepthMapGenerator = !debugEnableDepthMapGenerator;
         }
       }
 
@@ -381,7 +392,7 @@ int main(int argc, char* argv[]) {
       }
 
       // TODO move this inside CameraSystem
-      if (!calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
+      if (debugEnableDepthMapGenerator && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
           if (cameraSystem->viewAtIndex(viewIdx).depthMapGenerator) {
             cameraSystem->viewAtIndex(viewIdx).depthMapGenerator->processFrame();
@@ -433,7 +444,7 @@ int main(int argc, char* argv[]) {
                 calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
               }
             }
-            if (v.depthMapGenerator) {
+            if (debugEnableDepthMapGenerator && v.depthMapGenerator) {
               v.depthMapGenerator->renderIMGUI();
             }
           }
@@ -441,8 +452,6 @@ int main(int argc, char* argv[]) {
 
 
         ImGui::SliderFloat("UI Scale", &uiScale, 0.5f, 1.5f);
-        ImGui::Checkbox("Debug output: Distortion correction", &debugUseDistortion);
-        ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
 
         {
           const auto& meta = argusCamera->frameMetadata(0);
@@ -451,6 +460,8 @@ int main(int argc, char* argv[]) {
         }
 
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
+        ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
+        ImGui::Checkbox("Debug output: Distortion correction", &debugUseDistortion);
         ImGui::End();
 
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -497,7 +508,7 @@ int main(int argc, char* argv[]) {
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
           CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
 
-          if (debugModeSwitch && v.isStereo && v.depthMapGenerator && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
+          if (debugEnableDepthMapGenerator && v.isStereo && v.depthMapGenerator && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
             FxRenderView renderView;
             // TODO actual camera setup here. renderDisparityDepthMap only uses the viewProjection matrix.
             renderView.viewMatrix = eyeView[eyeIdx];

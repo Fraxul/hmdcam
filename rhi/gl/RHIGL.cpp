@@ -249,11 +249,58 @@ static void rhiVertexElementTypeToGLPackFormat(RHIVertexElementType rhiFormat, G
   }
 }
 
+bool isIntegerInternalFormat(GLenum internalFormat) {
+  switch (internalFormat) {
+    case GL_R8I:
+    case GL_R8UI:
+    case GL_R16I:
+    case GL_R16UI:
+    case GL_R32I:
+    case GL_R32UI:
+
+    case GL_RG8I:
+    case GL_RG8UI:
+    case GL_RG16I:
+    case GL_RG16UI:
+    case GL_RG32I:
+    case GL_RG32UI:
+
+    case GL_RGBA8I:
+    case GL_RGBA8UI:
+    case GL_RGBA16I:
+    case GL_RGBA16UI:
+    case GL_RGBA32I:
+    case GL_RGBA32UI:
+      return true;
+
+    default:
+      return false;
+  }
+}
+
+GLenum toIntegerUnpackFormat(GLenum unpackFormat) {
+  switch (unpackFormat) {
+    case GL_RED: return GL_RED_INTEGER;
+    case GL_RG: return GL_RG_INTEGER;
+    case GL_RGB: return GL_RGB_INTEGER;
+    case GL_RGBA: return GL_RGBA_INTEGER;
+    default:
+      fprintf(stderr, "toIntegerUnpackFormat(): unhandled case 0x%x", unpackFormat);
+      abort();
+      return 0;
+  }
+}
+
+
 void RHIGL::loadTextureData(RHISurface::ptr texture, RHIVertexElementType sourceDataFormat, const void* sourceData) {
   RHISurfaceGL* tex = static_cast<RHISurfaceGL*>(texture.get());
 
   GLenum unpackFormat, unpackType;
   rhiVertexElementTypeToGLPackFormat(sourceDataFormat, unpackFormat, unpackType);
+
+  if (isIntegerInternalFormat(tex->glInternalFormat())) {
+    unpackFormat = toIntegerUnpackFormat(unpackFormat);
+  }
 
   assert(tex->glTarget() == GL_TEXTURE_2D); // only handled case for now
 

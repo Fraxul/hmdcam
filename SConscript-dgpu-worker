@@ -1,0 +1,22 @@
+Import('env')
+
+dgpuEnv = env.Clone()
+
+#dgpuEnv.Append(
+#  CPPDEFINES=['GLATTER_MESA_GLX_GL'],
+#  CPPPATH=['rdma-client', '/usr/include/SDL2']
+#)
+
+if dgpuEnv['IS_TEGRA']:
+  # Link this app against the DGPU CUDA libraries instead of the default libraries (which on Tegra will be the iGPU libraries)
+  dgpuEnv.Append(
+    LINKFLAGS=['-Wl,-rpath=/usr/local/nvidia-dgpu-support']
+  )
+
+dgpuEnv.Program(
+  target = '../bin/dgpu-worker', # relative to build/dgpu-worker
+  source = Glob('dgpu-worker/*.cpp') + Glob('dgpu-worker/*.cu'),
+  LIBS=['stdc++', 'pthread', 'rt', 'opencv_core', 'opencv_cudastereo', 'opencv_cudaimgproc', 'cuda', 'cudart'],
+)
+
+

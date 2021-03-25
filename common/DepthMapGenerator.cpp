@@ -10,7 +10,6 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudawarping.hpp>
-#include <opencv2/cudastereo.hpp>
 #include <cuda.h>
 #include <time.h>
 #include <sys/time.h>
@@ -39,10 +38,14 @@ struct MeshDisparityDepthMapUniformBlock {
   float pad4;
 };
 
+static inline uint64_t currentTimeNs() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
+}
+
 static double OGGetAbsoluteTime() {
-  struct timeval tv;
-  gettimeofday(&tv, 0);
-  return ((double)tv.tv_usec)/1000000. + (tv.tv_sec);
+  return (static_cast<double>(currentTimeNs()) / 1000000000.0);
 }
 
 glm::mat4 Matrix4FromCVMatrix(cv::Mat matin) {
@@ -55,8 +58,9 @@ glm::mat4 Matrix4FromCVMatrix(cv::Mat matin) {
   return out;
 }
 
-DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, size_t viewIdx) :
-    m_cameraSystem(cs), m_viewIdx(viewIdx), m_iProcFrames(0), m_iFramesSinceFPS(0), m_dTimeOfLastFPS(0), m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING), m_enableProfiling(false) {
+DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* shm, size_t viewIdx) :
+    m_cameraSystem(cs), m_viewIdx(viewIdx), m_iProcFrames(0), m_iFramesSinceFPS(0), m_dTimeOfLastFPS(0), m_depthMapSHM(shm), m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING), m_enableProfiling(false), m_populateDebugTextures(false) {
+
 
   if (!disparityDepthMapPipeline) {
     disparityDepthMapPipeline = rhi()->compileRenderPipeline("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
@@ -65,26 +69,27 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, size_t viewIdx) :
   }
 
 
-  // Initial algorithm settings
+  m_didChangeSettings = true; // force initial algorithm setup
 
-  m_didChangeSettings = false;
-  m_algorithm = 1;
+  // Initial algorithm settings
+  m_algorithm = 2;
   m_useDisparityFilter = true;
   m_disparityFilterRadius = 3;
   m_disparityFilterIterations = 1;
 
-  // cuda::StereoBM
+  // cuda::StereoBM, algorithm 0
   m_sbmBlockSize = 19; // must be odd
 
-  // cuda::StereoConstantSpaceBP
+  // cuda::StereoConstantSpaceBP, algorithm 1
   m_sbpIterations = 5;
   m_sbpLevels = 5;
   m_scsbpNrPlane = 4;
 
-  // cuda::StereoSGM
+  // cuda::StereoSGM, algorithm 2
   m_sgmP1 = 10;
   m_sgmP2 = 120;
   m_sgmUniquenessRatio = 5; // 5-15
+  m_sgmUseHH4 = true;
 
 
 
@@ -134,12 +139,6 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, size_t viewIdx) :
 
   resizedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
   resizedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
-
-  resizedEqualizedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
-  resizedEqualizedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
-
-  mdisparity_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
-
 
   // Set up geometry depth map data
 
@@ -202,6 +201,7 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, size_t viewIdx) :
 }
 
 DepthMapGenerator::~DepthMapGenerator() {
+  delete m_depthMapSHM;
 }
 
 void ConvertToGray(cv::InputArray src, cv::OutputArray dst) {
@@ -243,14 +243,11 @@ Vector4 DepthMapGenerator::TransformToLocalSpace(float x, float y, int disp)
 void DepthMapGenerator::processFrame() {
   m_setupTimeMs = 0;
   m_algoTimeMs = 0;
-  m_filterTimeMs = 0;
   m_copyTimeMs = 0;
 
   if (m_enableProfiling) {
     try {
-      m_setupTimeMs = cv::cuda::Event::elapsedTime(m_setupStartEvent, m_algoStartEvent);
-      m_algoTimeMs = cv::cuda::Event::elapsedTime(m_algoStartEvent, m_filterStartEvent);
-      m_filterTimeMs = cv::cuda::Event::elapsedTime(m_filterStartEvent, m_copyStartEvent);
+      m_setupTimeMs = cv::cuda::Event::elapsedTime(m_setupStartEvent, m_setupFinishedEvent);
       m_copyTimeMs = cv::cuda::Event::elapsedTime(m_copyStartEvent, m_processingFinishedEvent);
     } catch (...) {
       // cv::cuda::Event::elapsedTime will throw if the event is not ready; just skip reading the event timers in that case.
@@ -271,7 +268,7 @@ void DepthMapGenerator::processFrame() {
   }
 
 
-  if ((!m_stereo) || m_didChangeSettings) {
+  if (m_didChangeSettings) {
     m_sbmBlockSize |= 1; // enforce odd blockSize
     m_disparityFilterRadius |= 1; // enforce odd filter size
 
@@ -280,37 +277,45 @@ void DepthMapGenerator::processFrame() {
         m_algorithm = 0;
       case 0:
         // uses CV_8UC1 disparity
-        m_stereo = cv::cuda::createStereoBM(NUM_DISP, m_sbmBlockSize);
         m_disparityPrescale = 1.0f / 16.0f;
         break;
       case 1: {
         if (m_sbpLevels > 4) // more than 4 levels seems to trigger an internal crash
           m_sbpLevels = 4;
-        m_stereo = cv::cuda::createStereoConstantSpaceBP(NUM_DISP, m_sbpIterations, m_sbpLevels, m_scsbpNrPlane);
         m_disparityPrescale = 1.0f / 16.0f;
       } break;
       case 2:
-        m_stereo = cv::cuda::createStereoSGM(0, NUM_DISP, m_sgmP1, m_sgmP2, m_sgmUniquenessRatio, cv::cuda::StereoSGM::MODE_HH4);
         m_disparityPrescale = 1.0f / 256.0f; // TODO: not sure if this is correct -- matches results from CSBP, roughly.
         break;
     };
 
-    if (m_useDisparityFilter) {
-      m_disparityFilter = cv::cuda::createDisparityBilateralFilter(NUM_DISP, m_disparityFilterRadius, m_disparityFilterIterations);
-    }
-
-
     if (m_algorithm == 0) {
       // CV_8uc1 disparity map type for StereoBM
       m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8i));
-      mdisparity_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
-      mdisparity_filtered_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
     } else {
       // CV_16sc1 disparity map type for everything else
       m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R16i));
-      mdisparity_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
-      mdisparity_filtered_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_16S);
     }
+
+
+    // Copy settings to SHM.
+    // The worker will read them on the next commit and reset m_depthMapSHM->segment()->m_didChangeSettings itself.
+    m_depthMapSHM->segment()->m_didChangeSettings = true;
+    m_depthMapSHM->segment()->m_algorithm = m_algorithm;
+    m_depthMapSHM->segment()->m_numDisparities = NUM_DISP;
+    m_depthMapSHM->segment()->m_useDisparityFilter = m_useDisparityFilter;
+    m_depthMapSHM->segment()->m_disparityFilterRadius = m_disparityFilterRadius;
+    m_depthMapSHM->segment()->m_disparityFilterIterations = m_disparityFilterIterations;
+    m_depthMapSHM->segment()->m_sbmBlockSize = m_sbmBlockSize;
+    m_depthMapSHM->segment()->m_sbpIterations = m_sbpIterations;
+    m_depthMapSHM->segment()->m_sbpLevels = m_sbpLevels;
+    m_depthMapSHM->segment()->m_scsbpNrPlane = m_scsbpNrPlane;
+    m_depthMapSHM->segment()->m_sgmP1 = m_sgmP1;
+    m_depthMapSHM->segment()->m_sgmP2 = m_sgmP2;
+    m_depthMapSHM->segment()->m_sgmUniquenessRatio = m_sgmUniquenessRatio;
+    m_depthMapSHM->segment()->m_sgmUseHH4 = m_sgmUseHH4;
+
+    m_didChangeSettings = false;
   }
 
   // Setup: Copy input camera surfaces to CV GpuMats, resize/grayscale/normalize
@@ -367,44 +372,59 @@ void DepthMapGenerator::processFrame() {
   cv::cuda::cvtColor(resizedLeft_gpu, resizedLeftGray_gpu, cv::COLOR_BGRA2GRAY, 0, m_leftStream);
   cv::cuda::cvtColor(resizedRight_gpu, resizedRightGray_gpu, cv::COLOR_BGRA2GRAY, 0, m_rightStream);
 
-  cv::cuda::equalizeHist(resizedLeftGray_gpu, resizedEqualizedLeftGray_gpu, m_leftStream);
-  cv::cuda::equalizeHist(resizedRightGray_gpu, resizedEqualizedRightGray_gpu, m_rightStream);
-
   m_leftRightJoinEvent.record(m_rightStream);
   m_leftStream.waitEvent(m_leftRightJoinEvent);
 
   if (m_enableProfiling) {
-    m_algoStartEvent.record(m_leftStream);
+    m_setupFinishedEvent.record(m_leftStream);
   }
+
+
+  m_depthMapSHM->segment()->m_activeViewCount = 1; // TODO multiview support
+  DepthMapSHM::ViewParams& viewParams = m_depthMapSHM->segment()->m_viewParams[0];
+  viewParams.width = resizedLeftGray_gpu.cols;
+  viewParams.height = resizedLeftGray_gpu.rows;
+  viewParams.inputPitchBytes = resizedLeftGray_gpu.step;
+  viewParams.outputPitchBytes = viewParams.width * ((m_algorithm == 0) ? 1 : 2); // Tightly packed output so it can be passed to RHI::loadTextureData
+  viewParams.inputLeftOffset = 0;
+  viewParams.inputRightOffset = (viewParams.inputLeftOffset + (viewParams.height * viewParams.inputPitchBytes) + 4095) & (~4095);
+  viewParams.outputOffset = (viewParams.inputRightOffset + (viewParams.height * viewParams.inputPitchBytes) + 4095) & (~4095);
+
+
+#if 0
+  // DEBUG: process everything twice for perf testing
+  memcpy(&(m_depthMapSHM->segment()->m_viewParams[1]), &(m_depthMapSHM->segment()->m_viewParams[0]), sizeof(DepthMapSHM::ViewParams));
+  m_depthMapSHM->segment()->m_activeViewCount = 2;
+#endif
+
+
+  cv::Mat leftMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputLeftOffset, viewParams.inputPitchBytes);
+  cv::Mat rightMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputRightOffset, viewParams.inputPitchBytes);
+  cv::Mat dispMat(viewParams.height, viewParams.width, (m_algorithm == 0) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
 
   // Disparity computation
 
-  {
-    // workaround for no common base interface between CUDA stereo remapping algorithms that can handle the CUstream parameter to compute()
-    switch (m_algorithm) {
-      case 0:
-        static_cast<cv::cuda::StereoBM*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
-        break;
-      case 1:
-        static_cast<cv::cuda::StereoConstantSpaceBP*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
-        break;
-      case 2:
-        static_cast<cv::cuda::StereoSGM*>(m_stereo.get())->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu, m_leftStream);
-        break;
-    };
+  // Readback previous results from the SHM segment
+ 
+  double wait_start = OGGetAbsoluteTime();
+  sem_wait(&m_depthMapSHM->segment()->m_workFinishedSem);
+  m_syncTimeMs = OGGetAbsoluteTime() - wait_start;
 
-    //m_stereo->compute(resizedLeftGray_gpu, resizedRightGray_gpu, mdisparity_gpu);
+  m_algoTimeMs = m_depthMapSHM->segment()->m_frameTimeMs;
 
-    if (m_enableProfiling) {
-      m_filterStartEvent.record(m_leftStream);
-    }
-   
-    if (m_useDisparityFilter) {
-      m_disparityFilter->apply(mdisparity_gpu, resizedLeftGray_gpu, mdisparity_filtered_gpu, m_leftStream);
-      mdisparity_gpu.swap(mdisparity_filtered_gpu);
-    }
+  // Write current frame to the SHM segment
+  m_leftStream.waitForCompletion(); // sync for transfer to other GPU
 
-  }
+  resizedLeftGray_gpu.download(leftMat);
+  resizedRightGray_gpu.download(rightMat);
+
+  m_depthMapSHM->flush(viewParams.inputLeftOffset, viewParams.inputPitchBytes * viewParams.width);
+  m_depthMapSHM->flush(viewParams.inputRightOffset, viewParams.inputPitchBytes * viewParams.width);
+
+  // Signal processing start
+  sem_post(&m_depthMapSHM->segment()->m_workAvailableSem);
+
+  //m_depthMapAlgorithm->processFrame(resizedLeftGray_gpu.cols, resizedLeftGray_gpu.rows, resizedLeftGray_gpu.cudaPtr(), resizedRightGray_gpu.cudaPtr(), resizedLeftGray_gpu.step, mdisparity_gpu.cudaPtr(), mdisparity_gpu.step);
 
   if (m_enableProfiling) {
     m_copyStartEvent.record(m_leftStream);
@@ -413,10 +433,13 @@ void DepthMapGenerator::processFrame() {
   // Copy results to render surfaces
 
   RHICUDA::copyGpuMatToSurface(rectLeft_gpu, m_iTexture, m_leftStream);
-  RHICUDA::copyGpuMatToSurface(mdisparity_gpu, m_disparityTexture, m_leftStream);
+  rhi()->loadTextureData(m_disparityTexture, (m_algorithm == 0) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, m_depthMapSHM->segment()->data() + viewParams.outputOffset);
 
-  RHICUDA::copyGpuMatToSurface(resizedEqualizedLeftGray_gpu, m_leftGray, m_leftStream);
-  RHICUDA::copyGpuMatToSurface(resizedEqualizedRightGray_gpu, m_rightGray, m_leftStream);
+  if (m_populateDebugTextures) {
+    RHICUDA::copyGpuMatToSurface(resizedLeftGray_gpu, m_leftGray, m_leftStream);
+    RHICUDA::copyGpuMatToSurface(resizedRightGray_gpu, m_rightGray, m_leftStream);
+  }
+
   if (m_enableProfiling) {
     m_processingFinishedEvent.record(m_leftStream);
   }
@@ -487,8 +510,8 @@ void DepthMapGenerator::renderIMGUI() {
     //float f;
     //if (cuEventElapsedTime(&f, m_setupStartEvent.event
     ImGui::Text("Setup: %.3fms", m_setupTimeMs);
+    ImGui::Text("Sync: %.3fms", m_syncTimeMs);
     ImGui::Text("Algo: %.3fms", m_algoTimeMs);
-    ImGui::Text("Filter: %.3fms", m_filterTimeMs);
     ImGui::Text("Copy: %.3fms", m_copyTimeMs);
   }
 

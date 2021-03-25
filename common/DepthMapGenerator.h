@@ -5,17 +5,18 @@
 #include "opencv2/core/affine.hpp"
 #include <opencv2/core/cuda.hpp>
 #include "opencv2/calib3d.hpp"
-#include <opencv2/cudastereo.hpp>
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
 #include <thread>
 #include "common/FxRenderView.h"
+#include "common/DepthMapSHM.h"
+#include "common/SHMSegment.h"
 
 class CameraSystem;
 
 class DepthMapGenerator {
 public:
-  DepthMapGenerator(CameraSystem*, size_t viewIdx);
+  DepthMapGenerator(CameraSystem*, SHMSegment<DepthMapSHM>*, size_t viewIdx);
   ~DepthMapGenerator();
 
   void processFrame();
@@ -26,13 +27,14 @@ public:
   RHISurface::ptr leftGrayscale() const { return m_leftGray; }
   RHISurface::ptr rightGrayscale() const { return m_rightGray; }
 
+  // controls availability of leftGrayscale and rightGrayscale
+  void setPopulateDebugTextures(bool value) { m_populateDebugTextures = value; }
+
   float m_disparityPrescale;
 
 protected:
   cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
   glm::mat4 m_R1, m_R1inv, m_Q, m_Qinv;
-  cv::Ptr< cv::StereoMatcher > m_stereo;
-  cv::Ptr<cv::cuda::DisparityBilateralFilter> m_disparityFilter;
 
   CameraSystem* m_cameraSystem;
   size_t m_viewIdx;
@@ -60,7 +62,10 @@ protected:
   // Matrix4 m_lastFrameHeaderMatrix;
   float m_CameraDistanceMeters;
 
-  // Algorithm settings. Only committed on m_didChangeSettings = true.
+  // Depth map backend
+  SHMSegment<DepthMapSHM>* m_depthMapSHM;
+
+  // Algorithm settings
   bool m_didChangeSettings;
   int m_algorithm;
   bool m_useDisparityFilter;
@@ -70,17 +75,17 @@ protected:
   // cuda::StereoBM
   int m_sbmBlockSize;
 
-  // cuda::StereoBeliefPropagation
+  // cuda::StereoConstantSpaceBP
   int m_sbpIterations;
   int m_sbpLevels;
-
-  // cuda::StereoConstantSpaceBP (shares parameters with StereoBeliefPropagation)
   int m_scsbpNrPlane;
 
   // cuda::StereoSGM
   int m_sgmP1;
   int m_sgmP2;
   int m_sgmUniquenessRatio;
+  bool m_sgmUseHH4;
+
 
   //Matrices used in the stereo computation.
   RHISurface::ptr origLeftBlitSrf;
@@ -96,11 +101,6 @@ protected:
   cv::cuda::GpuMat resizedRight_gpu;
   cv::cuda::GpuMat resizedLeftGray_gpu;
   cv::cuda::GpuMat resizedRightGray_gpu;
-  cv::cuda::GpuMat resizedEqualizedLeftGray_gpu;
-  cv::cuda::GpuMat resizedEqualizedRightGray_gpu;
-
-  cv::cuda::GpuMat mdisparity_gpu;
-  cv::cuda::GpuMat mdisparity_filtered_gpu;
 
   cv::cuda::Stream m_leftStream, m_rightStream;
   cv::cuda::Event m_leftRightJoinEvent;
@@ -108,11 +108,13 @@ protected:
   // Profiling events and data
   bool m_enableProfiling;
   cv::cuda::Event m_setupStartEvent;
-  cv::cuda::Event m_algoStartEvent;
-  cv::cuda::Event m_filterStartEvent;
+  cv::cuda::Event m_setupFinishedEvent;
+
   cv::cuda::Event m_copyStartEvent;
   cv::cuda::Event m_processingFinishedEvent;
 
-  float m_setupTimeMs, m_algoTimeMs, m_filterTimeMs, m_copyTimeMs;
+  float m_setupTimeMs, m_syncTimeMs, m_algoTimeMs, m_copyTimeMs;
+
+  bool m_populateDebugTextures;
 
 };

@@ -183,7 +183,7 @@ int main(int argc, char** argv) {
   cameraSystem->loadCalibrationData();
 
   // CV processing init
-  depthMapGenerator = new DepthMapGenerator(cameraSystem, /*viewIdx=*/0);
+  depthMapGenerator = new DepthMapGenerator(cameraSystem, createDepthMapAlgorithm(), /*viewIdx=*/0);
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
