@@ -44,9 +44,6 @@ protected:
 
   uint32_t  m_iFBAlgoWidth;
   uint32_t  m_iFBAlgoHeight;
-  uint32_t  m_iProcFrames;
-  uint32_t  m_iFramesSinceFPS, m_iFPS;
-  double    m_dTimeOfLastFPS;
 
   RHISurface::ptr m_iTexture;
   RHISurface::ptr m_disparityTexture;

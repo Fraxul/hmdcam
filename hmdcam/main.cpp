@@ -27,10 +27,12 @@
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
 #include "common/DGPUWorkerControl.h"
+#include "common/ScrollingBuffer.h"
 #include "InputListener.h"
 #include "Render.h"
 
 #include "imgui_backend.h"
+#include "implot/implot.h"
 
 #define STBI_ONLY_PNG
 #include "stb/stb_image.h"
@@ -65,10 +67,29 @@ CameraSystem* cameraSystem;
 
 RDMAContext* rdmaContext;
 
+
+// Profiling data
+struct FrameTimingData {
+  FrameTimingData() : captureTimeMs(0), submitTimeMs(0), captureLatencyMs(0), captureIntervalMs(0) {}
+
+  float captureTimeMs;
+  float submitTimeMs;
+
+  float captureLatencyMs;
+  float captureIntervalMs;
+};
+
+ScrollingBuffer<FrameTimingData> s_timingDataBuffer(512);
+
+
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
+}
+
+static inline float deltaTimeMs(uint64_t startTimeNs, uint64_t endTimeNs) {
+  return static_cast<float>(endTimeNs - startTimeNs) / 1000000.0f;
 }
 
 bool want_quit = false;
@@ -156,6 +177,7 @@ int main(int argc, char* argv[]) {
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
+  ImPlot::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = NULL; // Disable INI file load/save
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Keyboard navigation (mapped from the InputListener media remote interface)
@@ -349,6 +371,9 @@ int main(int argc, char* argv[]) {
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
 
     while (!want_quit) {
+      FrameTimingData timingData;
+      uint64_t frameStartTimeNs = currentTimeNs();
+
       if (testButton(kButtonPower)) {
         drawUI = !drawUI;
       }
@@ -370,6 +395,7 @@ int main(int argc, char* argv[]) {
       argusCamera->setRepeatCapture(!((bool) calibrationContext));
 
       argusCamera->readFrame();
+      timingData.captureTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
 
       if (previousCaptureTimestamp) {
         currentCaptureIntervalMs = static_cast<double>(argusCamera->frameSensorTimestamp(0) - previousCaptureTimestamp) / 1000000.0;
@@ -457,6 +483,20 @@ int main(int argc, char* argv[]) {
           const auto& meta = argusCamera->frameMetadata(0);
           ImGui::Text("Exp=1/%usec %uISO DGain=%f AGain=%f",
             (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs/1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
+        }
+
+        ImPlot::SetNextPlotLimitsY(0, 12.0f);
+        if (ImPlot::BeginPlot("##FrameTiming", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
+            ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
+            ImPlot::PlotLine("Capture", &s_timingDataBuffer.data()[0].captureTimeMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::PlotLine("Submit",  &s_timingDataBuffer.data()[0].submitTimeMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::EndPlot();
+        }
+        if (ImPlot::BeginPlot("###CaptureLatencyInterval", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
+            ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
+            ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::EndPlot();
         }
 
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
@@ -719,6 +759,7 @@ int main(int argc, char* argv[]) {
         rdmaContext->asyncSendUserEvent(1, SerializationBuffer());
       }
 
+      timingData.submitTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
       renderHMDFrame();
       {
         uint64_t thisFrameTimestamp = currentTimeNs();
@@ -744,6 +785,10 @@ int main(int argc, char* argv[]) {
 
         previousFrameTimestamp = thisFrameTimestamp;
       }
+
+      timingData.captureLatencyMs = currentCaptureLatencyMs;
+      timingData.captureIntervalMs = currentCaptureIntervalMs;
+      s_timingDataBuffer.push_back(timingData);
     } // Camera rendering loop
   }
 

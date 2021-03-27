@@ -44,8 +44,8 @@ static inline uint64_t currentTimeNs() {
   return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
 
-static double OGGetAbsoluteTime() {
-  return (static_cast<double>(currentTimeNs()) / 1000000000.0);
+static inline float deltaTimeMs(uint64_t startTimeNs, uint64_t endTimeNs) {
+  return static_cast<float>(endTimeNs - startTimeNs) / 1000000.0f;
 }
 
 glm::mat4 Matrix4FromCVMatrix(cv::Mat matin) {
@@ -59,7 +59,7 @@ glm::mat4 Matrix4FromCVMatrix(cv::Mat matin) {
 }
 
 DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* shm, size_t viewIdx) :
-    m_cameraSystem(cs), m_viewIdx(viewIdx), m_iProcFrames(0), m_iFramesSinceFPS(0), m_dTimeOfLastFPS(0), m_depthMapSHM(shm), m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING), m_enableProfiling(false), m_populateDebugTextures(false) {
+    m_cameraSystem(cs), m_viewIdx(viewIdx), m_depthMapSHM(shm), m_leftRightJoinEvent(cv::cuda::Event::DISABLE_TIMING), m_enableProfiling(false), m_populateDebugTextures(false) {
 
 
   if (!disparityDepthMapPipeline) {
@@ -254,20 +254,6 @@ void DepthMapGenerator::processFrame() {
     }
   }
 
-  m_iProcFrames++;
-  m_iFramesSinceFPS++;
-
-  double Start = OGGetAbsoluteTime();
-  if (Start >= m_dTimeOfLastFPS + 1) {
-    if (Start - m_dTimeOfLastFPS < 4)
-      m_dTimeOfLastFPS++;
-    else
-      m_dTimeOfLastFPS = Start;
-    m_iFPS = m_iFramesSinceFPS;
-    m_iFramesSinceFPS = 0;
-  }
-
-
   if (m_didChangeSettings) {
     m_sbmBlockSize |= 1; // enforce odd blockSize
     m_disparityFilterRadius |= 1; // enforce odd filter size
@@ -406,9 +392,9 @@ void DepthMapGenerator::processFrame() {
 
   // Readback previous results from the SHM segment
  
-  double wait_start = OGGetAbsoluteTime();
+  uint64_t wait_start = currentTimeNs();
   sem_wait(&m_depthMapSHM->segment()->m_workFinishedSem);
-  m_syncTimeMs = OGGetAbsoluteTime() - wait_start;
+  m_syncTimeMs = deltaTimeMs(wait_start, currentTimeNs());
 
   m_algoTimeMs = m_depthMapSHM->segment()->m_frameTimeMs;
 
@@ -504,7 +490,7 @@ void DepthMapGenerator::renderIMGUI() {
   }
 
   ImGui::Checkbox("CUDA Profiling", &m_enableProfiling);
-  if ((m_iProcFrames > 1) && m_enableProfiling) {
+  if (m_enableProfiling) {
     // TODO use cuEventElapsedTime and skip if the return is not CUDA_SUCCESS --
     // cv::cuda::Event::elapsedTime throws an exception on CUDA_ERROR_NOT_READY
     //float f;
@@ -514,8 +500,6 @@ void DepthMapGenerator::renderIMGUI() {
     ImGui::Text("Algo: %.3fms", m_algoTimeMs);
     ImGui::Text("Copy: %.3fms", m_copyTimeMs);
   }
-
-  ImGui::Text("Frames: %5d; %3d FPS", m_iProcFrames, m_iFPS);
 
   ImGui::PopID();
 }
