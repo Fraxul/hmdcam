@@ -70,13 +70,15 @@ RDMAContext* rdmaContext;
 
 // Profiling data
 struct FrameTimingData {
-  FrameTimingData() : captureTimeMs(0), submitTimeMs(0), captureLatencyMs(0), captureIntervalMs(0) {}
+  FrameTimingData() : captureTimeMs(0), submitTimeMs(0), captureLatencyMs(0), captureIntervalMs(0), captureIntervalAdjustmentMarker(0) {}
 
   float captureTimeMs;
   float submitTimeMs;
 
   float captureLatencyMs;
   float captureIntervalMs;
+
+  float captureIntervalAdjustmentMarker;
 };
 
 ScrollingBuffer<FrameTimingData> s_timingDataBuffer(512);
@@ -494,9 +496,16 @@ int main(int argc, char* argv[]) {
         }
         if (ImPlot::BeginPlot("###CaptureLatencyInterval", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
             ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
+            ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureIntervalAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
             ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
             ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
             ImPlot::EndPlot();
+        }
+
+        {
+          bool v = argusCamera->willAdjustCaptureInterval();
+          if (ImGui::Checkbox("Auto-adjust capture interval", &v))
+            argusCamera->setAdjustCaptureInterval(v);
         }
 
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
@@ -788,6 +797,8 @@ int main(int argc, char* argv[]) {
 
       timingData.captureLatencyMs = currentCaptureLatencyMs;
       timingData.captureIntervalMs = currentCaptureIntervalMs;
+      timingData.captureIntervalAdjustmentMarker = argusCamera->didAdjustCaptureIntervalThisFrame() ? 10.0f : 0.0;
+
       s_timingDataBuffer.push_back(timingData);
     } // Camera rendering loop
   }

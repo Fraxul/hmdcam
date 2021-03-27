@@ -42,6 +42,10 @@ public:
 
   void setRepeatCapture(bool);
 
+  bool didAdjustCaptureIntervalThisFrame() const { return m_didAdjustCaptureIntervalThisFrame; }
+  bool willAdjustCaptureInterval() const { return m_adjustCaptureInterval; }
+  void setAdjustCaptureInterval(bool value) { m_adjustCaptureInterval = value; }
+
 private:
   EGLDisplay m_display;
   EGLContext m_context;
@@ -58,6 +62,8 @@ private:
   uint64_t m_captureDurationMinNs, m_captureDurationMaxNs; // from sensor mode
   uint64_t m_previousSensorTimestampNs;
   unsigned int m_samplesAtCurrentDuration;
+  bool m_adjustCaptureInterval;
+  bool m_didAdjustCaptureIntervalThisFrame;
   boost::accumulators::accumulator_set<double, boost::accumulators::stats<
       boost::accumulators::tag::rolling_mean,
       boost::accumulators::tag::rolling_count

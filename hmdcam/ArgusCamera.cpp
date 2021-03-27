@@ -12,15 +12,19 @@
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 //#define FRAME_WAIT_TIME_STATS 1
 
+#ifdef FRAME_WAIT_TIME_STATS
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
+#endif
 
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<unsigned int> cameraIds, double framerate) :
   m_display(display_), m_context(context_),
   m_cameraIds(cameraIds),
+  m_adjustCaptureInterval(false),
+  m_didAdjustCaptureIntervalThisFrame(false),
   m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = 128),
   m_captureSession(NULL), m_captureRequest(NULL) {
 
@@ -294,7 +298,8 @@ bool ArgusCamera::readFrame() {
     m_frameMetadata[streamIdx].sensorAnalogGain = iMetadata->getSensorAnalogGain();
   }
 
-  if (m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > 8) && m_previousSensorTimestampNs)) {
+  m_didAdjustCaptureIntervalThisFrame = false;
+  if (m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > 8) && m_previousSensorTimestampNs)) {
 
     if (boost::accumulators::rolling_count(m_captureIntervalStats) > 8) {
 
@@ -314,6 +319,7 @@ bool ArgusCamera::readFrame() {
         int64_t newDuration = std::min<int64_t>(std::max<int64_t>(m_currentCaptureDurationNs + (targetOffset / 64), m_captureDurationMinNs), m_captureDurationMaxNs);
         // printf("Capture duration adjust %ld (%ld -> %ld)\n", targetOffset/64, m_currentCaptureDurationNs, newDuration);
         setCaptureDurationNs(newDuration);
+        m_didAdjustCaptureIntervalThisFrame = true;
 
         // Start a repeating capture
         if (Argus::interface_cast<Argus::ICaptureSession>(m_captureSession)->repeat(m_captureRequest) != Argus::STATUS_OK)
