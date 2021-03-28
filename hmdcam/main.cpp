@@ -157,13 +157,26 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
 int main(int argc, char* argv[]) {
 
 
-  SHMSegment<DepthMapSHM>* shm = SHMSegment<DepthMapSHM>::createSegment("cuda-dgpu-worker", 16*1024*1024);
-  printf("Waiting for DGPU worker...\n");
-  if (!spawnAndWaitForDGPUWorker(&shm->segment()->m_workerReadySem)) {
-    return 1;
+  bool enableDGPU = true;
+
+  for (int i = 1; i < argc; ++i) {
+    if (!strcmp(argv[i], "--disable-dgpu")) {
+      enableDGPU = false;
+    } else {
+      printf("Unrecognized argument %s\n", argv[i]);
+      return 1;
+    }
   }
 
 
+  SHMSegment<DepthMapSHM>* shm = NULL;
+  if (enableDGPU) {
+    shm = SHMSegment<DepthMapSHM>::createSegment("cuda-dgpu-worker", 16*1024*1024);
+    printf("Waiting for DGPU worker...\n");
+    if (!spawnAndWaitForDGPUWorker(&shm->segment()->m_workerReadySem)) {
+      return 1;
+    }
+  }
 
   rdmaContext = RDMAContext::createServerContext();
 
@@ -214,7 +227,7 @@ int main(int argc, char* argv[]) {
 
 
   // TODO move this depth map generator init to CameraSystem
-  {
+  if (enableDGPU) {
     CameraSystem::View& v = cameraSystem->viewAtIndex(0);
     if (v.isStereo && v.haveStereoRectificationParameters()) {
       v.depthMapGenerator = new DepthMapGenerator(cameraSystem, shm, 0);
