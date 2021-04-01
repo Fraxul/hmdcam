@@ -10,6 +10,7 @@
 #include "common/CameraSystem.h"
 #include "common/FxCamera.h"
 #include "common/DepthMapGenerator.h"
+#include "common/DGPUWorkerControl.h"
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -37,6 +38,7 @@ CameraSystem* cameraSystem;
 FxCamera* sceneCamera;
 RDMABuffer::ptr configBuffer;
 DepthMapGenerator* depthMapGenerator;
+SHMSegment<DepthMapSHM>* shm;
 
 RHIRenderPipeline::ptr meshVertexColorPipeline;
 RHIBuffer::ptr meshQuadVBO;
@@ -82,6 +84,13 @@ int main(int argc, char** argv) {
     printf("usage: %s hostname\n", argv[0]);
     return -1;
   }
+
+  shm = SHMSegment<DepthMapSHM>::createSegment("cuda-dgpu-worker", 16*1024*1024);
+  printf("Waiting for DGPU worker...\n");
+  if (!spawnAndWaitForDGPUWorker(&shm->segment()->m_workerReadySem)) {
+    return 1;
+  }
+
   const char* rdmaHost = argv[1];
 
   // RDMA context / connection
@@ -183,7 +192,8 @@ int main(int argc, char** argv) {
   cameraSystem->loadCalibrationData();
 
   // CV processing init
-  depthMapGenerator = new DepthMapGenerator(cameraSystem, createDepthMapAlgorithm(), /*viewIdx=*/0);
+  depthMapGenerator = new DepthMapGenerator(cameraSystem, shm, /*viewIdx=*/0);
+  depthMapGenerator->setPopulateDebugTextures(true);
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
