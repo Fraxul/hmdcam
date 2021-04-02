@@ -7,7 +7,7 @@
 #include "opencv2/calib3d.hpp"
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
-#include <thread>
+#include <vector>
 #include "common/FxRenderView.h"
 #include "common/DepthMapSHM.h"
 #include "common/SHMSegment.h"
@@ -48,6 +48,9 @@ protected:
   RHISurface::ptr m_iTexture;
   RHISurface::ptr m_disparityTexture;
   RHISurface::ptr m_leftGray, m_rightGray;
+
+  std::vector<RHIRenderTarget::ptr> m_disparityTextureMipTargets;
+
 
   RHIBuffer::ptr m_geoDepthMapTexcoordBuffer;
   RHIBuffer::ptr m_geoDepthMapTristripIndexBuffer;

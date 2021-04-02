@@ -7,6 +7,7 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   float CameraDistanceMeters;
   vec2 mogrify;
   float disparityPrescale;
+  int disparityTexLevels;
 };
 
 layout(location = 0) in vec4 position;
@@ -32,7 +33,20 @@ void main()
 {
 	v2fPosition = position;
 	v2fTexCoord = textureCoordinates.xy;
-  float disparity = (float(abs(texelFetch(disparityTex, ivec2(textureCoordinates.zw), 0).r)) * disparityPrescale);
+
+  int disparityRaw;
+  ivec2 mipCoords = ivec2(textureCoordinates.zw);
+  // Walk the mip chain to find a valid disparity value at this location
+  for (int level = 0; level < disparityTexLevels; ++level) {
+    disparityRaw = texelFetch(disparityTex, mipCoords, level).r;
+    if (disparityRaw > 0)
+      break;
+    mipCoords = mipCoords >> 1;
+  }
+  
+  disparityRaw = max(disparityRaw, 1); // prevent divide-by-zero
+
+  float disparity = (float(abs(disparityRaw)) * disparityPrescale);
   vec4 p = TransformToLocalSpace(textureCoordinates.z, textureCoordinates.w, disparity);
 
 	gl_Position = modelViewProjection * p;

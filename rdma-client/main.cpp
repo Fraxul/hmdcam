@@ -53,7 +53,7 @@ struct MeshTransformUniformBlock {
 static FxAtomicString ksDisparityScaleUniformBlock("DisparityScaleUniformBlock");
 struct DisparityScaleUniformBlock {
   float disparityScale;
-  float pad2;
+  int sourceLevel;
   float pad3;
   float pad4;
 };
@@ -320,8 +320,10 @@ int main(int argc, char** argv) {
 
       {
         ImGui::Begin("Internals");
-        static int disparityScale = 16;
+        static int disparityScale = 2;
+        static int disparityScaleSourceLevel = 0;
         ImGui::SliderInt("Disparity Scale", &disparityScale, 1, 128);
+        ImGui::SliderInt("Source Level", &disparityScaleSourceLevel, 0, depthMapGenerator->disparitySurface()->mipLevels() - 1);
 
         if (!disparityScaleTarget) {
           disparityScaleSurface = rhi()->newTexture2D(depthMapGenerator->disparitySurface()->width(), depthMapGenerator->disparitySurface()->height(), kSurfaceFormat_RGBA8);
@@ -333,6 +335,7 @@ int main(int argc, char** argv) {
         rhi()->loadTexture(ksImageTex, depthMapGenerator->disparitySurface());
         DisparityScaleUniformBlock ub;
         ub.disparityScale = depthMapGenerator->m_disparityPrescale *  (1.0f / static_cast<float>(disparityScale));
+        ub.sourceLevel = disparityScaleSourceLevel;
         rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
         rhi()->drawFullscreenPass();
         rhi()->endRenderPass(disparityScaleTarget);

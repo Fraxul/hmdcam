@@ -36,9 +36,9 @@ RHIRenderTargetGL::~RHIRenderTargetGL() {
   RHISurfaceGL* glSurface = static_cast<RHISurfaceGL*>(element.surface.get());
   if (glSurface->isGLTexture()) {
     if (element.singleLayer) {
-      GL(glFramebufferTextureLayer(GL_FRAMEBUFFER, attachPoint, glSurface->glId(), 0, element.layerIndex));
+      GL(glFramebufferTextureLayer(GL_FRAMEBUFFER, attachPoint, glSurface->glId(), element.level, element.layerIndex));
     } else {
-      GL(glFramebufferTexture(GL_FRAMEBUFFER, attachPoint, glSurface->glId(), 0));
+      GL(glFramebufferTexture(GL_FRAMEBUFFER, attachPoint, glSurface->glId(), element.level));
     }
   } else {
     assert(glSurface->isGLRenderbuffer());

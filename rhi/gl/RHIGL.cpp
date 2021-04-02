@@ -306,16 +306,13 @@ void RHIGL::loadTextureData(RHISurface::ptr texture, RHIVertexElementType source
 
   GL(glBindTexture(tex->glTarget(), tex->glId()));
   GL(glTexSubImage2D(tex->glTarget(), 0, 0, 0, tex->width(), tex->height(), unpackFormat, unpackType, sourceData));
-
-  if (tex->mipLevels() > 1) {
-    glGenerateMipmap(tex->glTarget());
-    glTexParameteri(tex->glTarget(), GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-  }
-
 }
 
 void RHIGL::generateTextureMips(RHISurface::ptr texture) {
   RHISurfaceGL* glTex = static_cast<RHISurfaceGL*>(texture.get());
+
+  if (glTex->mipLevels() == 1)
+    return;
 
   assert(glTex->glTarget() == GL_TEXTURE_2D ||
          glTex->glTarget() == GL_TEXTURE_3D ||
@@ -325,6 +322,7 @@ void RHIGL::generateTextureMips(RHISurface::ptr texture) {
 
   GL(glBindTexture(glTex->glTarget(), glTex->glId()));
   GL(glGenerateMipmap(glTex->glTarget()));
+  GL(glTexParameteri(glTex->glTarget(), GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR));
 }
 
 static GLuint generateSingleLayerFramebufferForTexture(RHISurfaceGL* glTex, uint8_t layer) {

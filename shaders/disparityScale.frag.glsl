@@ -6,14 +6,21 @@ uniform highp isampler2D imageTex;
 
 layout(std140) uniform DisparityScaleUniformBlock {
   float disparityScale;
-  float pad2;
+  int sourceLevel;
   float pad3;
   float pad4;
 };
 
 void main() {
-  float disparity = float(abs(texelFetch(imageTex, ivec2(gl_FragCoord.xy), 0).r));
-  outColor = vec4(vec3(disparity * disparityScale), 1.0f);
+  ivec2 coord = ivec2(int(gl_FragCoord.x) >> sourceLevel, int(gl_FragCoord.y) >> sourceLevel);
+
+  int disparity_raw = texelFetch(imageTex, coord, sourceLevel).r;
+  if (disparity_raw <= 0) {
+    // Highlight invalid disparity in red
+    outColor = vec4(1.0f, 0.0f, 0.0f, 1.0f);
+  } else {
+    outColor = vec4(vec3(float(disparity_raw) * disparityScale), 1.0f);
+  }
 
   // convert to luma
 }

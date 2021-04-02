@@ -38,10 +38,10 @@ protected:
 };
 
 struct RHIRenderTargetDescriptorElement {
-  RHIRenderTargetDescriptorElement(RHISurface::ptr surface_ = RHISurface::ptr()) : surface(surface_), singleLayer(false), layerIndex(0) {}
+  RHIRenderTargetDescriptorElement(RHISurface::ptr surface_ = RHISurface::ptr(), uint8_t level_ = 0) : surface(surface_), singleLayer(false), layerIndex(0), level(level_) {}
 
-  static RHIRenderTargetDescriptorElement singleLayerElement(RHISurface::ptr surface_, uint8_t layerIndex_) {
-    RHIRenderTargetDescriptorElement res(surface_);
+  static RHIRenderTargetDescriptorElement singleLayerElement(RHISurface::ptr surface_, uint8_t layerIndex_, uint8_t level_ = 0) {
+    RHIRenderTargetDescriptorElement res(surface_, level_);
     res.singleLayer = true;
     res.layerIndex = layerIndex_;
     return res;
@@ -50,6 +50,7 @@ struct RHIRenderTargetDescriptorElement {
   RHISurface::ptr surface;
   bool singleLayer;
   uint8_t layerIndex;
+  uint8_t level;
 };
 
 struct RHIRenderTargetDescriptor {
