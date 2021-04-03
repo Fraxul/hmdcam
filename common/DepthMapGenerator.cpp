@@ -63,9 +63,14 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
 
 
   if (!disparityDepthMapPipeline) {
-    disparityDepthMapPipeline = rhi()->compileRenderPipeline("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
+    RHIRenderPipelineDescriptor rpd;
+    rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
+    rpd.primitiveRestartEnabled = true;
+
+    disparityDepthMapPipeline = rhi()->compileRenderPipeline(
+      rhi()->compileShader(RHIShaderDescriptor("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
         RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
-      }), kPrimitiveTopologyTriangleStrip);
+      }))), rpd);
   }
 
 
@@ -166,13 +171,15 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
     { // Tristrip indices
       //From https://github.com/cnlohr/spreadgine/blob/master/src/spreadgine_util.c:216
       std::vector<uint32_t> depth_ia;
-      depth_ia.resize(m_iFBAlgoWidth * dmym1 * 2);
+      depth_ia.reserve((m_iFBAlgoWidth * dmym1 * 2) + dmym1);
       //int uiDepthIndexCount = (unsigned int)depth_ia.size();
       for (int y = 0; y < dmym1; y++) {
+        if (y != 0)
+          depth_ia.push_back(0xffffffff); // strip-restart
+
         for (int x = 0; x < m_iFBAlgoWidth; x++) {
-          int sq = (x + y * dmxm1) * 2;
-          depth_ia[sq + 0] = x + y * (m_iFBAlgoWidth);
-          depth_ia[sq + 1] = (x)+(y + 1) * (m_iFBAlgoWidth);
+          depth_ia.push_back(x + ( y      * (m_iFBAlgoWidth)));
+          depth_ia.push_back(x + ((y + 1) * (m_iFBAlgoWidth)));
         }
       }
 

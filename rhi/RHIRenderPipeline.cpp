@@ -11,6 +11,7 @@ size_t RHIRenderPipelineDescriptor::hash() const {
   boost::hash_combine(h, boost::hash_value(rasterizationEnabled));
   boost::hash_combine(h, boost::hash_value(alphaToCoverageEnabled));
   boost::hash_combine(h, boost::hash_value(perSampleShadingEnabled));
+  boost::hash_combine(h, boost::hash_value(primitiveRestartEnabled));
   return h;
 }
 

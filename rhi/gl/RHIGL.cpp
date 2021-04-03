@@ -586,6 +586,16 @@ void RHIGL::bindRenderPipeline(RHIRenderPipeline::ptr pipeline) {
     }
   }
 
+  if (previousPipeline && previousPipeline->descriptor().primitiveRestartEnabled == m_activeRenderPipeline->descriptor().primitiveRestartEnabled) {
+    // state unchanged
+  } else {
+    if (m_activeRenderPipeline->descriptor().primitiveRestartEnabled) {
+      glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
+    } else {
+      glDisable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
+    }
+  }
+
 }
 
 void RHIGL::bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr buffer) {
