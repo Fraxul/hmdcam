@@ -679,8 +679,8 @@ int main(int argc, char* argv[]) {
           rhi()->bindRenderPipeline(uiLayerPipeline);
           rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
           UILayerUniformBlock uiLayerBlock;
-          float uiScaleBase = 0.15f;
-          uiLayerBlock.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -0.25f)) * glm::scale(glm::vec3(uiScaleBase * uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScaleBase * uiScale, uiScaleBase * uiScale));
+          float uiScaleBase = 0.75f;
+          uiLayerBlock.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -1.2f)) * glm::scale(glm::vec3(uiScaleBase * uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScaleBase * uiScale, uiScaleBase * uiScale));
 
           rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
           rhi()->drawNDCQuad();

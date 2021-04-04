@@ -400,8 +400,7 @@ EGLDisplay renderEGLDisplay() { return demoState.display; }
 EGLContext renderEGLContext() { return demoState.context; }
 
 void recomputeHMDParameters() {
-  float nearZ = 0.01f;
-  float farZ = 100.0f;
+  float zNear = 1.0f;
 
   // from renderer_get_view_projection (compositor/main/comp_renderer.c)
   struct xrt_vec3 eye_relation = {
@@ -428,11 +427,7 @@ void recomputeHMDParameters() {
 
     const float a31 = (tan_right + tan_left) / tan_width;
     const float a32 = (tan_up + tan_down) / tan_height;
-    const float a33 = -farZ / (farZ - nearZ);
     
-    const float a43 =
-        -(farZ * nearZ) / (farZ - nearZ);
-
     /*
     self->mat_projection[eye] = (struct xrt_matrix_4x4) {
       .v = {
@@ -442,11 +437,13 @@ void recomputeHMDParameters() {
         0, 0, a43, 0,
       }
     };*/
+
+    // Right-handed infinite-Z far plane
     eyeProjection[eyeIdx] = glm::mat4(
-       a11,  0.0f,  0.0f,  0.0f,
-      0.0f,   a22,  0.0f,  0.0f,
-       a31,   a32,   a33, -1.0f,
-      0.0f,  0.0f,   a43,  0.0f);
+       a11,  0.0f,  0.0f,   0.0f,
+      0.0f,   a22,  0.0f,   0.0f,
+       a31,   a32,  0.0f,  -1.0f,
+      0.0f,  0.0f,  zNear,  0.0f);
 
     struct xrt_pose eye_pose;
     xrt_device_get_view_pose(xrtHMDevice, &eye_relation, eyeIdx, &eye_pose);
