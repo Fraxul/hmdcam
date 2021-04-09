@@ -209,7 +209,27 @@ int main(int argc, char* argv[]) {
   s_cameraWidth = argusCamera->streamWidth();
   s_cameraHeight = argusCamera->streamHeight();
 
-  renderSetDebugSurfaceSize(s_cameraWidth * 2, s_cameraHeight);
+  std::vector<RHIRect> debugSurfaceCameraRects;
+  {
+    // Size and allocate debug surface area based on camera count
+    unsigned int debugColumns = 1, debugRows = 1;
+    if (argusCamera->streamCount() > 1) {
+      debugColumns = 2;
+      debugRows = (argusCamera->streamCount() + 1) / 2; // round up
+    }
+    unsigned int dsW = debugColumns * argusCamera->streamWidth();
+    unsigned int dsH = debugRows * argusCamera->streamHeight();
+    printf("Debug stream: selected a %ux%u layout on a %ux%u surface for %zu cameras\n", debugColumns, debugRows, dsW, dsH, argusCamera->streamCount());
+
+    for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
+      unsigned int col = cameraIdx % debugColumns;
+      unsigned int row = cameraIdx / debugColumns;
+      RHIRect r = RHIRect::xywh(col * argusCamera->streamWidth(), row * argusCamera->streamHeight(), argusCamera->streamWidth(), argusCamera->streamHeight());
+      printf("  [%zu] (%ux%u) +(%u, %u)\n", cameraIdx, r.width, r.height, r.x, r.y);
+      debugSurfaceCameraRects.push_back(r);
+    }
+    renderSetDebugSurfaceSize(dsW, dsH);
+  }
 
   cameraSystem = new CameraSystem(argusCamera);
   // Load whatever calibration we have (may be nothing)
@@ -696,13 +716,9 @@ int main(int argc, char* argv[]) {
           RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({debugSurface}));
           rhi()->beginRenderPass(rt, kLoadInvalidate);
 
-          // render each distortion-corrected camera view to half of the debug surface
-          RHIRect leftRect = RHIRect::xywh(0, 0, debugSurface->width() / 2, debugSurface->height());
-          RHIRect rightRect = RHIRect::xywh(debugSurface->width() / 2, 0, debugSurface->width() / 2, debugSurface->height());
-
-          // TODO split up debug view for more than 2 cameras
-          for (int cameraIdx = 0; cameraIdx < 2; ++cameraIdx) {
-            rhi()->setViewport(cameraIdx == 0 ? leftRect : rightRect);
+          // render each distortion-corrected camera view to the previously allocated region of the debug surface
+          for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
+            rhi()->setViewport(debugSurfaceCameraRects[cameraIdx]);
 
             RHISurface::ptr overlayTex, distortionTex;
             distortionTex = cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap;
