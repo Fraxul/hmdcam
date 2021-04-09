@@ -204,8 +204,7 @@ int main(int argc, char* argv[]) {
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f);
 
   // Open the cameras
-  // TODO have ArgusCamera autodetect indices of and open all CSI cameras
-  argusCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), {0, 1}, s_cameraFramerate);
+  argusCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), s_cameraFramerate);
   s_cameraWidth = argusCamera->streamWidth();
   s_cameraHeight = argusCamera->streamHeight();
 

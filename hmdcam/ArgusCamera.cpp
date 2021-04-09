@@ -20,9 +20,8 @@ static inline uint64_t currentTimeNs() {
 }
 #endif
 
-ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<unsigned int> cameraIds, double framerate) :
+ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framerate) :
   m_display(display_), m_context(context_),
-  m_cameraIds(cameraIds),
   m_adjustCaptureInterval(false),
   m_didAdjustCaptureIntervalThisFrame(false),
   m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = 128),
@@ -30,9 +29,6 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
 
   m_targetCaptureIntervalNs = 1000000000.0 / framerate;
 
-  if (cameraIds.empty()) {
-    die("No camera IDs provided");
-  }
 
   m_cameraProvider.reset(Argus::CameraProvider::create());
   Argus::ICameraProvider* iCameraProvider = Argus::interface_cast<Argus::ICameraProvider>(m_cameraProvider.get());
@@ -41,25 +37,15 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
   }
   printf("Argus Version: %s\n", iCameraProvider->getVersion().c_str());
 
-  // DEBUG: Dump the list of available cameras
-  {
-    std::vector<Argus::CameraDevice*> devices;
-    iCameraProvider->getCameraDevices(&devices);
-    printf("Devices (%zu):\n", devices.size());
-    for (size_t deviceIdx = 0; deviceIdx < devices.size(); ++deviceIdx) {
-      printf("[%zu] %p\n", deviceIdx, devices[deviceIdx]);
-    }
+  iCameraProvider->getCameraDevices(&m_cameraDevices);
+  if (m_cameraDevices.empty()) {
+    die("No camera devices are available");
   }
 
   // Get the selected camera device and sensor mode.
-  for (size_t cameraIdx = 0; cameraIdx < m_cameraIds.size(); ++cameraIdx) {
-    Argus::CameraDevice* cameraDevice = ArgusHelpers::getCameraDevice(m_cameraProvider.get(), cameraIds[cameraIdx]);
-    if (!cameraDevice)
-        die("Selected camera (index %zu, id %u) is not available", cameraIdx, cameraIds[cameraIdx]);
-    m_cameraDevices.push_back(cameraDevice);
-
-    printf("[%zu] Sensor %u:\n", cameraIdx, cameraIds[cameraIdx]);
-    ArgusHelpers::printCameraDeviceInfo(cameraDevice, "  ");
+  for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
+    printf("Sensor %zu:\n", cameraIdx);
+    ArgusHelpers::printCameraDeviceInfo(m_cameraDevices[cameraIdx], "  ");
   }
 
   // Pick a sensor mode from the first camera, which will be applied to all cameras
@@ -123,7 +109,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, std::vector<u
   iEGLOutputStreamSettings->setMetadataEnable(true);
 
   // Create the per-camera OutputStreams and textures.
-  for (size_t cameraIdx = 0; cameraIdx < m_cameraIds.size(); ++cameraIdx) {
+  for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
     iOutputStreamSettings->setCameraDevice(m_cameraDevices[cameraIdx]);
     Argus::OutputStream* outputStream = iCaptureSession->createOutputStream(streamSettings.get());
     m_outputStreams.push_back(outputStream);

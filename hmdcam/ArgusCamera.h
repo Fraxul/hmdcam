@@ -12,7 +12,7 @@
 
 class ArgusCamera : public ICameraProvider {
 public:
-  ArgusCamera(EGLDisplay, EGLContext, std::vector<unsigned int> cameraIndices, double framerate);
+  ArgusCamera(EGLDisplay, EGLContext, double framerate);
   virtual ~ArgusCamera();
 
   bool readFrame();
@@ -50,7 +50,6 @@ private:
   EGLDisplay m_display;
   EGLContext m_context;
 
-  std::vector<unsigned int> m_cameraIds;
   std::vector<RHIEGLStreamSurfaceGL::ptr> m_textures;
   std::vector<EGLStreamKHR> m_eglStreams;
   unsigned int m_streamWidth, m_streamHeight;
