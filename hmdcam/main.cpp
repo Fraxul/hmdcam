@@ -746,7 +746,7 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      if (rdmaContext) {
+      if (rdmaContext && rdmaContext->hasPeerConnections()) {
         // Issue RDMA surface readbacks and write-buffer flushes
         for (size_t cameraIdx = 0; cameraIdx < rdmaRenderTargets.size(); ++cameraIdx) {
           CUgraphicsResource pReadResource = rdmaRenderSurfaces[cameraIdx]->cuGraphicsResource();
