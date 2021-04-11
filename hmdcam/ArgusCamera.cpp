@@ -71,6 +71,18 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
         sensorMode = sensorModeCandidate;
       }
     }
+
+    {
+      char* e = getenv("ARGUS_MODE");
+      if (e) {
+        int modeIdx = atoi(e);
+        if (modeIdx >= 0 && modeIdx < sensorModes.size()) {
+          printf("Overriding mode selection to index %d by ARGUS_MODE environment variable\n", modeIdx);
+          sensorMode = sensorModes[modeIdx];
+        }
+      }
+    }
+
   }
 
   if (!sensorMode)
