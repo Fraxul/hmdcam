@@ -4,6 +4,8 @@
 #include "rhi/RHI.h"
 #include "common/ICameraProvider.h"
 #include <opencv2/core.hpp>
+#include "glm/gtx/euler_angles.hpp"
+#include "glm/gtx/transform.hpp"
 
 class CharucoMultiViewCalibration;
 class DepthMapGenerator;
@@ -32,7 +34,7 @@ public:
   };
 
   struct View {
-    View() : depthMapGenerator(NULL), isStereo(false), fovX(0), fovY(0) {}
+    View() : depthMapGenerator(NULL), isStereo(false), viewTranslation(0.0f), viewRotation(0.0f), fovX(0), fovY(0) {}
 
     DepthMapGenerator* depthMapGenerator;
 
@@ -41,6 +43,9 @@ public:
     unsigned short cameraIndices[2]; // if (isStereo) [0] is left, [1] is right. Otherwise, only use [0].
 
     // TODO view translation and orientation
+    glm::vec3 viewTranslation;
+    glm::vec3 viewRotation; // euler, degrees
+    glm::mat4 viewTransform() const { return glm::eulerAngleXYZ(glm::radians(viewRotation[0]), glm::radians(viewRotation[1]), glm::radians(viewRotation[2])) * glm::translate(viewTranslation); }
 
     // Stereo data, only valid if (isStereo)
     cv::Mat stereoRotation, stereoTranslation; // Calibrated

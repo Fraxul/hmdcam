@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
   cameraSystem->loadCalibrationData();
 
   // CV processing init
-  depthMapGenerator = new DepthMapGenerator(cameraSystem, shm, /*viewIdx=*/0);
+  depthMapGenerator = new DepthMapGenerator(cameraSystem, shm);
   depthMapGenerator->setPopulateDebugTextures(true);
 
   // Setup Dear ImGui context
@@ -293,6 +293,25 @@ int main(int argc, char** argv) {
 
         }
 
+        ImGui::Separator();
+
+        for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+          CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+          if (!v.isStereo)
+            continue;
+
+          ImGui::PushID(viewIdx);
+
+          ImGui::Text("View %zu", viewIdx);
+          ImGui::DragFloat3("Tx", &v.viewTranslation[0], /*speed=*/ 0.1f, /*min=*/ -10.0f, /*max=*/ 10.0f);
+          ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/0.1f, /*min=*/ -75.0f, /*max=*/ 75.0f, "%.3fdeg");
+
+
+          ImGui::Separator();
+
+          ImGui::PopID();
+        }
+
         depthMapGenerator->renderIMGUI();
 
         ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
@@ -323,29 +342,37 @@ int main(int argc, char** argv) {
 
       {
         ImGui::Begin("Internals");
-        static int disparityScale = 2;
-        static int disparityScaleSourceLevel = 0;
-        ImGui::SliderInt("Disparity Scale", &disparityScale, 1, 128);
-        ImGui::SliderInt("Source Level", &disparityScaleSourceLevel, 0, depthMapGenerator->disparitySurface()->mipLevels() - 1);
+        static int internalsTargetView = 0;
+        ImGui::SliderInt("Target View", &internalsTargetView, 0, cameraSystem->views() - 1);
 
-        if (!disparityScaleTarget) {
-          disparityScaleSurface = rhi()->newTexture2D(depthMapGenerator->disparitySurface()->width(), depthMapGenerator->disparitySurface()->height(), kSurfaceFormat_RGBA8);
-          disparityScaleTarget = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ disparityScaleSurface }));
+        CameraSystem::View& v = cameraSystem->viewAtIndex(internalsTargetView);
+
+        if (v.isStereo) {
+
+          static int disparityScale = 2;
+          static int disparityScaleSourceLevel = 0;
+          ImGui::SliderInt("Disparity Scale", &disparityScale, 1, 128);
+          ImGui::SliderInt("Source Level", &disparityScaleSourceLevel, 0, depthMapGenerator->disparitySurface(internalsTargetView)->mipLevels() - 1);
+
+          if (!disparityScaleTarget) {
+            disparityScaleSurface = rhi()->newTexture2D(depthMapGenerator->disparitySurface(internalsTargetView)->width(), depthMapGenerator->disparitySurface(internalsTargetView)->height(), kSurfaceFormat_RGBA8);
+            disparityScaleTarget = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ disparityScaleSurface }));
+          }
+
+          rhi()->beginRenderPass(disparityScaleTarget, kLoadInvalidate);
+          rhi()->bindRenderPipeline(disparityScalePipeline);
+          rhi()->loadTexture(ksImageTex, depthMapGenerator->disparitySurface(internalsTargetView));
+          DisparityScaleUniformBlock ub;
+          ub.disparityScale = depthMapGenerator->m_disparityPrescale *  (1.0f / static_cast<float>(disparityScale));
+          ub.sourceLevel = disparityScaleSourceLevel;
+          rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
+          rhi()->drawFullscreenPass();
+          rhi()->endRenderPass(disparityScaleTarget);
+
+          ImGui_Image(disparityScaleSurface);
+          ImGui_Image(depthMapGenerator->leftGrayscale(internalsTargetView));
+          ImGui_Image(depthMapGenerator->rightGrayscale(internalsTargetView));
         }
-
-        rhi()->beginRenderPass(disparityScaleTarget, kLoadInvalidate);
-        rhi()->bindRenderPipeline(disparityScalePipeline);
-        rhi()->loadTexture(ksImageTex, depthMapGenerator->disparitySurface());
-        DisparityScaleUniformBlock ub;
-        ub.disparityScale = depthMapGenerator->m_disparityPrescale *  (1.0f / static_cast<float>(disparityScale));
-        ub.sourceLevel = disparityScaleSourceLevel;
-        rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
-        rhi()->drawFullscreenPass();
-        rhi()->endRenderPass(disparityScaleTarget);
-
-        ImGui_Image(disparityScaleSurface);
-        ImGui_Image(depthMapGenerator->leftGrayscale());
-        ImGui_Image(depthMapGenerator->rightGrayscale());
 
 
         ImGui::End();
@@ -376,8 +403,11 @@ int main(int argc, char** argv) {
         rhi()->drawPrimitives(0, 4);
       }
 #endif
-
-      depthMapGenerator->renderDisparityDepthMap(renderView);
+      for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+        CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+        if (v.isStereo)
+          depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView, v.viewTransform());
+      }
 
 
 

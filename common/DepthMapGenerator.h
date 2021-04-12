@@ -16,16 +16,16 @@ class CameraSystem;
 
 class DepthMapGenerator {
 public:
-  DepthMapGenerator(CameraSystem*, SHMSegment<DepthMapSHM>*, size_t viewIdx);
+  DepthMapGenerator(CameraSystem*, SHMSegment<DepthMapSHM>*);
   ~DepthMapGenerator();
 
   void processFrame();
-  void renderDisparityDepthMap(const FxRenderView& renderView);
+  void renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
   void renderIMGUI();
 
-  RHISurface::ptr disparitySurface() const { return m_disparityTexture; }
-  RHISurface::ptr leftGrayscale() const { return m_leftGray; }
-  RHISurface::ptr rightGrayscale() const { return m_rightGray; }
+  RHISurface::ptr disparitySurface(size_t viewIdx) const { return m_viewData[viewIdx].m_disparityTexture; }
+  RHISurface::ptr leftGrayscale(size_t viewIdx) const { return m_viewData[viewIdx].m_leftGray; }
+  RHISurface::ptr rightGrayscale(size_t viewIdx) const { return m_viewData[viewIdx].m_rightGray; }
 
   // controls availability of leftGrayscale and rightGrayscale
   void setPopulateDebugTextures(bool value) { m_populateDebugTextures = value; }
@@ -33,11 +33,8 @@ public:
   float m_disparityPrescale;
 
 protected:
-  cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
-  glm::mat4 m_R1, m_R1inv, m_Q, m_Qinv;
 
   CameraSystem* m_cameraSystem;
-  size_t m_viewIdx;
 
   uint32_t  m_iFBSideWidth;
   uint32_t  m_iFBSideHeight;
@@ -45,22 +42,10 @@ protected:
   uint32_t  m_iFBAlgoWidth;
   uint32_t  m_iFBAlgoHeight;
 
-  RHISurface::ptr m_iTexture;
-  RHISurface::ptr m_disparityTexture;
-  RHISurface::ptr m_leftGray, m_rightGray;
-
-  std::vector<RHIRenderTarget::ptr> m_disparityTextureMipTargets;
-
-
   RHIBuffer::ptr m_geoDepthMapTexcoordBuffer;
   RHIBuffer::ptr m_geoDepthMapTristripIndexBuffer;
   RHIBuffer::ptr m_geoDepthMapLineIndexBuffer;
   size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount;
-
-
-  // vr::CameraVideoStreamFrameHeader_t m_lastFrameHeader;
-  // Matrix4 m_lastFrameHeaderMatrix;
-  float m_CameraDistanceMeters;
 
   // Depth map backend
   SHMSegment<DepthMapSHM>* m_depthMapSHM;
@@ -87,23 +72,46 @@ protected:
   bool m_sgmUseHH4;
 
 
-  //Matrices used in the stereo computation.
-  RHISurface::ptr origLeftBlitSrf;
-  RHISurface::ptr origRightBlitSrf;
-  RHIRenderTarget::ptr origLeftBlitRT;
-  RHIRenderTarget::ptr origRightBlitRT;
+  struct ViewData {
+    ViewData() : m_isStereoView(false), m_leftJoinEvent(cv::cuda::Event::DISABLE_TIMING), m_rightJoinEvent(cv::cuda::Event::DISABLE_TIMING) {}
+    bool m_isStereoView;
+    size_t m_shmViewIndex;
 
-  cv::cuda::GpuMat origLeft_gpu;
-  cv::cuda::GpuMat origRight_gpu;
-  cv::cuda::GpuMat rectLeft_gpu;
-  cv::cuda::GpuMat rectRight_gpu;
-  cv::cuda::GpuMat resizedLeft_gpu;
-  cv::cuda::GpuMat resizedRight_gpu;
-  cv::cuda::GpuMat resizedLeftGray_gpu;
-  cv::cuda::GpuMat resizedRightGray_gpu;
 
-  cv::cuda::Stream m_leftStream, m_rightStream;
-  cv::cuda::Event m_leftRightJoinEvent;
+    cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
+    glm::mat4 m_R1, m_R1inv, m_Q, m_Qinv;
+
+    RHISurface::ptr m_iTexture;
+    RHISurface::ptr m_disparityTexture;
+    RHISurface::ptr m_leftGray, m_rightGray;
+
+    std::vector<RHIRenderTarget::ptr> m_disparityTextureMipTargets;
+
+    // vr::CameraVideoStreamFrameHeader_t m_lastFrameHeader;
+    // Matrix4 m_lastFrameHeaderMatrix;
+    float m_CameraDistanceMeters;
+
+    //Matrices used in the stereo computation.
+    RHISurface::ptr origLeftBlitSrf;
+    RHISurface::ptr origRightBlitSrf;
+    RHIRenderTarget::ptr origLeftBlitRT;
+    RHIRenderTarget::ptr origRightBlitRT;
+
+    cv::cuda::GpuMat origLeft_gpu;
+    cv::cuda::GpuMat origRight_gpu;
+    cv::cuda::GpuMat rectLeft_gpu;
+    cv::cuda::GpuMat rectRight_gpu;
+    cv::cuda::GpuMat resizedLeft_gpu;
+    cv::cuda::GpuMat resizedRight_gpu;
+    cv::cuda::GpuMat resizedLeftGray_gpu;
+    cv::cuda::GpuMat resizedRightGray_gpu;
+
+    cv::cuda::Stream m_leftStream, m_rightStream;
+    cv::cuda::Event m_leftJoinEvent;
+    cv::cuda::Event m_rightJoinEvent;
+  };
+
+  std::vector<ViewData> m_viewData;
 
   // Profiling events and data
   bool m_enableProfiling;
@@ -112,6 +120,7 @@ protected:
 
   cv::cuda::Event m_copyStartEvent;
   cv::cuda::Event m_processingFinishedEvent;
+  cv::cuda::Stream m_globalStream;
 
   float m_setupTimeMs, m_syncTimeMs, m_algoTimeMs, m_copyTimeMs;
 

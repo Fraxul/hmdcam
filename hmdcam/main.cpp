@@ -177,6 +177,7 @@ int main(int argc, char* argv[]) {
 
 
   SHMSegment<DepthMapSHM>* shm = NULL;
+  DepthMapGenerator* depthMapGenerator = NULL;
   if (enableDGPU) {
     shm = SHMSegment<DepthMapSHM>::createSegment("cuda-dgpu-worker", 16*1024*1024);
     printf("Waiting for DGPU worker...\n");
@@ -258,10 +259,7 @@ int main(int argc, char* argv[]) {
 
   // TODO move this depth map generator init to CameraSystem
   if (enableDGPU) {
-    CameraSystem::View& v = cameraSystem->viewAtIndex(0);
-    if (v.isStereo && v.haveStereoRectificationParameters()) {
-      v.depthMapGenerator = new DepthMapGenerator(cameraSystem, shm, 0);
-    }
+    depthMapGenerator = new DepthMapGenerator(cameraSystem, shm);
   }
 
 
@@ -468,12 +466,8 @@ int main(int argc, char* argv[]) {
       }
 
       // TODO move this inside CameraSystem
-      if (debugEnableDepthMapGenerator && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
-        for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
-          if (cameraSystem->viewAtIndex(viewIdx).depthMapGenerator) {
-            cameraSystem->viewAtIndex(viewIdx).depthMapGenerator->processFrame();
-          }
-        }
+      if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
+        depthMapGenerator->processFrame();
       }
 
       if (calibrationContext && calibrationContext->finished()) {
@@ -520,9 +514,9 @@ int main(int argc, char* argv[]) {
                 calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
               }
             }
-            if (debugEnableDepthMapGenerator && v.depthMapGenerator) {
-              v.depthMapGenerator->renderIMGUI();
-            }
+          }
+          if (debugEnableDepthMapGenerator && depthMapGenerator) {
+            depthMapGenerator->renderIMGUI();
           }
         }
 
@@ -608,14 +602,14 @@ int main(int argc, char* argv[]) {
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
           CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
 
-          if (debugEnableDepthMapGenerator && v.isStereo && v.depthMapGenerator && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
+          if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
             FxRenderView renderView;
             // TODO actual camera setup here. renderDisparityDepthMap only uses the viewProjection matrix.
             renderView.viewMatrix = eyeView[eyeIdx];
             renderView.projectionMatrix = eyeProjection[eyeIdx];
             renderView.viewProjectionMatrix = renderView.projectionMatrix * renderView.viewMatrix; 
 
-            v.depthMapGenerator->renderDisparityDepthMap(renderView);
+            depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView, v.viewTransform());
 
           } else {
             for (int viewEyeIdx = 0; viewEyeIdx < (v.isStereo ? 2 : 1); ++viewEyeIdx) {
