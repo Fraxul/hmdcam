@@ -535,25 +535,28 @@ int main(int argc, char* argv[]) {
             (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs/1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
         }
 
-        ImPlot::SetNextPlotLimitsY(0, 12.0f);
-        if (ImPlot::BeginPlot("##FrameTiming", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
-            ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
-            ImPlot::PlotLine("Capture", &s_timingDataBuffer.data()[0].captureTimeMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-            ImPlot::PlotLine("Submit",  &s_timingDataBuffer.data()[0].submitTimeMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-            ImPlot::EndPlot();
-        }
-        if (ImPlot::BeginPlot("###CaptureLatencyInterval", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
-            ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
-            ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureIntervalAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-            ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-            ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-            ImPlot::EndPlot();
-        }
+        // Skip perf data to save UI space if we're calibrating
+        if (!calibrationContext) {
+          ImPlot::SetNextPlotLimitsY(0, 12.0f);
+          if (ImPlot::BeginPlot("##FrameTiming", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
+              ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
+              ImPlot::PlotLine("Capture", &s_timingDataBuffer.data()[0].captureTimeMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::PlotLine("Submit",  &s_timingDataBuffer.data()[0].submitTimeMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::EndPlot();
+          }
+          if (ImPlot::BeginPlot("###CaptureLatencyInterval", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
+              ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
+              ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureIntervalAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::EndPlot();
+          }
 
-        {
-          bool v = argusCamera->willAdjustCaptureInterval();
-          if (ImGui::Checkbox("Auto-adjust capture interval", &v))
-            argusCamera->setAdjustCaptureInterval(v);
+          {
+            bool v = argusCamera->willAdjustCaptureInterval();
+            if (ImGui::Checkbox("Auto-adjust capture interval", &v))
+              argusCamera->setAdjustCaptureInterval(v);
+          }
         }
 
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
