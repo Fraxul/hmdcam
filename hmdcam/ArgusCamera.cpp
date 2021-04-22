@@ -42,6 +42,21 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     die("No camera devices are available");
   }
 
+
+  {
+    char* e = getenv("ARGUS_MAX_SENSORS");
+    int maxSensors = 0;
+    if (e)
+      maxSensors = atoi(e);
+
+    if (maxSensors > 0) {
+      if (m_cameraDevices.size() > maxSensors) {
+        printf("DEBUG: Trimming sensor list from ARGUS_MAX_SENSORS=%d env\n", maxSensors);
+        m_cameraDevices.resize(maxSensors);
+      }
+    }
+  }
+
   // Get the selected camera device and sensor mode.
   for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
     printf("Sensor %zu:\n", cameraIdx);

@@ -158,10 +158,16 @@ int main(int argc, char* argv[]) {
 
 
   bool enableDGPU = true;
+  bool enableRDMA = true;
+  bool debugInitOnly = false;
 
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--disable-dgpu")) {
       enableDGPU = false;
+    } else if (!strcmp(argv[i], "--disable-rdma")) {
+      enableRDMA = false;
+    } else if (!strcmp(argv[i], "--debug-init-only")) {
+      debugInitOnly = true;
     } else {
       printf("Unrecognized argument %s\n", argv[i]);
       return 1;
@@ -178,10 +184,12 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  rdmaContext = RDMAContext::createServerContext();
+  if (enableRDMA) {
+    rdmaContext = RDMAContext::createServerContext();
 
-  if (!rdmaContext) {
-    printf("RDMA server context initialization failed; RDMA service will be unavailable.\n");
+    if (!rdmaContext) {
+      printf("RDMA server context initialization failed; RDMA service will be unavailable.\n");
+    }
   }
 
   startInputListenerThread();
@@ -424,6 +432,11 @@ int main(int argc, char* argv[]) {
       ImGui::NewFrame();
 
       ++frameCounter;
+
+      if (debugInitOnly && frameCounter >= 10) {
+        printf("DEBUG: Initialization-only testing requested, exiting now.\n");
+        want_quit = true;
+      }
 
       // Only use repeating captures if we're not in calibration. The variable CPU-side delays for calibration image processing usually end up crashing libargus.
       argusCamera->setRepeatCapture(!((bool) calibrationContext));
