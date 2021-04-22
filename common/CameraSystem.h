@@ -5,6 +5,7 @@
 #include "common/ICameraProvider.h"
 #include <opencv2/core.hpp>
 
+class CharucoMultiViewCalibration;
 class DepthMapGenerator;
 
 class CameraSystem {
@@ -214,13 +215,7 @@ public:
 
     size_t m_viewIdx;
 
-    RHISurface::ptr m_fullGreyTex[2];
-    RHIRenderTarget::ptr m_fullGreyRT[2];
-    RHISurface::ptr m_feedbackTex[2];
-    cv::Mat m_feedbackView[2];
-
-    std::vector<std::vector<cv::Point3f> > m_objectPoints; // Points from the board definition for the relevant corners each frame
-    std::vector<std::vector<cv::Point2f> > m_calibrationPoints[2]; // Points in image space for the 2 views for the relevant corners each frame
+    CharucoMultiViewCalibration* m_calibState;
 
     // Cached data of previous calibration to be restored if the context is cancelled.
     View m_previousViewData;
@@ -229,6 +224,7 @@ public:
 
   ICameraProvider* cameraProvider() const { return m_cameraProvider; }
 
+  cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, bool undistort);
 protected:
   ICameraProvider* m_cameraProvider;
 
@@ -239,7 +235,6 @@ protected:
   void updateCameraIntrinsicDistortionParameters(size_t cameraIdx); // Generate camera-specific derived data after calibration
   void updateViewStereoDistortionParameters(size_t viewIdx); // Generate view-specific derived data after calibration
   RHISurface::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2);
-  cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, bool undistort);
 
 private:
   // noncopyable

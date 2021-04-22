@@ -1,5 +1,6 @@
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
+#include "common/CharucoMultiViewCalibration.h"
 #include "rhi/RHIResources.h"
 #include "imgui.h"
 #include <iostream>
@@ -23,8 +24,8 @@ const unsigned int s_charucoBoardSquareCountY = 9;
 const float s_charucoBoardSquareSideLengthMeters = 0.060f;
 const float s_charucoBoardMarkerSideLengthMeters = 0.045f;
 
-static cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary;
-static cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
+cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary;
+cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 
 
 // TODO move this
@@ -646,131 +647,25 @@ CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* c
   // Store cancellation cache
   m_previousViewData = cameraSystem()->viewAtIndex(viewIdx);
 
-  // Textures and RTs we use for captures
-  for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-    m_fullGreyTex[eyeIdx] = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
-    m_fullGreyRT[eyeIdx] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_fullGreyTex[eyeIdx]}));
-    m_feedbackTex[eyeIdx] = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    m_feedbackView[eyeIdx].create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/cameraProvider()->streamWidth(), CV_8UC4);
-  }
+  CameraSystem::View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+  m_calibState = new CharucoMultiViewCalibration(cameraSystem(), {v.cameraIndices[0], v.cameraIndices[1]});
 }
 
 CameraSystem::StereoCalibrationContext::~StereoCalibrationContext() {
-
+  delete m_calibState;
 }
 
 void CameraSystem::StereoCalibrationContext::renderStatusUI() {
   ImGui::Text("View %zu Stereo", m_viewIdx);
-  ImGui::Text("%zu samples", m_objectPoints.size());
+  ImGui::Text("%zu samples", m_calibState->m_objectPoints.size());
 }
 
 
 void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
-  // Capture and undistort camera views.
-  cv::Mat eyeFullRes[2];
-  for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-    eyeFullRes[eyeIdx] = cameraSystem()->captureGreyscale(cameraSystem()->viewAtIndex(m_viewIdx).cameraIndices[eyeIdx], m_fullGreyTex[eyeIdx], m_fullGreyRT[eyeIdx], /*undistort=*/true);
-  }
-
-  std::vector<std::vector<cv::Point2f> > corners[2], rejected[2];
-  std::vector<int> ids[2];
-
-  std::vector<cv::Point2f> currentCharucoCornerPoints[2];
-  std::vector<int> currentCharucoCornerIds[2];
-
-  // Run ArUco marker detection
-  // Note that we don't feed the camera distortion parameters to the aruco functions here, since the images we're operating on have already been undistorted.
-  for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-    Camera& c = cameraSystem()->cameraAtIndex(cameraSystem()->viewAtIndex(m_viewIdx).cameraIndices[eyeIdx]);
-
-    cv::aruco::detectMarkers(eyeFullRes[eyeIdx], s_charucoDictionary, corners[eyeIdx], ids[eyeIdx], cv::aruco::DetectorParameters::create(), rejected[eyeIdx], c.optimizedMatrix, zeroDistortion);
-    cv::aruco::refineDetectedMarkers(eyeFullRes[eyeIdx], s_charucoBoard, corners[eyeIdx], ids[eyeIdx], rejected[eyeIdx], c.optimizedMatrix, zeroDistortion);
-
-    // Find chessboard corners using detected markers
-    if (!ids[eyeIdx].empty()) {
-      cv::aruco::interpolateCornersCharuco(corners[eyeIdx], ids[eyeIdx], eyeFullRes[eyeIdx], s_charucoBoard, currentCharucoCornerPoints[eyeIdx], currentCharucoCornerIds[eyeIdx], c.optimizedMatrix, zeroDistortion);
-    }
-  }
-
-  // Find set of chessboard corners present in both eyes
-  std::set<int> stereoCornerIds;
-  {
-    std::set<int> eye0Ids;
-    for (size_t i = 0; i < currentCharucoCornerIds[0].size(); ++i) {
-      eye0Ids.insert(currentCharucoCornerIds[0][i]);
-    }
-    for (size_t i = 0; i < currentCharucoCornerIds[1].size(); ++i) {
-      int id = currentCharucoCornerIds[1][i];
-      if (eye0Ids.find(id) != eye0Ids.end())
-        stereoCornerIds.insert(id);
-    }
-  }
-
-  // Require at least 6 corners visibile to both cameras to consider this frame
-  bool foundOverlap = stereoCornerIds.size() >= 6;
-
-  // Filter the eye corner sets to only overlapping corners, which we will later feed to stereoCalibrate
-  std::vector<cv::Point3f> thisFrameBoardRefCorners;
-  std::vector<cv::Point2f> thisFrameImageCorners[2];
-
-  for (std::set<int>::const_iterator corner_it = stereoCornerIds.begin(); corner_it != stereoCornerIds.end(); ++corner_it) {
-    int cornerId = *corner_it;
-
-    for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-      for (size_t eyeCornerIdx = 0; eyeCornerIdx < currentCharucoCornerIds[eyeIdx].size(); ++eyeCornerIdx) {
-        if (currentCharucoCornerIds[eyeIdx][eyeCornerIdx] == cornerId) {
-          thisFrameImageCorners[eyeIdx].push_back(currentCharucoCornerPoints[eyeIdx][eyeCornerIdx]);
-          break;
-        }
-      }
-    }
-
-    // save the corner point in board space from the board definition
-    thisFrameBoardRefCorners.push_back(s_charucoBoard->chessboardCorners[cornerId]);
-  }
-  assert(thisFrameBoardRefCorners.size() == thisFrameImageCorners[0].size() && thisFrameBoardRefCorners.size() == thisFrameImageCorners[1].size());
-
-
-  // Draw feedback points
-  for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-    memset(m_feedbackView[eyeIdx].ptr(0), 0, m_feedbackView[eyeIdx].total() * 4);
-
-    if (!corners[eyeIdx].empty()) {
-      cv::aruco::drawDetectedMarkers(m_feedbackView[eyeIdx], corners[eyeIdx]);
-    }
-
-    // Borrowed from cv::aruco::drawDetectedCornersCharuco -- modified to switch the color per-marker to indicate stereo visibility
-    for(size_t cornerIdx = 0; cornerIdx < currentCharucoCornerIds[eyeIdx].size(); ++cornerIdx) {
-      cv::Point2f corner = currentCharucoCornerPoints[eyeIdx][cornerIdx];
-      int id = currentCharucoCornerIds[eyeIdx][cornerIdx];
-
-      // grey for mono points
-      cv::Scalar cornerColor = cv::Scalar(127, 127, 127);
-      if (stereoCornerIds.find(id) != stereoCornerIds.end()) {
-        // red for stereo points
-        cornerColor = cv::Scalar(255, 0, 0);
-      }
-
-      // draw first corner mark
-      cv::rectangle(m_feedbackView[eyeIdx], corner - cv::Point2f(3, 3), corner + cv::Point2f(3, 3), cornerColor, 1, cv::LINE_AA);
-
-      // draw ID
-      char idbuf[16];
-      sprintf(idbuf, "id=%u", id);
-      cv::putText(m_feedbackView[eyeIdx], idbuf, corner + cv::Point2f(5, -5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cornerColor, 2);
-    }
-  }
-  rhi()->loadTextureData(m_feedbackTex[0], kVertexElementTypeUByte4N, m_feedbackView[0].ptr(0));
-  rhi()->loadTextureData(m_feedbackTex[1], kVertexElementTypeUByte4N, m_feedbackView[1].ptr(0));
-
-
-  // Handle capture requests
-  if (foundOverlap && captureRequested()) {
+  if (m_calibState->processFrame(captureRequested())) {
+    // capture request succeeded if return is true
     acknowledgeCaptureRequest();
-
-    m_objectPoints.push_back(thisFrameBoardRefCorners);
-    m_calibrationPoints[0].push_back(thisFrameImageCorners[0]);
-    m_calibrationPoints[1].push_back(thisFrameImageCorners[1]);
+  }
 
 #if 0 // TODO fix this
     if (shouldSaveCalibrationImages()) {
@@ -790,8 +685,6 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
       printf("Saved %s\n", filename);
     }
 #endif
-
-  }
 }
 
 
@@ -804,8 +697,8 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
     // Note the use of the zero distortion matrix and optimized camera matrix, since we already corrected for individual camera distortions when capturing the images.
     View& v = cameraSystem()->viewAtIndex(m_viewIdx);
 
-    double rms = cv::stereoCalibrate(m_objectPoints,
-      m_calibrationPoints[0], m_calibrationPoints[1],
+    double rms = cv::stereoCalibrate(m_calibState->m_objectPoints,
+      m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
       cameraSystem()->cameraAtIndex(v.cameraIndices[0]).optimizedMatrix, zeroDistortion,
       cameraSystem()->cameraAtIndex(v.cameraIndices[1]).optimizedMatrix, zeroDistortion,
       cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
@@ -829,9 +722,7 @@ void CameraSystem::StereoCalibrationContext::didAcceptCalibrationPreview() {
 
 void CameraSystem::StereoCalibrationContext::didRejectCalibrationPreview() {
   // Reset stored data
-  m_objectPoints.clear();
-  m_calibrationPoints[0].clear();
-  m_calibrationPoints[1].clear();
+  m_calibState->reset();
 }
 
 void CameraSystem::StereoCalibrationContext::didCancelCalibrationSession() {
@@ -848,5 +739,6 @@ bool CameraSystem::StereoCalibrationContext::requiresStereoRendering() const {
 
 RHISurface::ptr CameraSystem::StereoCalibrationContext::overlaySurfaceAtIndex(size_t index) {
   assert(index < 2);
-  return m_feedbackTex[index];
+  return m_calibState->m_feedbackTex[index];
 }
+
