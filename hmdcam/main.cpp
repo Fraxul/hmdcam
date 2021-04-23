@@ -513,6 +513,12 @@ int main(int argc, char* argv[]) {
               if (ImGui::Button(caption)) {
                 calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
               }
+              if (viewIdx != 0) {
+                sprintf(caption, "Calibrate offset for stereo view %zu", viewIdx);
+                if (ImGui::Button(caption)) {
+                  calibrationContext.reset(cameraSystem->calibrationContextForStereoViewOffset(0, viewIdx));
+                }
+              }
             }
           }
           if (debugEnableDepthMapGenerator && depthMapGenerator) {

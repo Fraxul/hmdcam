@@ -45,7 +45,11 @@ public:
     // TODO view translation and orientation
     glm::vec3 viewTranslation;
     glm::vec3 viewRotation; // euler, degrees
-    glm::mat4 viewTransform() const { return glm::eulerAngleXYZ(glm::radians(viewRotation[0]), glm::radians(viewRotation[1]), glm::radians(viewRotation[2])) * glm::translate(viewTranslation); }
+    glm::mat4 viewTransform() const {
+      glm::mat4 res = glm::transpose(glm::eulerAngleXYZ(glm::radians(viewRotation[0]), glm::radians(viewRotation[1]), glm::radians(viewRotation[2])));
+      for (size_t i = 0; i < 3; ++i) res[3][i] = -viewTranslation[i];
+      return res;
+    }
 
     // Stereo data, only valid if (isStereo)
     cv::Mat stereoRotation, stereoTranslation; // Calibrated
@@ -79,6 +83,7 @@ public:
 
   CalibrationContext* calibrationContextForCamera(size_t cameraIdx);
   CalibrationContext* calibrationContextForView(size_t viewIdx);
+  CalibrationContext* calibrationContextForStereoViewOffset(size_t referenceViewIdx, size_t viewIdx);
 
   std::string calibrationFilename;
 
@@ -225,6 +230,59 @@ public:
     // Cached data of previous calibration to be restored if the context is cancelled.
     View m_previousViewData;
 
+  };
+
+
+  class StereoViewOffsetCalibrationContext : public CalibrationContextStateMachineBase {
+  public:
+    StereoViewOffsetCalibrationContext(CameraSystem*, size_t referenceViewIdx, size_t viewIdx);
+    virtual ~StereoViewOffsetCalibrationContext();
+
+    virtual bool requiresStereoRendering() const;
+    virtual RHISurface::ptr overlaySurfaceAtIndex(size_t);
+
+    virtual bool isViewContext() { return true; }
+    virtual size_t getCameraOrViewIndex() { return m_viewIdx; }
+
+    virtual bool involvesCamera(size_t cameraIdx) {
+      const View& rv = cameraSystem()->viewAtIndex(m_referenceViewIdx);
+      const View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+      return (cameraIdx == v.cameraIndices[0] || cameraIdx == v.cameraIndices[1] ||
+              cameraIdx == rv.cameraIndices[0] || cameraIdx == rv.cameraIndices[1]);
+    }
+
+    virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) {
+      View& rv = cameraSystem()->viewAtIndex(m_referenceViewIdx);
+      if (cameraIdx == rv.cameraIndices[0])
+        return 0;
+      else if (cameraIdx == rv.cameraIndices[1])
+        return 1;
+
+      View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+      if (cameraIdx == v.cameraIndices[0])
+        return 2;
+      else if (cameraIdx == v.cameraIndices[1])
+        return 3;
+
+      return -1;
+    }
+
+  protected:
+    virtual void renderStatusUI();
+    virtual void processFrameCaptureMode();
+    virtual bool cookCalibrationDataForPreview();
+    virtual void didAcceptCalibrationPreview();
+    virtual void didRejectCalibrationPreview();
+    virtual void didCancelCalibrationSession();
+
+    size_t m_referenceViewIdx, m_viewIdx;
+
+    CharucoMultiViewCalibration* m_calibState;
+
+    glm::mat4 m_tgt2ref;
+
+    // Cached data of previous calibration to be restored if the context is cancelled.
+    glm::vec3 m_previousViewTranslation, m_previousViewRotation;
   };
 
   ICameraProvider* cameraProvider() const { return m_cameraProvider; }
