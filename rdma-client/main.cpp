@@ -9,6 +9,7 @@
 #include "RDMACameraProvider.h"
 #include "common/CameraSystem.h"
 #include "common/FxCamera.h"
+#include "common/FxThreading.h"
 #include "common/DepthMapGenerator.h"
 #include "common/DGPUWorkerControl.h"
 
@@ -84,6 +85,8 @@ int main(int argc, char** argv) {
     printf("usage: %s hostname\n", argv[0]);
     return -1;
   }
+
+  FxThreading::detail::init();
 
   shm = SHMSegment<DepthMapSHM>::createSegment("cuda-dgpu-worker", 16*1024*1024);
   printf("Waiting for DGPU worker...\n");
@@ -389,6 +392,8 @@ int main(int argc, char** argv) {
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplSDL2_Shutdown();
   ImGui::DestroyContext();
+
+  FxThreading::detail::shutdown();
 
   SDL_GL_DeleteContext(gl_context);
   SDL_DestroyWindow(window);

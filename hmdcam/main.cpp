@@ -27,6 +27,7 @@
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
 #include "common/DGPUWorkerControl.h"
+#include "common/FxThreading.h"
 #include "common/ScrollingBuffer.h"
 #include "InputListener.h"
 #include "Render.h"
@@ -197,6 +198,8 @@ int main(int argc, char* argv[]) {
     printf("RenderInit() failed\n");
     return 1;
   }
+
+  FxThreading::detail::init();
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -859,6 +862,8 @@ int main(int argc, char* argv[]) {
   delete argusCamera;
 
   RenderShutdown();
+
+  FxThreading::detail::shutdown();
 
   return 0;
 }

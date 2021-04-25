@@ -1,5 +1,6 @@
 #include "common/CharucoMultiViewCalibration.h"
 #include "common/CameraSystem.h"
+#include "common/FxThreading.h"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/aruco/charuco.hpp>
 #include <set>
@@ -46,7 +47,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
 
   // Run ArUco marker detection
   // Note that we don't feed the camera distortion parameters to the aruco functions here, since the images we're operating on have already been undistorted.
-  for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
+  FxThreading::runArrayTask(0, cameraCount(), [&](size_t cameraIdx) {
     CameraSystem::Camera& c = cameraSystem()->cameraAtIndex(m_cameraIds[cameraIdx]);
 
     cv::aruco::detectMarkers(eyeFullRes[cameraIdx], s_charucoDictionary, corners[cameraIdx], ids[cameraIdx], cv::aruco::DetectorParameters::create(), rejected[cameraIdx], c.optimizedMatrix, zeroDistortion);
@@ -56,7 +57,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
     if (!ids[cameraIdx].empty()) {
       cv::aruco::interpolateCornersCharuco(corners[cameraIdx], ids[cameraIdx], eyeFullRes[cameraIdx], s_charucoBoard, currentCharucoCornerPoints[cameraIdx], currentCharucoCornerIds[cameraIdx], c.optimizedMatrix, zeroDistortion);
     }
-  }
+  });
 
   // Find set of chessboard corners present in all views
   std::set<int> commonCornerIds;
@@ -113,7 +114,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
 
 
   // Draw feedback points
-  for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
+  FxThreading::runArrayTask(0, cameraCount(), [&](size_t cameraIdx) {
     memset(m_feedbackView[cameraIdx].ptr(0), 0, m_feedbackView[cameraIdx].total() * 4);
 
     if (!corners[cameraIdx].empty()) {
@@ -140,7 +141,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
       sprintf(idbuf, "id=%u", id);
       cv::putText(m_feedbackView[cameraIdx], idbuf, corner + cv::Point2f(5, -5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cornerColor, 2);
     }
-  }
+  });
 
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
     rhi()->loadTextureData(m_feedbackTex[cameraIdx], kVertexElementTypeUByte4N, m_feedbackView[cameraIdx].ptr(0));
