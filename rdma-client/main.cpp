@@ -8,6 +8,7 @@
 #include "rdma/RDMABuffer.h"
 #include "RDMACameraProvider.h"
 #include "common/CameraSystem.h"
+#include "common/CharucoMultiViewCalibration.h"
 #include "common/FxCamera.h"
 #include "common/FxThreading.h"
 #include "common/DepthMapGenerator.h"
@@ -75,6 +76,21 @@ void ImGui_Image(RHISurface::ptr img, const ImVec2& uv0 = ImVec2(0,0), const ImV
   ImGui::Image((ImTextureID) static_cast<uintptr_t>(static_cast<RHISurfaceGL*>(img.get())->glId()), ImVec2(img->width(), img->height()), uv0, uv1);
 }
 
+template <typename T> static std::vector<T> flattenVector(const std::vector<std::vector<T> >& in) {
+  std::vector<T> res;
+  size_t s = 0;
+  for (size_t i = 0; i < in.size(); ++i) {
+    s += in[i].size();
+  }
+  res.reserve(s);
+  for (size_t i = 0; i < in.size(); ++i) {
+    for (size_t j = 0; j < in[i].size(); ++j) {
+      res.push_back(in[i][j]);
+    }
+  }
+  return res;
+}
+extern int triangulationDisparityScaleInv; // TODO remove
 
 
 
@@ -194,6 +210,10 @@ int main(int argc, char** argv) {
   cameraSystem = new CameraSystem(cameraProvider);
   cameraSystem->loadCalibrationData();
 
+  std::vector<CharucoMultiViewCalibration*> charucoProcessors;
+  charucoProcessors.resize(cameraSystem->views());
+  bool enableCharucoDetection = false;
+
   // CV processing init
   depthMapGenerator = new DepthMapGenerator(cameraSystem, shm);
   depthMapGenerator->setPopulateDebugTextures(true);
@@ -273,12 +293,6 @@ int main(int argc, char** argv) {
 
       windowRenderTarget->platformSetUpdatedWindowDimensions(io.DisplaySize.x, io.DisplaySize.y);
 
-
-      // Service RDMA context
-      rdmaContext->fireUserEvents();
-      cameraProvider->updateSurfaces();
-      depthMapGenerator->processFrame();
-
       {
         ImGui::Begin("RDMA-Client");
 
@@ -290,6 +304,9 @@ int main(int argc, char** argv) {
 
           if (ImGui::InputFloat3("Camera Target", &t[0]))
             sceneCamera->setTargetPosition(t);
+
+          ImGui::Checkbox("Charuco detection", &enableCharucoDetection);
+          ImGui::SliderInt("Charuco Disp Scale", &triangulationDisparityScaleInv, 1, 256); // TODO remove
 
         }
 
@@ -346,22 +363,25 @@ int main(int argc, char** argv) {
         ImGui::SliderInt("Target View", &internalsTargetView, 0, cameraSystem->views() - 1);
 
         CameraSystem::View& v = cameraSystem->viewAtIndex(internalsTargetView);
+        RHISurface::ptr disparitySurface;
+        if (v.isStereo)
+          disparitySurface = depthMapGenerator->disparitySurface(internalsTargetView);
 
-        if (v.isStereo) {
+        if (disparitySurface) {
 
           static int disparityScale = 2;
           static int disparityScaleSourceLevel = 0;
           ImGui::SliderInt("Disparity Scale", &disparityScale, 1, 128);
-          ImGui::SliderInt("Source Level", &disparityScaleSourceLevel, 0, depthMapGenerator->disparitySurface(internalsTargetView)->mipLevels() - 1);
+          ImGui::SliderInt("Source Level", &disparityScaleSourceLevel, 0, disparitySurface->mipLevels() - 1);
 
           if (!disparityScaleTarget) {
-            disparityScaleSurface = rhi()->newTexture2D(depthMapGenerator->disparitySurface(internalsTargetView)->width(), depthMapGenerator->disparitySurface(internalsTargetView)->height(), kSurfaceFormat_RGBA8);
+            disparityScaleSurface = rhi()->newTexture2D(disparitySurface->width(), disparitySurface->height(), kSurfaceFormat_RGBA8);
             disparityScaleTarget = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ disparityScaleSurface }));
           }
 
           rhi()->beginRenderPass(disparityScaleTarget, kLoadInvalidate);
           rhi()->bindRenderPipeline(disparityScalePipeline);
-          rhi()->loadTexture(ksImageTex, depthMapGenerator->disparitySurface(internalsTargetView));
+          rhi()->loadTexture(ksImageTex, disparitySurface);
           DisparityScaleUniformBlock ub;
           ub.disparityScale = depthMapGenerator->m_disparityPrescale *  (1.0f / static_cast<float>(disparityScale));
           ub.sourceLevel = disparityScaleSourceLevel;
@@ -378,10 +398,37 @@ int main(int argc, char** argv) {
         ImGui::End();
       }
 
+      // Service RDMA context
+      rdmaContext->fireUserEvents();
+      cameraProvider->updateSurfaces();
+
+      if (enableCharucoDetection) {
+        for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+          CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+
+          // Create the processor if it doesn't already exist
+          if (!charucoProcessors[viewIdx]) {
+            if (v.isStereo) {
+              charucoProcessors[viewIdx] = new CharucoMultiViewCalibration(cameraSystem, {v.cameraIndices[0], v.cameraIndices[1]}, {viewIdx, viewIdx});
+            } else {
+              charucoProcessors[viewIdx] = new CharucoMultiViewCalibration(cameraSystem, {v.cameraIndices[0]});
+            }
+            charucoProcessors[viewIdx]->m_enableFeedbackView = false; // don't need the 2d feedback rendering
+          }
+
+          // Clear previous capture results from the processors
+          charucoProcessors[viewIdx]->m_calibrationPoints[0].clear();
+          charucoProcessors[viewIdx]->m_calibrationPoints[1].clear();
+          charucoProcessors[viewIdx]->m_objectPoints.clear();
+
+          // Run process
+          charucoProcessors[viewIdx]->processFrame(/*requestCapture=*/ true);
+        }
+      }
+
+      depthMapGenerator->processFrame();
 
       // Rendering
-      ImGui::Render();
-
       FxRenderView renderView = sceneCamera->toRenderView(static_cast<float>(io.DisplaySize.x) / static_cast<float>(io.DisplaySize.y));
 
 
@@ -409,9 +456,61 @@ int main(int argc, char** argv) {
           depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView, v.viewTransform());
       }
 
+      if (enableCharucoDetection) {
+        std::vector<glm::vec4> pointsStaging;
+        ImGui::Begin("ChAruCo");
+
+        for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+          if (viewIdx != 0)
+            ImGui::Separator();
+          ImGui::Text("View %zu", viewIdx);
+
+          CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+          CharucoMultiViewCalibration* proc = charucoProcessors[viewIdx];
+          if (!proc)
+            continue;
+
+          if (proc->m_calibrationPoints.empty() || proc->m_objectPoints.empty())
+            continue; // nothing detected this frame
+
+          if (v.isStereo) {
+            cv::Mat points = getTriangulatedPointsForView(cameraSystem, viewIdx, proc->m_calibrationPoints[0], proc->m_calibrationPoints[1]);
+            // Points are point-per-row, 1 column, CV_32FC3
+            glm::mat4 viewXf = v.viewTransform();
+
+            size_t offset = pointsStaging.size();
+            std::vector<cv::Point2f> lp = flattenVector(proc->m_calibrationPoints[0]);
+            std::vector<cv::Point2f> rp = flattenVector(proc->m_calibrationPoints[1]);
+
+            pointsStaging.resize(pointsStaging.size() + points.rows);
+            for (int pointIdx = 0; pointIdx < points.rows; ++pointIdx) {
+              float* p = points.ptr<float>(pointIdx);
+              ImGui::Text("%.4f %.4f || %.4f %.4f || %.4f %.4f %.4f",
+                lp[pointIdx].x, lp[pointIdx].y,
+                rp[pointIdx].x, rp[pointIdx].y,
+                p[0], p[1], p[2]);
+              pointsStaging[offset + pointIdx] = viewXf * glm::vec4(p[0], p[1], p[2], 1.0f);
+            }
+
+          } else {
+            // TODO do something useful with markers detected in 2d views
+          }
+
+        }
+
+        RHIBuffer::ptr pointsBuf = rhi()->newBufferWithContents(pointsStaging.data(), pointsStaging.size() * sizeof(float) * 4);
+
+        // render points as locator gizmos
+        drawTriadGizmosForPoints(pointsBuf, pointsStaging.size(), renderView.viewProjectionMatrix);
+
+        ImGui::End();
+      }
+
 
 
       // May modify GL state, so this should be done at the end of the renderpass.
+      ImGui::Render();
+
       ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
       rhi()->endRenderPass(windowRenderTarget);
 

@@ -2,6 +2,7 @@
 #include "common/DepthMapGenerator.h"
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
+#include "common/glmCvInterop.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
@@ -54,16 +55,6 @@ static inline uint64_t currentTimeNs() {
 
 static inline float deltaTimeMs(uint64_t startTimeNs, uint64_t endTimeNs) {
   return static_cast<float>(endTimeNs - startTimeNs) / 1000000.0f;
-}
-
-glm::mat4 Matrix4FromCVMatrix(cv::Mat matin) {
-  glm::mat4 out(1.0f);
-  for (int y = 0; y < matin.rows; y++) {
-    for (int x = 0; x < matin.cols; x++) {
-      out[y][x] = (float)matin.at<double>(y, x);
-    }
-  }
-  return out;
 }
 
 DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* shm) :
@@ -199,9 +190,9 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
       vd.m_rightMap1_gpu.upload(m1); vd.m_rightMap2_gpu.upload(m2);
 
     }
-    vd.m_R1 = Matrix4FromCVMatrix(v.stereoRectification[0]);
-    vd.m_R1inv = glm::inverse(vd.m_R1);
-    vd.m_Q = Matrix4FromCVMatrix(v.stereoDisparityToDepth);
+    // stereoRectification is a 3x3 rotation matrix -- transpose is equivalent to inverse
+    vd.m_R1inv = glm::transpose(glmMat4FromCVMatrix(v.stereoRectification[0]));
+    vd.m_Q = glmMat4FromCVMatrix(v.stereoDisparityToDepth);
 
     vd.m_CameraDistanceMeters = glm::length(glm::vec3(v.stereoTranslation.at<double>(0), v.stereoTranslation.at<double>(1), v.stereoTranslation.at<double>(2)));
 
@@ -291,15 +282,15 @@ void DepthMapGenerator::processFrame() {
         m_algorithm = 0;
       case 0:
         // uses CV_8UC1 disparity
-        m_disparityPrescale = 1.0f / 16.0f;
+        m_disparityPrescale = 1.0f; // / 16.0f;
         break;
       case 1: {
         if (m_sbpLevels > 4) // more than 4 levels seems to trigger an internal crash
           m_sbpLevels = 4;
-        m_disparityPrescale = 1.0f / 16.0f;
+        m_disparityPrescale = 1.0f; // / 16.0f;
       } break;
       case 2:
-        m_disparityPrescale = 1.0f / 256.0f; // TODO: not sure if this is correct -- matches results from CSBP, roughly.
+        m_disparityPrescale = 1.0f / 16.0f; // TODO: not sure if this is correct -- matches results from CSBP, roughly.
         break;
     };
 

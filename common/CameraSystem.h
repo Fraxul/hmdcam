@@ -7,8 +7,11 @@
 #include "glm/gtx/euler_angles.hpp"
 #include "glm/gtx/transform.hpp"
 
+class CameraSystem;
 class CharucoMultiViewCalibration;
 class DepthMapGenerator;
+
+cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints);
 
 class CameraSystem {
 public:
@@ -52,7 +55,8 @@ public:
     }
 
     // Stereo data, only valid if (isStereo)
-    cv::Mat stereoRotation, stereoTranslation; // Calibrated
+    cv::Mat stereoRotation, stereoTranslation;  // Calibrated -- from cv::stereoCalibrate
+    cv::Mat essentialMatrix, fundamentalMatrix; // Calibrated -- from cv::stereoCalibrate
     cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify
     cv::Mat stereoDisparityToDepth;
     cv::Rect stereoValidROI[2];
@@ -89,6 +93,13 @@ public:
 
   class CalibrationContext {
   public:
+
+    enum OverlayDistortionSpace {
+      kDistortionSpaceUncorrected,
+      kDistortionSpaceIntrinsic,
+      kDistortionSpaceView
+    };
+
     virtual ~CalibrationContext();
     virtual void processFrame() = 0;
     virtual void processUI() = 0; // run IMGUI code to draw UI and handle inputs
@@ -102,6 +113,7 @@ public:
 
     virtual bool involvesCamera(size_t cameraIdx) = 0;
     virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) = 0;
+    virtual OverlayDistortionSpace overlayDistortionSpace() const = 0;
 
   protected:
     CalibrationContext(CameraSystem*);
@@ -165,6 +177,7 @@ public:
 
     virtual bool involvesCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx; }
     virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx ? 0 : -1; }
+    virtual OverlayDistortionSpace overlayDistortionSpace() const { return kDistortionSpaceUncorrected; }
 
   protected:
     virtual void renderStatusUI();
@@ -214,6 +227,7 @@ public:
       else
         return -1;
     }
+    virtual OverlayDistortionSpace overlayDistortionSpace() const { return kDistortionSpaceIntrinsic; }
 
   protected:
     virtual void renderStatusUI();
@@ -266,6 +280,7 @@ public:
 
       return -1;
     }
+    virtual OverlayDistortionSpace overlayDistortionSpace() const { return kDistortionSpaceView; }
 
   protected:
     virtual void renderStatusUI();
@@ -287,7 +302,7 @@ public:
 
   ICameraProvider* cameraProvider() const { return m_cameraProvider; }
 
-  cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, bool undistort);
+  cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, RHISurface::ptr distortionMap = RHISurface::ptr());
 protected:
   ICameraProvider* m_cameraProvider;
 

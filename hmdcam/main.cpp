@@ -645,15 +645,19 @@ int main(int argc, char* argv[]) {
 
               RHISurface::ptr overlayTex, distortionTex;
               size_t drawFlags = 0;
-              if (calibrationContext && calibrationContext->isViewContext() && calibrationContext->getCameraOrViewIndex() == viewIdx) {
+              if (calibrationContext && calibrationContext->involvesCamera(v.cameraIndices[viewEyeIdx])) {
                 // Calibrating a stereo view that includes this camera
                 overlayTex = calibrationContext->overlaySurfaceAtIndex(viewEyeIdx);
-                distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
-
-              } else if (calibrationContext && calibrationContext->isCameraContext() && calibrationContext->getCameraOrViewIndex() == v.cameraIndices[viewEyeIdx]) {
-                // Calibrating this camera's intrinsic distortion
-                overlayTex = calibrationContext->overlaySurfaceAtIndex(0);
-
+                switch (calibrationContext->overlayDistortionSpace()) {
+                  case CameraSystem::CalibrationContext::kDistortionSpaceUncorrected:
+                    break; // do nothing
+                  case CameraSystem::CalibrationContext::kDistortionSpaceIntrinsic:
+                    distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
+                    break;
+                  case CameraSystem::CalibrationContext::kDistortionSpaceView:
+                    distortionTex = v.stereoDistortionMap[viewEyeIdx];
+                    break;
+                };
               } else if (v.isStereo) {
                 // Drawing this camera as part of a stereo pair
                 distortionTex = v.stereoDistortionMap[viewEyeIdx];
@@ -739,22 +743,23 @@ int main(int argc, char* argv[]) {
             rhi()->setViewport(debugSurfaceCameraRects[cameraIdx]);
 
             RHISurface::ptr overlayTex, distortionTex;
-            distortionTex = cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap;
 
             if (calibrationContext && calibrationContext->involvesCamera(cameraIdx)) {
-              if (calibrationContext->isViewContext()) {
-                // Calibrating a stereo view that includes this camera
-                overlayTex = calibrationContext->overlaySurfaceAtIndex(calibrationContext->overlaySurfaceIndexForCamera(cameraIdx));
-              } else {
-                // Intrinsic calibration for camera. Disable distortion correction.
-                overlayTex = calibrationContext->overlaySurfaceAtIndex(calibrationContext->overlaySurfaceIndexForCamera(cameraIdx));
-                distortionTex = RHISurface::ptr();
+              overlayTex = calibrationContext->overlaySurfaceAtIndex(calibrationContext->overlaySurfaceIndexForCamera(cameraIdx));
+
+              switch (calibrationContext->overlayDistortionSpace()) {
+                case CameraSystem::CalibrationContext::kDistortionSpaceUncorrected:
+                  break; // do nothing
+                case CameraSystem::CalibrationContext::kDistortionSpaceView: // TODO not handled correctly right now -- falling back to Intrinsic
+                case CameraSystem::CalibrationContext::kDistortionSpaceIntrinsic:
+                  distortionTex = cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap;
+                  break;
               }
             } else if (debugUseDistortion) {
               // Distortion-corrected view
+              distortionTex = cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap;
             } else {
               // No-distortion / direct passthrough
-              distortionTex = RHISurface::ptr();
             }
 
             renderDrawCamera(cameraIdx, /*drawFlags=*/0, distortionTex, overlayTex, /*mvp=*/glm::mat4(1.0f) /*identity*/);

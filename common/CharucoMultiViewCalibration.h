@@ -12,15 +12,20 @@ class CameraSystem;
 
 class CharucoMultiViewCalibration {
 public:
-  CharucoMultiViewCalibration(CameraSystem*, const std::vector<size_t>& cameraIds);
+  // Camera stereo view IDs are optional -- if provided, images will be undistorted using the stereo distortion maps for the associated view.
+  CharucoMultiViewCalibration(CameraSystem*, const std::vector<size_t>& cameraIds, const std::vector<size_t>& cameraStereoViewIds = std::vector<size_t>());
 
   // Returns true if a frame was actually captured (only if captureRequested is true)
   bool processFrame(bool captureRequested);
   void reset();
 
 
+  bool m_undistortCapturedViews;
+  bool m_enableFeedbackView;
+
   CameraSystem* m_cameraSystem;
   std::vector<size_t> m_cameraIds;
+  std::vector<ssize_t> m_cameraStereoViewIds;
 
   size_t cameraCount() const { return m_cameraIds.size(); }
 

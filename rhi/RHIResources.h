@@ -14,7 +14,6 @@ extern RHIRenderPipeline::ptr uiLayerPipeline;
 extern RHIRenderPipeline::ptr overlayCompositePipeline;
 extern RHIBuffer::ptr fullscreenPassVBO;
 extern RHIBuffer::ptr ndcQuadVBO;
-extern RHIBuffer::ptr frustumVisualizeVBO;
 extern RHIVertexLayout fullscreenPassVertexLayout;
 extern RHIVertexLayout ndcQuadVertexLayout;
 extern RHIRenderPipelineDescriptor tristripPipelineDescriptor;
@@ -51,4 +50,7 @@ struct LineGizmoUniformBlock {
   glm::mat4 modelMatrix;
   glm::vec4 color;
 };
+
+// pointBuf is vec4[]
+void drawTriadGizmosForPoints(RHIBuffer::ptr pointBuf, size_t count, const glm::mat4& viewProjection);
 

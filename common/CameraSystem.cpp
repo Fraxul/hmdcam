@@ -122,6 +122,8 @@ bool CameraSystem::loadCalibrationData() {
             vfn["rightCameraIndex"] >> v.cameraIndices[1];
             vfn["stereoRotation"] >> v.stereoRotation;
             vfn["stereoTranslation"] >> v.stereoTranslation;
+            vfn["essentialMatrix"] >> v.essentialMatrix;
+            vfn["fundamentalMatrix"] >> v.fundamentalMatrix;
 
             cv::Mat tmpMat;
             vfn["viewTranslation"] >> tmpMat; v.viewTranslation = glmVec3FromCV(tmpMat);
@@ -190,6 +192,8 @@ void CameraSystem::saveCalibrationData() {
       if (v.haveStereoCalibration()) {
         fs.write("stereoRotation", v.stereoRotation);
         fs.write("stereoTranslation", v.stereoTranslation);
+        fs.write("essentialMatrix", v.essentialMatrix);
+        fs.write("fundamentalMatrix", v.fundamentalMatrix);
       }
       fs.write("viewTranslation", cv::Mat(cvVec3FromGlm(v.viewTranslation)));
       fs.write("viewRotation", cv::Mat(cvVec3FromGlm(v.viewRotation)));
@@ -407,14 +411,12 @@ void CameraSystem::CalibrationContextStateMachineBase::processUI() {
 
 }
 
-cv::Mat CameraSystem::captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, bool undistort) {
+cv::Mat CameraSystem::captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, RHISurface::ptr distortionMap) {
 
   rhi()->beginRenderPass(rt, kLoadInvalidate);
-  if (undistort) {
-    assert(cameraAtIndex(cameraIdx).intrinsicDistortionMap);
-
+  if (distortionMap) {
     rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
-    rhi()->loadTexture(ksDistortionMap, cameraAtIndex(cameraIdx).intrinsicDistortionMap, linearClampSampler);
+    rhi()->loadTexture(ksDistortionMap, distortionMap, linearClampSampler);
   } else {
     rhi()->bindRenderPipeline(camGreyscalePipeline);
   }
@@ -588,7 +590,7 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
   // Look for ChAruCo markers and allow capturing if we're not in preview mode
 
   // stereoCamera->readFrame();
-  cv::Mat viewFullRes = cameraSystem()->captureGreyscale(m_cameraIdx, m_fullGreyTex, m_fullGreyRT, /*undistort=*/false);
+  cv::Mat viewFullRes = cameraSystem()->captureGreyscale(m_cameraIdx, m_fullGreyTex, m_fullGreyRT);
 
   std::vector<std::vector<cv::Point2f> > corners, rejected;
   std::vector<int> ids;
@@ -709,7 +711,6 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
     cv::Mat E, F;
     cv::Mat perViewErrors;
 
-    // Note the use of the zero distortion matrix and optimized camera matrix, since we already corrected for individual camera distortions when capturing the images.
     View& v = cameraSystem()->viewAtIndex(m_viewIdx);
 
     double rms = cv::stereoCalibrate(m_calibState->m_objectPoints,
@@ -769,7 +770,10 @@ CameraSystem::StereoViewOffsetCalibrationContext::StereoViewOffsetCalibrationCon
 
   CameraSystem::View& rv = cameraSystem()->viewAtIndex(m_referenceViewIdx);
   CameraSystem::View& v = cameraSystem()->viewAtIndex(m_viewIdx);
-  m_calibState = new CharucoMultiViewCalibration(cameraSystem(), {rv.cameraIndices[0], rv.cameraIndices[1], v.cameraIndices[0], v.cameraIndices[1]});
+
+  m_calibState = new CharucoMultiViewCalibration(cameraSystem(),
+    {rv.cameraIndices[0], rv.cameraIndices[1], v.cameraIndices[0], v.cameraIndices[1]},
+    {referenceViewIdx, referenceViewIdx, viewIdx, viewIdx});
 
   m_tgt2ref = glm::mat4(1.0f);
 }
@@ -805,20 +809,59 @@ template <typename T> static std::vector<T> flattenVector(const std::vector<std:
   return res;
 }
 
-static cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints) {
+int triangulationDisparityScaleInv = 1;
+
+cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints) {
   CameraSystem::View& view = cameraSystem->viewAtIndex(viewIdx);
 
   auto lp = flattenVector(leftCalibrationPoints);
   auto rp = flattenVector(rightCalibrationPoints);
+  assert(lp.size() == rp.size());
 
-  // Input points (m_calibState->m_calibrationPoints) have been corrected for camera intrinsic distortion, but still need to have the stereo remap applied to them.
-  // map from (zero distortion, optimized matrix) space to stereo rectified space
-  cv::Mat ldp, rdp;
-  cv::undistortPoints(lp, ldp, cameraSystem->cameraAtIndex(view.cameraIndices[0]).optimizedMatrix, /*identity distCoeffs*/cv::Mat(), view.stereoRectification[0], view.stereoProjection[0]);
-  cv::undistortPoints(rp, rdp, cameraSystem->cameraAtIndex(view.cameraIndices[1]).optimizedMatrix, /*identity distCoeffs*/cv::Mat(), view.stereoRectification[1], view.stereoProjection[1]);
+  if (lp.empty())
+    return cv::Mat();
+
+  // Input points (m_calibState->m_calibrationPoints) have been captured in distortion-corrected, stereo-remapped space
+
+  // TODO try replacing this call with a different function (maybe compute a disparity value and use the same algorithm as the depth map generator?)
+#if 1
+  cv::Mat dest;
+  dest.create(/*rows=*/ lp.size(), /*cols=*/1, CV_32FC3);
+
+  // stereoRectification is a 3x3 rotation matrix -- transpose is equivalent to inverse
+  glm::mat3 R1inv = glm::transpose(glmMat3FromCVMatrix(view.stereoRectification[0]));
+  glm::mat4 Q = glmMat4FromCVMatrix(view.stereoDisparityToDepth);
+  float CameraDistanceMeters = glm::length(glm::vec3(view.stereoTranslation.at<double>(0), view.stereoTranslation.at<double>(1), view.stereoTranslation.at<double>(2)));
+
+  float dispScale = 16.0f / static_cast<float>(triangulationDisparityScaleInv);
+
+  for (size_t pointIdx = 0; pointIdx < lp.size(); ++pointIdx) {
+    float x = lp[pointIdx].x;
+    float y = lp[pointIdx].y;
+
+    float fDisp = (rp[pointIdx].x - lp[pointIdx].x) / dispScale;
+
+      float lz = (Q[2][3] * CameraDistanceMeters) / fDisp;
+      float ly = (y + Q[1][3]) / Q[2][3];
+      float lx = -(x + Q[0][3]) / Q[2][3];
+      lx *= lz;
+      ly *= lz;
+      lz *= -1.0f;
+
+    glm::vec3 localP = R1inv * glm::vec3(lx, ly, lz);
+
+    float* pDest = dest.ptr<float>(pointIdx);
+    pDest[0] = localP[0];
+    pDest[1] = localP[1];
+    pDest[2] = localP[2];
+  }
+
+
+#else
+
 
   cv::Mat triangulatedPointsH;
-  cv::triangulatePoints(view.stereoProjection[0], view.stereoProjection[1], ldp, rdp, triangulatedPointsH);
+  cv::triangulatePoints(view.stereoProjection[0], view.stereoProjection[1], lp, rp, triangulatedPointsH);
 
   // output matrix shape is {channels=1 rows=4 cols=#points}
   // convertPointsFromHomogeneous wants {channels=4 rows=#points cols=1}
@@ -829,6 +872,7 @@ static cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t v
 
   cv::Mat dest;
   cv::convertPointsFromHomogeneous(inH, dest);
+#endif
 
   return dest;
 }
@@ -856,6 +900,9 @@ void CameraSystem::StereoViewOffsetCalibrationContext::processFrameCaptureMode()
   // Recompute pose estimate with new data
   cv::Mat refPoints = getTriangulatedPointsForView(cameraSystem(), m_referenceViewIdx, m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1]);
   cv::Mat tgtPoints = getTriangulatedPointsForView(cameraSystem(), m_viewIdx,          m_calibState->m_calibrationPoints[2], m_calibState->m_calibrationPoints[3]);
+
+  if (refPoints.rows == 0)
+    return;
 
   // {ref,tgt}Points are point-per-row, 1 column, CV_32FC3
 

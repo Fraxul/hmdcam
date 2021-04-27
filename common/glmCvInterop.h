@@ -7,14 +7,29 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
 
+static glm::mat3 glmMat3FromCVMatrix(cv::Mat matin) {
+  glm::mat3 out(1.0f);
+  switch (CV_MAT_DEPTH(matin.type())) {
+    case CV_64F:
+      for (int y = 0; y < std::min<int>(3, matin.rows); y++) { for (int x = 0; x < std::min<int>(3, matin.cols); x++) { out[y][x] = (float)matin.at<double>(y, x); } }
+      break;
+    case CV_32F:
+      for (int y = 0; y < std::min<int>(3, matin.rows); y++) { for (int x = 0; x < std::min<int>(3, matin.cols); x++) { out[y][x] = matin.at<float>(y, x); } }
+      break;
+    default:
+      assert(false);
+  }
+  return out;
+}
+
 static glm::mat4 glmMat4FromCVMatrix(cv::Mat matin) {
   glm::mat4 out(1.0f);
   switch (CV_MAT_DEPTH(matin.type())) {
     case CV_64F:
-      for (int y = 0; y < matin.rows; y++) { for (int x = 0; x < matin.cols; x++) { out[y][x] = (float)matin.at<double>(y, x); } }
+      for (int y = 0; y < std::min<int>(4, matin.rows); y++) { for (int x = 0; x < std::min<int>(4, matin.cols); x++) { out[y][x] = (float)matin.at<double>(y, x); } }
       break;
     case CV_32F:
-      for (int y = 0; y < matin.rows; y++) { for (int x = 0; x < matin.cols; x++) { out[y][x] = matin.at<float>(y, x); } }
+      for (int y = 0; y < std::min<int>(4, matin.rows); y++) { for (int x = 0; x < std::min<int>(4, matin.cols); x++) { out[y][x] = matin.at<float>(y, x); } }
       break;
     default:
       assert(false);

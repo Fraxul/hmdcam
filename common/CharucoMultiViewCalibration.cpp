@@ -9,7 +9,7 @@ extern cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary; // in CameraSystem
 extern cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard; // in CameraSystem
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_32FC1);
 
-CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, const std::vector<size_t>& cameraIds_) : m_cameraSystem(cs_), m_cameraIds(cameraIds_) {
+CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, const std::vector<size_t>& cameraIds_, const std::vector<size_t>& cameraStereoViewIds_) : m_undistortCapturedViews(true), m_enableFeedbackView(true), m_cameraSystem(cs_), m_cameraIds(cameraIds_) {
 
   m_fullGreyTex.resize(cameraCount());
   m_fullGreyRT.resize(cameraCount());
@@ -17,6 +17,16 @@ CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, cons
   m_feedbackView.resize(cameraCount());
 
   m_calibrationPoints.resize(cameraCount());
+
+  m_cameraStereoViewIds.resize(m_cameraIds.size(), -1);
+  for (size_t cameraIdx = 0; cameraIdx < cameraStereoViewIds_.size(); ++cameraIdx) {
+    ssize_t x = cameraStereoViewIds_[cameraIdx];
+    if (x >= 0 && x < cameraSystem()->views()) {
+      CameraSystem::View& v = cameraSystem()->viewAtIndex(x);
+      assert(v.isStereo && (v.cameraIndices[0] == m_cameraIds[cameraIdx] || v.cameraIndices[1] == m_cameraIds[cameraIdx]));
+      m_cameraStereoViewIds[cameraIdx] = x;
+    }
+  }
 
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
     m_fullGreyTex[cameraIdx] = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
@@ -35,7 +45,21 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   // Capture and undistort camera views.
   std::vector<cv::Mat> eyeFullRes(cameraCount());
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
-    eyeFullRes[cameraIdx] = cameraSystem()->captureGreyscale(m_cameraIds[cameraIdx], m_fullGreyTex[cameraIdx], m_fullGreyRT[cameraIdx], /*undistort=*/true);
+    RHISurface::ptr distortionMap;
+
+    if (m_undistortCapturedViews) {
+      if (m_cameraStereoViewIds[cameraIdx] >= 0) {
+        // Stereo distortion correction
+        CameraSystem::View& v = cameraSystem()->viewAtIndex(m_cameraStereoViewIds[cameraIdx]);
+        distortionMap = (m_cameraIds[cameraIdx] == v.cameraIndices[0]) ? v.stereoDistortionMap[0] : v.stereoDistortionMap[1];
+        assert(distortionMap);
+      } else {
+        // Intrinsic distortion correction
+        distortionMap = cameraSystem()->cameraAtIndex(m_cameraIds[cameraIdx]).intrinsicDistortionMap;
+      }
+    }
+
+    eyeFullRes[cameraIdx] = cameraSystem()->captureGreyscale(m_cameraIds[cameraIdx], m_fullGreyTex[cameraIdx], m_fullGreyRT[cameraIdx], distortionMap);
   }
 
   std::vector<std::vector<std::vector<cv::Point2f> > > corners(cameraCount());
@@ -113,38 +137,40 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   }
 
 
-  // Draw feedback points
-  FxThreading::runArrayTask(0, cameraCount(), [&](size_t cameraIdx) {
-    memset(m_feedbackView[cameraIdx].ptr(0), 0, m_feedbackView[cameraIdx].total() * 4);
+  // Draw feedback views
+  if (m_enableFeedbackView) {
+    FxThreading::runArrayTask(0, cameraCount(), [&](size_t cameraIdx) {
+      memset(m_feedbackView[cameraIdx].ptr(0), 0, m_feedbackView[cameraIdx].total() * 4);
 
-    if (!corners[cameraIdx].empty()) {
-      cv::aruco::drawDetectedMarkers(m_feedbackView[cameraIdx], corners[cameraIdx]);
-    }
-
-    // Borrowed from cv::aruco::drawDetectedCornersCharuco -- modified to switch the color per-marker to indicate stereo visibility
-    for(size_t cornerIdx = 0; cornerIdx < currentCharucoCornerIds[cameraIdx].size(); ++cornerIdx) {
-      cv::Point2f corner = currentCharucoCornerPoints[cameraIdx][cornerIdx];
-      int id = currentCharucoCornerIds[cameraIdx][cornerIdx];
-
-      // grey for mono points
-      cv::Scalar cornerColor = cv::Scalar(127, 127, 127);
-      if (commonCornerIds.find(id) != commonCornerIds.end()) {
-        // red for stereo points
-        cornerColor = cv::Scalar(255, 0, 0);
+      if (!corners[cameraIdx].empty()) {
+        cv::aruco::drawDetectedMarkers(m_feedbackView[cameraIdx], corners[cameraIdx]);
       }
 
-      // draw first corner mark
-      cv::rectangle(m_feedbackView[cameraIdx], corner - cv::Point2f(3, 3), corner + cv::Point2f(3, 3), cornerColor, 1, cv::LINE_AA);
+      // Borrowed from cv::aruco::drawDetectedCornersCharuco -- modified to switch the color per-marker to indicate stereo visibility
+      for(size_t cornerIdx = 0; cornerIdx < currentCharucoCornerIds[cameraIdx].size(); ++cornerIdx) {
+        cv::Point2f corner = currentCharucoCornerPoints[cameraIdx][cornerIdx];
+        int id = currentCharucoCornerIds[cameraIdx][cornerIdx];
 
-      // draw ID
-      char idbuf[16];
-      sprintf(idbuf, "id=%u", id);
-      cv::putText(m_feedbackView[cameraIdx], idbuf, corner + cv::Point2f(5, -5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cornerColor, 2);
+        // grey for mono points
+        cv::Scalar cornerColor = cv::Scalar(127, 127, 127);
+        if (commonCornerIds.find(id) != commonCornerIds.end()) {
+          // red for stereo points
+          cornerColor = cv::Scalar(255, 0, 0);
+        }
+
+        // draw first corner mark
+        cv::rectangle(m_feedbackView[cameraIdx], corner - cv::Point2f(3, 3), corner + cv::Point2f(3, 3), cornerColor, 1, cv::LINE_AA);
+
+        // draw ID
+        char idbuf[16];
+        sprintf(idbuf, "id=%u", id);
+        cv::putText(m_feedbackView[cameraIdx], idbuf, corner + cv::Point2f(5, -5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cornerColor, 2);
+      }
+    });
+
+    for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
+      rhi()->loadTextureData(m_feedbackTex[cameraIdx], kVertexElementTypeUByte4N, m_feedbackView[cameraIdx].ptr(0));
     }
-  });
-
-  for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
-    rhi()->loadTextureData(m_feedbackTex[cameraIdx], kVertexElementTypeUByte4N, m_feedbackView[cameraIdx].ptr(0));
   }
 
 

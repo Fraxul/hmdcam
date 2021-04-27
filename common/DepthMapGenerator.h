@@ -79,7 +79,7 @@ protected:
 
 
     cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
-    glm::mat4 m_R1, m_R1inv, m_Q, m_Qinv;
+    glm::mat4 m_R1inv, m_Q, m_Qinv;
 
     RHISurface::ptr m_iTexture;
     RHISurface::ptr m_disparityTexture;

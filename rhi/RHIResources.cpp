@@ -7,8 +7,10 @@ static /*CVar*/ int r_textureAnisotropy = 8;
 
 RHIRenderPipeline::ptr uiLayerPipeline;
 RHIRenderPipeline::ptr overlayCompositePipeline;
+RHIRenderPipeline::ptr triadGizmoPipeline;
 RHIBuffer::ptr fullscreenPassVBO;
 RHIBuffer::ptr ndcQuadVBO;
+RHIBuffer::ptr triadGizmoVBO;
 RHISurface::ptr hbaoNoiseTexture;
 RHISurface::ptr emptySsaoTexture;
 RHISurface::ptr emptyLayeredDepthTexture;
@@ -80,6 +82,30 @@ void initRHIResources() {
 
   positionOnlyVertexLayout.elements.clear();
   positionOnlyVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position", 0, sizeof(glm::vec3)));
+
+  {
+    static const float triadData[] = {
+      // X-axis
+      0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+      1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+
+      // Y-axis
+      0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+      0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+
+      // Z-axis
+
+      0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+      0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f
+    };
+
+    triadGizmoVBO = rhi()->newBufferWithContents(triadData, sizeof(float) * 36);
+  }
+
+  triadGizmoPipeline = rhi()->compileRenderPipeline("shaders/triadGizmo.vtx.glsl", "shaders/triadGizmo.frag.glsl", {
+      RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position",  0, 24),
+      RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "color", 12, 24)
+    }, kPrimitiveTopologyLineList);
 
   // Depth-stencil states
   {
@@ -245,5 +271,16 @@ void initRHIResources() {
   overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kFragmentShader, "shaders/overlayCompositeShader.frag.glsl");
   overlayCompositeShaderDescriptor.setVertexLayout(ndcQuadVertexLayout);
   overlayCompositePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(overlayCompositeShaderDescriptor), tristripPipelineDescriptor);
+}
+
+FxAtomicString ksTriadGizmoUniformBuffer("TriadGizmoUniformBuffer");
+FxAtomicString ksPositionDataBuffer("PositionDataBuffer");
+
+void drawTriadGizmosForPoints(RHIBuffer::ptr pointBuf, size_t count, const glm::mat4& viewProjection) {
+  rhi()->bindRenderPipeline(triadGizmoPipeline);
+  rhi()->bindStreamBuffer(0, triadGizmoVBO);
+  rhi()->loadShaderBuffer(ksPositionDataBuffer, pointBuf);
+  rhi()->loadUniformBlockImmediate(ksTriadGizmoUniformBuffer, &viewProjection, sizeof(glm::mat4));
+  rhi()->drawPrimitives(0, 6, count);
 }
 
