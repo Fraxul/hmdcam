@@ -19,7 +19,7 @@
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
 
-static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_32FC1);
+static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 14, CV_64F);
 
 // ChAruCo target pattern config
 const cv::aruco::PREDEFINED_DICTIONARY_NAME s_charucoDictionaryName = cv::aruco::DICT_5X5_100;
@@ -621,10 +621,13 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
       std::vector<float> reprojErrs;
       cv::Size imageSize(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
       float alpha = 0.25f;
-      int flags = 0; //cv::CALIB_FIX_PRINCIPAL_POINT | cv::CALIB_FIX_ASPECT_RATIO;
+      int flags =
+        cv::CALIB_FIX_PRINCIPAL_POINT |
+        cv::CALIB_FIX_ASPECT_RATIO |
+        cv::CALIB_RATIONAL_MODEL;
 
       c.intrinsicMatrix = cv::Mat::eye(3, 3, CV_64F);
-      c.distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
+      c.distCoeffs = cv::Mat::zeros(14, 1, CV_64F);
 
 
       m_feedbackRmsError = cv::aruco::calibrateCameraCharuco(m_allCharucoCorners, m_allCharucoIds,
@@ -702,12 +705,19 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
 
     View& v = cameraSystem()->viewAtIndex(m_viewIdx);
 
+    int flags =
+      cv::CALIB_USE_INTRINSIC_GUESS | // load previously-established intrinsics
+      cv::CALIB_FIX_INTRINSIC |       // and don't modify them
+      cv::CALIB_FIX_PRINCIPAL_POINT |
+      cv::CALIB_FIX_ASPECT_RATIO |
+      cv::CALIB_RATIONAL_MODEL;
+
     m_feedbackRmsError = cv::stereoCalibrate(m_calibState->m_objectPoints,
       m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
       cameraSystem()->cameraAtIndex(v.cameraIndices[0]).intrinsicMatrix, cameraSystem()->cameraAtIndex(v.cameraIndices[0]).distCoeffs,
       cameraSystem()->cameraAtIndex(v.cameraIndices[1]).intrinsicMatrix, cameraSystem()->cameraAtIndex(v.cameraIndices[1]).distCoeffs,
       cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
-      feedbackRx, feedbackTx, feedbackE, feedbackF, perViewErrors, cv::CALIB_FIX_INTRINSIC);
+      feedbackRx, feedbackTx, feedbackE, feedbackF, perViewErrors, flags);
 
     m_feedbackTx = glmVec3FromCV(feedbackTx);
     glm::mat4 rx = glmMat3FromCVMatrix(feedbackRx);
@@ -744,12 +754,19 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
 
     View& v = cameraSystem()->viewAtIndex(m_viewIdx);
 
+    int flags =
+      cv::CALIB_USE_INTRINSIC_GUESS | // load previously-established intrinsics
+      cv::CALIB_FIX_INTRINSIC |       // and don't modify them
+      cv::CALIB_FIX_PRINCIPAL_POINT |
+      cv::CALIB_FIX_ASPECT_RATIO |
+      cv::CALIB_RATIONAL_MODEL;
+
     double rms = cv::stereoCalibrate(m_calibState->m_objectPoints,
       m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
       cameraSystem()->cameraAtIndex(v.cameraIndices[0]).optimizedMatrix, zeroDistortion,
       cameraSystem()->cameraAtIndex(v.cameraIndices[1]).optimizedMatrix, zeroDistortion,
       cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
-      v.stereoRotation, v.stereoTranslation, E, F, perViewErrors, cv::CALIB_FIX_INTRINSIC);
+      v.stereoRotation, v.stereoTranslation, E, F, perViewErrors, flags);
 
     printf("RMS error reported by stereoCalibrate: %g\n", rms);
     std::cout << " Per-view error: " << std::endl << perViewErrors << std::endl;
