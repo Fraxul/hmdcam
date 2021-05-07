@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <SDL.h>
 #include <cuda.h>
+#include <opencv2/imgproc.hpp>
 
 #include "rdma/RDMAContext.h"
 #include "rdma/RDMABuffer.h"
@@ -41,6 +42,10 @@ FxCamera* sceneCamera;
 RDMABuffer::ptr configBuffer;
 DepthMapGenerator* depthMapGenerator;
 SHMSegment<DepthMapSHM>* shm;
+
+extern RHIRenderPipeline::ptr camGreyscalePipeline;
+extern RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
+extern FxAtomicString ksDistortionMap;
 
 RHIRenderPipeline::ptr meshVertexColorPipeline;
 RHIBuffer::ptr meshQuadVBO;
@@ -305,6 +310,24 @@ int main(int argc, char** argv) {
           if (ImGui::InputFloat3("Camera Target", &t[0]))
             sceneCamera->setTargetPosition(t);
 
+          FxRenderView renderView = sceneCamera->toRenderView(static_cast<float>(io.DisplaySize.x) / static_cast<float>(io.DisplaySize.y));
+          {
+            glm::mat4 m = renderView.viewMatrix;
+            ImGui::Text("View");
+            for (size_t i = 0; i < 4; ++i) {
+              ImGui::Text("% .3f % .3f % .3f % .3f",
+                m[i][0], m[i][1], m[i][2], m[i][3]);
+            }
+          }
+          {
+            glm::mat4 m = renderView.projectionMatrix;
+            ImGui::Text("Projection");
+            for (size_t i = 0; i < 4; ++i) {
+              ImGui::Text("% .3f % .3f % .3f % .3f",
+                m[i][0], m[i][1], m[i][2], m[i][3]);
+            }
+          }
+
           ImGui::Checkbox("Charuco detection", &enableCharucoDetection);
           ImGui::SliderInt("Charuco Disp Scale", &triangulationDisparityScaleInv, 1, 256); // TODO remove
 
@@ -335,6 +358,47 @@ int main(int argc, char** argv) {
 
         ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
         ImGui::End();
+      }
+
+      // distortion test
+      {
+        ImGui::Begin("Distortion test", NULL, ImGuiWindowFlags_AlwaysAutoResize);
+        static RHISurface::ptr testSrf;
+        static RHIRenderTarget::ptr testRT;
+        static bool s_CPU = false;
+        ImGui::Checkbox("CPU", &s_CPU);
+
+        if (!testSrf) {
+          testSrf = rhi()->newTexture2D(cameraProvider->streamWidth(), cameraProvider->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+          testRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ testSrf }));
+        }
+
+        CameraSystem::View& v = cameraSystem->viewAtIndex(0);
+
+        if (s_CPU) {
+
+          CameraSystem::Camera& c = cameraSystem->cameraAtIndex(v.cameraIndices[0]);
+          cv::Size imageSize = cv::Size(cameraProvider->streamWidth(), cameraProvider->streamHeight());
+          cv::Mat map1, map2;
+
+          cv::initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_32F, map1, map2);
+
+          cv::Mat res;
+          cv::remap(cameraProvider->cvMat(v.cameraIndices[0]), res, map1, map2, cv::INTER_LINEAR);
+          rhi()->loadTextureData(testSrf, kVertexElementTypeUByte4N, res.data);
+        } else {
+          // guts of captureGreyscale
+          rhi()->beginRenderPass(testRT, kLoadInvalidate);
+          rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
+          rhi()->loadTexture(ksDistortionMap, v.stereoDistortionMap[0], linearClampSampler);
+          rhi()->loadTexture(ksImageTex, cameraProvider->rgbTexture(v.cameraIndices[0]), linearClampSampler);
+          rhi()->drawNDCQuad();
+          rhi()->endRenderPass(testRT);
+        }
+        ImGui_Image(testSrf);
+        ImGui::End();
+
+
       }
 
       for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {

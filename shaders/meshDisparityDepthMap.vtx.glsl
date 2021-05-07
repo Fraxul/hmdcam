@@ -21,12 +21,11 @@ out vec4 v2fPosition;
 vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
 
 	float lz = Q11 * CameraDistanceMeters / (fDisp * mogrify.x);
-	float ly = -((y * mogrify.y) + Q7) / Q11;
+	float ly = ((y * mogrify.y) + Q7) / Q11;
 	float lx = ((x * mogrify.x) + Q3) / Q11;
 	lx *= lz;
 	ly *= lz;
-	lz *= -1.0f;
-	return R1inv * vec4(lx, ly, lz, 1.0f);
+	return R1inv * vec4(lx, -ly, -lz, 1.0f);
 }
 
 void main()

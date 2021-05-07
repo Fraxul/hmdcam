@@ -49,8 +49,8 @@ public:
     glm::vec3 viewTranslation;
     glm::vec3 viewRotation; // euler, degrees
     glm::mat4 viewTransform() const {
-      glm::mat4 res = glm::transpose(glm::eulerAngleXYZ(glm::radians(viewRotation[0]), glm::radians(viewRotation[1]), glm::radians(viewRotation[2])));
-      for (size_t i = 0; i < 3; ++i) res[3][i] = -viewTranslation[i];
+      glm::mat4 res = glm::eulerAngleXYZ(glm::radians(viewRotation[0]), glm::radians(viewRotation[1]), glm::radians(viewRotation[2]));
+      for (size_t i = 0; i < 3; ++i) res[3][i] = viewTranslation[i];
       return res;
     }
 
@@ -257,6 +257,7 @@ public:
     // Feedback data during capture
     glm::vec3 m_feedbackTx, m_feedbackRx;
     double m_feedbackRmsError;
+    cv::Rect m_feedbackValidROI[2];
 
   };
 

@@ -605,15 +605,17 @@ int main(int argc, char* argv[]) {
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
         rhi()->beginRenderPass(eyeRT[eyeIdx], kLoadClear);
 
+        FxRenderView renderView;
+        // TODO actual camera setup here. renderDisparityDepthMap only uses the viewProjection matrix.
+
+        renderView.viewMatrix = eyeView[eyeIdx];
+        renderView.projectionMatrix = eyeProjection[eyeIdx];
+        renderView.viewProjectionMatrix = renderView.projectionMatrix * renderView.viewMatrix;
+
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
           CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
 
           if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
-            FxRenderView renderView;
-            // TODO actual camera setup here. renderDisparityDepthMap only uses the viewProjection matrix.
-            renderView.viewMatrix = eyeView[eyeIdx];
-            renderView.projectionMatrix = eyeProjection[eyeIdx];
-            renderView.viewProjectionMatrix = renderView.projectionMatrix * renderView.viewMatrix; 
 
             depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView, v.viewTransform());
 
@@ -641,7 +643,7 @@ int main(int argc, char* argv[]) {
               glm::mat4 model = glm::translate(tx) * glm::scale(glm::vec3(fovScaleFactor * zoomFactor, fovScaleFactor * zoomFactor * (static_cast<float>(argusCamera->streamHeight()) / static_cast<float>(argusCamera->streamWidth())) , 1.0f));
 
               // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
-              glm::mat4 mvp = eyeProjection[eyeIdx] * eyeView[eyeIdx] * model;
+              glm::mat4 mvp = renderView.viewProjectionMatrix * model;
 
               RHISurface::ptr overlayTex, distortionTex;
               size_t drawFlags = 0;
@@ -699,7 +701,7 @@ int main(int argc, char* argv[]) {
           rhi()->bindRenderPipeline(solidQuadPipeline);
           SolidQuadUniformBlock ub;
           // Scale to reduce the X-width of the -1...1 quad to the size requested in sbsSeparatorWidth
-          ub.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -1.0f)) * glm::scale(glm::vec3(static_cast<float>(sbsSeparatorWidth * 4) / static_cast<float>(eyeRT[eyeIdx]->width()), 1.0f, 1.0f));
+          ub.modelViewProjection = renderView.viewProjectionMatrix * glm::translate(glm::vec3(0.0f, 0.0f, -1.0f)) * glm::scale(glm::vec3(static_cast<float>(sbsSeparatorWidth * 4) / static_cast<float>(eyeRT[eyeIdx]->width()), 1.0f, 1.0f));
           ub.color = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
           rhi()->loadUniformBlockImmediate(ksSolidQuadUniformBlock, &ub, sizeof(SolidQuadUniformBlock));
           rhi()->drawNDCQuad();
@@ -713,7 +715,7 @@ int main(int argc, char* argv[]) {
           rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
           UILayerUniformBlock uiLayerBlock;
           float uiScaleBase = 0.75f;
-          uiLayerBlock.modelViewProjection = eyeProjection[eyeIdx] * eyeView[eyeIdx] * glm::translate(glm::vec3(0.0f, 0.0f, -1.2f)) * glm::scale(glm::vec3(uiScaleBase * uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScaleBase * uiScale, uiScaleBase * uiScale));
+          uiLayerBlock.modelViewProjection = renderView.viewProjectionMatrix * glm::translate(glm::vec3(0.0f, 0.0f, -1.2f)) * glm::scale(glm::vec3(uiScaleBase * uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScaleBase * uiScale, uiScaleBase * uiScale));
 
           rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
           rhi()->drawNDCQuad();

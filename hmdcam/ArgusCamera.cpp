@@ -1,6 +1,9 @@
 #include "ArgusCamera.h"
 #include "ArgusHelpers.h"
 #include "rhi/gl/GLCommon.h"
+#include "rhi/RHI.h"
+#include "rhi/RHIResources.h"
+#include "rhi/cuda/RHICVInterop.h"
 #include <Argus/Argus.h>
 #include <EGLStream/EGLStream.h>
 
@@ -19,6 +22,10 @@ static inline uint64_t currentTimeNs() {
   return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
 #endif
+
+extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
+extern FxAtomicString ksNDCQuadUniformBlock;
+extern FxAtomicString ksImageTex;
 
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framerate) :
   m_display(display_), m_context(context_),
@@ -355,5 +362,24 @@ void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {
 
 void ArgusCamera::stop() {
   setRepeatCapture(false);
+}
+
+void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) const {
+  if (!m_tmpBlitSurface) {
+    m_tmpBlitSurface = rhi()->newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+    m_tmpBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { m_tmpBlitSurface } ));
+  }
+
+  glm::mat4 ub = glm::mat4(1.0f);
+  ub[1][1] = -1.0f; // Y-flip for coordsys matching
+
+  rhi()->beginRenderPass(m_tmpBlitRT, kLoadInvalidate);
+  rhi()->bindRenderPipeline(camTexturedQuadPipeline);
+  rhi()->loadTexture(ksImageTex, rgbTexture(sensorIdx), linearClampSampler);
+  rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(glm::mat4));
+  rhi()->drawNDCQuad();
+  rhi()->endRenderPass(m_tmpBlitRT);
+
+  RHICUDA::copySurfaceToGpuMat(m_tmpBlitSurface, gpuMat, const_cast<cv::cuda::Stream&>(stream));
 }
 

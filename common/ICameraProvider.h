@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include "rhi/RHISurface.h"
+#include <opencv2/core/cuda.hpp>
 
 class ICameraProvider {
 public:
@@ -8,6 +9,7 @@ public:
 
   virtual size_t streamCount() const = 0;
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const = 0;
+  virtual void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream& = cv::cuda::Stream()) const = 0;
   virtual unsigned int streamWidth() const = 0;
   virtual unsigned int streamHeight() const = 0;
 };

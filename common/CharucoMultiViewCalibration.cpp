@@ -3,6 +3,7 @@
 #include "common/FxThreading.h"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/aruco/charuco.hpp>
+#include <opencv2/calib3d.hpp>
 #include <set>
 
 extern cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary; // in CameraSystem
@@ -45,6 +46,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   // Capture and undistort camera views.
   std::vector<cv::Mat> eyeFullRes(cameraCount());
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
+
     RHISurface::ptr distortionMap;
 
     if (m_undistortCapturedViews) {

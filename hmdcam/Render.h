@@ -49,15 +49,9 @@ struct SolidQuadUniformBlock {
 extern FxAtomicString ksSolidQuadUniformBlock;
 
 extern FxAtomicString ksImageTex;
-extern FxAtomicString ksLeftCameraTex;
-extern FxAtomicString ksRightCameraTex;
-extern FxAtomicString ksLeftDistortionMap;
-extern FxAtomicString ksRightDistortionMap;
 extern FxAtomicString ksOverlayTex;
-extern FxAtomicString ksLeftOverlayTex;
-extern FxAtomicString ksRightOverlayTex;
-extern FxAtomicString ksDistortionMap;
 extern FxAtomicString ksMaskTex;
+extern FxAtomicString ksDistortionMap;
 
 extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
 extern RHIRenderPipeline::ptr camOverlayPipeline;

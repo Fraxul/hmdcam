@@ -3,6 +3,7 @@
 #include <EGL/egl.h>
 #include <Argus/Argus.h>
 #include "rhi/egl/RHIEGLStreamSurfaceGL.h"
+#include "rhi/RHIRenderTarget.h"
 #include "common/ICameraProvider.h"
 
 #include <boost/accumulators/accumulators.hpp>
@@ -21,6 +22,7 @@ public:
 
   virtual size_t streamCount() const { return m_eglStreams.size(); }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
+  virtual void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&) const;
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
 
@@ -82,6 +84,9 @@ private:
   Argus::CaptureSession* m_captureSession;
   Argus::Request* m_captureRequest;
   Argus::EventQueue* m_completionEventQueue; // for EVENT_TYPE_CAPTURE_COMPLETE
+
+  mutable RHISurface::ptr m_tmpBlitSurface;
+  mutable RHIRenderTarget::ptr m_tmpBlitRT;
 
   // noncopyable
   ArgusCamera(const ArgusCamera&);

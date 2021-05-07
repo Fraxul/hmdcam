@@ -33,11 +33,10 @@ cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 
 
 // TODO move this
-#define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
-static RHIRenderPipeline::ptr camGreyscalePipeline;
-static RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
-static FxAtomicString ksDistortionMap("distortionMap");
-static FxAtomicString ksImageTex("imageTex");
+RHIRenderPipeline::ptr camGreyscalePipeline;
+RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
+FxAtomicString ksDistortionMap("distortionMap");
+FxAtomicString ksImageTex("imageTex");
 
 
 CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibration.yml"), m_cameraProvider(cam) {
@@ -58,7 +57,6 @@ CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibrat
       "shaders/ndcQuad.vtx.glsl",
       "shaders/camGreyscale.frag.glsl",
       ndcQuadVertexLayout);
-    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
 #ifdef GLATTER_EGL_GLES_3_2 // TODO query this at use-time from the RHISurface type
     desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
 #else
@@ -72,7 +70,6 @@ CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibrat
       "shaders/ndcQuad.vtx.glsl",
       "shaders/camGreyscaleUndistort.frag.glsl",
       ndcQuadVertexLayout);
-    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
 #ifdef GLATTER_EGL_GLES_3_2
     desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
 #else
@@ -525,7 +522,9 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
   } else {
     ImGui::Text("RMS error: %f", m_feedbackRmsError);
     ImGui::Text("FOV: %.2f x %.2f", m_feedbackFovX, m_feedbackFovY);
-    ImGui::Text("Principal Point: %.2f, %.2f", m_feedbackPrincipalPoint.x, m_feedbackPrincipalPoint.y);
+    ImGui::Text("Principal Point offset: %.2f, %.2f",
+      static_cast<float>(cameraProvider()->streamWidth()  / 2) - m_feedbackPrincipalPoint.x,
+      static_cast<float>(cameraProvider()->streamHeight() / 2) - m_feedbackPrincipalPoint.y);
   }
 }
 
@@ -690,6 +689,8 @@ void CameraSystem::StereoCalibrationContext::renderStatusUI() {
   ImGui::Text("Est. Tx  (mm): %.3g %.3g %.3g", m_feedbackTx[0] * 1000.0f, m_feedbackTx[1] * 1000.0f, m_feedbackTx[2] * 1000.0f);
   ImGui::Text("Est. Rx (deg): %.3g %.3g %.3g", glm::degrees(m_feedbackRx[0]), glm::degrees(m_feedbackRx[1]), glm::degrees(m_feedbackRx[2]));
   ImGui::Text("RMS Error: %f", m_feedbackRmsError);
+  ImGui::Text("Stereo ROI (L): [%u x %u from (%u, %u)", m_feedbackValidROI[0].width, m_feedbackValidROI[0].height, m_feedbackValidROI[0].x, m_feedbackValidROI[0].y);
+  ImGui::Text("Stereo ROI (R): [%u x %u from (%u, %u)", m_feedbackValidROI[1].width, m_feedbackValidROI[1].height, m_feedbackValidROI[1].x, m_feedbackValidROI[1].y);
 }
 
 
@@ -704,6 +705,8 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
     cv::Mat feedbackTx, feedbackRx;
 
     View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+    Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
+    Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
 
     int flags =
       cv::CALIB_USE_INTRINSIC_GUESS | // load previously-established intrinsics
@@ -714,14 +717,28 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
 
     m_feedbackRmsError = cv::stereoCalibrate(m_calibState->m_objectPoints,
       m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
-      cameraSystem()->cameraAtIndex(v.cameraIndices[0]).intrinsicMatrix, cameraSystem()->cameraAtIndex(v.cameraIndices[0]).distCoeffs,
-      cameraSystem()->cameraAtIndex(v.cameraIndices[1]).intrinsicMatrix, cameraSystem()->cameraAtIndex(v.cameraIndices[1]).distCoeffs,
+      leftC.optimizedMatrix, zeroDistortion,
+      rightC.optimizedMatrix, zeroDistortion,
       cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
       feedbackRx, feedbackTx, feedbackE, feedbackF, perViewErrors, flags);
 
     m_feedbackTx = glmVec3FromCV(feedbackTx);
     glm::mat4 rx = glmMat3FromCVMatrix(feedbackRx);
     glm::extractEulerAngleXYZ(rx, m_feedbackRx[0], m_feedbackRx[1], m_feedbackRx[2]);
+
+    cv::Mat feedbackRect[2], feedbackProj[2], feedbackQ;
+    cv::Rect stereoValidROI[2];
+
+    cv::stereoRectify(
+      leftC.intrinsicMatrix, leftC.distCoeffs,
+      rightC.intrinsicMatrix, rightC.distCoeffs,
+      cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
+      feedbackRx, feedbackTx,
+      feedbackRect[0], feedbackRect[1],
+      feedbackProj[0], feedbackProj[1],
+      feedbackQ,
+      /*flags=*/cv::CALIB_ZERO_DISPARITY, /*alpha=*/ -1.0f, cv::Size(),
+      &m_feedbackValidROI[0], &m_feedbackValidROI[1]);
 
   }
 
@@ -860,7 +877,7 @@ template <typename T> static std::vector<T> flattenVector(const std::vector<std:
   return res;
 }
 
-int triangulationDisparityScaleInv = 1;
+int triangulationDisparityScaleInv = 16;
 
 cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints) {
   CameraSystem::View& view = cameraSystem->viewAtIndex(viewIdx);
@@ -879,8 +896,7 @@ cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx,
   cv::Mat dest;
   dest.create(/*rows=*/ lp.size(), /*cols=*/1, CV_32FC3);
 
-  // stereoRectification is a 3x3 rotation matrix -- transpose is equivalent to inverse
-  glm::mat3 R1inv = glm::transpose(glmMat3FromCVMatrix(view.stereoRectification[0]));
+  glm::mat3 R1inv = glm::inverse(glmMat3FromCVMatrix(view.stereoRectification[0]));
   glm::mat4 Q = glmMat4FromCVMatrix(view.stereoDisparityToDepth);
   float CameraDistanceMeters = glm::length(glm::vec3(view.stereoTranslation.at<double>(0), view.stereoTranslation.at<double>(1), view.stereoTranslation.at<double>(2)));
 
@@ -890,16 +906,15 @@ cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx,
     float x = lp[pointIdx].x;
     float y = lp[pointIdx].y;
 
-    float fDisp = (rp[pointIdx].x - lp[pointIdx].x) / dispScale;
+    float fDisp = fabs(rp[pointIdx].x - lp[pointIdx].x) / dispScale;
 
       float lz = (Q[2][3] * CameraDistanceMeters) / fDisp;
       float ly = (y + Q[1][3]) / Q[2][3];
-      float lx = -(x + Q[0][3]) / Q[2][3];
+      float lx = (x + Q[0][3]) / Q[2][3];
       lx *= lz;
       ly *= lz;
-      lz *= -1.0f;
 
-    glm::vec3 localP = R1inv * glm::vec3(lx, ly, lz);
+    glm::vec3 localP = R1inv * glm::vec3(lx, -ly, -lz);
 
     float* pDest = dest.ptr<float>(pointIdx);
     pDest[0] = localP[0];
@@ -910,6 +925,7 @@ cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx,
 
 #else
 
+  // the coordsys for this function needs to have X and Y negated to match
 
   cv::Mat triangulatedPointsH;
   cv::triangulatePoints(view.stereoProjection[0], view.stereoProjection[1], lp, rp, triangulatedPointsH);

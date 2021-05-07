@@ -21,9 +21,6 @@
 #define MOGRIFY_X 4
 #define MOGRIFY_Y 4
 
-extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
-extern FxAtomicString ksNDCQuadUniformBlock;
-
 
 RHIRenderPipeline::ptr disparityDepthMapPipeline;
 FxAtomicString ksMeshDisparityDepthMapUniformBlock("MeshDisparityDepthMapUniformBlock");
@@ -115,8 +112,10 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
       depth_tc.resize(uiDepthVertCount * 4);
       for (int y = 0; y < m_iFBAlgoHeight; y++) {
         for (int x = 0; x < m_iFBAlgoWidth; x++) {
-          depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 0] = 1.0f * x / (m_iFBAlgoWidth - 1);
-          depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 1] = 1.0f * y / (m_iFBAlgoHeight - 1);
+          // xy is image texture coordinates (0...1)
+          depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 0] = static_cast<float>(x) / static_cast<float>(m_iFBAlgoWidth - 1);
+          depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 1] = static_cast<float>(y) / static_cast<float>(m_iFBAlgoHeight - 1);
+          // zw is disparity map coordinates (texels)
           depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 2] = x;
           depth_tc[(x + y * m_iFBAlgoWidth) * 4 + 3] = y;
         }
@@ -190,8 +189,7 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
       vd.m_rightMap1_gpu.upload(m1); vd.m_rightMap2_gpu.upload(m2);
 
     }
-    // stereoRectification is a 3x3 rotation matrix -- transpose is equivalent to inverse
-    vd.m_R1inv = glm::transpose(glmMat4FromCVMatrix(v.stereoRectification[0]));
+    vd.m_R1inv = glm::inverse(glmMat4FromCVMatrix(v.stereoRectification[0]));
     vd.m_Q = glmMat4FromCVMatrix(v.stereoDisparityToDepth);
 
     vd.m_CameraDistanceMeters = glm::length(glm::vec3(v.stereoTranslation.at<double>(0), v.stereoTranslation.at<double>(1), v.stereoTranslation.at<double>(2)));
@@ -340,44 +338,8 @@ void DepthMapGenerator::processFrame() {
     if (!vd.m_isStereoView)
       continue;
 
-#ifdef GLATTER_EGL_GLES_3_2
-    // Workaround for rgbTexture() on tegra being an EGLStream-backed texture, which doesn't work correctly with cuda-gl interop mapping
-    if (!vd.origLeftBlitRT) {
-      vd.origLeftBlitSrf = rhi()->newTexture2D(m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-      vd.origRightBlitSrf = rhi()->newTexture2D(m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-      vd.origLeftBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { vd.origLeftBlitSrf } ));
-      vd.origRightBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { vd.origRightBlitSrf } ));
-    }
-
-    {
-      glm::mat4 ub = glm::mat4(1.0f);
-      ub[1][1] = -1.0f; // flip Y for coordsys fix
-      {
-        rhi()->beginRenderPass(vd.origLeftBlitRT, kLoadInvalidate);
-        rhi()->bindRenderPipeline(camTexturedQuadPipeline);
-        rhi()->loadTexture(ksImageTex, m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]), linearClampSampler);
-        rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(glm::mat4));
-        rhi()->drawNDCQuad();
-        rhi()->endRenderPass(vd.origLeftBlitRT);
-      }
-      {
-        rhi()->beginRenderPass(vd.origRightBlitRT, kLoadInvalidate);
-        rhi()->bindRenderPipeline(camTexturedQuadPipeline);
-        rhi()->loadTexture(ksImageTex, m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1]), linearClampSampler);
-        rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(glm::mat4));
-        rhi()->drawNDCQuad();
-        rhi()->endRenderPass(vd.origRightBlitRT);
-      }
-    }
-
-    RHICUDA::copySurfaceToGpuMat(vd.origLeftBlitSrf, vd.origLeft_gpu/*, m_leftStream*/);
-    RHICUDA::copySurfaceToGpuMat(vd.origRightBlitSrf, vd.origRight_gpu/*, m_rightStream*/);
-
-
-#else
-    RHICUDA::copySurfaceToGpuMat(m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]), vd.origLeft_gpu/*, m_leftStream*/);
-    RHICUDA::copySurfaceToGpuMat(m_cameraSystem->cameraProvider()->rgbTexture(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1]), vd.origRight_gpu/*, m_rightStream*/);
-#endif
+    m_cameraSystem->cameraProvider()->populateGpuMat(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0], vd.origLeft_gpu/*, m_leftStream*/);
+    m_cameraSystem->cameraProvider()->populateGpuMat(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1], vd.origRight_gpu/*, m_rightStream*/);
   }
 
   if (m_enableProfiling) {

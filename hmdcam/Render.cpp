@@ -22,9 +22,6 @@
 #include <glm/gtx/transform.hpp>
 #include <sys/time.h>
 
-#define CAMERA_INVERTED 1 // 0 = upright, 1 = camera rotated 180 degrees. (90 degree rotation is not supported)
-
-
 extern bool vive_watchman_enable; // hacky; symbol added in xrt/drivers/vive/vive_device.c to disable watchman thread (since we don't use lighthouse tracking)
 
 RHIRenderTarget::ptr windowRenderTarget;
@@ -44,15 +41,7 @@ RHISurface::ptr disabledMaskTex;
 RHIRenderPipeline::ptr mesh1chDistortionPipeline;
 RHIRenderPipeline::ptr mesh3chDistortionPipeline;
 
-FxAtomicString ksImageTex("imageTex");
-FxAtomicString ksLeftCameraTex("leftCameraTex");
-FxAtomicString ksRightCameraTex("rightCameraTex");
-FxAtomicString ksLeftDistortionMap("leftDistortionMap");
-FxAtomicString ksRightDistortionMap("rightDistortionMap");
 FxAtomicString ksOverlayTex("overlayTex");
-FxAtomicString ksLeftOverlayTex("leftOverlayTex");
-FxAtomicString ksRightOverlayTex("rightOverlayTex");
-FxAtomicString ksDistortionMap("distortionMap");
 FxAtomicString ksMaskTex("maskTex");
 
 // per-eye render targets (pre distortion)
@@ -163,50 +152,11 @@ bool RenderInit() {
 
   // Set up shared resources
 
-  {
-    RHIShaderDescriptor desc(
-    "shaders/ndcQuadXf.vtx.glsl",
-    "shaders/camTexturedQuad.frag.glsl",
-    ndcQuadVertexLayout);
-    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
-
-    camTexturedQuadPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
-  }
-
-  {
-    RHIShaderDescriptor desc(
-      "shaders/ndcQuadXf.vtx.glsl",
-      "shaders/camOverlay.frag.glsl",
-      ndcQuadVertexLayout);
-    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
-    camOverlayPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
-  }
-
-  {
-    RHIShaderDescriptor desc(
-    "shaders/ndcClippedQuadXf.vtx.glsl",
-    "shaders/camUndistortMask.frag.glsl",
-    ndcQuadVertexLayout);
-    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
-    camUndistortMaskPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
-  }
-
-  {
-    RHIShaderDescriptor desc(
-    "shaders/ndcQuadXf.vtx.glsl",
-    "shaders/camUndistortOverlay.frag.glsl",
-    ndcQuadVertexLayout);
-    desc.setFlag("CAMERA_INVERTED", (bool) CAMERA_INVERTED);
-    camUndistortOverlayPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
-  }
-
-  {
-    RHIShaderDescriptor desc(
-      "shaders/solidQuad.vtx.glsl",
-      "shaders/solidQuad.frag.glsl",
-      ndcQuadVertexLayout);
-    solidQuadPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
-  }
+  camTexturedQuadPipeline = rhi()->compileRenderPipeline("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
+  camOverlayPipeline = rhi()->compileRenderPipeline("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camOverlay.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
+  camUndistortMaskPipeline = rhi()->compileRenderPipeline("shaders/ndcClippedQuadXf_vFlip.vtx.glsl", "shaders/camUndistortMask.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
+  camUndistortOverlayPipeline = rhi()->compileRenderPipeline("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camUndistortOverlay.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
+  solidQuadPipeline = rhi()->compileRenderPipeline("shaders/solidQuad.vtx.glsl", "shaders/solidQuad.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
 
   {
     RHIVertexLayout vtx;
@@ -400,7 +350,7 @@ EGLDisplay renderEGLDisplay() { return demoState.display; }
 EGLContext renderEGLContext() { return demoState.context; }
 
 void recomputeHMDParameters() {
-  float zNear = 1.0f;
+  float zNear = 0.5f;
 
   // from renderer_get_view_projection (compositor/main/comp_renderer.c)
   struct xrt_vec3 eye_relation = {

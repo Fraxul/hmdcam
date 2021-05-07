@@ -5,9 +5,8 @@ layout(location = 0) out vec4 outColor;
 uniform samplerExternalOES imageTex;
 uniform sampler2D overlayTex;
 void main() {
-  vec4 color = texture(imageTex, adjustCameraTexcoord(fragTexCoord));
-  // Flip to convert from overlay texture's OpenCV coordinate system to GL
-  vec4 overlayColor = texture(overlayTex, vec2(fragTexCoord.x, 1.0f - fragTexCoord.y));
+  vec4 color = texture(imageTex, fragTexCoord);
+  vec4 overlayColor = texture(overlayTex, fragTexCoord);
 
   // OpenCV's overlay drawing doesn't set the alpha channel, so we just assume that
   // the pixels are opaque if they're not black.
