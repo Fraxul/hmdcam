@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <signal.h>
 #include <cuda.h>
 #include "common/SHMSegment.h"
 #include "common/DepthMapSHM.h"
@@ -41,6 +42,7 @@ struct PerViewData {
 };
 
 int main(int argc, char* argv[]) {
+  int ppid = getppid();
 
   shm = SHMSegment<DepthMapSHM>::openSegment("cuda-dgpu-worker");
   if (!shm) {
@@ -85,7 +87,24 @@ int main(int argc, char* argv[]) {
 
 
   while (true) {
-    sem_wait(&shm->segment()->m_workAvailableSem);
+    {
+      struct timespec ts;
+      ts.tv_sec = 1;
+      ts.tv_nsec = 0;
+      if (sem_timedwait(&shm->segment()->m_workAvailableSem, &ts) < 0) {
+        if (errno == ETIMEDOUT) {
+          if (kill(ppid, 0) != 0) {
+            printf("dgpu-worker: parent process %d has exited\n", ppid);
+            return 0;
+          }
+          continue;
+        } else {
+          perror("sem_timedwait");
+          return -1;
+        }
+      }
+    }
+
     uint64_t startTime = currentTimeNs();
 
     if ((!m_stereo) || shm->segment()->m_didChangeSettings) {
