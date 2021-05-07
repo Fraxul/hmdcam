@@ -244,6 +244,10 @@ public:
     // Cached data of previous calibration to be restored if the context is cancelled.
     View m_previousViewData;
 
+    // Feedback data during capture
+    glm::vec3 m_feedbackTx, m_feedbackRx;
+    double m_feedbackRmsError;
+
   };
 
 

@@ -666,6 +666,10 @@ CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* c
 
   CameraSystem::View& v = cameraSystem()->viewAtIndex(m_viewIdx);
   m_calibState = new CharucoMultiViewCalibration(cameraSystem(), {v.cameraIndices[0], v.cameraIndices[1]});
+
+  m_feedbackTx = glm::vec3(0.0f);
+  m_feedbackRx = glm::vec3(0.0f);
+  m_feedbackRmsError = 0.0;
 }
 
 CameraSystem::StereoCalibrationContext::~StereoCalibrationContext() {
@@ -675,6 +679,9 @@ CameraSystem::StereoCalibrationContext::~StereoCalibrationContext() {
 void CameraSystem::StereoCalibrationContext::renderStatusUI() {
   ImGui::Text("View %zu Stereo", m_viewIdx);
   ImGui::Text("%zu samples", m_calibState->m_objectPoints.size());
+  ImGui::Text("Est. Tx  (mm): %.3g %.3g %.3g", m_feedbackTx[0] * 1000.0f, m_feedbackTx[1] * 1000.0f, m_feedbackTx[2] * 1000.0f);
+  ImGui::Text("Est. Rx (deg): %.3g %.3g %.3g", glm::degrees(m_feedbackRx[0]), glm::degrees(m_feedbackRx[1]), glm::degrees(m_feedbackRx[2]));
+  ImGui::Text("RMS Error: %f", m_feedbackRmsError);
 }
 
 
@@ -682,6 +689,25 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
   if (m_calibState->processFrame(captureRequested())) {
     // capture request succeeded if return is true
     acknowledgeCaptureRequest();
+
+
+    cv::Mat feedbackE, feedbackF;
+    cv::Mat perViewErrors;
+    cv::Mat feedbackTx, feedbackRx;
+
+    View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+
+    m_feedbackRmsError = cv::stereoCalibrate(m_calibState->m_objectPoints,
+      m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
+      cameraSystem()->cameraAtIndex(v.cameraIndices[0]).intrinsicMatrix, cameraSystem()->cameraAtIndex(v.cameraIndices[0]).distCoeffs,
+      cameraSystem()->cameraAtIndex(v.cameraIndices[1]).intrinsicMatrix, cameraSystem()->cameraAtIndex(v.cameraIndices[1]).distCoeffs,
+      cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
+      feedbackRx, feedbackTx, feedbackE, feedbackF, perViewErrors, cv::CALIB_FIX_INTRINSIC);
+
+    m_feedbackTx = glmVec3FromCV(feedbackTx);
+    glm::mat4 rx = glmMat3FromCVMatrix(feedbackRx);
+    glm::extractEulerAngleXYZ(rx, m_feedbackRx[0], m_feedbackRx[1], m_feedbackRx[2]);
+
   }
 
 #if 0 // TODO fix this
@@ -739,6 +765,9 @@ void CameraSystem::StereoCalibrationContext::didAcceptCalibrationPreview() {
 void CameraSystem::StereoCalibrationContext::didRejectCalibrationPreview() {
   // Reset stored data
   m_calibState->reset();
+  m_feedbackTx = glm::vec3(0.0f);
+  m_feedbackRx = glm::vec3(0.0f);
+  m_feedbackRmsError = 0.0;
 }
 
 void CameraSystem::StereoCalibrationContext::didCancelCalibrationSession() {
@@ -786,11 +815,11 @@ void CameraSystem::StereoViewOffsetCalibrationContext::renderStatusUI() {
   ImGui::Text("View %zu Stereo Offset", m_viewIdx);
   ImGui::Text("%zu samples", m_calibState->m_objectPoints.size());
 
-  ImGui::Text("Tx: %.3g %.3g %.3g", m_tgt2ref[3][0], m_tgt2ref[3][1], m_tgt2ref[3][2]);
+  ImGui::Text("Tx  (mm): %.3g %.3g %.3g", m_tgt2ref[3][0] * 1000.0f, m_tgt2ref[3][1] * 1000.0f, m_tgt2ref[3][2] * 1000.0f);
 
   float rx, ry, rz;
   glm::extractEulerAngleXYZ(m_tgt2ref, rx, ry, rz);
-  ImGui::Text("Rx: %.3g %.3g %.3g", glm::degrees(rx), glm::degrees(ry), glm::degrees(rz));
+  ImGui::Text("Rx (deg): %.3g %.3g %.3g", glm::degrees(rx), glm::degrees(ry), glm::degrees(rz));
 
 }
 
