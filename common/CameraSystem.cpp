@@ -354,6 +354,25 @@ size_t CameraSystem::createStereoView(size_t leftCameraIndex, size_t rightCamera
   return newViewIndex;
 }
 
+cv::Mat CameraSystem::captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, RHISurface::ptr distortionMap) {
+
+  rhi()->beginRenderPass(rt, kLoadInvalidate);
+  if (distortionMap) {
+    rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
+    rhi()->loadTexture(ksDistortionMap, distortionMap, linearClampSampler);
+  } else {
+    rhi()->bindRenderPipeline(camGreyscalePipeline);
+  }
+  rhi()->loadTexture(ksImageTex, cameraProvider()->rgbTexture(cameraIdx), linearClampSampler);
+  rhi()->drawNDCQuad();
+  rhi()->endRenderPass(rt);
+
+  cv::Mat res;
+  res.create(/*rows=*/ tex->height(), /*columns=*/tex->width(), CV_8UC1);
+  assert(res.isContinuous());
+  rhi()->readbackTexture(tex, 0, kVertexElementTypeUByte1N, res.ptr(0));
+  return res;
+}
 
 CameraSystem::CalibrationContext* CameraSystem::calibrationContextForCamera(size_t cameraIdx) {
   assert(cameraIdx < cameras());
@@ -410,66 +429,6 @@ void CameraSystem::CalibrationContextStateMachineBase::processUI() {
   }
 
 }
-
-cv::Mat CameraSystem::captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, RHISurface::ptr distortionMap) {
-
-  rhi()->beginRenderPass(rt, kLoadInvalidate);
-  if (distortionMap) {
-    rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
-    rhi()->loadTexture(ksDistortionMap, distortionMap, linearClampSampler);
-  } else {
-    rhi()->bindRenderPipeline(camGreyscalePipeline);
-  }
-  rhi()->loadTexture(ksImageTex, cameraProvider()->rgbTexture(cameraIdx), linearClampSampler);
-  rhi()->drawNDCQuad();
-  rhi()->endRenderPass(rt);
-
-  cv::Mat res;
-  res.create(/*rows=*/ tex->height(), /*columns=*/tex->width(), CV_8UC1);
-  assert(res.isContinuous());
-  rhi()->readbackTexture(tex, 0, kVertexElementTypeUByte1N, res.ptr(0));
-  return res;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSystem* cs, size_t cameraIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_cameraIdx(cameraIdx) {
-
-  // Store cancellation cache
-  m_previousIntrinsicMatrix = cameraSystem()->cameraAtIndex(cameraIdx).intrinsicMatrix;
-  m_previousDistCoeffs = cameraSystem()->cameraAtIndex(cameraIdx).distCoeffs;
-
-  // Textures and RTs we use for captures
-  m_fullGreyTex = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
-  m_fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_fullGreyTex}));
-  m_feedbackTex = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-  m_feedbackView.create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/cameraProvider()->streamWidth(), CV_8UC4);
-}
-
-CameraSystem::IntrinsicCalibrationContext::~IntrinsicCalibrationContext() {
-
-}
-
-void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
-  ImGui::Text("Camera %zu Intrinsic", m_cameraIdx);
-  ImGui::Text("%zu samples", m_allCharucoCorners.size());
-}
-
 void CameraSystem::CalibrationContextStateMachineBase::processFrame() {
 
   if (m_calibrationFinished) {
@@ -530,6 +489,47 @@ void CameraSystem::CalibrationContextStateMachineBase::processFrame() {
   }
 }
 
+
+
+
+
+
+
+
+
+
+CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSystem* cs, size_t cameraIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_cameraIdx(cameraIdx) {
+
+  // Store cancellation cache
+  m_previousIntrinsicMatrix = cameraSystem()->cameraAtIndex(cameraIdx).intrinsicMatrix;
+  m_previousDistCoeffs = cameraSystem()->cameraAtIndex(cameraIdx).distCoeffs;
+
+  // Textures and RTs we use for captures
+  m_fullGreyTex = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+  m_fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_fullGreyTex}));
+  m_feedbackTex = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+  m_feedbackView.create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/cameraProvider()->streamWidth(), CV_8UC4);
+
+  m_feedbackRmsError = -1.0;
+}
+
+CameraSystem::IntrinsicCalibrationContext::~IntrinsicCalibrationContext() {
+
+}
+
+void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
+  ImGui::Text("Camera %zu Intrinsic", m_cameraIdx);
+  ImGui::Text("%zu samples", m_allCharucoCorners.size());
+  if (m_feedbackRmsError < 0.0) {
+    ImGui::Text("(insufficient/invalid data for preview)");
+  } else {
+    ImGui::Text("RMS error: %f", m_feedbackRmsError);
+    ImGui::Text("FOV: %.2f x %.2f", m_feedbackFovX, m_feedbackFovY);
+    ImGui::Text("Principal Point: %.2f, %.2f", m_feedbackPrincipalPoint.x, m_feedbackPrincipalPoint.y);
+  }
+}
+
+
 void CameraSystem::IntrinsicCalibrationContext::didAcceptCalibrationPreview() {
   // Calibration accepted. We don't need to do anything else here.
 }
@@ -544,46 +544,18 @@ void CameraSystem::IntrinsicCalibrationContext::didCancelCalibrationSession() {
   // Restore previously saved calibration snapshot
   cameraSystem()->cameraAtIndex(m_cameraIdx).intrinsicMatrix = m_previousIntrinsicMatrix;
   cameraSystem()->cameraAtIndex(m_cameraIdx).distCoeffs = m_previousDistCoeffs;
+  cameraSystem()->updateCameraIntrinsicDistortionParameters(m_cameraIdx);
 }
 
 bool CameraSystem::IntrinsicCalibrationContext::cookCalibrationDataForPreview() {
-  try {
-    Camera& c = cameraSystem()->cameraAtIndex(m_cameraIdx);
-
-    cv::Mat stdDeviations, perViewErrors;
-    std::vector<float> reprojErrs;
-    cv::Size imageSize(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
-    float aspectRatio = 1.0f;
-    int flags = cv::CALIB_FIX_PRINCIPAL_POINT | cv::CALIB_FIX_ASPECT_RATIO;
-
-    c.intrinsicMatrix = cv::Mat::eye(3, 3, CV_64F);
-    if( flags & cv::CALIB_FIX_ASPECT_RATIO )
-        c.intrinsicMatrix.at<double>(0,0) = aspectRatio;
-    c.distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
-
-
-    double rms = cv::aruco::calibrateCameraCharuco(m_allCharucoCorners, m_allCharucoIds,
-                                   s_charucoBoard, imageSize,
-                                   c.intrinsicMatrix, c.distCoeffs,
-                                   cv::noArray(), cv::noArray(), stdDeviations, cv::noArray(),
-                                   perViewErrors, flags);
-
-
-    printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);
-    std::cout << "Camera " << m_cameraIdx << " Per-view error: " << std::endl << perViewErrors << std::endl;
-    std::cout << "Camera " << m_cameraIdx << " Matrix: " << std::endl << c.intrinsicMatrix << std::endl;
-    std::cout << "Camera " << m_cameraIdx << " Distortion coefficients: " << std::endl << c.distCoeffs << std::endl;
-
-    // Recompute distortion parameters and update map
-    cameraSystem()->updateCameraIntrinsicDistortionParameters(m_cameraIdx);
-
-
-    return true; // Calibration succeeded
-
-  } catch (const std::exception& ex) {
-    printf("Camera intrinsic calibration failed: %s\n", ex.what());
+  if (m_feedbackRmsError < 0) {
+    printf("CameraSystem::IntrinsicCalibrationContext::cookCalibrationDataForPreview(): calibration hasn't converged, can't generate a preview\n");
+    return false; // incremental calibration data is invalid
   }
-  return false; // Calibration failed
+
+  // Recompute distortion parameters and update map
+  cameraSystem()->updateCameraIntrinsicDistortionParameters(m_cameraIdx);
+  return true;
 }
 
 void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
@@ -642,6 +614,39 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
       printf("Saved %s\n", filename);
     }
 
+    try {
+      Camera& c = cameraSystem()->cameraAtIndex(m_cameraIdx);
+
+      cv::Mat stdDeviations, perViewErrors;
+      std::vector<float> reprojErrs;
+      cv::Size imageSize(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
+      float alpha = 0.25f;
+      int flags = 0; //cv::CALIB_FIX_PRINCIPAL_POINT | cv::CALIB_FIX_ASPECT_RATIO;
+
+      c.intrinsicMatrix = cv::Mat::eye(3, 3, CV_64F);
+      c.distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
+
+
+      m_feedbackRmsError = cv::aruco::calibrateCameraCharuco(m_allCharucoCorners, m_allCharucoIds,
+                                     s_charucoBoard, imageSize,
+                                     c.intrinsicMatrix, c.distCoeffs,
+                                     cv::noArray(), cv::noArray(), stdDeviations, cv::noArray(),
+                                     perViewErrors, flags);
+
+
+      //printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);
+      //std::cout << "Camera " << m_cameraIdx << " Per-view error: " << std::endl << perViewErrors << std::endl;
+      //std::cout << "Camera " << m_cameraIdx << " Matrix: " << std::endl << c.intrinsicMatrix << std::endl;
+      //std::cout << "Camera " << m_cameraIdx << " Distortion coefficients: " << std::endl << c.distCoeffs << std::endl;
+
+      double focalLength, aspectRatio; // not valid without a real aperture size, which we don't bother providing
+      cv::Mat optimizedMatrix = cv::getOptimalNewCameraMatrix(c.intrinsicMatrix, c.distCoeffs, imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
+      cv::calibrationMatrixValues(optimizedMatrix, imageSize, 0.0, 0.0, m_feedbackFovX, m_feedbackFovY, focalLength, m_feedbackPrincipalPoint, aspectRatio);
+
+    } catch (const std::exception& ex) {
+      printf("Incremental calibration updated failed: %s\n", ex.what());
+      m_feedbackRmsError = -1.0;
+    }
   }
 }
 

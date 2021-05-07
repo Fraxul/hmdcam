@@ -200,6 +200,10 @@ public:
     cv::Mat m_previousIntrinsicMatrix;
     cv::Mat m_previousDistCoeffs;
 
+    // Preview data
+    double m_feedbackRmsError;
+    double m_feedbackFovX, m_feedbackFovY; // degrees
+    cv::Point2d m_feedbackPrincipalPoint;
   };
 
   class StereoCalibrationContext : public CalibrationContextStateMachineBase {
