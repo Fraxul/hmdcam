@@ -116,6 +116,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
 
   // Filter the eye corner sets to only commonly visible corners, which we will later feed to stereoCalibrate
   std::vector<cv::Point3f> thisFrameBoardRefCorners;
+  std::vector<int> thisFrameBoardRefIds;
   std::vector<std::vector<cv::Point2f> > thisFrameImageCorners(cameraCount());
 
   for (std::set<int>::const_iterator corner_it = commonCornerIds.begin(); corner_it != commonCornerIds.end(); ++corner_it) {
@@ -132,6 +133,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
 
     // save the corner point in board space from the board definition
     thisFrameBoardRefCorners.push_back(s_charucoBoard->chessboardCorners[cornerId]);
+    thisFrameBoardRefIds.push_back(cornerId);
   }
 
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
@@ -179,6 +181,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   // Handle capture requests
   if (foundOverlap && captureRequested) {
     m_objectPoints.push_back(thisFrameBoardRefCorners);
+    m_objectIds.push_back(thisFrameBoardRefIds);
     for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
       m_calibrationPoints[cameraIdx].push_back(thisFrameImageCorners[cameraIdx]);
     }
@@ -190,6 +193,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
 
 void CharucoMultiViewCalibration::reset() {
   m_objectPoints.clear();
+  m_objectIds.clear();
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
     m_calibrationPoints[cameraIdx].clear();
   }

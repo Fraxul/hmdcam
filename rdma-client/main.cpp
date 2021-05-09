@@ -481,9 +481,7 @@ int main(int argc, char** argv) {
           }
 
           // Clear previous capture results from the processors
-          charucoProcessors[viewIdx]->m_calibrationPoints[0].clear();
-          charucoProcessors[viewIdx]->m_calibrationPoints[1].clear();
-          charucoProcessors[viewIdx]->m_objectPoints.clear();
+          charucoProcessors[viewIdx]->reset();
 
           // Run process
           charucoProcessors[viewIdx]->processFrame(/*requestCapture=*/ true);

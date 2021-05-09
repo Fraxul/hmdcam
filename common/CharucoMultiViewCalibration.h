@@ -43,4 +43,5 @@ public:
 
   // Per-frame
   std::vector<std::vector<cv::Point3f> > m_objectPoints; // Points from the board definition for the relevant corners each frame
+  std::vector<std::vector<int> > m_objectIds; // Corner IDs from the board definition for the relevant corners each frame
 };
