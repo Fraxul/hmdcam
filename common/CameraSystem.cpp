@@ -985,6 +985,26 @@ void CameraSystem::StereoViewOffsetCalibrationContext::processFrameCaptureMode()
   }
 #endif
 
+
+#if 0
+  // formatted for Mathematica
+  printf("StereoViewOffsetCalibrationContext::processFrameCaptureMode(): %d points:\n", refPoints.rows);
+
+  printf("{ \n");
+  for (size_t i = 0; i < refPoints.rows; ++i) {
+    float* rp = refPoints.ptr<float>(i);
+    printf("  {%f, %f, %f}, \n",
+      rp[0], rp[1], rp[2]);
+  }
+  printf("}, {\n");
+  for (size_t i = 0; i < refPoints.rows; ++i) {
+    float* tp = tgtPoints.ptr<float>(i);
+    printf("  {%f, %f, %f}, \n",
+      tp[0], tp[1], tp[2]);
+  }
+  printf("}\n");
+#endif
+
   // Algorithm refs:
   // http://nghiaho.com/?page_id=671
   // https://github.com/nghiaho12/rigid_transform_3D
