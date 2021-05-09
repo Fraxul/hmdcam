@@ -43,6 +43,10 @@ static cv::Matx44f CVMatrixFromGlmMat4(glm::mat4 matin) {
   return out;
 }
 
+static glm::vec3 glmVec3FromCV(const cv::Point3f& v) {
+  return glm::vec3(v.x, v.y, v.z);
+}
+
 static glm::vec3 glmVec3FromCV(const cv::Vec3f& v) {
   return glm::make_vec3(v.val);
 }

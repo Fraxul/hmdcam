@@ -19,6 +19,10 @@ public:
   bool processFrame(bool captureRequested);
   void reset();
 
+  // internal helpers
+  cv::Mat calibSpaceDistCoeffs(size_t cameraIdx);
+  cv::Mat calibSpaceProjection(size_t cameraIdx);
+
 
   bool m_undistortCapturedViews;
   bool m_enableFeedbackView;

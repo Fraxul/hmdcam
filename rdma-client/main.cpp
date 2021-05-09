@@ -4,6 +4,8 @@
 #include <SDL.h>
 #include <cuda.h>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/aruco/charuco.hpp>
+#include <glm/gtx/transform.hpp>
 
 #include "rdma/RDMAContext.h"
 #include "rdma/RDMABuffer.h"
@@ -14,6 +16,7 @@
 #include "common/FxThreading.h"
 #include "common/DepthMapGenerator.h"
 #include "common/DGPUWorkerControl.h"
+#include "common/glmCvInterop.h"
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -46,6 +49,8 @@ SHMSegment<DepthMapSHM>* shm;
 extern RHIRenderPipeline::ptr camGreyscalePipeline;
 extern RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 extern FxAtomicString ksDistortionMap;
+extern cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
+static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_64FC1);
 
 RHIRenderPipeline::ptr meshVertexColorPipeline;
 RHIBuffer::ptr meshQuadVBO;
@@ -217,7 +222,7 @@ int main(int argc, char** argv) {
 
   std::vector<CharucoMultiViewCalibration*> charucoProcessors;
   charucoProcessors.resize(cameraSystem->views());
-  bool enableCharucoDetection = false;
+  bool enableCharucoDetection = true;
 
   // CV processing init
   depthMapGenerator = new DepthMapGenerator(cameraSystem, shm);
@@ -361,8 +366,7 @@ int main(int argc, char** argv) {
       }
 
       // distortion test
-      {
-        ImGui::Begin("Distortion test", NULL, ImGuiWindowFlags_AlwaysAutoResize);
+      if (ImGui::Begin("Distortion test", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
         static RHISurface::ptr testSrf;
         static RHIRenderTarget::ptr testRT;
         static bool s_CPU = false;
@@ -396,10 +400,8 @@ int main(int argc, char** argv) {
           rhi()->endRenderPass(testRT);
         }
         ImGui_Image(testSrf);
-        ImGui::End();
-
-
       }
+      ImGui::End();
 
       for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
         CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
@@ -522,6 +524,10 @@ int main(int argc, char** argv) {
         std::vector<glm::vec4> pointsStaging;
         ImGui::Begin("ChAruCo");
 
+        static int gizmoType = 1;
+        ImGui::RadioButton("Triangulated", &gizmoType, 0);
+        ImGui::RadioButton("Linear remap", &gizmoType, 1);
+
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
           if (viewIdx != 0)
             ImGui::Separator();
@@ -532,26 +538,97 @@ int main(int argc, char** argv) {
           if (!proc)
             continue;
 
-          if (proc->m_calibrationPoints.empty() || proc->m_objectPoints.empty())
+          if (proc->m_calibrationPoints.empty() || proc->m_objectPoints.empty() || proc->m_objectPoints[0].empty())
             continue; // nothing detected this frame
 
           if (v.isStereo) {
-            cv::Mat points = getTriangulatedPointsForView(cameraSystem, viewIdx, proc->m_calibrationPoints[0], proc->m_calibrationPoints[1]);
-            // Points are point-per-row, 1 column, CV_32FC3
-            glm::mat4 viewXf = v.viewTransform();
-
-            size_t offset = pointsStaging.size();
             std::vector<cv::Point2f> lp = flattenVector(proc->m_calibrationPoints[0]);
             std::vector<cv::Point2f> rp = flattenVector(proc->m_calibrationPoints[1]);
+            std::vector<int> ids = flattenVector(proc->m_objectIds);
 
-            pointsStaging.resize(pointsStaging.size() + points.rows);
-            for (int pointIdx = 0; pointIdx < points.rows; ++pointIdx) {
-              float* p = points.ptr<float>(pointIdx);
-              ImGui::Text("%.4f %.4f || %.4f %.4f || %.4f %.4f %.4f",
-                lp[pointIdx].x, lp[pointIdx].y,
-                rp[pointIdx].x, rp[pointIdx].y,
-                p[0], p[1], p[2]);
-              pointsStaging[offset + pointIdx] = viewXf * glm::vec4(p[0], p[1], p[2], 1.0f);
+            std::vector<glm::vec3> triangulatedPoints = getTriangulatedPointsForView(cameraSystem, viewIdx, proc->m_calibrationPoints[0], proc->m_calibrationPoints[1]);
+
+            std::vector<glm::vec3> boardObjectSpacePoints;
+            // build object-space point vector of charuco corners
+            for (const cv::Point3f& p : s_charucoBoard->chessboardCorners) {
+              boardObjectSpacePoints.push_back(glmVec3FromCV(p));
+            }
+
+            char idBuf[32];
+
+            glm::mat4 linearRemapXf;
+            float linearRemapError;
+            {
+              std::vector<glm::vec3> p2Points;
+              // subset of board points that are visible / have been triangulated
+              for (int id : ids) {
+                p2Points.push_back(boardObjectSpacePoints[id]);
+              }
+              linearRemapError = computePointSetLinearTransform(triangulatedPoints, p2Points, linearRemapXf);
+
+              if (linearRemapError >= 0.0) { // returns <0 on failure
+                float ex, ey, ez;
+                glm::extractEulerAngleXYZ(linearRemapXf, ex, ey, ez);
+                ImGui::Text("Linear remap: Tx %.1f %.1f %.1f Rx %.2f %.2f %.2f Error: %.1f",
+                  linearRemapXf[3][0] * 1000.0f, linearRemapXf[3][1] * 1000.0f, linearRemapXf[3][2] * 1000.0f,
+                  glm::degrees(ex), glm::degrees(ey), glm::degrees(ez), linearRemapError * 1000.0f);
+
+                sprintf(idBuf, "charuco%zu_lr", viewIdx);
+                glm::vec3 offset = glm::vec3(0.0f);
+
+                ImGui::BeginChild(idBuf, ImVec2(0, 256), /*border=*/false);
+                for (size_t pointIdx = 0; pointIdx < triangulatedPoints.size(); ++pointIdx) {
+                  // multiplying by 1000.0f for display in mm
+                  glm::vec3 tp = triangulatedPoints[pointIdx] * 1000.0f;
+                  glm::vec3 lrp = glm::vec3(linearRemapXf * glm::vec4(p2Points[pointIdx], 1.0f)) * 1000.0f;
+                  offset += (lrp - tp);
+
+                  float error = glm::length(lrp - tp);
+                  ImGui::Text("[%.2u] triangulated %.1f %.1f %.1f => linear-remap %.1f %.1f %.1f || error: %.1f (%.1f %.1f %.1f)",
+                    proc->m_objectIds[0][pointIdx],
+                    tp.x, tp.y, tp.z,
+                    lrp.x, lrp.y, lrp.z,
+                    error,
+                    fabs(tp.x - lrp.x), fabs(tp.y - lrp.y), fabs(tp.z - lrp.z));
+                }
+                offset *= (1.0f / static_cast<float>(triangulatedPoints.size()));
+                ImGui::EndChild();
+
+                ImGui::Text("Offset %.3f %.3f %.3f",
+                  offset[0] * 1000.0f, offset[1] * 1000.0f, offset[2] * 1000.0f);
+
+                if (gizmoType == 1) {
+                  pointsStaging.reserve(pointsStaging.size() + boardObjectSpacePoints.size());
+                  glm::mat4 viewXf = v.viewTransform();
+                  for (const glm::vec3& p : boardObjectSpacePoints) {
+                    pointsStaging.push_back(viewXf * (linearRemapXf * glm::vec4(p, 1.0f)));
+                  }
+                }
+              }
+            }
+
+            sprintf(idBuf, "charuco%zu_disp", viewIdx);
+            if (ImGui::BeginChild(idBuf, ImVec2(0, 256), /*border=*/false)) {
+              for (size_t pointIdx = 0; pointIdx < triangulatedPoints.size(); ++pointIdx) {
+                const glm::vec3& p = triangulatedPoints[pointIdx];
+                ImGui::Text("[%.2u] %.4f %.4f || %.4f %.4f || %.4f %.4f %.4f",
+                  ids[pointIdx],
+                  lp[pointIdx].x, lp[pointIdx].y,
+                  rp[pointIdx].x, rp[pointIdx].y,
+                  p[0], p[1], p[2]);
+              }
+            }
+            ImGui::EndChild();
+
+
+            if (gizmoType == 0) { // triangulated
+              size_t offset = pointsStaging.size();
+              pointsStaging.resize(pointsStaging.size() + triangulatedPoints.size());
+              glm::mat4 viewXf = v.viewTransform();
+
+              for (int pointIdx = 0; pointIdx < triangulatedPoints.size(); ++pointIdx) {
+                pointsStaging[offset + pointIdx] = viewXf * glm::vec4(triangulatedPoints[pointIdx], 1.0f);
+              }
             }
 
           } else {
@@ -560,10 +637,12 @@ int main(int argc, char** argv) {
 
         }
 
-        RHIBuffer::ptr pointsBuf = rhi()->newBufferWithContents(pointsStaging.data(), pointsStaging.size() * sizeof(float) * 4);
+        if (pointsStaging.size()) {
+          RHIBuffer::ptr pointsBuf = rhi()->newBufferWithContents(pointsStaging.data(), pointsStaging.size() * sizeof(float) * 4);
 
-        // render points as locator gizmos
-        drawTriadGizmosForPoints(pointsBuf, pointsStaging.size(), renderView.viewProjectionMatrix);
+          // render points as locator gizmos
+          drawTriadGizmosForPoints(pointsBuf, pointsStaging.size(), renderView.viewProjectionMatrix, /*scale=*/-0.025f /*25mm*/);
+        }
 
         ImGui::End();
       }

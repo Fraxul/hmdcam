@@ -1,6 +1,7 @@
 #include "common/CharucoMultiViewCalibration.h"
 #include "common/CameraSystem.h"
 #include "common/FxThreading.h"
+#include "common/glmCvInterop.h"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/aruco/charuco.hpp>
 #include <opencv2/calib3d.hpp>
@@ -74,21 +75,8 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   // Run ArUco marker detection
   // Note that we don't feed the camera distortion parameters to the aruco functions here, since the images we're operating on have already been undistorted.
   FxThreading::runArrayTask(0, cameraCount(), [&](size_t cameraIdx) {
-    CameraSystem::Camera& c = cameraSystem()->cameraAtIndex(m_cameraIds[cameraIdx]);
-
-    cv::Mat cm, dist;
-    if (m_undistortCapturedViews) {
-      dist = zeroDistortion;
-      if (m_cameraStereoViewIds[cameraIdx] >= 0) {
-        CameraSystem::View& v = cameraSystem()->viewAtIndex(m_cameraStereoViewIds[cameraIdx]);
-        cm = (m_cameraIds[cameraIdx] == v.cameraIndices[0] ? v.stereoProjection[0] : v.stereoProjection[1]).colRange(0, 3);
-      } else {
-        cm = c.optimizedMatrix;
-      }
-    } else {
-      cm = c.intrinsicMatrix;
-      dist = c.distCoeffs;
-    }
+    cv::Mat cm = calibSpaceProjection(cameraIdx);
+    cv::Mat dist = calibSpaceDistCoeffs(cameraIdx);
 
     cv::aruco::detectMarkers(eyeFullRes[cameraIdx], s_charucoDictionary, corners[cameraIdx], ids[cameraIdx], cv::aruco::DetectorParameters::create(), rejected[cameraIdx], cm, dist);
     cv::aruco::refineDetectedMarkers(eyeFullRes[cameraIdx], s_charucoBoard, corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx], cm, dist);
@@ -210,6 +198,28 @@ void CharucoMultiViewCalibration::reset() {
   m_objectIds.clear();
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
     m_calibrationPoints[cameraIdx].clear();
+  }
+}
+
+cv::Mat CharucoMultiViewCalibration::calibSpaceDistCoeffs(size_t cameraIdx) {
+  if (m_undistortCapturedViews)
+    return zeroDistortion;
+
+  return cameraSystem()->cameraAtIndex(m_cameraIds[cameraIdx]).distCoeffs;
+}
+
+cv::Mat CharucoMultiViewCalibration::calibSpaceProjection(size_t cameraIdx) {
+  CameraSystem::Camera& c = cameraSystem()->cameraAtIndex(m_cameraIds[cameraIdx]);
+
+  if (m_undistortCapturedViews) {
+    if (m_cameraStereoViewIds[cameraIdx] >= 0) {
+      CameraSystem::View& v = cameraSystem()->viewAtIndex(m_cameraStereoViewIds[cameraIdx]);
+      return (m_cameraIds[cameraIdx] == v.cameraIndices[0] ? v.stereoProjection[0] : v.stereoProjection[1]).colRange(0, 3);
+    } else {
+      return c.optimizedMatrix;
+    }
+  } else {
+    return c.intrinsicMatrix;
   }
 }
 

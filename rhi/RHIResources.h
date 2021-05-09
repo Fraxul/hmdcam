@@ -52,5 +52,5 @@ struct LineGizmoUniformBlock {
 };
 
 // pointBuf is vec4[]
-void drawTriadGizmosForPoints(RHIBuffer::ptr pointBuf, size_t count, const glm::mat4& viewProjection);
+void drawTriadGizmosForPoints(RHIBuffer::ptr pointBuf, size_t count, const glm::mat4& viewProjection, float scale = 1.0f);
 

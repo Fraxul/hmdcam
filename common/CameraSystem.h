@@ -11,7 +11,12 @@ class CameraSystem;
 class CharucoMultiViewCalibration;
 class DepthMapGenerator;
 
-cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints);
+std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints);
+std::vector<glm::vec3> transformBoardPointsForView(const glm::mat4& transform);
+
+// computes a linear transform that maps the points in pVec2 to their positions in pVec1 -- translation and rotation only
+// return value is RMS error distance between (outTransform * pVec2) points and pVec1 points
+float computePointSetLinearTransform(const std::vector<glm::vec3>& pVec1, const std::vector<glm::vec3>& pVec2, glm::mat4& outTransform);
 
 class CameraSystem {
 public:
@@ -326,9 +331,13 @@ public:
 
     size_t m_referenceViewIdx, m_viewIdx;
 
-    CharucoMultiViewCalibration* m_calibState;
+    CharucoMultiViewCalibration* m_refCalibState;
+    CharucoMultiViewCalibration* m_tgtCalibState;
+
+    std::vector<glm::vec3> m_refPoints, m_tgtPoints;
 
     glm::mat4 m_tgt2ref;
+    float m_rmsError;
 
     // Cached data of previous calibration to be restored if the context is cancelled.
     glm::vec3 m_previousViewTranslation, m_previousViewRotation;

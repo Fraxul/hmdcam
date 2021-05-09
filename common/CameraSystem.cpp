@@ -914,26 +914,32 @@ CameraSystem::StereoViewOffsetCalibrationContext::StereoViewOffsetCalibrationCon
   CameraSystem::View& rv = cameraSystem()->viewAtIndex(m_referenceViewIdx);
   CameraSystem::View& v = cameraSystem()->viewAtIndex(m_viewIdx);
 
-  m_calibState = new CharucoMultiViewCalibration(cameraSystem(),
-    {rv.cameraIndices[0], rv.cameraIndices[1], v.cameraIndices[0], v.cameraIndices[1]},
-    {referenceViewIdx, referenceViewIdx, viewIdx, viewIdx});
+  m_refCalibState = new CharucoMultiViewCalibration(cameraSystem(),
+    {rv.cameraIndices[0], rv.cameraIndices[1]},
+    {referenceViewIdx, referenceViewIdx});
+
+  m_tgtCalibState = new CharucoMultiViewCalibration(cameraSystem(),
+    {v.cameraIndices[0], v.cameraIndices[1]},
+    {viewIdx, viewIdx});
 
   m_tgt2ref = glm::mat4(1.0f);
 }
 
 CameraSystem::StereoViewOffsetCalibrationContext::~StereoViewOffsetCalibrationContext() {
-  delete m_calibState;
+  delete m_refCalibState;
+  delete m_tgtCalibState;
 }
 
 void CameraSystem::StereoViewOffsetCalibrationContext::renderStatusUI() {
   ImGui::Text("View %zu Stereo Offset", m_viewIdx);
-  ImGui::Text("%zu samples", m_calibState->m_objectPoints.size());
+  ImGui::Text("%zu points", m_refPoints.size());
 
-  ImGui::Text("Tx  (mm): %.3g %.3g %.3g", m_tgt2ref[3][0] * 1000.0f, m_tgt2ref[3][1] * 1000.0f, m_tgt2ref[3][2] * 1000.0f);
+  ImGui::Text("Tx  (mm): %.1f %.1f %.1f", m_tgt2ref[3][0] * 1000.0f, m_tgt2ref[3][1] * 1000.0f, m_tgt2ref[3][2] * 1000.0f);
+  ImGui::Text("RMS Error (mm): %.2f", m_rmsError * 1000.0f);
 
   float rx, ry, rz;
   glm::extractEulerAngleXYZ(m_tgt2ref, rx, ry, rz);
-  ImGui::Text("Rx (deg): %.3g %.3g %.3g", glm::degrees(rx), glm::degrees(ry), glm::degrees(rz));
+  ImGui::Text("Rx (deg): %.2f %.2f %.2f", glm::degrees(rx), glm::degrees(ry), glm::degrees(rz));
 
 }
 
@@ -954,23 +960,22 @@ template <typename T> static std::vector<T> flattenVector(const std::vector<std:
 
 int triangulationDisparityScaleInv = 16;
 
-cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints) {
-  CameraSystem::View& view = cameraSystem->viewAtIndex(viewIdx);
+std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints) {
+  std::vector<glm::vec3> res;
 
   auto lp = flattenVector(leftCalibrationPoints);
   auto rp = flattenVector(rightCalibrationPoints);
   assert(lp.size() == rp.size());
 
   if (lp.empty())
-    return cv::Mat();
+    return res;
+
+  res.resize(lp.size());
 
   // Input points (m_calibState->m_calibrationPoints) have been captured in distortion-corrected, stereo-remapped space
 
-  // TODO try replacing this call with a different function (maybe compute a disparity value and use the same algorithm as the depth map generator?)
 #if 1
-  cv::Mat dest;
-  dest.create(/*rows=*/ lp.size(), /*cols=*/1, CV_32FC3);
-
+  CameraSystem::View& view = cameraSystem->viewAtIndex(viewIdx);
   glm::mat3 R1inv = glm::inverse(glmMat3FromCVMatrix(view.stereoRectification[0]));
   glm::mat4 Q = glmMat4FromCVMatrix(view.stereoDisparityToDepth);
   float CameraDistanceMeters = glm::length(glm::vec3(view.stereoTranslation.at<double>(0), view.stereoTranslation.at<double>(1), view.stereoTranslation.at<double>(2)));
@@ -989,12 +994,7 @@ cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx,
       lx *= lz;
       ly *= lz;
 
-    glm::vec3 localP = R1inv * glm::vec3(lx, -ly, -lz);
-
-    float* pDest = dest.ptr<float>(pointIdx);
-    pDest[0] = localP[0];
-    pDest[1] = localP[1];
-    pDest[2] = localP[2];
+    res[pointIdx] = R1inv * glm::vec3(lx, -ly, -lz);
   }
 
 
@@ -1016,9 +1016,18 @@ cv::Mat getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx,
   cv::convertPointsFromHomogeneous(inH, dest);
 #endif
 
-  return dest;
+  return res;
 }
 
+std::vector<glm::vec3> transformBoardPointsForView(const glm::mat4& transform) {
+  std::vector<glm::vec3> res;
+  res.resize(s_charucoBoard->chessboardCorners.size());
+
+  for (size_t pointIdx = 0; pointIdx < res.size(); ++pointIdx) {
+    res[pointIdx] = glm::vec3(transform * glm::vec4(glmVec3FromCV(s_charucoBoard->chessboardCorners[pointIdx]), 1.0f));
+  }
+  return res;
+}
 
 cv::Vec3f centroid(const cv::Mat& m) {
   assert((m.cols == 1 && m.type() == CV_32FC3) || (m.cols == 3 && m.type() == CV_32FC1));
@@ -1032,34 +1041,132 @@ cv::Vec3f centroid(const cv::Mat& m) {
   return res.mul(cv::Vec3f::all(1.0f / static_cast<float>(m.rows)));
 }
 
+glm::vec3 centroid(const std::vector<glm::vec3>& points) {
+
+  glm::vec3 res = glm::vec3(0.0f);
+
+  for (size_t i = 0; i < points.size(); ++i) {
+    res += points[i];
+  }
+
+  return res * glm::vec3(1.0f / static_cast<float>(points.size()));
+}
+
+float computePointSetLinearTransform(const std::vector<glm::vec3>& pVec1, const std::vector<glm::vec3>& pVec2, glm::mat4& outTransform) {
+  // Algorithm refs:
+  // http://nghiaho.com/?page_id=671
+  // https://github.com/nghiaho12/rigid_transform_3D
+
+  assert(pVec1.size() == pVec2.size());
+
+  glm::vec3 c1 = centroid(pVec1);
+  glm::vec3 c2 = centroid(pVec2);
+
+  // Matrix multiply requires 1-channel 3-column matrix
+  cv::Mat p1Centered(pVec1.size(), 3, CV_32F);
+  cv::Mat p2Centered(pVec1.size(), 3, CV_32F);
+
+  for (int row = 0; row < pVec1.size(); ++row) {
+    // glm::vec3 and 3xCV_32F have identical in-memory layout, so we can treat each row as a glm::vec3 for convenience
+    p1Centered.at<glm::vec3>(row) = pVec1[row] - c1;
+    p2Centered.at<glm::vec3>(row) = pVec2[row] - c2;
+  }
+
+  // covariance matrix
+  cv::Mat H = p1Centered.t() * p2Centered;
+  assert(H.rows == 3 && H.cols == 3);
+
+  cv::Mat w, u, vt;
+  cv::SVD::compute(H, w, u, vt);
+
+  cv::Mat R = vt.t() * u.t();
+
+  if (cv::determinant(R) < 0) {
+    //printf("det < 0\n");
+    // correct for reflection case
+    for (int i = 0; i < 3; ++i) {
+      vt.at<float>(2, i) *= -1.0f;
+    }
+    R = vt.t() * u.t();
+    assert(cv::determinant(R) >= 0.0);
+  }
+
+  outTransform = glm::translate(c1) * glmMat4FromCVMatrix(R) * glm::translate(-c2);
+
+  // compute error: transform each of p2 by the computed transform and compare to the corresponding p1 point
+  float errorAccum = 0.0f;
+
+  for (size_t pIdx = 0; pIdx < pVec1.size(); ++pIdx) {
+    glm::vec3 p2t = glm::vec3(outTransform * glm::vec4(pVec2[pIdx], 1.0f));
+    float err = glm::length(pVec1[pIdx] - p2t);
+    errorAccum += sqrtf(err);
+  }
+  errorAccum /= static_cast<float>(pVec1.size());
+  errorAccum *= errorAccum;
+  return errorAccum;
+}
+
+std::vector<glm::vec3> recoverViewSpaceBoardPoints(CameraSystem* cameraSystem, size_t viewIdx, CharucoMultiViewCalibration* calibState) {
+  std::vector<glm::vec3> res;
+
+  std::vector<glm::vec3> viewP = getTriangulatedPointsForView(cameraSystem, viewIdx, calibState->m_calibrationPoints[0], calibState->m_calibrationPoints[1]);
+  if (viewP.empty())
+    return res; // no points
+
+  std::vector<int> ids = flattenVector(calibState->m_objectIds);
+
+  std::vector<glm::vec3> objectP;
+  for (int id : ids) {
+    objectP.push_back(glmVec3FromCV(s_charucoBoard->chessboardCorners[id]));
+  }
+
+  glm::mat4 linearRemapXf;
+  float linearRemapError = computePointSetLinearTransform(viewP, objectP, linearRemapXf);
+  if (linearRemapError < 0) {
+    return res; // computation failed
+  }
+
+  // use computed transform to map all board points into view space
+  for (const cv::Point3f& p : s_charucoBoard->chessboardCorners) {
+    res.push_back(glm::vec3(linearRemapXf * glm::vec4(glmVec3FromCV(p), 1.0f)));
+  }
+
+  return res;
+}
+
 void CameraSystem::StereoViewOffsetCalibrationContext::processFrameCaptureMode() {
-  if (!m_calibState->processFrame(captureRequested()))
+
+  // we don't need the calibration states to save point vectors, we just want the board orientations
+  m_refCalibState->reset();
+  m_tgtCalibState->reset();
+
+  bool didCapRef = m_refCalibState->processFrame(captureRequested());
+  bool didCapTgt = m_tgtCalibState->processFrame(captureRequested());
+
+  if (!(didCapRef && didCapTgt))
     return;
 
   // capture request succeeded if return is true
   acknowledgeCaptureRequest();
 
-  // Recompute pose estimate with new data
-  cv::Mat refPoints = getTriangulatedPointsForView(cameraSystem(), m_referenceViewIdx, m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1]);
-  cv::Mat tgtPoints = getTriangulatedPointsForView(cameraSystem(), m_viewIdx,          m_calibState->m_calibrationPoints[2], m_calibState->m_calibrationPoints[3]);
+  std::vector<glm::vec3> refVP = recoverViewSpaceBoardPoints(cameraSystem(), m_referenceViewIdx, m_refCalibState);
+  std::vector<glm::vec3> tgtVP = recoverViewSpaceBoardPoints(cameraSystem(), m_viewIdx, m_tgtCalibState);
 
-  if (refPoints.rows == 0)
-    return;
+  if (refVP.empty() || tgtVP.empty())
+    return; // mapping failed
 
-  // {ref,tgt}Points are point-per-row, 1 column, CV_32FC3
+  // Keep only the points that exist in at least one view -- that might help reduce extrapolation error?
+  std::set<int> idSet;
 
-#if 0
-  printf("StereoViewOffsetCalibrationContext::processFrameCaptureMode(): %d points:\n", refPoints.rows);
-  for (size_t i = 0; i < refPoints.rows; ++i) {
-    float* rp = refPoints.ptr<float>(i);
-    float* tp = tgtPoints.ptr<float>(i);
-    printf("  [%zu] %.3f  %.3f  %.3f  \t\t %.3f  %.3f  %.3f\n",
-      i,
-      rp[0], rp[1], rp[2],
-      tp[0], tp[1], tp[2]);
+  for (int id : flattenVector(m_refCalibState->m_objectIds))
+    idSet.insert(id);
+  for (int id : flattenVector(m_tgtCalibState->m_objectIds))
+    idSet.insert(id);
+
+  for (int id : idSet) {
+    m_refPoints.push_back(refVP[id]);
+    m_tgtPoints.push_back(tgtVP[id]);
   }
-#endif
-
 
 #if 0
   // formatted for Mathematica
@@ -1080,61 +1187,8 @@ void CameraSystem::StereoViewOffsetCalibrationContext::processFrameCaptureMode()
   printf("}\n");
 #endif
 
-  // Algorithm refs:
-  // http://nghiaho.com/?page_id=671
-  // https://github.com/nghiaho12/rigid_transform_3D
 
-  cv::Vec3f refCenter = centroid(refPoints);
-  cv::Vec3f tgtCenter = centroid(tgtPoints);
-
-  // Matrix multiply requires 1-channel 3-column matrix instead of 3-channel 1-column matrix. In-memory layout is the same.
-  cv::Mat refCentered(refPoints.rows, 3, CV_32F);
-  cv::Mat tgtCentered(refPoints.rows, 3, CV_32F);
-
-  for (int row = 0; row < refPoints.rows; ++row) {
-    refCentered.at<cv::Vec3f>(row) = refPoints.at<cv::Vec3f>(row) - refCenter;
-    tgtCentered.at<cv::Vec3f>(row) = tgtPoints.at<cv::Vec3f>(row) - tgtCenter;
-  }
-
-#if 0
-  printf("After centering:\n");
-  for (int i = 0; i < lpMat.rows; ++i) {
-    float* rp = refCentered.ptr<float>(i);
-    float* tp = tgtCentered.ptr<float>(i);
-    printf("  [%d] %.3f  %.3f  %.3f  \t\t %.3f  %.3f  %.3f\n",
-      i,
-      rp[0], rp[1], rp[2],
-      tp[0], tp[1], tp[2]);
-  }
-#endif
-
-  // covariance matrix
-  cv::Mat H = refCentered.t() * tgtCentered;
-  assert(H.rows == 3 && H.cols == 3);
-
-  cv::Mat w, u, vt;
-  cv::SVD::compute(H, w, u, vt);
-
-  cv::Mat R = vt.t() * u.t();
-
-  if (cv::determinant(R) < 0) {
-    //printf("det < 0\n");
-    // correct for reflection case
-    for (int i = 0; i < 3; ++i) {
-      vt.at<float>(2, i) *= -1.0f;
-    }
-    R = vt.t() * u.t();
-    assert(cv::determinant(R) >= 0.0);
-  }
-
-  //std::cout << R << std::endl;
-  //float rx, ry, rz;
-  //glm::extractEulerAngleXYZ(glmMat4FromCVMatrix(R), rx, ry, rz);
-  //printf("extracted rotation angles: %.3f %.3f %.3f\n", glm::degrees(rx), glm::degrees(ry), glm::degrees(rz));
-
-  // Compute view-to-view transform matrix
-  // tgt2ref transforms points in the target view space to the reference view space
-  m_tgt2ref = glm::translate(glmVec3FromCV(refCenter)) * glmMat4FromCVMatrix(R) * glm::translate(-glmVec3FromCV(tgtCenter));
+  m_rmsError = computePointSetLinearTransform(m_refPoints, m_tgtPoints, m_tgt2ref);
 }
 
 void CameraSystem::StereoViewOffsetCalibrationContext::processFramePreviewMode() {
@@ -1172,5 +1226,8 @@ bool CameraSystem::StereoViewOffsetCalibrationContext::requiresStereoRendering()
 
 RHISurface::ptr CameraSystem::StereoViewOffsetCalibrationContext::overlaySurfaceAtIndex(size_t index) {
   assert(index < 4);
-  return m_calibState->m_feedbackTex[index];
+  if (index < 2)
+    return m_refCalibState->m_feedbackTex[index];
+  else
+    return m_tgtCalibState->m_feedbackTex[index - 2];
 }

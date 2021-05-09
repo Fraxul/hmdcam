@@ -276,11 +276,21 @@ void initRHIResources() {
 FxAtomicString ksTriadGizmoUniformBuffer("TriadGizmoUniformBuffer");
 FxAtomicString ksPositionDataBuffer("PositionDataBuffer");
 
-void drawTriadGizmosForPoints(RHIBuffer::ptr pointBuf, size_t count, const glm::mat4& viewProjection) {
+struct TriadGizmoUniformBuffer {
+  glm::mat4 viewProjection;
+  float scale;
+  float pad2, pad3, pad4;
+};
+
+void drawTriadGizmosForPoints(RHIBuffer::ptr pointBuf, size_t count, const glm::mat4& viewProjection, float scale) {
   rhi()->bindRenderPipeline(triadGizmoPipeline);
   rhi()->bindStreamBuffer(0, triadGizmoVBO);
   rhi()->loadShaderBuffer(ksPositionDataBuffer, pointBuf);
-  rhi()->loadUniformBlockImmediate(ksTriadGizmoUniformBuffer, &viewProjection, sizeof(glm::mat4));
+
+  TriadGizmoUniformBuffer ub;
+  ub.viewProjection = viewProjection;
+  ub.scale = scale;
+  rhi()->loadUniformBlockImmediate(ksTriadGizmoUniformBuffer, &ub, sizeof(ub));
   rhi()->drawPrimitives(0, 6, count);
 }
 
