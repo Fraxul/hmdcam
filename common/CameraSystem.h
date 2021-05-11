@@ -114,6 +114,7 @@ public:
     virtual bool involvesCamera(size_t cameraIdx) = 0;
     virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) = 0;
     virtual OverlayDistortionSpace overlayDistortionSpace() const = 0;
+    virtual RHISurface::ptr previewDistortionMapForCamera(size_t cameraIdx) const = 0;
 
   protected:
     CalibrationContext(CameraSystem*);
@@ -178,6 +179,7 @@ public:
     virtual bool involvesCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx; }
     virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx ? 0 : -1; }
     virtual OverlayDistortionSpace overlayDistortionSpace() const { return kDistortionSpaceUncorrected; }
+    virtual RHISurface::ptr previewDistortionMapForCamera(size_t cameraIdx) const { return RHISurface::ptr(); }
 
   protected:
     virtual void renderStatusUI();
@@ -232,6 +234,10 @@ public:
         return -1;
     }
     virtual OverlayDistortionSpace overlayDistortionSpace() const { return kDistortionSpaceIntrinsic; }
+    virtual RHISurface::ptr previewDistortionMapForCamera(size_t cameraIdx) const {
+      View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+      return cameraSystem()->cameraAtIndex((cameraIdx == v.cameraIndices[0]) ? 0 : 1).intrinsicDistortionMap;
+    }
 
   protected:
     virtual void renderStatusUI();
@@ -289,6 +295,21 @@ public:
       return -1;
     }
     virtual OverlayDistortionSpace overlayDistortionSpace() const { return kDistortionSpaceView; }
+    virtual RHISurface::ptr previewDistortionMapForCamera(size_t cameraIdx) const {
+      View& rv = cameraSystem()->viewAtIndex(m_referenceViewIdx);
+      if (cameraIdx == rv.cameraIndices[0])
+        return rv.stereoDistortionMap[0];
+      else if (cameraIdx == rv.cameraIndices[1])
+        return rv.stereoDistortionMap[1];
+
+      View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+      if (cameraIdx == v.cameraIndices[0])
+        return v.stereoDistortionMap[0];
+      else if (cameraIdx == v.cameraIndices[1])
+        return v.stereoDistortionMap[1];
+
+      return RHISurface::ptr();
+    }
 
   protected:
     virtual void renderStatusUI();

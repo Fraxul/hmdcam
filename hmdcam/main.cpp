@@ -648,16 +648,7 @@ int main(int argc, char* argv[]) {
               if (calibrationContext && calibrationContext->involvesCamera(v.cameraIndices[viewEyeIdx])) {
                 // Calibrating a stereo view that includes this camera
                 overlayTex = calibrationContext->overlaySurfaceAtIndex(viewEyeIdx);
-                switch (calibrationContext->overlayDistortionSpace()) {
-                  case CameraSystem::CalibrationContext::kDistortionSpaceUncorrected:
-                    break; // do nothing
-                  case CameraSystem::CalibrationContext::kDistortionSpaceIntrinsic:
-                    distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
-                    break;
-                  case CameraSystem::CalibrationContext::kDistortionSpaceView:
-                    distortionTex = v.stereoDistortionMap[viewEyeIdx];
-                    break;
-                };
+                distortionTex = calibrationContext->previewDistortionMapForCamera(v.cameraIndices[viewEyeIdx]);
               } else if (v.isStereo) {
                 // Drawing this camera as part of a stereo pair
                 distortionTex = v.stereoDistortionMap[viewEyeIdx];
@@ -746,15 +737,7 @@ int main(int argc, char* argv[]) {
 
             if (calibrationContext && calibrationContext->involvesCamera(cameraIdx)) {
               overlayTex = calibrationContext->overlaySurfaceAtIndex(calibrationContext->overlaySurfaceIndexForCamera(cameraIdx));
-
-              switch (calibrationContext->overlayDistortionSpace()) {
-                case CameraSystem::CalibrationContext::kDistortionSpaceUncorrected:
-                  break; // do nothing
-                case CameraSystem::CalibrationContext::kDistortionSpaceView: // TODO not handled correctly right now -- falling back to Intrinsic
-                case CameraSystem::CalibrationContext::kDistortionSpaceIntrinsic:
-                  distortionTex = cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap;
-                  break;
-              }
+              distortionTex = calibrationContext->previewDistortionMapForCamera(cameraIdx);
             } else if (debugUseDistortion) {
               // Distortion-corrected view
               distortionTex = cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap;
