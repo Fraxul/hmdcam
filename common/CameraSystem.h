@@ -142,6 +142,7 @@ public:
     bool shouldSaveCalibrationImages() const { return m_saveCalibrationImages; }
 
     virtual void processFrameCaptureMode() = 0;
+    virtual void processFramePreviewMode() = 0;
     virtual void renderStatusUI() = 0;
     virtual bool cookCalibrationDataForPreview() = 0;
     virtual void didAcceptCalibrationPreview() = 0;
@@ -150,7 +151,7 @@ public:
 
   private:
     bool m_captureRequested;
-    bool m_finishRequested;
+    bool m_previewRequested;
     bool m_cancelRequested;
     bool m_saveCalibrationImages;
 
@@ -178,12 +179,13 @@ public:
 
     virtual bool involvesCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx; }
     virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx ? 0 : -1; }
-    virtual OverlayDistortionSpace overlayDistortionSpace() const { return kDistortionSpaceUncorrected; }
-    virtual RHISurface::ptr previewDistortionMapForCamera(size_t cameraIdx) const { return RHISurface::ptr(); }
+    virtual OverlayDistortionSpace overlayDistortionSpace() const;
+    virtual RHISurface::ptr previewDistortionMapForCamera(size_t cameraIdx) const;
 
   protected:
     virtual void renderStatusUI();
     virtual void processFrameCaptureMode();
+    virtual void processFramePreviewMode();
     virtual bool cookCalibrationDataForPreview();
     virtual void didAcceptCalibrationPreview();
     virtual void didRejectCalibrationPreview();
@@ -242,6 +244,7 @@ public:
   protected:
     virtual void renderStatusUI();
     virtual void processFrameCaptureMode();
+    virtual void processFramePreviewMode();
     virtual bool cookCalibrationDataForPreview();
     virtual void didAcceptCalibrationPreview();
     virtual void didRejectCalibrationPreview();
@@ -315,6 +318,7 @@ public:
   protected:
     virtual void renderStatusUI();
     virtual void processFrameCaptureMode();
+    virtual void processFramePreviewMode();
     virtual bool cookCalibrationDataForPreview();
     virtual void didAcceptCalibrationPreview();
     virtual void didRejectCalibrationPreview();

@@ -395,7 +395,7 @@ CameraSystem::CalibrationContext::~CalibrationContext() {
 }
 
 CameraSystem::CalibrationContextStateMachineBase::CalibrationContextStateMachineBase(CameraSystem* cs) : CameraSystem::CalibrationContext(cs), 
-  m_captureRequested(false), m_finishRequested(false), m_cancelRequested(false), m_saveCalibrationImages(false), m_inCalibrationPreviewMode(false), m_calibrationPreviewAccepted(false), m_calibrationPreviewRejected(false), m_calibrationFinished(false) {
+  m_captureRequested(false), m_previewRequested(false), m_cancelRequested(false), m_saveCalibrationImages(false), m_inCalibrationPreviewMode(false), m_calibrationPreviewAccepted(false), m_calibrationPreviewRejected(false), m_calibrationFinished(false) {
 
 }
 
@@ -417,11 +417,11 @@ void CameraSystem::CalibrationContextStateMachineBase::processUI() {
 
   if (m_inCalibrationPreviewMode) {
     m_calibrationPreviewAccepted = ImGui::Button("Accept Calibration");
-    m_calibrationPreviewRejected = ImGui::Button("Reject Calibration");
+    m_calibrationPreviewRejected = ImGui::Button("Back");
   } else {
     m_captureRequested = ImGui::Button("Capture Frame");
     ImGui::Checkbox("Save calibration images", &m_saveCalibrationImages);
-    m_finishRequested = ImGui::Button("Finish Calibration");
+    m_previewRequested = ImGui::Button("Preview Calibration");
     m_cancelRequested = ImGui::Button("Cancel and Discard");
   }
 
@@ -432,12 +432,14 @@ void CameraSystem::CalibrationContextStateMachineBase::processFrame() {
     return; // Nothing to do
   }
 
-  if (!m_inCalibrationPreviewMode) {
+  if (m_inCalibrationPreviewMode) {
+    this->processFramePreviewMode();
+  } else {
     this->processFrameCaptureMode();
   }
 
-  if (m_finishRequested) {
-    m_finishRequested = false;
+  if (m_previewRequested) {
+    m_previewRequested = false;
     m_captureRequested = false; // Skip any stale capture requests
 
     // Cook a new calibration from the captures and switch to preview mode
@@ -471,7 +473,7 @@ void CameraSystem::CalibrationContextStateMachineBase::processFrame() {
 
     else if (m_calibrationPreviewRejected) {
       m_calibrationPreviewRejected = false;
-      // Reset stored data and return to capture mode
+      // Return to capture mode
       this->didRejectCalibrationPreview();
 
       m_inCalibrationPreviewMode = false;
@@ -514,6 +516,20 @@ CameraSystem::IntrinsicCalibrationContext::~IntrinsicCalibrationContext() {
 
 }
 
+CameraSystem::CalibrationContext::OverlayDistortionSpace CameraSystem::IntrinsicCalibrationContext::overlayDistortionSpace() const {
+  if (inCalibrationPreviewMode())
+    return kDistortionSpaceIntrinsic;
+
+  return kDistortionSpaceUncorrected;
+}
+
+RHISurface::ptr CameraSystem::IntrinsicCalibrationContext::previewDistortionMapForCamera(size_t cameraIdx) const {
+  if (inCalibrationPreviewMode())
+    return cameraSystem()->cameraAtIndex(m_cameraIdx).intrinsicDistortionMap;
+
+  return RHISurface::ptr();
+}
+
 void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
   ImGui::Text("Camera %zu Intrinsic", m_cameraIdx);
   ImGui::Text("%zu samples", m_allCharucoCorners.size());
@@ -534,9 +550,7 @@ void CameraSystem::IntrinsicCalibrationContext::didAcceptCalibrationPreview() {
 }
 
 void CameraSystem::IntrinsicCalibrationContext::didRejectCalibrationPreview() {
-  // Reset stored data in preparation for reentering capture mode
-  m_allCharucoCorners.clear();
-  m_allCharucoIds.clear();
+  // Returning from preview to capture mode.
 }
 
 void CameraSystem::IntrinsicCalibrationContext::didCancelCalibrationSession() {
@@ -558,9 +572,6 @@ bool CameraSystem::IntrinsicCalibrationContext::cookCalibrationDataForPreview() 
 }
 
 void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
-  // Look for ChAruCo markers and allow capturing if we're not in preview mode
-
-  // stereoCamera->readFrame();
   cv::Mat viewFullRes = cameraSystem()->captureGreyscale(m_cameraIdx, m_fullGreyTex, m_fullGreyRT);
 
   std::vector<std::vector<cv::Point2f> > corners, rejected;
@@ -650,6 +661,70 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
       m_feedbackRmsError = -1.0;
     }
   }
+}
+
+void CameraSystem::IntrinsicCalibrationContext::processFramePreviewMode() {
+  // Look for charuco target and show reprojection errors.
+  CameraSystem::Camera& c = cameraSystem()->cameraAtIndex(m_cameraIdx);
+
+  cv::Mat viewFullRes = cameraSystem()->captureGreyscale(m_cameraIdx, m_fullGreyTex, m_fullGreyRT, c.intrinsicDistortionMap);
+
+  std::vector<std::vector<cv::Point2f> > corners, rejected;
+  std::vector<int> ids;
+
+  std::vector<cv::Point2f> currentCharucoCorners;
+  std::vector<int> currentCharucoIds;
+
+  // Run ArUco marker detection
+  // Note that we don't feed the camera distortion parameters to the aruco functions here, since the images we're operating on have already been undistorted.
+  cv::aruco::detectMarkers(viewFullRes, s_charucoDictionary, corners, ids, cv::aruco::DetectorParameters::create(), rejected, c.optimizedMatrix, zeroDistortion);
+  cv::aruco::refineDetectedMarkers(viewFullRes, s_charucoBoard, corners, ids, rejected, c.optimizedMatrix, zeroDistortion);
+
+  // Find corners using detected markers
+  if (!ids.empty()) {
+    cv::aruco::interpolateCornersCharuco(corners, ids, viewFullRes, s_charucoBoard, currentCharucoCorners, currentCharucoIds, c.optimizedMatrix, zeroDistortion);
+  }
+
+  // Draw feedback view
+  memset(m_feedbackView.ptr(0), 0, m_feedbackView.total() * 4);
+
+  cv::Mat rvec, tvec;
+  if (estimatePoseCharucoBoard(currentCharucoCorners, currentCharucoIds, s_charucoBoard, c.optimizedMatrix, zeroDistortion, rvec, tvec)) {
+    // Enough markers are present to estimate the board pose
+
+    std::vector<cv::Point2f> projPoints;
+    cv::projectPoints(s_charucoBoard->chessboardCorners, rvec, tvec, c.optimizedMatrix, cv::noArray(), projPoints);
+
+    for (size_t pointIdx = 0; pointIdx < currentCharucoIds.size(); ++pointIdx) {
+      cv::Point2f corner = currentCharucoCorners[pointIdx];
+      cv::Point2f rpCorner = projPoints[currentCharucoIds[pointIdx]];
+
+      cv::Scalar color;
+      float error = glm::length(glm::vec2(corner.x, corner.y) - glm::vec2(rpCorner.x, rpCorner.y));
+
+      if (error < 0.25f) {
+        color = cv::Scalar(0, 255, 0);
+      }  else if (error < 0.75f) {
+        color = cv::Scalar(0, 0, 255);
+      } else {
+        color = cv::Scalar(255, 0, 0);
+      }
+
+
+      // draw reference corner mark
+      cv::rectangle(m_feedbackView, corner - cv::Point2f(5, 5), corner + cv::Point2f(5, 5), color, 1, cv::LINE_AA);
+
+      // draw reprojected corner mark
+      cv::rectangle(m_feedbackView, rpCorner - cv::Point2f(3, 3), rpCorner + cv::Point2f(3, 3), color, 1, cv::LINE_AA);
+
+      // draw error callout
+      char textbuf[16];
+      sprintf(textbuf, "%.2fpx", error);
+      cv::putText(m_feedbackView, textbuf, corner + cv::Point2f(7, -7), cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 2);
+    } // point loop
+  }
+
+  rhi()->loadTextureData(m_feedbackTex, kVertexElementTypeUByte4N, m_feedbackView.ptr(0));
 }
 
 bool CameraSystem::IntrinsicCalibrationContext::requiresStereoRendering() const {
@@ -762,6 +837,9 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
 #endif
 }
 
+void CameraSystem::StereoCalibrationContext::processFramePreviewMode() {
+
+}
 
 bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
   try {
@@ -802,11 +880,7 @@ void CameraSystem::StereoCalibrationContext::didAcceptCalibrationPreview() {
 }
 
 void CameraSystem::StereoCalibrationContext::didRejectCalibrationPreview() {
-  // Reset stored data
-  m_calibState->reset();
-  m_feedbackTx = glm::vec3(0.0f);
-  m_feedbackRx = glm::vec3(0.0f);
-  m_feedbackRmsError = 0.0;
+  // Returning from preview to capture mode.
 }
 
 void CameraSystem::StereoCalibrationContext::didCancelCalibrationSession() {
@@ -1062,6 +1136,9 @@ void CameraSystem::StereoViewOffsetCalibrationContext::processFrameCaptureMode()
   m_tgt2ref = glm::translate(glmVec3FromCV(refCenter)) * glmMat4FromCVMatrix(R) * glm::translate(-glmVec3FromCV(tgtCenter));
 }
 
+void CameraSystem::StereoViewOffsetCalibrationContext::processFramePreviewMode() {
+
+}
 
 bool CameraSystem::StereoViewOffsetCalibrationContext::cookCalibrationDataForPreview() {
   // We've been updating the calibration data incrementally every frame -- nothing to do here.
@@ -1079,8 +1156,7 @@ void CameraSystem::StereoViewOffsetCalibrationContext::didAcceptCalibrationPrevi
 }
 
 void CameraSystem::StereoViewOffsetCalibrationContext::didRejectCalibrationPreview() {
-  // Reset stored data
-  m_calibState->reset();
+  // Returning from preview to capture mode.
 }
 
 void CameraSystem::StereoViewOffsetCalibrationContext::didCancelCalibrationSession() {
