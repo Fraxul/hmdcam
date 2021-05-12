@@ -26,7 +26,8 @@ const cv::aruco::PREDEFINED_DICTIONARY_NAME s_charucoDictionaryName = cv::aruco:
 const unsigned int s_charucoBoardSquareCountX = 12;
 const unsigned int s_charucoBoardSquareCountY = 9;
 const float s_charucoBoardSquareSideLengthMeters = 0.060f;
-const float s_charucoBoardMarkerSideLengthMeters = 0.045f;
+// markers are 7x7 pixels, squares are 9x9 pixels (add 1px border), so the marker size is 7/9 of the square size
+const float s_charucoBoardMarkerSideLengthMeters = s_charucoBoardSquareSideLengthMeters * (7.0f / 9.0f);
 
 cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary;
 cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;

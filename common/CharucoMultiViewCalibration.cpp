@@ -76,12 +76,26 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   FxThreading::runArrayTask(0, cameraCount(), [&](size_t cameraIdx) {
     CameraSystem::Camera& c = cameraSystem()->cameraAtIndex(m_cameraIds[cameraIdx]);
 
-    cv::aruco::detectMarkers(eyeFullRes[cameraIdx], s_charucoDictionary, corners[cameraIdx], ids[cameraIdx], cv::aruco::DetectorParameters::create(), rejected[cameraIdx], c.optimizedMatrix, zeroDistortion);
-    cv::aruco::refineDetectedMarkers(eyeFullRes[cameraIdx], s_charucoBoard, corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx], c.optimizedMatrix, zeroDistortion);
+    cv::Mat cm, dist;
+    if (m_undistortCapturedViews) {
+      dist = zeroDistortion;
+      if (m_cameraStereoViewIds[cameraIdx] >= 0) {
+        CameraSystem::View& v = cameraSystem()->viewAtIndex(m_cameraStereoViewIds[cameraIdx]);
+        cm = (m_cameraIds[cameraIdx] == v.cameraIndices[0] ? v.stereoProjection[0] : v.stereoProjection[1]).colRange(0, 3);
+      } else {
+        cm = c.optimizedMatrix;
+      }
+    } else {
+      cm = c.intrinsicMatrix;
+      dist = c.distCoeffs;
+    }
+
+    cv::aruco::detectMarkers(eyeFullRes[cameraIdx], s_charucoDictionary, corners[cameraIdx], ids[cameraIdx], cv::aruco::DetectorParameters::create(), rejected[cameraIdx], cm, dist);
+    cv::aruco::refineDetectedMarkers(eyeFullRes[cameraIdx], s_charucoBoard, corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx], cm, dist);
 
     // Find chessboard corners using detected markers
     if (!ids[cameraIdx].empty()) {
-      cv::aruco::interpolateCornersCharuco(corners[cameraIdx], ids[cameraIdx], eyeFullRes[cameraIdx], s_charucoBoard, currentCharucoCornerPoints[cameraIdx], currentCharucoCornerIds[cameraIdx], c.optimizedMatrix, zeroDistortion);
+      cv::aruco::interpolateCornersCharuco(corners[cameraIdx], ids[cameraIdx], eyeFullRes[cameraIdx], s_charucoBoard, currentCharucoCornerPoints[cameraIdx], currentCharucoCornerIds[cameraIdx], cm, dist);
     }
   });
 
