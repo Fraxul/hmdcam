@@ -161,6 +161,7 @@ int main(int argc, char* argv[]) {
   bool enableDGPU = true;
   bool enableRDMA = true;
   bool debugInitOnly = false;
+  int rdmaInterval = 2;
 
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--disable-dgpu")) {
@@ -169,6 +170,16 @@ int main(int argc, char* argv[]) {
       enableRDMA = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
       debugInitOnly = true;
+    } else if (!strcmp(argv[i], "--rdma-interval")) {
+      if (i == (argc - 1)) {
+        printf("--rdma-interval: requires argument\n");
+        return 1;
+      }
+      rdmaInterval = atoi(argv[++i]);
+      if (rdmaInterval <= 0) {
+        printf("--rdma-interval: invalid argument\n");
+        return 1;
+      }
     } else {
       printf("Unrecognized argument %s\n", argv[i]);
       return 1;
@@ -186,6 +197,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  int rdmaFrame = 0;
   if (enableRDMA) {
     rdmaContext = RDMAContext::createServerContext();
 
@@ -770,7 +782,7 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      if (rdmaContext && rdmaContext->hasPeerConnections()) {
+      if (rdmaContext && rdmaContext->hasPeerConnections() && rdmaFrame == 0) {
         // Issue RDMA surface readbacks and write-buffer flushes
         for (size_t cameraIdx = 0; cameraIdx < rdmaRenderTargets.size(); ++cameraIdx) {
           CUgraphicsResource pReadResource = rdmaRenderSurfaces[cameraIdx]->cuGraphicsResource();
@@ -803,6 +815,11 @@ int main(int argc, char* argv[]) {
         }
         // Send "buffers dirty" event
         rdmaContext->asyncSendUserEvent(1, SerializationBuffer());
+      }
+      // track RDMA send interval
+      rdmaFrame += 1;
+      if (rdmaFrame >= rdmaInterval) {
+        rdmaFrame = 0;
       }
 
       timingData.submitTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
