@@ -767,6 +767,26 @@ void CameraSystem::StereoCalibrationContext::renderStatusUI() {
   ImGui::Text("RMS Error: %f", m_feedbackRmsError);
   ImGui::Text("Stereo ROI (L): [%u x %u from (%u, %u)", m_feedbackValidROI[0].width, m_feedbackValidROI[0].height, m_feedbackValidROI[0].x, m_feedbackValidROI[0].y);
   ImGui::Text("Stereo ROI (R): [%u x %u from (%u, %u)", m_feedbackValidROI[1].width, m_feedbackValidROI[1].height, m_feedbackValidROI[1].x, m_feedbackValidROI[1].y);
+  ImGui::Text("Per-View Errors");
+  if (m_perViewErrors.rows > 0) {
+    for (int i = 0; i < m_perViewErrors.rows; ++i) {
+      ImGui::Text(" [%d] %f, %f", i, m_perViewErrors.at<double>(i, 0), m_perViewErrors.at<double>(i, 1));
+    }
+    if (ImGui::Button("Drop highest-error sample")) {
+      double maxError = 0;
+      int maxErrorRow = 0;
+      for (int i = 0; i < m_perViewErrors.rows; ++i) {
+        double e = std::max<double>(m_perViewErrors.at<double>(i, 0), m_perViewErrors.at<double>(i, 1));
+        if (e > maxError) {
+          e = maxError;
+          maxErrorRow = i;
+        }
+      }
+
+      m_calibState->dropSampleAtIndex(maxErrorRow);
+      internalUpdateCaptureState();
+    }
+  }
 }
 
 
@@ -775,48 +795,7 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
     // capture request succeeded if return is true
     acknowledgeCaptureRequest();
 
-
-    cv::Mat feedbackE, feedbackF;
-    cv::Mat perViewErrors;
-    cv::Mat feedbackTx, feedbackRx;
-
-    View& v = cameraSystem()->viewAtIndex(m_viewIdx);
-    Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
-    Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
-
-    int flags =
-      cv::CALIB_USE_INTRINSIC_GUESS | // load previously-established intrinsics
-      cv::CALIB_FIX_INTRINSIC |       // and don't modify them
-      cv::CALIB_FIX_PRINCIPAL_POINT |
-      cv::CALIB_FIX_ASPECT_RATIO |
-      cv::CALIB_RATIONAL_MODEL;
-
-    m_feedbackRmsError = cv::stereoCalibrate(m_calibState->m_objectPoints,
-      m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
-      leftC.optimizedMatrix, zeroDistortion,
-      rightC.optimizedMatrix, zeroDistortion,
-      cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
-      feedbackRx, feedbackTx, feedbackE, feedbackF, perViewErrors, flags);
-
-    m_feedbackTx = glmVec3FromCV(feedbackTx);
-    glm::mat4 rx = glmMat3FromCVMatrix(feedbackRx);
-    glm::extractEulerAngleXYZ(rx, m_feedbackRx[0], m_feedbackRx[1], m_feedbackRx[2]);
-
-    cv::Mat feedbackRect[2], feedbackProj[2], feedbackQ;
-    cv::Rect stereoValidROI[2];
-
-    cv::stereoRectify(
-      leftC.intrinsicMatrix, leftC.distCoeffs,
-      rightC.intrinsicMatrix, rightC.distCoeffs,
-      cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
-      feedbackRx, feedbackTx,
-      feedbackRect[0], feedbackRect[1],
-      feedbackProj[0], feedbackProj[1],
-      feedbackQ,
-      /*flags=*/cv::CALIB_ZERO_DISPARITY, /*alpha=*/ -1.0f, cv::Size(),
-      &m_feedbackValidROI[0], &m_feedbackValidROI[1]);
-
-  }
+    internalUpdateCaptureState();
 
 #if 0 // TODO fix this
     if (shouldSaveCalibrationImages()) {
@@ -836,7 +815,51 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
       printf("Saved %s\n", filename);
     }
 #endif
+  }
 }
+
+void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
+  cv::Mat feedbackE, feedbackF;
+  cv::Mat feedbackTx, feedbackRx;
+
+  View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+  Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
+  Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
+
+  int flags =
+    cv::CALIB_USE_INTRINSIC_GUESS | // load previously-established intrinsics
+    cv::CALIB_FIX_INTRINSIC |       // and don't modify them
+    cv::CALIB_FIX_PRINCIPAL_POINT |
+    cv::CALIB_FIX_ASPECT_RATIO |
+    cv::CALIB_RATIONAL_MODEL;
+
+  m_feedbackRmsError = cv::stereoCalibrate(m_calibState->m_objectPoints,
+    m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
+      leftC.optimizedMatrix, zeroDistortion,
+      rightC.optimizedMatrix, zeroDistortion,
+    cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
+    feedbackRx, feedbackTx, feedbackE, feedbackF, m_perViewErrors, flags);
+
+  m_feedbackTx = glmVec3FromCV(feedbackTx);
+  glm::mat4 rx = glmMat3FromCVMatrix(feedbackRx);
+  glm::extractEulerAngleXYZ(rx, m_feedbackRx[0], m_feedbackRx[1], m_feedbackRx[2]);
+
+  cv::Mat feedbackRect[2], feedbackProj[2], feedbackQ;
+  cv::Rect stereoValidROI[2];
+
+  cv::stereoRectify(
+    leftC.intrinsicMatrix, leftC.distCoeffs,
+    rightC.intrinsicMatrix, rightC.distCoeffs,
+    cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
+    feedbackRx, feedbackTx,
+    feedbackRect[0], feedbackRect[1],
+    feedbackProj[0], feedbackProj[1],
+    feedbackQ,
+    /*flags=*/cv::CALIB_ZERO_DISPARITY, /*alpha=*/ -1.0f, cv::Size(),
+    &m_feedbackValidROI[0], &m_feedbackValidROI[1]);
+
+}
+
 
 void CameraSystem::StereoCalibrationContext::processFramePreviewMode() {
 

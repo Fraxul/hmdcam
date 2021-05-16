@@ -18,6 +18,7 @@ public:
   // Returns true if a frame was actually captured (only if captureRequested is true)
   bool processFrame(bool captureRequested);
   void reset();
+  void dropSampleAtIndex(size_t sampleIdx);
 
   // internal helpers
   cv::Mat calibSpaceDistCoeffs(size_t cameraIdx);

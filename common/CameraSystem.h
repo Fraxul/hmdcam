@@ -255,6 +255,8 @@ public:
     virtual void didRejectCalibrationPreview();
     virtual void didCancelCalibrationSession();
 
+    void internalUpdateCaptureState();
+
     size_t m_viewIdx;
 
     CharucoMultiViewCalibration* m_calibState;
@@ -265,6 +267,7 @@ public:
     // Feedback data during capture
     glm::vec3 m_feedbackTx, m_feedbackRx;
     double m_feedbackRmsError;
+    cv::Mat m_perViewErrors;
     cv::Rect m_feedbackValidROI[2];
 
   };

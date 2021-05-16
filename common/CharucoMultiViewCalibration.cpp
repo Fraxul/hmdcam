@@ -201,6 +201,17 @@ void CharucoMultiViewCalibration::reset() {
   }
 }
 
+void CharucoMultiViewCalibration::dropSampleAtIndex(size_t idx) {
+  if (idx >= m_objectIds.size())
+    return; // index out of range
+
+  m_objectPoints.erase(m_objectPoints.begin() + idx);
+  m_objectIds.erase(m_objectIds.begin() + idx);
+  for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
+    m_calibrationPoints[cameraIdx].erase(m_calibrationPoints[cameraIdx].begin() + idx);
+  }
+}
+
 cv::Mat CharucoMultiViewCalibration::calibSpaceDistCoeffs(size_t cameraIdx) {
   if (m_undistortCapturedViews)
     return zeroDistortion;
