@@ -71,6 +71,9 @@ protected:
   int m_sgmUniquenessRatio;
   bool m_sgmUseHH4;
 
+  // Render settings
+  int m_trimLeft, m_trimTop;
+  int m_trimRight, m_trimBottom;
 
   struct ViewData {
     ViewData() : m_isStereoView(false), m_leftJoinEvent(cv::cuda::Event::DISABLE_TIMING), m_rightJoinEvent(cv::cuda::Event::DISABLE_TIMING) {}

@@ -35,6 +35,9 @@ struct MeshDisparityDepthMapUniformBlock {
   glm::vec2 mogrify;
   float disparityPrescale;
   int disparityTexLevels;
+
+  glm::vec2 trim_minXY;
+  glm::vec2 trim_maxXY;
 };
 
 RHIRenderPipeline::ptr disparityMipPipeline;
@@ -95,6 +98,12 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
   m_sgmP2 = 120;
   m_sgmUniquenessRatio = 5; // 5-15
   m_sgmUseHH4 = true;
+
+  // Render settings
+  m_trimLeft = 8;
+  m_trimTop = 8;
+  m_trimRight = 8;
+  m_trimBottom = 8;
 
 
   // Common data
@@ -507,6 +516,9 @@ void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderVi
   ub.disparityPrescale = m_disparityPrescale;
   ub.disparityTexLevels = vd.m_disparityTexture->mipLevels() - 1;
 
+  ub.trim_minXY = glm::vec2(m_trimLeft, m_trimTop);
+  ub.trim_maxXY = glm::vec2((m_iFBAlgoWidth - 1) - m_trimRight, (m_iFBAlgoHeight - 1) - m_trimBottom);
+
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksImageTex, vd.m_iTexture);
   rhi()->loadTexture(ksDisparityTex, vd.m_disparityTexture);
@@ -544,6 +556,12 @@ void DepthMapGenerator::renderIMGUI() {
     m_didChangeSettings |= ImGui::SliderInt("Filter Radius (odd)", &m_disparityFilterRadius, 1, 9);
     m_didChangeSettings |= ImGui::SliderInt("Filter Iterations", &m_disparityFilterIterations, 1, 8);
   }
+
+  // Render settings. These don't affect the algorithm so we don't need to set m_didChangeSettings when they change.
+  ImGui::SliderInt("Trim Left",   &m_trimLeft,   0, 64);
+  ImGui::SliderInt("Trim Top",    &m_trimTop,    0, 64);
+  ImGui::SliderInt("Trim Right",  &m_trimRight,  0, 64);
+  ImGui::SliderInt("Trim Bottom", &m_trimBottom, 0, 64);
 
   ImGui::Checkbox("CUDA Profiling", &m_enableProfiling);
   if (m_enableProfiling) {

@@ -2,6 +2,7 @@
 
 in vec2 v2fTexCoord;
 in vec4 v2fPosition;
+flat in int v2fTrimmed;
 uniform sampler2D imageTex;
 
 /*
@@ -21,6 +22,9 @@ void main()
 
 //  if (v2fPosition.w < 0.1)
 //    discard;
+
+  if (v2fTrimmed != 0)
+    discard;
 
   outColor = texture(imageTex, v2fTexCoord);
 }
