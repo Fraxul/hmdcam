@@ -60,3 +60,6 @@ flicker.FailureFrameCount = 3;
 flicker.CorrectionFreqListEntries = 4;
 flicker.CorrectionFreqList = {60, 90, 100, 120};
 
+The default Sharpening filter should be disabled to improve accuracy of Charuco target detection:
+sharpness.v5.enable = FALSE;
+
