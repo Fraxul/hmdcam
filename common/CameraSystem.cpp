@@ -204,6 +204,21 @@ void CameraSystem::saveCalibrationData() {
 
 }
 
+glm::mat4 CameraSystem::viewWorldTransform(size_t viewIdx) const {
+  assert(viewIdx < views());
+
+  glm::mat4 vt = viewAtIndex(viewIdx).viewLocalTransform();
+
+  // View 0's tranform is stored relative to the world (user input)
+  // Other view tranforms are calibrated, so they're stored relative to view 0 to maintain calibration when adjusting the view offset.
+
+  if (viewIdx == 0)
+    return vt;
+  else
+    return viewAtIndex(0).viewLocalTransform() * vt;
+
+}
+
 void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
   cv::Size imageSize = cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
   float alpha = 0.25; // scaling factor. 0 = no invalid pixels in output (no black borders), 1 = use all input pixels

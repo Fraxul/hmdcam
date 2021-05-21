@@ -50,10 +50,11 @@ public:
     size_t cameraCount() const { return isStereo ? 2 : 1; }
     unsigned short cameraIndices[2]; // if (isStereo) [0] is left, [1] is right. Otherwise, only use [0].
 
-    // TODO view translation and orientation
     glm::vec3 viewTranslation;
     glm::vec3 viewRotation; // euler, degrees
-    glm::mat4 viewTransform() const {
+
+    // local transform only. for absolute view-to-world, see CameraSystem::viewWorldTransform
+    glm::mat4 viewLocalTransform() const {
       glm::mat4 res = glm::eulerAngleXYZ(glm::radians(viewRotation[0]), glm::radians(viewRotation[1]), glm::radians(viewRotation[2]));
       for (size_t i = 0; i < 3; ++i) res[3][i] = viewTranslation[i];
       return res;
@@ -83,9 +84,13 @@ public:
 
   size_t cameras() const { return m_cameras.size(); }
   Camera& cameraAtIndex(size_t cameraIndex) { return m_cameras[cameraIndex]; }
+  const Camera& cameraAtIndex(size_t cameraIndex) const { return m_cameras[cameraIndex]; }
 
   size_t views() const { return m_views.size(); }
   View& viewAtIndex(size_t viewIndex) { return m_views[viewIndex]; }
+  const View& viewAtIndex(size_t viewIndex) const { return m_views[viewIndex]; }
+
+  glm::mat4 viewWorldTransform(size_t viewIdx) const;
 
   class CalibrationContext;
 

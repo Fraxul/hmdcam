@@ -517,7 +517,7 @@ int main(int argc, char** argv) {
       for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
         CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
         if (v.isStereo)
-          depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView, v.viewTransform());
+          depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView, cameraSystem->viewWorldTransform(viewIdx));
       }
 
       if (enableCharucoDetection) {
@@ -599,7 +599,7 @@ int main(int argc, char** argv) {
 
                 if (gizmoType == 1) {
                   pointsStaging.reserve(pointsStaging.size() + boardObjectSpacePoints.size());
-                  glm::mat4 viewXf = v.viewTransform();
+                  glm::mat4 viewXf = cameraSystem->viewWorldTransform(viewIdx);
                   for (const glm::vec3& p : boardObjectSpacePoints) {
                     pointsStaging.push_back(viewXf * (linearRemapXf * glm::vec4(p, 1.0f)));
                   }
@@ -624,7 +624,7 @@ int main(int argc, char** argv) {
             if (gizmoType == 0) { // triangulated
               size_t offset = pointsStaging.size();
               pointsStaging.resize(pointsStaging.size() + triangulatedPoints.size());
-              glm::mat4 viewXf = v.viewTransform();
+              glm::mat4 viewXf = cameraSystem->viewWorldTransform(viewIdx);
 
               for (int pointIdx = 0; pointIdx < triangulatedPoints.size(); ++pointIdx) {
                 pointsStaging[offset + pointIdx] = viewXf * glm::vec4(triangulatedPoints[pointIdx], 1.0f);

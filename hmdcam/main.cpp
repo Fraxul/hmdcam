@@ -525,13 +525,30 @@ int main(int argc, char* argv[]) {
               if (ImGui::Button(caption)) {
                 calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
               }
-              if (viewIdx != 0) {
-                sprintf(caption, "Calibrate offset for stereo view %zu", viewIdx);
-                if (ImGui::Button(caption)) {
-                  calibrationContext.reset(cameraSystem->calibrationContextForStereoViewOffset(0, viewIdx));
-                }
-              }
             }
+
+            if (v.isStereo && viewIdx != 0) {
+              // Autocalibration for secondary stereo views
+              char caption[64];
+              sprintf(caption, "Calibrate offset for stereo view %zu", viewIdx);
+              if (ImGui::Button(caption)) {
+                calibrationContext.reset(cameraSystem->calibrationContextForStereoViewOffset(0, viewIdx));
+              }
+            } else {
+              // Direct view transform editing
+              ImGui::PushID(viewIdx);
+              ImGui::Text("View %zu Transform", viewIdx);
+              // convert to and from millimeters for editing
+              glm::vec3 txMM = v.viewTranslation * 1000.0f;
+              if (ImGui::DragFloat3("Tx", &txMM[0], /*speed=*/ 0.1f, /*min=*/ -500.0f, /*max=*/ 500.0f, "%.1fmm")) {
+                v.viewTranslation = txMM / 1000.0f;
+              }
+              ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/0.1f, /*min=*/ -75.0f, /*max=*/ 75.0f, "%.1fdeg");
+              ImGui::PopID();
+            }
+          }
+          if (ImGui::Button("Save Settings")) {
+            cameraSystem->saveCalibrationData();
           }
           if (debugEnableDepthMapGenerator && depthMapGenerator) {
             depthMapGenerator->renderIMGUI();
@@ -629,7 +646,7 @@ int main(int argc, char* argv[]) {
 
           if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
 
-            depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView, v.viewTransform());
+            depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView, cameraSystem->viewWorldTransform(viewIdx));
 
           } else {
             for (int viewEyeIdx = 0; viewEyeIdx < (v.isStereo ? 2 : 1); ++viewEyeIdx) {
