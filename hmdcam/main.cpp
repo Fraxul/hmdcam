@@ -632,7 +632,11 @@ int main(int argc, char* argv[]) {
 
       for (int eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
         rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+
+        // Note that our camera uses reversed depth projection -- we clear to 0 and use a "greater" depth-test.
+        rhi()->setClearDepth(0.0f);
         rhi()->beginRenderPass(eyeRT[eyeIdx], kLoadClear);
+        rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
 
         FxRenderView renderView;
         // TODO actual camera setup here. renderDisparityDepthMap only uses the viewProjection matrix.

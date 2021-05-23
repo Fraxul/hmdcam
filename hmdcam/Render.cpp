@@ -46,6 +46,7 @@ FxAtomicString ksMaskTex("maskTex");
 
 // per-eye render targets (pre distortion)
 RHISurface::ptr eyeTex[2];
+RHISurface::ptr eyeDepthRenderbuffer[2];
 RHIRenderTarget::ptr eyeRT[2];
 
 // distortion parameter buffers
@@ -279,7 +280,8 @@ bool RenderInit() {
   // Create FBOs for per-eye rendering (pre distortion)
   for (int i = 0; i < 2; ++i) {
     eyeTex[i] = rhi()->newTexture2D(eye_width, eye_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    eyeRT[i] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ eyeTex[i] }));
+    eyeDepthRenderbuffer[i] = rhi()->newRenderbuffer2D(eye_width, eye_height, RHISurfaceDescriptor(kSurfaceFormat_Depth32f));
+    eyeRT[i] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ eyeTex[i] }, eyeDepthRenderbuffer[i]));
   }
 
   printf("Screen dimensions: %u x %u\n", windowRenderTarget->width(), windowRenderTarget->height());
