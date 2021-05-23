@@ -1,0 +1,13 @@
+# copy to /etc/systemd/system
+# then run sudo systemctl enable dgpu-fans.service
+
+[Unit]
+Description=dgpu-fans
+After=nvpmodel.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dgpu-fans -q
+
+[Install]
+WantedBy=multi-user.target

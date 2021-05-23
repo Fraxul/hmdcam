@@ -1,0 +1,16 @@
+Import('env')
+
+dgpuEnv = env.Clone()
+
+# Link this app against the DGPU CUDA libraries instead of the default libraries (which on Tegra will be the iGPU libraries)
+dgpuEnv.Append(
+  LINKFLAGS=['-Wl,-rpath=/usr/local/nvidia-dgpu-support']
+)
+
+dgpuEnv.Program(
+  target = '../bin/dgpu-fans', # relative to build/dgpu-worker
+  source = Glob('dgpu-fans/*.cpp') + ['/usr/local/nvidia-dgpu-support/libnvidia-ml.so.1'],
+  LIBS = []
+)
+
+

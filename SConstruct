@@ -40,6 +40,7 @@ Export('env')
 if is_tegra:
   # Only build hmdcam application on Tegra
   SConscript('SConscript-hmdcam', variant_dir = 'build/hmdcam', duplicate = 0)
+  SConscript('SConscript-dgpu-fans', variant_dir = 'build/dgpu-fans', duplicate = 0)
 
 SConscript('SConscript-rdma-client', variant_dir = 'build/rdma-client', duplicate = 0)
 SConscript('SConscript-dgpu-worker', variant_dir = 'build/dgpu-worker', duplicate = 0)
