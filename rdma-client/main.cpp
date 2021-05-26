@@ -315,6 +315,11 @@ int main(int argc, char** argv) {
           if (ImGui::InputFloat3("Camera Target", &t[0]))
             sceneCamera->setTargetPosition(t);
 
+          float fov = sceneCamera->fieldOfView();
+          if (ImGui::DragFloat("Camera Horizontal FoV", &fov, /*speed=*/1.0f, /*min=*/20.0f, /*max=*/170.0f, /*format=*/"%.1fdeg")) {
+            sceneCamera->setFieldOfView(fov);
+          }
+
           FxRenderView renderView = sceneCamera->toRenderView(static_cast<float>(io.DisplaySize.x) / static_cast<float>(io.DisplaySize.y));
           {
             glm::mat4 m = renderView.viewMatrix;
