@@ -42,6 +42,9 @@ public:
 
   void setUseHMDControl(bool value) { m_useHMDControl = value; }
 
+  void setUseInfiniteZ(bool value) { m_useInfiniteZ = value; }
+  bool useInfiniteZ() const { return m_useInfiniteZ; }
+
 protected:
   glm::vec3 m_position;
   glm::vec3 m_targetPosition;
@@ -50,6 +53,7 @@ protected:
   float m_fovX;
   float m_zNear, m_zFar;
 
+  bool m_useInfiniteZ;
   bool m_useHMDControl;
 };
 

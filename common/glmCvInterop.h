@@ -37,6 +37,12 @@ static glm::mat4 glmMat4FromCVMatrix(cv::Mat matin) {
   return out;
 }
 
+static cv::Matx33f CVMatrixFromGlmMat3(glm::mat3 matin) {
+  cv::Matx33f out;
+  for (int y = 0; y < 3; y++) { for (int x = 0; x < 3; x++) { out(y,x) = matin[y][x]; } }
+  return out;
+}
+
 static cv::Matx44f CVMatrixFromGlmMat4(glm::mat4 matin) {
   cv::Matx44f out;
   for (int y = 0; y < 4; y++) { for (int x = 0; x < 4; x++) { out(y,x) = matin[y][x]; } }

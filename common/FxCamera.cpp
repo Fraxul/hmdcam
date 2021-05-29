@@ -24,7 +24,8 @@ FxCamera::FxCamera() :
   m_targetPosition(glm::vec3(0, 0, -5)),
   m_upVec(glm::vec3(0, 1, 0)),
   m_fovX(65.0f),
-  m_zNear(1.0f), m_zFar(10000.0f),
+  m_zNear(r_zNear), m_zFar(10000.0f),
+  m_useInfiniteZ(true),
   m_useHMDControl(false) {
 
 }
@@ -187,29 +188,27 @@ FxRenderView FxCamera::toRenderView(float renderTargetAspectRatio, int forStereo
     1.0f / glm::tan(glm::radians(res.fovY * 0.5f)) );
   glm::vec2 projOffset = glm::vec2(0.0f);
 
-#if 1
-  // Right-handed infinite-Z far plane
-  // TODO option to use this
-  res.projectionMatrix = glm::mat4(
-    glm::vec4(projScale.x,    0.0f,        projOffset.x,     0.0f),
-    glm::vec4(0.0f,           projScale.y, projOffset.y,     0.0f),
-    glm::vec4(0.0f,           0.0f,        0.0f,            -1.0f),
-    glm::vec4(0.0f,           0.0f,        r_zNear,          0.0f)
-  );
+  if (m_useInfiniteZ) {
+    // Right-handed infinite-Z far plane
+    res.projectionMatrix = glm::mat4(
+      glm::vec4(projScale.x,    0.0f,        projOffset.x,     0.0f),
+      glm::vec4(0.0f,           projScale.y, projOffset.y,     0.0f),
+      glm::vec4(0.0f,           0.0f,        0.0f,            -1.0f),
+      glm::vec4(0.0f,           0.0f,        m_zNear,          0.0f)
+    );
+  } else {
+    // bounded-Z far plane
+    float z1 = m_zNear / (m_zNear - m_zFar);
+    float z2 = -m_zFar * z1;
+    res.projectionMatrix = glm::mat4(
+      glm::vec4(projScale.x,    0.0f,        projOffset.x,  0.0f),
+      glm::vec4(0.0f,           projScale.y, projOffset.y,  0.0f),
+      glm::vec4(0.0f,           0.0f,        z1,           -1.0f),
+      glm::vec4(0.0f,           0.0f,        z2,            0.0f)
+    );
+  }
 
-#else
-  // bounded-Z far plane
-  float z1 = r_zNear.value() / (r_zNear.value() - m_zFar);
-  float z2 = -m_zFar * z1;
-  res.projectionMatrix = glm::mat4(
-    glm::vec4(projScale.x,    0.0f,        projOffset.x,  0.0f),
-    glm::vec4(0.0f,           projScale.y, projOffset.y,  0.0f),
-    glm::vec4(0.0f,           0.0f,        z1,           -1.0f),
-    glm::vec4(0.0f,           0.0f,        z2,            0.0f)
-  );
-#endif
-
-  res.zNear = r_zNear;
+  res.zNear = m_zNear;
   res.zFar = m_zFar;
   res.zMin = 0.0f;
   res.zMax = 1.0f;
