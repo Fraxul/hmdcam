@@ -10,6 +10,7 @@
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/cudaarithm.hpp>
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudawarping.hpp>
 #include <cuda.h>
@@ -184,6 +185,8 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
     if (!vd.m_isStereoView)
       continue; // Not applicable for mono views
 
+    vd.m_isVerticalStereo = v.isVerticalStereo();
+
     CameraSystem::Camera& cL = m_cameraSystem->cameraAtIndex(v.cameraIndices[0]);
     CameraSystem::Camera& cR = m_cameraSystem->cameraAtIndex(v.cameraIndices[1]);
 
@@ -220,8 +223,13 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
     vd.resizedLeft_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
     vd.resizedRight_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
 
-    vd.resizedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
-    vd.resizedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth + NUM_DISP, CV_8U);
+    vd.resizedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
+    vd.resizedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
+
+    if (vd.m_isVerticalStereo) {
+      vd.resizedTransposedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoWidth, m_iFBAlgoHeight, CV_8U);
+      vd.resizedTransposedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoWidth, m_iFBAlgoHeight, CV_8U);
+    }
   }
 
 }
@@ -370,6 +378,11 @@ void DepthMapGenerator::processFrame() {
     cv::cuda::cvtColor(vd.resizedLeft_gpu, vd.resizedLeftGray_gpu, cv::COLOR_BGRA2GRAY, 0, vd.m_leftStream);
     cv::cuda::cvtColor(vd.resizedRight_gpu, vd.resizedRightGray_gpu, cv::COLOR_BGRA2GRAY, 0, vd.m_rightStream);
 
+    if (vd.m_isVerticalStereo) {
+      cv::cuda::transpose(vd.resizedLeftGray_gpu, vd.resizedTransposedLeftGray_gpu, vd.m_leftStream);
+      cv::cuda::transpose(vd.resizedRightGray_gpu, vd.resizedTransposedRightGray_gpu, vd.m_rightStream);
+    }
+
     vd.m_leftJoinEvent.record(vd.m_leftStream);
     vd.m_rightJoinEvent.record(vd.m_rightStream);
   }
@@ -411,9 +424,12 @@ void DepthMapGenerator::processFrame() {
     m_depthMapSHM->segment()->m_activeViewCount += 1;
 
     DepthMapSHM::ViewParams& viewParams = m_depthMapSHM->segment()->m_viewParams[vd.m_shmViewIndex];
-    viewParams.width = vd.resizedLeftGray_gpu.cols;
-    viewParams.height = vd.resizedLeftGray_gpu.rows;
-    viewParams.inputPitchBytes = vd.resizedLeftGray_gpu.step;
+    cv::cuda::GpuMat& leftGpu = vd.m_isVerticalStereo ? vd.resizedTransposedLeftGray_gpu : vd.resizedLeftGray_gpu;
+    cv::cuda::GpuMat& rightGpu = vd.m_isVerticalStereo ? vd.resizedTransposedRightGray_gpu : vd.resizedRightGray_gpu;
+
+    viewParams.width = leftGpu.cols;
+    viewParams.height = leftGpu.rows;
+    viewParams.inputPitchBytes = leftGpu.step;
     viewParams.outputPitchBytes = viewParams.width * ((m_algorithm == 0) ? 1 : 2); // Tightly packed output so it can be passed to RHI::loadTextureData
 
     // Allocate space in the SHM region for the I/O buffers.
@@ -430,8 +446,8 @@ void DepthMapGenerator::processFrame() {
     cv::Mat rightMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputRightOffset, viewParams.inputPitchBytes);
     cv::Mat dispMat(viewParams.height, viewParams.width, (m_algorithm == 0) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
 
-    vd.resizedLeftGray_gpu.download(leftMat, m_globalStream);
-    vd.resizedRightGray_gpu.download(rightMat, m_globalStream);
+    leftGpu.download(leftMat, m_globalStream);
+    rightGpu.download(rightMat, m_globalStream);
   }
 
   // Write current frame to the SHM segment
@@ -465,7 +481,14 @@ void DepthMapGenerator::processFrame() {
 
     RHICUDA::copyGpuMatToSurface(vd.rectLeft_gpu, vd.m_iTexture, m_globalStream);
 
-    rhi()->loadTextureData(vd.m_disparityTexture, (m_algorithm == 0) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, m_depthMapSHM->segment()->data() + viewParams.outputOffset);
+    if (vd.m_isVerticalStereo) {
+      cv::Mat transposedDispMat(viewParams.height, viewParams.width, (m_algorithm == 0) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
+      cv::Mat dispMat = transposedDispMat.t(); // TODO might be more efficient to transpose in the DGPUWorker while the data is still on the GPU
+      rhi()->loadTextureData(vd.m_disparityTexture, (m_algorithm == 0) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, dispMat.data);
+
+    } else {
+      rhi()->loadTextureData(vd.m_disparityTexture, (m_algorithm == 0) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, m_depthMapSHM->segment()->data() + viewParams.outputOffset);
+    }
 
     // Filter invalid disparities: generate mip-chain
     for (uint32_t targetLevel = 1; targetLevel < vd.m_disparityTexture->mipLevels(); ++targetLevel) {

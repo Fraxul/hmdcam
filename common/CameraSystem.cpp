@@ -1020,17 +1020,23 @@ std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, 
 
   float dispScale = 16.0f / static_cast<float>(triangulationDisparityScaleInv);
 
+  bool isVerticalStereo = view.isVerticalStereo();
+
   for (size_t pointIdx = 0; pointIdx < lp.size(); ++pointIdx) {
     float x = lp[pointIdx].x;
     float y = lp[pointIdx].y;
 
-    float fDisp = fabs(rp[pointIdx].x - lp[pointIdx].x) / dispScale;
+    float fDisp;
+    if (isVerticalStereo)
+      fDisp = fabs(rp[pointIdx].y - lp[pointIdx].y) / dispScale;
+    else
+      fDisp = fabs(rp[pointIdx].x - lp[pointIdx].x) / dispScale;
 
-      float lz = (Q[2][3] * CameraDistanceMeters) / fDisp;
-      float ly = (y + Q[1][3]) / Q[2][3];
-      float lx = (x + Q[0][3]) / Q[2][3];
-      lx *= lz;
-      ly *= lz;
+    float lz = (Q[2][3] * CameraDistanceMeters) / fDisp;
+    float ly = (y + Q[1][3]) / Q[2][3];
+    float lx = (x + Q[0][3]) / Q[2][3];
+    lx *= lz;
+    ly *= lz;
 
     res[pointIdx] = R1inv * glm::vec3(lx, -ly, -lz);
   }

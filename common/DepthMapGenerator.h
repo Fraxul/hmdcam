@@ -76,8 +76,9 @@ protected:
   int m_trimRight, m_trimBottom;
 
   struct ViewData {
-    ViewData() : m_isStereoView(false), m_leftJoinEvent(cv::cuda::Event::DISABLE_TIMING), m_rightJoinEvent(cv::cuda::Event::DISABLE_TIMING) {}
+    ViewData() : m_isStereoView(false), m_isVerticalStereo(false), m_leftJoinEvent(cv::cuda::Event::DISABLE_TIMING), m_rightJoinEvent(cv::cuda::Event::DISABLE_TIMING) {}
     bool m_isStereoView;
+    bool m_isVerticalStereo;
     size_t m_shmViewIndex;
 
 
@@ -108,6 +109,8 @@ protected:
     cv::cuda::GpuMat resizedRight_gpu;
     cv::cuda::GpuMat resizedLeftGray_gpu;
     cv::cuda::GpuMat resizedRightGray_gpu;
+    cv::cuda::GpuMat resizedTransposedLeftGray_gpu;
+    cv::cuda::GpuMat resizedTransposedRightGray_gpu;
 
     cv::cuda::Stream m_leftStream, m_rightStream;
     cv::cuda::Event m_leftJoinEvent;
