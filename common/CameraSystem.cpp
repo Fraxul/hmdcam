@@ -2,6 +2,7 @@
 #include "common/ICameraProvider.h"
 #include "common/CharucoMultiViewCalibration.h"
 #include "common/glmCvInterop.h"
+#include "common/FxThreading.h"
 #include "rhi/RHIResources.h"
 #include "imgui.h"
 #include <iostream>
@@ -526,6 +527,7 @@ CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSys
   m_feedbackView.create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/cameraProvider()->streamWidth(), CV_8UC4);
 
   m_feedbackRmsError = -1.0;
+  m_incrementalUpdateInProgress = false;
 }
 
 CameraSystem::IntrinsicCalibrationContext::~IntrinsicCalibrationContext() {
@@ -551,6 +553,8 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
   ImGui::Text("%zu samples", m_allCharucoCorners.size());
   if (m_feedbackRmsError < 0.0) {
     ImGui::Text("(insufficient/invalid data for preview)");
+  } else if (m_incrementalUpdateInProgress) {
+    ImGui::Text("Updating calibration...");
   } else {
     ImGui::Text("RMS error: %f", m_feedbackRmsError);
     ImGui::Text("FOV: %.2f x %.2f", m_feedbackFovX, m_feedbackFovY);
@@ -615,6 +619,9 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
 
   rhi()->loadTextureData(m_feedbackTex, kVertexElementTypeUByte4N, m_feedbackView.ptr(0));
 
+  if (m_incrementalUpdateInProgress)
+    return; // don't allow capture while we're still updating
+
   // Require at least a third of the markers to be in frame to take an intrinsic calibration sample
   bool found = (currentCharucoCorners.total() >= (s_charucoBoard->chessboardCorners.size() / 3));
   if (found && captureRequested()) {
@@ -640,43 +647,48 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
       printf("Saved %s\n", filename);
     }
 
-    try {
-      Camera& c = cameraSystem()->cameraAtIndex(m_cameraIdx);
-
-      cv::Mat stdDeviations, perViewErrors;
-      std::vector<float> reprojErrs;
-      cv::Size imageSize(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
-      float alpha = 0.25f;
-      int flags =
-        cv::CALIB_FIX_PRINCIPAL_POINT |
-        cv::CALIB_FIX_ASPECT_RATIO |
-        cv::CALIB_RATIONAL_MODEL;
-
-      c.intrinsicMatrix = cv::Mat::eye(3, 3, CV_64F);
-      c.distCoeffs = cv::Mat::zeros(14, 1, CV_64F);
-
-
-      m_feedbackRmsError = cv::aruco::calibrateCameraCharuco(m_allCharucoCorners, m_allCharucoIds,
-                                     s_charucoBoard, imageSize,
-                                     c.intrinsicMatrix, c.distCoeffs,
-                                     cv::noArray(), cv::noArray(), stdDeviations, cv::noArray(),
-                                     perViewErrors, flags);
-
-
-      //printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);
-      //std::cout << "Camera " << m_cameraIdx << " Per-view error: " << std::endl << perViewErrors << std::endl;
-      //std::cout << "Camera " << m_cameraIdx << " Matrix: " << std::endl << c.intrinsicMatrix << std::endl;
-      //std::cout << "Camera " << m_cameraIdx << " Distortion coefficients: " << std::endl << c.distCoeffs << std::endl;
-
-      double focalLength, aspectRatio; // not valid without a real aperture size, which we don't bother providing
-      cv::Mat optimizedMatrix = cv::getOptimalNewCameraMatrix(c.intrinsicMatrix, c.distCoeffs, imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
-      cv::calibrationMatrixValues(optimizedMatrix, imageSize, 0.0, 0.0, m_feedbackFovX, m_feedbackFovY, focalLength, m_feedbackPrincipalPoint, aspectRatio);
-
-    } catch (const std::exception& ex) {
-      printf("Incremental calibration updated failed: %s\n", ex.what());
-      m_feedbackRmsError = -1.0;
-    }
+    m_incrementalUpdateInProgress = true;
+    FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
   }
+}
+
+void CameraSystem::IntrinsicCalibrationContext::asyncUpdateIncrementalCalibration() {
+  try {
+    Camera& c = cameraSystem()->cameraAtIndex(m_cameraIdx);
+
+    cv::Mat stdDeviations, perViewErrors;
+    std::vector<float> reprojErrs;
+    cv::Size imageSize(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
+    int flags =
+      cv::CALIB_FIX_PRINCIPAL_POINT |
+      cv::CALIB_FIX_ASPECT_RATIO |
+      cv::CALIB_RATIONAL_MODEL;
+
+    c.intrinsicMatrix = cv::Mat::eye(3, 3, CV_64F);
+    c.distCoeffs = cv::Mat::zeros(14, 1, CV_64F);
+
+
+    m_feedbackRmsError = cv::aruco::calibrateCameraCharuco(m_allCharucoCorners, m_allCharucoIds,
+                                   s_charucoBoard, imageSize,
+                                   c.intrinsicMatrix, c.distCoeffs,
+                                   cv::noArray(), cv::noArray(), stdDeviations, cv::noArray(),
+                                   perViewErrors, flags);
+
+
+    //printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);
+    //std::cout << "Camera " << m_cameraIdx << " Per-view error: " << std::endl << perViewErrors << std::endl;
+    //std::cout << "Camera " << m_cameraIdx << " Matrix: " << std::endl << c.intrinsicMatrix << std::endl;
+    //std::cout << "Camera " << m_cameraIdx << " Distortion coefficients: " << std::endl << c.distCoeffs << std::endl;
+
+    double focalLength, aspectRatio; // not valid without a real aperture size, which we don't bother providing
+    cv::calibrationMatrixValues(c.intrinsicMatrix, imageSize, 0.0, 0.0, m_feedbackFovX, m_feedbackFovY, focalLength, m_feedbackPrincipalPoint, aspectRatio);
+
+  } catch (const std::exception& ex) {
+    printf("Incremental calibration updated failed: %s\n", ex.what());
+    m_feedbackRmsError = -1.0;
+  }
+
+  m_incrementalUpdateInProgress = false;
 }
 
 void CameraSystem::IntrinsicCalibrationContext::processFramePreviewMode() {

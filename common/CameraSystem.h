@@ -216,9 +216,12 @@ public:
     cv::Mat m_previousDistCoeffs;
 
     // Preview data
+    void asyncUpdateIncrementalCalibration();
+
     double m_feedbackRmsError;
     double m_feedbackFovX, m_feedbackFovY; // degrees
     cv::Point2d m_feedbackPrincipalPoint;
+    bool m_incrementalUpdateInProgress;
   };
 
   class StereoCalibrationContext : public CalibrationContextStateMachineBase {
