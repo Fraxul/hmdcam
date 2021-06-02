@@ -362,6 +362,10 @@ int main(int argc, char** argv) {
           ImGui::PopID();
         }
 
+        if (ImGui::Button("Save Settings")) {
+          cameraSystem->saveCalibrationData();
+        }
+
         depthMapGenerator->renderIMGUI();
 
         ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
