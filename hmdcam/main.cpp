@@ -744,6 +744,7 @@ int main(int argc, char* argv[]) {
         // UI overlay
         if (drawUI || calibrationContext) {
           rhi()->bindBlendState(standardAlphaOverBlendState);
+          rhi()->bindDepthStencilState(disabledDepthStencilState);
           rhi()->bindRenderPipeline(uiLayerPipeline);
           rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
           UILayerUniformBlock uiLayerBlock;
