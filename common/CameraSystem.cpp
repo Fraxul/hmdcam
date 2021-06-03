@@ -561,6 +561,41 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
     ImGui::Text("Principal Point offset: %.2f, %.2f",
       static_cast<float>(cameraProvider()->streamWidth()  / 2) - m_feedbackPrincipalPoint.x,
       static_cast<float>(cameraProvider()->streamHeight() / 2) - m_feedbackPrincipalPoint.y);
+
+    ImGui::Text("Per-View Errors");
+    if (m_perViewErrors.rows > 0) {
+      for (int i = 0; i < m_perViewErrors.rows; ++i) {
+        ImGui::Text(" [%d] %f", i, m_perViewErrors.at<double>(i, 0));
+      }
+      if (ImGui::Button("Drop last sample")) {
+        // drop sample
+        m_allCharucoCorners.pop_back();
+        m_allCharucoIds.pop_back();
+
+        // update calibration feedback
+        m_incrementalUpdateInProgress = true;
+        FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
+      }
+      if (ImGui::Button("Drop highest-error sample")) {
+        double maxError = 0;
+        int maxErrorRow = 0;
+        for (int i = 0; i < m_perViewErrors.rows; ++i) {
+          double e = m_perViewErrors.at<double>(i, 0);
+          if (e > maxError) {
+            e = maxError;
+            maxErrorRow = i;
+          }
+        }
+
+        // drop sample
+        m_allCharucoCorners.erase(m_allCharucoCorners.begin() + maxErrorRow);
+        m_allCharucoIds.erase(m_allCharucoIds.begin() + maxErrorRow);
+
+        // update calibration feedback
+        m_incrementalUpdateInProgress = true;
+        FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
+      }
+    }
   }
 }
 
@@ -656,7 +691,7 @@ void CameraSystem::IntrinsicCalibrationContext::asyncUpdateIncrementalCalibratio
   try {
     Camera& c = cameraSystem()->cameraAtIndex(m_cameraIdx);
 
-    cv::Mat stdDeviations, perViewErrors;
+    cv::Mat stdDeviations;
     std::vector<float> reprojErrs;
     cv::Size imageSize(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
     int flags =
@@ -672,7 +707,7 @@ void CameraSystem::IntrinsicCalibrationContext::asyncUpdateIncrementalCalibratio
                                    s_charucoBoard, imageSize,
                                    c.intrinsicMatrix, c.distCoeffs,
                                    cv::noArray(), cv::noArray(), stdDeviations, cv::noArray(),
-                                   perViewErrors, flags);
+                                   m_perViewErrors, flags);
 
 
     //printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);

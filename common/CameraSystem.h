@@ -218,6 +218,7 @@ public:
     // Preview data
     void asyncUpdateIncrementalCalibration();
 
+    cv::Mat m_perViewErrors;
     double m_feedbackRmsError;
     double m_feedbackFovX, m_feedbackFovY; // degrees
     cv::Point2d m_feedbackPrincipalPoint;
