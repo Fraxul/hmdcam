@@ -352,7 +352,7 @@ EGLDisplay renderEGLDisplay() { return demoState.display; }
 EGLContext renderEGLContext() { return demoState.context; }
 
 void recomputeHMDParameters() {
-  float zNear = 0.5f;
+  float zNear = 0.0f;
 
   // from renderer_get_view_projection (compositor/main/comp_renderer.c)
   struct xrt_vec3 eye_relation = {
