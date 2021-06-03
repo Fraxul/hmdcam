@@ -994,6 +994,7 @@ RHISurface::ptr CameraSystem::StereoCalibrationContext::overlaySurfaceAtIndex(si
 
 
 CameraSystem::StereoViewOffsetCalibrationContext::StereoViewOffsetCalibrationContext(CameraSystem* cs, size_t referenceViewIdx, size_t viewIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_referenceViewIdx(referenceViewIdx), m_viewIdx(viewIdx) {
+  m_useLinearRemap = false;
 
   // Store cancellation cache
   m_previousViewTranslation = cameraSystem()->viewAtIndex(viewIdx).viewTranslation;
@@ -1028,6 +1029,9 @@ void CameraSystem::StereoViewOffsetCalibrationContext::renderStatusUI() {
   float rx, ry, rz;
   glm::extractEulerAngleXYZ(m_tgt2ref, rx, ry, rz);
   ImGui::Text("Rx (deg): %.2f %.2f %.2f", glm::degrees(rx), glm::degrees(ry), glm::degrees(rz));
+
+  ImGui::Checkbox("Use linear remap", &m_useLinearRemap);
+  ImGui::Text("(Less accurate, but does not require common board-points across all views)");
 
 }
 
@@ -1243,23 +1247,47 @@ void CameraSystem::StereoViewOffsetCalibrationContext::processFrameCaptureMode()
   // capture request succeeded if return is true
   acknowledgeCaptureRequest();
 
-  std::vector<glm::vec3> refVP = recoverViewSpaceBoardPoints(cameraSystem(), m_referenceViewIdx, m_refCalibState);
-  std::vector<glm::vec3> tgtVP = recoverViewSpaceBoardPoints(cameraSystem(), m_viewIdx, m_tgtCalibState);
 
-  if (refVP.empty() || tgtVP.empty())
-    return; // mapping failed
+  if (m_useLinearRemap) {
+    // Recover the board pose using visible points from each view-pair, then use the board pose to estimate the position of all points.
+    // Requires the board to be visible in all views, but does not require the same points to be visible.
 
-  // Keep only the points that exist in at least one view -- that might help reduce extrapolation error?
-  std::set<int> idSet;
+    std::vector<glm::vec3> refVP = recoverViewSpaceBoardPoints(cameraSystem(), m_referenceViewIdx, m_refCalibState);
+    std::vector<glm::vec3> tgtVP = recoverViewSpaceBoardPoints(cameraSystem(), m_viewIdx, m_tgtCalibState);
 
-  for (int id : flattenVector(m_refCalibState->m_objectIds))
-    idSet.insert(id);
-  for (int id : flattenVector(m_tgtCalibState->m_objectIds))
-    idSet.insert(id);
+    if (refVP.empty() || tgtVP.empty())
+      return; // mapping failed
 
-  for (int id : idSet) {
-    m_refPoints.push_back(refVP[id]);
-    m_tgtPoints.push_back(tgtVP[id]);
+    // Keep only the points that exist in at least one view -- that might help reduce extrapolation error?
+    std::set<int> idSet;
+
+    for (int id : flattenVector(m_refCalibState->m_objectIds))
+      idSet.insert(id);
+    for (int id : flattenVector(m_tgtCalibState->m_objectIds))
+      idSet.insert(id);
+
+    for (int id : idSet) {
+      m_refPoints.push_back(refVP[id]);
+      m_tgtPoints.push_back(tgtVP[id]);
+    }
+  } else {
+    // Use direct matching of points between views. Requires common points to be visible in all views.
+
+    std::vector<glm::vec3> tgtViewP = getTriangulatedPointsForView(cameraSystem(), m_viewIdx, m_tgtCalibState->m_calibrationPoints[0], m_tgtCalibState->m_calibrationPoints[1]);
+    std::vector<int> tgtIds = flattenVector(m_tgtCalibState->m_objectIds);
+
+    std::vector<glm::vec3> refViewP = getTriangulatedPointsForView(cameraSystem(), m_referenceViewIdx, m_refCalibState->m_calibrationPoints[0], m_refCalibState->m_calibrationPoints[1]);
+    std::vector<int> refIds = flattenVector(m_refCalibState->m_objectIds);
+
+    for (size_t i = 0; i < refIds.size(); ++i) {
+      for (size_t j = 0; j < tgtIds.size(); ++j) {
+        if (refIds[i] == tgtIds[j]) {
+          m_refPoints.push_back(refViewP[i]);
+          m_tgtPoints.push_back(tgtViewP[j]);
+          break;
+        }
+      }
+    }
   }
 
 #if 0

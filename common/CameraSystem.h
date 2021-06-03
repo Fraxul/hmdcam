@@ -355,6 +355,8 @@ public:
 
     // Cached data of previous calibration to be restored if the context is cancelled.
     glm::vec3 m_previousViewTranslation, m_previousViewRotation;
+
+    bool m_useLinearRemap;
   };
 
   ICameraProvider* cameraProvider() const { return m_cameraProvider; }
