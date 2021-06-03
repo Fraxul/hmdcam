@@ -55,7 +55,7 @@ public:
 
     // local transform only. for absolute view-to-world, see CameraSystem::viewWorldTransform
     glm::mat4 viewLocalTransform() const {
-      glm::mat4 res = glm::eulerAngleXYZ(glm::radians(viewRotation[0]), glm::radians(viewRotation[1]), glm::radians(viewRotation[2]));
+      glm::mat4 res = glm::eulerAngleYXZ(glm::radians(viewRotation[0]), glm::radians(viewRotation[1]), glm::radians(viewRotation[2]));
       for (size_t i = 0; i < 3; ++i) res[3][i] = viewTranslation[i];
       return res;
     }

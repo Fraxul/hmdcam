@@ -905,7 +905,7 @@ void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
 
   m_feedbackTx = glmVec3FromCV(feedbackTx);
   glm::mat4 rx = glmMat3FromCVMatrix(feedbackRx);
-  glm::extractEulerAngleXYZ(rx, m_feedbackRx[0], m_feedbackRx[1], m_feedbackRx[2]);
+  glm::extractEulerAngleYXZ(rx, m_feedbackRx[0], m_feedbackRx[1], m_feedbackRx[2]);
 
   cv::Mat feedbackRect[2], feedbackProj[2], feedbackQ;
   cv::Rect stereoValidROI[2];
@@ -1027,7 +1027,7 @@ void CameraSystem::StereoViewOffsetCalibrationContext::renderStatusUI() {
   ImGui::Text("RMS Error (mm): %.2f", m_rmsError * 1000.0f);
 
   float rx, ry, rz;
-  glm::extractEulerAngleXYZ(m_tgt2ref, rx, ry, rz);
+  glm::extractEulerAngleYXZ(m_tgt2ref, rx, ry, rz);
   ImGui::Text("Rx (deg): %.2f %.2f %.2f", glm::degrees(rx), glm::degrees(ry), glm::degrees(rz));
 
   ImGui::Checkbox("Use linear remap", &m_useLinearRemap);
@@ -1328,7 +1328,7 @@ void CameraSystem::StereoViewOffsetCalibrationContext::didAcceptCalibrationPrevi
   v.viewTranslation = glm::vec3(m_tgt2ref[3]);
 
   glm::vec3 rv;
-  glm::extractEulerAngleXYZ(m_tgt2ref, rv[0], rv[1], rv[2]);
+  glm::extractEulerAngleYXZ(m_tgt2ref, rv[0], rv[1], rv[2]);
   v.viewRotation = glm::degrees(rv);
 }
 

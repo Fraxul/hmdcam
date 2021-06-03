@@ -580,7 +580,7 @@ int main(int argc, char** argv) {
 
               if (linearRemapError >= 0.0) { // returns <0 on failure
                 float ex, ey, ez;
-                glm::extractEulerAngleXYZ(linearRemapXf, ex, ey, ez);
+                glm::extractEulerAngleYXZ(linearRemapXf, ex, ey, ez);
                 ImGui::Text("Linear remap: Tx %.1f %.1f %.1f Rx %.2f %.2f %.2f Error: %.1f",
                   linearRemapXf[3][0] * 1000.0f, linearRemapXf[3][1] * 1000.0f, linearRemapXf[3][2] * 1000.0f,
                   glm::degrees(ex), glm::degrees(ey), glm::degrees(ez), linearRemapError * 1000.0f);

@@ -337,7 +337,7 @@ int main(int argc, char** argv) {
         stereoDirty |= ImGui::DragFloat3("Rx", &stereoOffsetRDeg[0], /*speed=*/1.0f, /*min=*/-120.0f, /*max=*/120.0f, /*format=*/"%.1fdeg");
 
         if (true) { // stereoDirty) {
-          cv::Mat rMat_f32 = cv::Mat(CVMatrixFromGlmMat3(glm::mat3(glm::eulerAngleXYZ(glm::radians(stereoOffsetRDeg[0]), glm::radians(stereoOffsetRDeg[1]), glm::radians(stereoOffsetRDeg[2])))));
+          cv::Mat rMat_f32 = cv::Mat(CVMatrixFromGlmMat3(glm::mat3(glm::eulerAngleYXZ(glm::radians(stereoOffsetRDeg[0]), glm::radians(stereoOffsetRDeg[1]), glm::radians(stereoOffsetRDeg[2])))));
           cv::Mat tMat_f32 = cv::Mat(cvVec3FromGlm(stereoOffsetPMM * 1000.0f));
           cv::Mat rMat, tMat;
           rMat_f32.convertTo(rMat, CV_64F);
@@ -411,7 +411,7 @@ int main(int argc, char** argv) {
           cam.setTargetPosition(glm::vec3(0.0f, 0.0f, -1.0f));
         } else {
           cam.setPosition(stereoOffsetPMM * 0.001f);
-          glm::mat3 rm = glm::mat3(glm::eulerAngleXYZ(glm::radians(stereoOffsetRDeg[0]), glm::radians(stereoOffsetRDeg[1]), glm::radians(stereoOffsetRDeg[2])));
+          glm::mat3 rm = glm::mat3(glm::eulerAngleYXZ(glm::radians(stereoOffsetRDeg[0]), glm::radians(stereoOffsetRDeg[1]), glm::radians(stereoOffsetRDeg[2])));
           cam.setTargetPosition(rm * glm::vec3(0.0f, 0.0f, -1.0f));
         }
         cam.setZNear(0.01f);
