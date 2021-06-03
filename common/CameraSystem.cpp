@@ -811,6 +811,7 @@ CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* c
 
   CameraSystem::View& v = cameraSystem()->viewAtIndex(m_viewIdx);
   m_calibState = new CharucoMultiViewCalibration(cameraSystem(), {v.cameraIndices[0], v.cameraIndices[1]});
+  m_calibState->m_undistortCapturedViews = false; // operate in native space
 
   m_feedbackTx = glm::vec3(0.0f);
   m_feedbackRx = glm::vec3(0.0f);
@@ -897,8 +898,8 @@ void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
 
   m_feedbackRmsError = cv::stereoCalibrate(m_calibState->m_objectPoints,
     m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
-      leftC.optimizedMatrix, zeroDistortion,
-      rightC.optimizedMatrix, zeroDistortion,
+    leftC.intrinsicMatrix, leftC.distCoeffs,
+    rightC.intrinsicMatrix, rightC.distCoeffs,
     cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
     feedbackRx, feedbackTx, feedbackE, feedbackF, m_perViewErrors, flags);
 
@@ -934,6 +935,8 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
     cv::Mat perViewErrors;
 
     View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+    Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
+    Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
 
     int flags =
       cv::CALIB_USE_INTRINSIC_GUESS | // load previously-established intrinsics
@@ -944,8 +947,8 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
 
     double rms = cv::stereoCalibrate(m_calibState->m_objectPoints,
       m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
-      cameraSystem()->cameraAtIndex(v.cameraIndices[0]).optimizedMatrix, zeroDistortion,
-      cameraSystem()->cameraAtIndex(v.cameraIndices[1]).optimizedMatrix, zeroDistortion,
+      leftC.intrinsicMatrix, leftC.distCoeffs,
+      rightC.intrinsicMatrix, rightC.distCoeffs,
       cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
       v.stereoRotation, v.stereoTranslation, E, F, perViewErrors, flags);
 

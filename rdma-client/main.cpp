@@ -353,7 +353,10 @@ int main(int argc, char** argv) {
           ImGui::PushID(viewIdx);
 
           ImGui::Text("View %zu", viewIdx);
-          ImGui::DragFloat3("Tx", &v.viewTranslation[0], /*speed=*/ 0.1f, /*min=*/ -10.0f, /*max=*/ 10.0f);
+          glm::vec3 txMM = v.viewTranslation * 1000.0f;
+          if (ImGui::DragFloat3("Tx", &txMM[0], /*speed=*/ 0.1f, /*min=*/ -1000.0f, /*max=*/ 1000.0f, "%.1fmm")) {
+            v.viewTranslation = txMM * 0.001f;
+          }
           ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/0.1f, /*min=*/ -75.0f, /*max=*/ 75.0f, "%.3fdeg");
 
 

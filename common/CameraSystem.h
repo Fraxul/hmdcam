@@ -250,10 +250,11 @@ public:
       else
         return -1;
     }
-    virtual OverlayDistortionSpace overlayDistortionSpace() const { return kDistortionSpaceIntrinsic; }
+    virtual OverlayDistortionSpace overlayDistortionSpace() const { return kDistortionSpaceUncorrected; }
     virtual RHISurface::ptr previewDistortionMapForCamera(size_t cameraIdx) const {
-      View& v = cameraSystem()->viewAtIndex(m_viewIdx);
-      return cameraSystem()->cameraAtIndex((cameraIdx == v.cameraIndices[0]) ? 0 : 1).intrinsicDistortionMap;
+      // View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+      // return cameraSystem()->cameraAtIndex((cameraIdx == v.cameraIndices[0]) ? 0 : 1).intrinsicDistortionMap;
+      return RHISurface::ptr();
     }
 
   protected:
