@@ -63,3 +63,16 @@ flicker.CorrectionFreqList = {60, 90, 100, 120};
 The default Sharpening filter should be disabled to improve accuracy of Charuco target detection:
 sharpness.v5.enable = FALSE;
 
+
+
+====== Nvidia Visual Profiler (nvvp) (on desktop) =====
+CUDA 11.1 + Ubuntu 20.04 nvvp will fail to launch out-of-the-box with a Java error.
+solution: nvvp needs to run under the java 8 runtime (and as root, typically)
+
+  sudo apt install openjdk8-jre
+  sudo update-alternatives --config java
+  select OpenJDK 8
+
+nvvp can then be run with sudo /usr/local/cuda/bin/nvvp
+
+

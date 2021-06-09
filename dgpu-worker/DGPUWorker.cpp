@@ -78,6 +78,9 @@ int main(int argc, char* argv[]) {
 
   cv::cuda::Event m_processingStartEvent, m_processingEndEvent;
 
+  // Enable cv::cuda buffer pool (must be done before creating per-view streams)
+  cv::cuda::setBufferPoolUsage(true);
+  cv::cuda::setBufferPoolConfig(cv::cuda::getDevice(), /*size (bytes) = */ 4 * 1048576, /*number of stacks/streams = */ DepthMapSHM::maxViews + 1);
 
   PerViewData perViewData[DepthMapSHM::maxViews];
 
