@@ -63,6 +63,17 @@ bool waitForDGPUWorkerReady(int pid, sem_t* sem, unsigned int timeout_sec) {
 }
 
 bool spawnAndWaitForDGPUWorker(sem_t* sem, unsigned int timeout_sec) {
+  if (getenv("DGPU_WORKER_ATTACH")) {
+    // Debug support for launching the worker process externally (through a debugger or NSight)
+    printf("Waiting for externally-spawned DGPU worker...\n");
+    int res = sem_wait(sem);
+    if (res != 0) {
+      perror("sem_wait()");
+      return false;
+    }
+    return true;
+  }
+
   int pid = spawnDGPUWorker();
   return waitForDGPUWorkerReady(pid, sem, timeout_sec);
 }
