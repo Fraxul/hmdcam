@@ -329,8 +329,8 @@ void DepthMapGenerator::processFrame() {
     }
 
     // Copy settings to SHM.
-    // The worker will read them on the next commit and reset m_depthMapSHM->segment()->m_didChangeSettings itself.
-    m_depthMapSHM->segment()->m_didChangeSettings = true;
+    // The worker will read them on the next commit, see the settingsGeneration change, and update itself
+    m_depthMapSHM->segment()->m_settingsGeneration += 1;
     m_depthMapSHM->segment()->m_algorithm = m_algorithm;
     m_depthMapSHM->segment()->m_numDisparities = NUM_DISP;
     m_depthMapSHM->segment()->m_useDisparityFilter = m_useDisparityFilter;

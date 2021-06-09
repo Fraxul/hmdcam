@@ -84,6 +84,7 @@ int main(int argc, char* argv[]) {
 
   // Signal readyness
   sem_post(&shm->segment()->m_workerReadySem);
+  unsigned int lastSettingsGeneration = 0xffffffff;
 
 
   while (true) {
@@ -107,7 +108,7 @@ int main(int argc, char* argv[]) {
 
     uint64_t startTime = currentTimeNs();
 
-    if ((!m_stereo) || shm->segment()->m_didChangeSettings) {
+    if ((!m_stereo) || (shm->segment()->m_settingsGeneration != lastSettingsGeneration)) {
       switch (shm->segment()->m_algorithm) {
         case 0:
           // uses CV_8UC1 disparity
@@ -126,6 +127,7 @@ int main(int argc, char* argv[]) {
       } else {
         m_disparityFilter.reset();
       }
+      lastSettingsGeneration = shm->segment()->m_settingsGeneration;
     }
 
 

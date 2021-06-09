@@ -41,7 +41,7 @@ public:
 
 
   // Algorithm settings
-  bool m_didChangeSettings;
+  unsigned int m_settingsGeneration;
   int m_algorithm;
   int m_numDisparities;
   bool m_useDisparityFilter;
