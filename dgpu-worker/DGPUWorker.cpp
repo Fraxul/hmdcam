@@ -34,6 +34,14 @@ static SHMSegment<DepthMapSHM>* shm;
 
 
 struct PerViewData {
+  PerViewData() : m_lastSettingsGeneration(0xffffffff) {}
+
+  // Some of the stereo matchers keep internal state which prevents them from being used in multiple parallel streams;
+  // we keep per-view stereo matcher and filter objects to avoid conflicts.
+  cv::Ptr<cv::StereoMatcher> m_stereoMatcher;
+  cv::Ptr<cv::cuda::DisparityBilateralFilter> m_disparityFilter;
+  unsigned int m_lastSettingsGeneration;
+
   cv::cuda::GpuMat m_leftGpu, m_rightGpu;
   cv::cuda::GpuMat m_equalizedLeftGpu, m_equalizedRightGpu;
   cv::cuda::GpuMat m_outputGpu;
@@ -73,9 +81,6 @@ int main(int argc, char* argv[]) {
   CUDA_CHECK(cuDevicePrimaryCtxRetain(&s_cudaContext, s_cudaDevice));
   CUDA_CHECK(cuCtxSetCurrent(s_cudaContext));
 
-  cv::Ptr<cv::StereoMatcher> m_stereo;
-  cv::Ptr<cv::cuda::DisparityBilateralFilter> m_disparityFilter;
-
   cv::cuda::Event m_processingStartEvent, m_processingEndEvent;
 
   // Enable cv::cuda buffer pool (must be done before creating per-view streams)
@@ -87,7 +92,6 @@ int main(int argc, char* argv[]) {
 
   // Signal readyness
   sem_post(&shm->segment()->m_workerReadySem);
-  unsigned int lastSettingsGeneration = 0xffffffff;
 
 
   while (true) {
@@ -111,26 +115,31 @@ int main(int argc, char* argv[]) {
 
     uint64_t startTime = currentTimeNs();
 
-    if ((!m_stereo) || (shm->segment()->m_settingsGeneration != lastSettingsGeneration)) {
-      switch (shm->segment()->m_algorithm) {
-        case 0:
-          // uses CV_8UC1 disparity
-          m_stereo = cv::cuda::createStereoBM(shm->segment()->m_numDisparities, shm->segment()->m_sbmBlockSize);
-          break;
-        case 1: {
-          m_stereo = cv::cuda::createStereoConstantSpaceBP(shm->segment()->m_numDisparities, shm->segment()->m_sbpIterations, shm->segment()->m_sbpLevels, shm->segment()->m_scsbpNrPlane);
-        } break;
-        case 2:
-          m_stereo = cv::cuda::createStereoSGM(0, shm->segment()->m_numDisparities, shm->segment()->m_sgmP1, shm->segment()->m_sgmP2, shm->segment()->m_sgmUniquenessRatio, shm->segment()->m_sgmUseHH4 ? cv::cuda::StereoSGM::MODE_HH4 : cv::cuda::StereoSGM::MODE_HH);
-          break;
-      };
+    // Ensure latest settings are applied to all active views.
+    for (size_t viewIdx = 0; viewIdx < shm->segment()->m_activeViewCount; ++viewIdx) {
+      PerViewData& viewData = perViewData[viewIdx];
 
-      if (shm->segment()->m_useDisparityFilter) {
-        m_disparityFilter = cv::cuda::createDisparityBilateralFilter(shm->segment()->m_numDisparities, shm->segment()->m_disparityFilterRadius, shm->segment()->m_disparityFilterIterations);
-      } else {
-        m_disparityFilter.reset();
+      if ((!viewData.m_stereoMatcher) || (shm->segment()->m_settingsGeneration != viewData.m_lastSettingsGeneration)) {
+        switch (shm->segment()->m_algorithm) {
+          case 0:
+            // uses CV_8UC1 disparity
+            viewData.m_stereoMatcher = cv::cuda::createStereoBM(shm->segment()->m_numDisparities, shm->segment()->m_sbmBlockSize);
+            break;
+          case 1: {
+            viewData.m_stereoMatcher = cv::cuda::createStereoConstantSpaceBP(shm->segment()->m_numDisparities, shm->segment()->m_sbpIterations, shm->segment()->m_sbpLevels, shm->segment()->m_scsbpNrPlane);
+          } break;
+          case 2:
+            viewData.m_stereoMatcher = cv::cuda::createStereoSGM(0, shm->segment()->m_numDisparities, shm->segment()->m_sgmP1, shm->segment()->m_sgmP2, shm->segment()->m_sgmUniquenessRatio, shm->segment()->m_sgmUseHH4 ? cv::cuda::StereoSGM::MODE_HH4 : cv::cuda::StereoSGM::MODE_HH);
+            break;
+        };
+
+        if (shm->segment()->m_useDisparityFilter) {
+          viewData.m_disparityFilter = cv::cuda::createDisparityBilateralFilter(shm->segment()->m_numDisparities, shm->segment()->m_disparityFilterRadius, shm->segment()->m_disparityFilterIterations);
+        } else {
+          viewData.m_disparityFilter.reset();
+        }
+        viewData.m_lastSettingsGeneration = shm->segment()->m_settingsGeneration;
       }
-      lastSettingsGeneration = shm->segment()->m_settingsGeneration;
     }
 
 
@@ -152,18 +161,18 @@ int main(int argc, char* argv[]) {
       // workaround for no common base interface between CUDA stereo remapping algorithms that can handle the CUstream parameter to compute()
       switch (shm->segment()->m_algorithm) {
         case 0:
-          static_cast<cv::cuda::StereoBM*>(m_stereo.get())->compute(viewData.m_equalizedLeftGpu, viewData.m_equalizedRightGpu, viewData.m_disparityFilterTemp, viewData.m_stream);
+          static_cast<cv::cuda::StereoBM*>(viewData.m_stereoMatcher.get())->compute(viewData.m_equalizedLeftGpu, viewData.m_equalizedRightGpu, viewData.m_disparityFilterTemp, viewData.m_stream);
           break;
         case 1:
-          static_cast<cv::cuda::StereoConstantSpaceBP*>(m_stereo.get())->compute(viewData.m_equalizedLeftGpu, viewData.m_equalizedRightGpu, viewData.m_disparityFilterTemp, viewData.m_stream);
+          static_cast<cv::cuda::StereoConstantSpaceBP*>(viewData.m_stereoMatcher.get())->compute(viewData.m_equalizedLeftGpu, viewData.m_equalizedRightGpu, viewData.m_disparityFilterTemp, viewData.m_stream);
           break;
         case 2:
-          static_cast<cv::cuda::StereoSGM*>(m_stereo.get())->compute(viewData.m_equalizedLeftGpu, viewData.m_equalizedRightGpu, viewData.m_disparityFilterTemp, viewData.m_stream);
+          static_cast<cv::cuda::StereoSGM*>(viewData.m_stereoMatcher.get())->compute(viewData.m_equalizedLeftGpu, viewData.m_equalizedRightGpu, viewData.m_disparityFilterTemp, viewData.m_stream);
           break;
       };
 
-      if (m_disparityFilter) {
-        m_disparityFilter->apply(viewData.m_disparityFilterTemp, viewData.m_equalizedLeftGpu, viewData.m_outputGpu, viewData.m_stream);
+      if (viewData.m_disparityFilter) {
+        viewData.m_disparityFilter->apply(viewData.m_disparityFilterTemp, viewData.m_equalizedLeftGpu, viewData.m_outputGpu, viewData.m_stream);
       } else {
         // Bypass filter, just swap the output pointer
         viewData.m_outputGpu.swap(viewData.m_disparityFilterTemp);
