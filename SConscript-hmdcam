@@ -5,7 +5,7 @@ tegraEnv = env.Clone()
 
 # Import locally built Monado static libraries
 MONADO_BASE='/mnt/scratch/monado'
-MONADO_BUILD=MONADO_BASE + '/build-minimal'
+MONADO_BUILD='/mnt/nvme/monado-minimal-build'
 
 tegraEnv.Append(
   CPPDEFINES=['GLATTER_EGL_GLES_3_2'],
@@ -25,7 +25,9 @@ monadoStatics = \
       MONADO_BUILD + '/src/xrt/auxiliary/libaux_tracking.a',
       MONADO_BUILD + '/src/xrt/auxiliary/libaux_os.a',
       MONADO_BUILD + '/src/xrt/auxiliary/libaux_util.a',
-      MONADO_BUILD + '/src/xrt/auxiliary/libaux_math.a' # Needs to be after libaux_tracking.a for symbol resolution.
+      MONADO_BUILD + '/src/xrt/auxiliary/libaux_vive.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/libaux_math.a', # Needs to be after libaux_tracking.a for symbol resolution.
+      MONADO_BUILD + '/src/xrt/auxiliary/bindings/libaux_generated_bindings.a' # Needs to be after libaux_util.a
     ]
 
 

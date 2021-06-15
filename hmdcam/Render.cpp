@@ -253,7 +253,7 @@ bool RenderInit() {
     }
 
     printf("Distortion mesh data:\n");
-    printf("vertices=%zu stride=%zu num_uv_channels=%zu num_indices={%zu, %zu} offset_indices={%zu, %zu} total_num_indices=%zu\n",
+    printf("vertices=%u stride=%u num_uv_channels=%u num_indices={%u, %u} offset_indices={%u, %u} total_num_indices=%u\n",
       hmd->distortion.mesh.num_vertices, hmd->distortion.mesh.stride, hmd->distortion.mesh.num_uv_channels,
       hmd->distortion.mesh.num_indices[0], hmd->distortion.mesh.num_indices[1],
       hmd->distortion.mesh.offset_indices[0], hmd->distortion.mesh.offset_indices[1],
