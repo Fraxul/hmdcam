@@ -44,7 +44,7 @@ cv::Mat RDMACameraProvider::cvMat(size_t sensorIdx) const {
   return cv::Mat(/*rows=*/ streamHeight(), /*cols=*/ streamWidth(), CV_8UC4, m_cameraRDMABuffers[sensorIdx]->data());
 }
 
-void RDMACameraProvider::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) const {
+void RDMACameraProvider::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {
   gpuMat.upload(cvMat(sensorIdx), const_cast<cv::cuda::Stream&>(stream));
 }
 

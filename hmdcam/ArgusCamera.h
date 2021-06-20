@@ -2,7 +2,7 @@
 #include <vector>
 #include <EGL/egl.h>
 #include <Argus/Argus.h>
-#include "rhi/egl/RHIEGLStreamSurfaceGL.h"
+#include "rhi/egl/RHIEGLImageSurfaceGL.h"
 #include "rhi/RHIRenderTarget.h"
 #include "common/ICameraProvider.h"
 
@@ -20,9 +20,9 @@ public:
 
   void stop();
 
-  virtual size_t streamCount() const { return m_eglStreams.size(); }
+  virtual size_t streamCount() const { return m_textures.size(); }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
-  virtual void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&) const;
+  virtual void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&);
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
 
@@ -52,8 +52,7 @@ private:
   EGLDisplay m_display;
   EGLContext m_context;
 
-  std::vector<RHIEGLStreamSurfaceGL::ptr> m_textures;
-  std::vector<EGLStreamKHR> m_eglStreams;
+  std::vector<RHIEGLImageSurfaceGL::ptr> m_textures;
   unsigned int m_streamWidth, m_streamHeight;
   bool m_captureIsRepeating;
 
@@ -78,6 +77,13 @@ private:
   // Per-sensor objects
   std::vector<Argus::CameraDevice*> m_cameraDevices;
   std::vector<Argus::OutputStream*> m_outputStreams;
+
+  std::vector<std::vector<int> > m_nativeBuffers;
+  std::vector<std::vector<EGLImageKHR> > m_eglImages;
+  std::vector<std::vector<Argus::Buffer*> > m_argusBuffers;
+
+  // Which buffers need to be released to the stream next readFrame
+  std::vector<Argus::Buffer*> m_releaseBuffers;
 
   // Session common objects
   Argus::UniqueObj<Argus::CameraProvider> m_cameraProvider;

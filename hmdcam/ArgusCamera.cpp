@@ -6,6 +6,7 @@
 #include "rhi/cuda/RHICVInterop.h"
 #include <Argus/Argus.h>
 #include <EGLStream/EGLStream.h>
+#include <nvbuf_utils.h>
 
 #include <boost/accumulators/statistics/min.hpp>
 #include <boost/accumulators/statistics/max.hpp>
@@ -22,6 +23,8 @@ static inline uint64_t currentTimeNs() {
   return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
 #endif
+
+static const size_t kBufferCount = 8;
 
 extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
 extern FxAtomicString ksNDCQuadUniformBlock;
@@ -129,50 +132,79 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
   m_completionEventQueue = iEventProvider->createEventQueue( {Argus::EVENT_TYPE_CAPTURE_COMPLETE });
   assert(m_completionEventQueue);
 
-  // Create the OutputStreamSettings object for an EGL OutputStream
-  Argus::UniqueObj<Argus::OutputStreamSettings> streamSettings(iCaptureSession->createOutputStreamSettings(Argus::STREAM_TYPE_EGL));
-  Argus::IEGLOutputStreamSettings *iEGLOutputStreamSettings = Argus::interface_cast<Argus::IEGLOutputStreamSettings>(streamSettings);
+  // Create the OutputStreamSettings object for a buffer OutputStream
+  Argus::UniqueObj<Argus::OutputStreamSettings> streamSettings(iCaptureSession->createOutputStreamSettings(Argus::STREAM_TYPE_BUFFER));
+  Argus::IBufferOutputStreamSettings *iBufferOutputStreamSettings = Argus::interface_cast<Argus::IBufferOutputStreamSettings>(streamSettings);
   Argus::IOutputStreamSettings* iOutputStreamSettings = Argus::interface_cast<Argus::IOutputStreamSettings>(streamSettings);
-  assert(iEGLOutputStreamSettings && iOutputStreamSettings);
+  assert(iBufferOutputStreamSettings && iOutputStreamSettings);
 
   // Configure the OutputStream to use the EGLImage BufferType.
-  iEGLOutputStreamSettings->setPixelFormat(Argus::PIXEL_FMT_YCbCr_420_888);
-  iEGLOutputStreamSettings->setResolution(Argus::Size2D<uint32_t>(m_streamWidth, m_streamHeight));
-  iEGLOutputStreamSettings->setEGLDisplay(m_display);
-  iEGLOutputStreamSettings->setMode(Argus::EGL_STREAM_MODE_MAILBOX);
-  iEGLOutputStreamSettings->setMetadataEnable(true);
+  iBufferOutputStreamSettings->setBufferType(Argus::BUFFER_TYPE_EGL_IMAGE);
+  iBufferOutputStreamSettings->setMetadataEnable(true);
 
   // Create the per-camera OutputStreams and textures.
+  m_nativeBuffers.resize(m_cameraDevices.size());
+  m_eglImages.resize(m_cameraDevices.size());
+  m_argusBuffers.resize(m_cameraDevices.size());
+
   for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
     iOutputStreamSettings->setCameraDevice(m_cameraDevices[cameraIdx]);
     Argus::OutputStream* outputStream = iCaptureSession->createOutputStream(streamSettings.get());
     m_outputStreams.push_back(outputStream);
 
-    Argus::IEGLOutputStream *iEGLOutputStream = Argus::interface_cast<Argus::IEGLOutputStream>(outputStream);
-    if (!iEGLOutputStream)
-        die("Failed to create EGLOutputStream");
+    Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(outputStream);
+    if (!iBufferOutputStream)
+        die("Failed to create BufferOutputStream");
 
-    m_eglStreams.push_back(iEGLOutputStream->getEGLStream());
+    // Allocate native buffers.
+    for (size_t i = 0; i < kBufferCount; i++) {
+      NvBufferCreateParams inputParams = {0};
+
+      inputParams.width = m_streamWidth;
+      inputParams.height = m_streamHeight;
+      inputParams.layout = NvBufferLayout_Pitch;
+      inputParams.colorFormat = NvBufferColorFormat_NV12;
+      inputParams.payloadType = NvBufferPayload_SurfArray;
+      inputParams.nvbuf_tag = NvBufferTag_CAMERA;
+
+      int fd = -1;
+      if (NvBufferCreateEx(&fd, &inputParams)) {
+        die("NvBufferCreateEx failed");
+      }
+
+      m_nativeBuffers[cameraIdx].push_back(fd);
+      m_eglImages[cameraIdx].push_back(NvEGLImageFromFd(m_display, fd));
+    }
+
+    // Create the BufferSettings object to configure Buffer creation.
+    Argus::UniqueObj<Argus::BufferSettings> bufferSettings(iBufferOutputStream->createBufferSettings());
+    Argus::IEGLImageBufferSettings *iBufferSettings = Argus::interface_cast<Argus::IEGLImageBufferSettings>(bufferSettings);
+    iBufferSettings->setEGLDisplay(m_display);
+
+    // Create the Buffers for each EGLImage (and release to stream for initial capture use).
+    for (size_t i = 0; i < kBufferCount; i++) {
+      iBufferSettings->setEGLImage(m_eglImages[cameraIdx][i]);
+      Argus::Buffer* b = iBufferOutputStream->createBuffer(bufferSettings.get());
+      if (!b)
+          die("Failed to create Buffer");
+      m_argusBuffers[cameraIdx].push_back(b);
+      if (iBufferOutputStream->releaseBuffer(b) != Argus::STATUS_OK)
+          die("Failed to release Buffer for capture use");
+    }
+    m_releaseBuffers.push_back(NULL);
 
     // GL textures which will be associated with EGL images in readFrame()
-    m_textures.push_back(new RHIEGLStreamSurfaceGL(m_streamWidth, m_streamHeight, kSurfaceFormat_RGBA8));
+    m_textures.push_back(new RHIEGLImageSurfaceGL(m_streamWidth, m_streamHeight, kSurfaceFormat_RGBA8));
+
     glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_textures[cameraIdx]->glId());
-
-    // Connect the stream consumer. This must be done before starting the capture session, or libargus will return an invalid state error.
-    if (!eglStreamConsumerGLTextureExternalKHR(m_display, m_eglStreams[cameraIdx]))
-      die("Unable to connect GL as EGLStream consumer");
-
     glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-
-    // Set the acquire timeout to infinite.
-    eglStreamAttribKHR(m_display, m_eglStreams[cameraIdx], EGL_CONSUMER_ACQUIRE_TIMEOUT_USEC_KHR, -1);
   }
 
   // Set up all of the per-stream metadata containers
-  m_frameMetadata.resize(m_eglStreams.size());
+  m_frameMetadata.resize(m_cameraDevices.size());
 
   // Create capture request, set the sensor mode, and enable the output stream.s
   m_captureRequest = iCaptureSession->createRequest();
@@ -218,6 +250,17 @@ ArgusCamera::~ArgusCamera() {
   for (Argus::OutputStream* outputStream : m_outputStreams)
     outputStream->destroy();
   m_outputStreams.clear();
+  for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
+    for (Argus::Buffer* buf : m_argusBuffers[cameraIdx]) {
+      buf->destroy();
+    }
+    for (EGLImage img : m_eglImages[cameraIdx]) {
+      eglDestroyImageKHR(m_display, img);
+    }
+    for (int fd : m_nativeBuffers[cameraIdx]) {
+      NvBufferDestroy(fd);
+    }
+  }
 
 }
 
@@ -289,33 +332,41 @@ bool ArgusCamera::readFrame() {
     previousCaptureCompletionTimestamp = 0;
   }
 
-
   bool res = true;
-  for (size_t streamIdx = 0; streamIdx < m_eglStreams.size(); ++streamIdx) {
-    const EGLStreamKHR& eglStream = m_eglStreams[streamIdx];
-    res |= eglStreamConsumerAcquireKHR(m_display, eglStream);
+  for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
+    Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(m_outputStreams[cameraIdx]);
+    Argus::Status status = Argus::STATUS_OK;
+    Argus::Buffer* buffer = iBufferOutputStream->acquireBuffer(Argus::TIMEOUT_INFINITE, &status);
 
-    const Argus::ICaptureMetadata* iMetadata = NULL;
+    // Clean up previous capture's buffer and track this one to be released next round
+    if (m_releaseBuffers[cameraIdx])
+      iBufferOutputStream->releaseBuffer(m_releaseBuffers[cameraIdx]);
 
-    // Try and acquire the metadata interface for this frame from the EGLStream
-    Argus::UniqueObj<EGLStream::MetadataContainer> metadataContainer(EGLStream::MetadataContainer::create(m_display, eglStream));
-    EGLStream::IArgusCaptureMetadata *iArgusCaptureMetadata = Argus::interface_cast<EGLStream::IArgusCaptureMetadata>(metadataContainer);
+    m_releaseBuffers[cameraIdx] = buffer;
 
-    if (iArgusCaptureMetadata) {
-      iMetadata = Argus::interface_cast<const Argus::ICaptureMetadata>(iArgusCaptureMetadata->getMetadata());
-    }
+    Argus::IEGLImageBuffer* eglImageBuffer = Argus::interface_cast<Argus::IEGLImageBuffer>(buffer);
+    assert(eglImageBuffer);
+
+    // Update EGL image associated with the GL texture for this stream
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_textures[cameraIdx]->glId());
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, eglImageBuffer->getEGLImage());
+
+    Argus::IBuffer* iBuffer = Argus::interface_cast<Argus::IBuffer>(buffer);
+    assert(iBuffer);
+
+    const Argus::ICaptureMetadata* iMetadata = Argus::interface_cast<const Argus::ICaptureMetadata>(iBuffer->getMetadata());
 
     if (!iMetadata) {
-      printf("ArgusCamera::readFrame(): Failed to read metadata for stream index %zu\n", streamIdx);
+      printf("ArgusCamera::readFrame(): Failed to read metadata for camera index %zu\n", cameraIdx);
       continue;
     }
 
     // Update metadata fields for this frame
-    m_frameMetadata[streamIdx].sensorTimestamp = iMetadata->getSensorTimestamp();
-    m_frameMetadata[streamIdx].sensorExposureTimeNs = iMetadata->getSensorExposureTime();
-    m_frameMetadata[streamIdx].sensorSensitivityISO = iMetadata->getSensorSensitivity();
-    m_frameMetadata[streamIdx].ispDigitalGain = iMetadata->getIspDigitalGain();
-    m_frameMetadata[streamIdx].sensorAnalogGain = iMetadata->getSensorAnalogGain();
+    m_frameMetadata[cameraIdx].sensorTimestamp = iMetadata->getSensorTimestamp();
+    m_frameMetadata[cameraIdx].sensorExposureTimeNs = iMetadata->getSensorExposureTime();
+    m_frameMetadata[cameraIdx].sensorSensitivityISO = iMetadata->getSensorSensitivity();
+    m_frameMetadata[cameraIdx].ispDigitalGain = iMetadata->getIspDigitalGain();
+    m_frameMetadata[cameraIdx].sensorAnalogGain = iMetadata->getSensorAnalogGain();
   }
 
   m_didAdjustCaptureIntervalThisFrame = false;
@@ -364,7 +415,7 @@ void ArgusCamera::stop() {
   setRepeatCapture(false);
 }
 
-void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) const {
+void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {
   if (!m_tmpBlitSurface) {
     m_tmpBlitSurface = rhi()->newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
     m_tmpBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { m_tmpBlitSurface } ));
