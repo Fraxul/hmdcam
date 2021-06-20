@@ -3,10 +3,12 @@
 #include "rhi/gl/GLCommon.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
+#include "rhi/cuda/CudaUtil.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include <Argus/Argus.h>
 #include <EGLStream/EGLStream.h>
 #include <nvbuf_utils.h>
+#include <cudaEGL.h>
 
 #include <boost/accumulators/statistics/min.hpp>
 #include <boost/accumulators/statistics/max.hpp>
@@ -143,9 +145,8 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
   iBufferOutputStreamSettings->setMetadataEnable(true);
 
   // Create the per-camera OutputStreams and textures.
-  m_nativeBuffers.resize(m_cameraDevices.size());
-  m_eglImages.resize(m_cameraDevices.size());
-  m_argusBuffers.resize(m_cameraDevices.size());
+  m_bufferPools.resize(m_cameraDevices.size());
+  m_releaseBuffers.resize(m_cameraDevices.size(), NULL);
 
   for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
     iOutputStreamSettings->setCameraDevice(m_cameraDevices[cameraIdx]);
@@ -156,8 +157,15 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     if (!iBufferOutputStream)
         die("Failed to create BufferOutputStream");
 
-    // Allocate native buffers.
+    // Create the BufferSettings object to configure Buffer creation.
+    Argus::UniqueObj<Argus::BufferSettings> bufferSettings(iBufferOutputStream->createBufferSettings());
+    Argus::IEGLImageBufferSettings *iBufferSettings = Argus::interface_cast<Argus::IEGLImageBufferSettings>(bufferSettings);
+    iBufferSettings->setEGLDisplay(m_display);
+
+    // Allocate native buffers, create the Argus::Buffer for each EGLImage, and release to stream for initial capture use.
     for (size_t i = 0; i < kBufferCount; i++) {
+      BufferPool::Entry b;
+
       NvBufferCreateParams inputParams = {0};
 
       inputParams.width = m_streamWidth;
@@ -167,31 +175,25 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
       inputParams.payloadType = NvBufferPayload_SurfArray;
       inputParams.nvbuf_tag = NvBufferTag_CAMERA;
 
-      int fd = -1;
-      if (NvBufferCreateEx(&fd, &inputParams)) {
+      if (NvBufferCreateEx(&b.nativeBuffer, &inputParams)) {
         die("NvBufferCreateEx failed");
       }
 
-      m_nativeBuffers[cameraIdx].push_back(fd);
-      m_eglImages[cameraIdx].push_back(NvEGLImageFromFd(m_display, fd));
-    }
+      b.eglImage = NvEGLImageFromFd(m_display, b.nativeBuffer);
 
-    // Create the BufferSettings object to configure Buffer creation.
-    Argus::UniqueObj<Argus::BufferSettings> bufferSettings(iBufferOutputStream->createBufferSettings());
-    Argus::IEGLImageBufferSettings *iBufferSettings = Argus::interface_cast<Argus::IEGLImageBufferSettings>(bufferSettings);
-    iBufferSettings->setEGLDisplay(m_display);
-
-    // Create the Buffers for each EGLImage (and release to stream for initial capture use).
-    for (size_t i = 0; i < kBufferCount; i++) {
-      iBufferSettings->setEGLImage(m_eglImages[cameraIdx][i]);
-      Argus::Buffer* b = iBufferOutputStream->createBuffer(bufferSettings.get());
-      if (!b)
+      iBufferSettings->setEGLImage(b.eglImage);
+      b.argusBuffer = iBufferOutputStream->createBuffer(bufferSettings.get());
+      if (!b.argusBuffer)
           die("Failed to create Buffer");
-      m_argusBuffers[cameraIdx].push_back(b);
-      if (iBufferOutputStream->releaseBuffer(b) != Argus::STATUS_OK)
+
+      if (iBufferOutputStream->releaseBuffer(b.argusBuffer) != Argus::STATUS_OK)
           die("Failed to release Buffer for capture use");
+
+      CUDA_CHECK(cuGraphicsEGLRegisterImage(&b.cudaResource, b.eglImage, CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY));
+
+      m_bufferPools[cameraIdx].buffers.push_back(b);
     }
-    m_releaseBuffers.push_back(NULL);
+
 
     // GL textures which will be associated with EGL images in readFrame()
     m_textures.push_back(new RHIEGLImageSurfaceGL(m_streamWidth, m_streamHeight, kSurfaceFormat_RGBA8));
@@ -250,18 +252,16 @@ ArgusCamera::~ArgusCamera() {
   for (Argus::OutputStream* outputStream : m_outputStreams)
     outputStream->destroy();
   m_outputStreams.clear();
-  for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
-    for (Argus::Buffer* buf : m_argusBuffers[cameraIdx]) {
-      buf->destroy();
-    }
-    for (EGLImage img : m_eglImages[cameraIdx]) {
-      eglDestroyImageKHR(m_display, img);
-    }
-    for (int fd : m_nativeBuffers[cameraIdx]) {
-      NvBufferDestroy(fd);
+
+  for (BufferPool& bp : m_bufferPools) {
+    for (BufferPool::Entry& b : bp.buffers) {
+      b.argusBuffer->destroy();
+      cuGraphicsUnregisterResource(b.cudaResource);
+      eglDestroyImageKHR(m_display, b.eglImage);
+      NvBufferDestroy(b.nativeBuffer);
     }
   }
-
+  m_bufferPools.clear();
 }
 
 bool ArgusCamera::readFrame() {
@@ -337,6 +337,7 @@ bool ArgusCamera::readFrame() {
     Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(m_outputStreams[cameraIdx]);
     Argus::Status status = Argus::STATUS_OK;
     Argus::Buffer* buffer = iBufferOutputStream->acquireBuffer(Argus::TIMEOUT_INFINITE, &status);
+    m_bufferPools[cameraIdx].setActiveBufferIndex(buffer);
 
     // Clean up previous capture's buffer and track this one to be released next round
     if (m_releaseBuffers[cameraIdx])
@@ -348,8 +349,10 @@ bool ArgusCamera::readFrame() {
     assert(eglImageBuffer);
 
     // Update EGL image associated with the GL texture for this stream
+    assert(m_bufferPools[cameraIdx].activeBuffer().eglImage == eglImageBuffer->getEGLImage());
+
     glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_textures[cameraIdx]->glId());
-    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, eglImageBuffer->getEGLImage());
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, m_bufferPools[cameraIdx].activeBuffer().eglImage);
 
     Argus::IBuffer* iBuffer = Argus::interface_cast<Argus::IBuffer>(buffer);
     assert(iBuffer);
@@ -414,6 +417,54 @@ void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {
 void ArgusCamera::stop() {
   setRepeatCapture(false);
 }
+
+
+cv::cuda::GpuMat ArgusCamera::gpuMatGreyscale(size_t sensorIdx) {
+  CUeglFrame eglFrame;
+  CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&eglFrame, m_bufferPools[sensorIdx].activeBuffer().cudaResource, 0, 0));
+  return cv::cuda::GpuMat(eglFrame.height, eglFrame.width, CV_8U, eglFrame.frame.pPitch[0], eglFrame.pitch);
+}
+
+/*
+void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {
+  CUgraphicsResource pReadResource = NULL;
+  CUresult status = cuGraphicsEGLRegisterImage(&pReadResource, m_currentEglImages[sensorIdx], CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY);
+  if (status != CUDA_SUCCESS)
+    die("cuGraphicsEGLRegisterImage failed: %d\n", status);
+
+  CUeglFrame eglFrame;
+  status = cuGraphicsResourceGetMappedEglFrame(&eglFrame, pReadResource, 0, 0);
+  if (status != CUDA_SUCCESS) {
+    die("cuGraphicsSubResourceGetMappedArray failed: %d\n", status);
+  }
+
+  // TODO optionally support NV12 -> RGB format conversion
+
+  CUDA_MEMCPY2D copyDescriptor;
+  memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
+
+  assert(eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH);
+  copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+  copyDescriptor.srcDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
+  copyDescriptor.srcPitch = eglFrame.pitch;
+
+  copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+  copyDescriptor.dstDevice = (CUdeviceptr) gpuMat.cudaPtr();
+  copyDescriptor.dstPitch = gpuMat.step;
+
+  copyDescriptor.WidthInBytes = eglFrame.frame.width * gpuMat.elemSize();
+  copyDescriptor.Height = copyHeight;
+
+  CUStream streamPtr = (CUStream) stream.cudaPtr();
+  if (streamPtr) {
+    CUDA_CHECK(cuMemcpy2DAsync(&copyDescriptor, streamPtr));
+  } else {
+    CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+  }
+
+  cuGraphicsUnregisterResource(pReadResource);
+}
+*/
 
 void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {
   if (!m_tmpBlitSurface) {

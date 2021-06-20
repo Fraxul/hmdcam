@@ -23,6 +23,7 @@ public:
   virtual size_t streamCount() const { return m_textures.size(); }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
   virtual void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&);
+  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
 
@@ -78,9 +79,35 @@ private:
   std::vector<Argus::CameraDevice*> m_cameraDevices;
   std::vector<Argus::OutputStream*> m_outputStreams;
 
-  std::vector<std::vector<int> > m_nativeBuffers;
-  std::vector<std::vector<EGLImageKHR> > m_eglImages;
-  std::vector<std::vector<Argus::Buffer*> > m_argusBuffers;
+
+  struct BufferPool {
+    struct Entry {
+      Entry() : argusBuffer(NULL), nativeBuffer(-1), eglImage(NULL), cudaResource(NULL) {}
+      Entry(Argus::Buffer* b_, int nb_, EGLImageKHR egl_, CUgraphicsResource cr_) : argusBuffer(b_), nativeBuffer(nb_), eglImage(egl_), cudaResource(cr_) {}
+
+      Argus::Buffer* argusBuffer;
+      int nativeBuffer;
+      EGLImageKHR eglImage;
+      CUgraphicsResource cudaResource;
+    };
+
+    std::vector<Entry> buffers;
+    Entry& activeBuffer() { return buffers[activeBufferIndex]; }
+
+    size_t activeBufferIndex;
+    void setActiveBufferIndex(Argus::Buffer* b) {
+      for (size_t i = 0; i < buffers.size(); ++i) {
+        if (buffers[i].argusBuffer == b) {
+          activeBufferIndex = i;
+          return;
+        }
+      }
+      assert(false && "ArgusCamera::BufferPool::setActiveBufferIndex(): buffer not in pool");
+    }
+
+  };
+
+  std::vector<BufferPool> m_bufferPools;
 
   // Which buffers need to be released to the stream next readFrame
   std::vector<Argus::Buffer*> m_releaseBuffers;

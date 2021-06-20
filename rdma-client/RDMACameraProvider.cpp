@@ -3,6 +3,7 @@
 #include "rhi/RHI.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include <opencv2/core/mat.hpp>
+#include <opencv2/cudaimgproc.hpp>
 #include <cuda.h>
 
 
@@ -44,7 +45,15 @@ cv::Mat RDMACameraProvider::cvMat(size_t sensorIdx) const {
   return cv::Mat(/*rows=*/ streamHeight(), /*cols=*/ streamWidth(), CV_8UC4, m_cameraRDMABuffers[sensorIdx]->data());
 }
 
+cv::cuda::GpuMat RDMACameraProvider::gpuMatGreyscale(size_t sensorIndex) {
+  m_gpuMatTmp[sensorIndex].upload(cvMat(sensorIndex));
+  cv::cuda::cvtColor(m_gpuMatTmp[sensorIndex], m_gpuMatGreyscaleTmp[sensorIndex], cv::COLOR_BGRA2GRAY, 0);
+  return m_gpuMatGreyscaleTmp[sensorIndex];
+}
+
+/*
 void RDMACameraProvider::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {
   gpuMat.upload(cvMat(sensorIdx), const_cast<cv::cuda::Stream&>(stream));
 }
+*/
 

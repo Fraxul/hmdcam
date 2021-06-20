@@ -80,12 +80,11 @@ protected:
     bool m_isStereoView;
     bool m_isVerticalStereo;
     size_t m_shmViewIndex;
-
+    size_t m_leftCameraIndex, m_rightCameraIndex;
 
     cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
     glm::mat4 m_R1inv, m_Q, m_Qinv;
 
-    RHISurface::ptr m_iTexture;
     RHISurface::ptr m_disparityTexture;
     RHISurface::ptr m_leftGray, m_rightGray;
 
@@ -101,16 +100,12 @@ protected:
     RHIRenderTarget::ptr origLeftBlitRT;
     RHIRenderTarget::ptr origRightBlitRT;
 
-    cv::cuda::GpuMat origLeft_gpu;
-    cv::cuda::GpuMat origRight_gpu;
     cv::cuda::GpuMat rectLeft_gpu;
     cv::cuda::GpuMat rectRight_gpu;
     cv::cuda::GpuMat resizedLeft_gpu;
     cv::cuda::GpuMat resizedRight_gpu;
-    cv::cuda::GpuMat resizedLeftGray_gpu;
-    cv::cuda::GpuMat resizedRightGray_gpu;
-    cv::cuda::GpuMat resizedTransposedLeftGray_gpu;
-    cv::cuda::GpuMat resizedTransposedRightGray_gpu;
+    cv::cuda::GpuMat resizedTransposedLeft_gpu;
+    cv::cuda::GpuMat resizedTransposedRight_gpu;
 
     cv::cuda::Stream m_leftStream, m_rightStream;
     cv::cuda::Event m_leftJoinEvent;
