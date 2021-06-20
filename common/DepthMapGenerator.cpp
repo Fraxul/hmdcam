@@ -10,10 +10,10 @@
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
-#include <opencv2/cudaarithm.hpp>
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudawarping.hpp>
 #include <cuda.h>
+#include <npp.h>
 #include <time.h>
 #include <sys/time.h>
 #include <thread>
@@ -368,8 +368,16 @@ void DepthMapGenerator::processFrame() {
     cv::cuda::resize(vd.rectRight_gpu, vd.resizedRight_gpu, cv::Size(m_iFBAlgoWidth, m_iFBAlgoHeight), 0, 0, cv::INTER_LINEAR, vd.m_rightStream);
 
     if (vd.m_isVerticalStereo) {
-      cv::cuda::transpose(vd.resizedLeft_gpu, vd.resizedTransposedLeft_gpu, vd.m_leftStream);
-      cv::cuda::transpose(vd.resizedRight_gpu, vd.resizedTransposedRight_gpu, vd.m_rightStream);
+      // cv::cuda::transpose is unusable due to forced CPU-GPU sync when switching the CUDA stream that NPPI is targeting, so we skip the CV wrappers and use NPPI directly.
+      NppiSize sz;
+      sz.width  = vd.resizedLeft_gpu.cols;
+      sz.height = vd.resizedLeft_gpu.rows;
+
+      nppSetStream((cudaStream_t) vd.m_leftStream.cudaPtr());
+      nppiTranspose_8u_C1R(vd.resizedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedLeft_gpu.step), vd.resizedTransposedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedTransposedLeft_gpu.step), sz);
+
+      nppSetStream((cudaStream_t) vd.m_rightStream.cudaPtr());
+      nppiTranspose_8u_C1R(vd.resizedRight_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedRight_gpu.step), vd.resizedTransposedRight_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedTransposedRight_gpu.step), sz);
     }
 
     vd.m_leftJoinEvent.record(vd.m_leftStream);
