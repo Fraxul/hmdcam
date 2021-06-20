@@ -10,6 +10,6 @@ rdmaEnv.Append(
 rdmaEnv.Program(
   target = '../bin/rdma-client', # relative to build/rdma-client
   source = Glob('rdma-client/*.cpp') + Glob('rdma-client/*.cu') + Glob('common/*.cpp') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('imgui/*.cpp'),
-  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'boost_thread', 'GL', 'dl', 'pthread', 'rt', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaarithm', 'opencv_cudaimgproc', 'opencv_cudastereo', 'opencv_cudawarping', 'cuda', 'cudart', 'ibverbs', 'rdmacm', 'SDL2']
+  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'boost_thread', 'GL', 'dl', 'pthread', 'rt', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudastereo', 'opencv_cudawarping', 'cuda', 'cudart', 'nppc', 'nppidei', 'ibverbs', 'rdmacm', 'SDL2']
 )
 
