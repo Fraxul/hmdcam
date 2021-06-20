@@ -355,8 +355,8 @@ void DepthMapGenerator::processFrame() {
     if (!vd.m_isStereoView)
       continue;
 
-    m_cameraSystem->cameraProvider()->populateGpuMat(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0], vd.origLeft_gpu/*, m_leftStream*/);
-    m_cameraSystem->cameraProvider()->populateGpuMat(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1], vd.origRight_gpu/*, m_rightStream*/);
+    m_cameraSystem->cameraProvider()->populateGpuMat(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0], vd.origLeft_gpu, vd.m_leftStream);
+    m_cameraSystem->cameraProvider()->populateGpuMat(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1], vd.origRight_gpu, vd.m_rightStream);
   }
 
   if (m_enableProfiling) {
