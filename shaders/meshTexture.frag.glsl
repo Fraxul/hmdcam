@@ -3,7 +3,8 @@
 in vec2 v2fTexCoord;
 in vec4 v2fPosition;
 flat in int v2fTrimmed;
-uniform sampler2D imageTex;
+uniform SAMPLER_TYPE imageTex;
+uniform sampler2D distortionMap;
 
 /*
 uniform vec3 tolforconf;
@@ -26,6 +27,10 @@ void main()
   if (v2fTrimmed != 0)
     discard;
 
-  outColor = texture(imageTex, v2fTexCoord);
+  //outColor = texture(imageTex, v2fTexCoord);
+
+  // Remap through OpenCV-generated distortion map
+  vec2 distortionCoord = texture(distortionMap, v2fTexCoord).rg; // RG32F texture
+  outColor = texture(imageTex, distortionCoord);
 }
 

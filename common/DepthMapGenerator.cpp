@@ -27,6 +27,7 @@ RHIRenderPipeline::ptr disparityDepthMapPipeline;
 FxAtomicString ksMeshDisparityDepthMapUniformBlock("MeshDisparityDepthMapUniformBlock");
 static FxAtomicString ksDisparityTex("disparityTex");
 static FxAtomicString ksImageTex("imageTex");
+extern FxAtomicString ksDistortionMap;
 struct MeshDisparityDepthMapUniformBlock {
   glm::mat4 modelViewProjection;
   glm::mat4 R1inv;
@@ -67,10 +68,16 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
     rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
     rpd.primitiveRestartEnabled = true;
 
-    disparityDepthMapPipeline = rhi()->compileRenderPipeline(
-      rhi()->compileShader(RHIShaderDescriptor("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
+    RHIShaderDescriptor desc("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
         RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
-      }))), rpd);
+      }));
+#ifdef GLATTER_EGL_GLES_3_2 // TODO query this at use-time from the RHISurface type
+    desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
+#else
+    desc.setFlag("SAMPLER_TYPE", "sampler2D");
+#endif
+
+    disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
   }
 
   if (!disparityMipPipeline) {
@@ -186,6 +193,8 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
       continue; // Not applicable for mono views
 
     vd.m_isVerticalStereo = v.isVerticalStereo();
+    vd.m_leftCameraIndex = v.cameraIndices[0];
+    vd.m_rightCameraIndex = v.cameraIndices[1];
 
     CameraSystem::Camera& cL = m_cameraSystem->cameraAtIndex(v.cameraIndices[0]);
     CameraSystem::Camera& cR = m_cameraSystem->cameraAtIndex(v.cameraIndices[1]);
@@ -207,28 +216,18 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
     vd.m_CameraDistanceMeters = glm::length(glm::vec3(v.stereoTranslation.at<double>(0), v.stereoTranslation.at<double>(1), v.stereoTranslation.at<double>(2)));
 
 
-    vd.m_iTexture = rhi()->newTexture2D(m_iFBSideWidth, m_iFBSideHeight, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
     // vd.m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R16i));
-    vd.m_leftGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
-    vd.m_rightGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
 
     //Set up what matrices we can to prevent dynamic memory allocation.
+    vd.rectLeft_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8U);
+    vd.rectRight_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8U);
 
-    vd.origLeft_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
-    vd.origRight_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
-
-    vd.rectLeft_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
-    vd.rectRight_gpu = cv::cuda::GpuMat(m_iFBSideHeight, m_iFBSideWidth, CV_8UC4);
-
-    vd.resizedLeft_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
-    vd.resizedRight_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8UC4);
-
-    vd.resizedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
-    vd.resizedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
+    vd.resizedLeft_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
+    vd.resizedRight_gpu = cv::cuda::GpuMat(m_iFBAlgoHeight, m_iFBAlgoWidth, CV_8U);
 
     if (vd.m_isVerticalStereo) {
-      vd.resizedTransposedLeftGray_gpu = cv::cuda::GpuMat(m_iFBAlgoWidth, m_iFBAlgoHeight, CV_8U);
-      vd.resizedTransposedRightGray_gpu = cv::cuda::GpuMat(m_iFBAlgoWidth, m_iFBAlgoHeight, CV_8U);
+      vd.resizedTransposedLeft_gpu = cv::cuda::GpuMat(m_iFBAlgoWidth, m_iFBAlgoHeight, CV_8U);
+      vd.resizedTransposedRight_gpu = cv::cuda::GpuMat(m_iFBAlgoWidth, m_iFBAlgoHeight, CV_8U);
     }
   }
 
@@ -349,16 +348,6 @@ void DepthMapGenerator::processFrame() {
   }
 
   // Setup: Copy input camera surfaces to CV GpuMats, resize/grayscale/normalize
-  for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
-    ViewData& vd = m_viewData[viewIdx];
-
-    if (!vd.m_isStereoView)
-      continue;
-
-    m_cameraSystem->cameraProvider()->populateGpuMat(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0], vd.origLeft_gpu, vd.m_leftStream);
-    m_cameraSystem->cameraProvider()->populateGpuMat(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1], vd.origRight_gpu, vd.m_rightStream);
-  }
-
   if (m_enableProfiling) {
     m_setupStartEvent.record(m_globalStream);
   }
@@ -369,18 +358,18 @@ void DepthMapGenerator::processFrame() {
     if (!vd.m_isStereoView)
       continue;
 
-    cv::cuda::remap(vd.origLeft_gpu, vd.rectLeft_gpu, vd.m_leftMap1_gpu, vd.m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), vd.m_leftStream);
-    cv::cuda::remap(vd.origRight_gpu, vd.rectRight_gpu, vd.m_rightMap1_gpu, vd.m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), vd.m_rightStream);
+    cv::cuda::GpuMat origLeft_gpu = m_cameraSystem->cameraProvider()->gpuMatGreyscale(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]);
+    cv::cuda::GpuMat origRight_gpu = m_cameraSystem->cameraProvider()->gpuMatGreyscale(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1]);
+
+    cv::cuda::remap(origLeft_gpu, vd.rectLeft_gpu, vd.m_leftMap1_gpu, vd.m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), vd.m_leftStream);
+    cv::cuda::remap(origRight_gpu, vd.rectRight_gpu, vd.m_rightMap1_gpu, vd.m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), vd.m_rightStream);
 
     cv::cuda::resize(vd.rectLeft_gpu, vd.resizedLeft_gpu, cv::Size(m_iFBAlgoWidth, m_iFBAlgoHeight), 0, 0, cv::INTER_LINEAR, vd.m_leftStream);
     cv::cuda::resize(vd.rectRight_gpu, vd.resizedRight_gpu, cv::Size(m_iFBAlgoWidth, m_iFBAlgoHeight), 0, 0, cv::INTER_LINEAR, vd.m_rightStream);
 
-    cv::cuda::cvtColor(vd.resizedLeft_gpu, vd.resizedLeftGray_gpu, cv::COLOR_BGRA2GRAY, 0, vd.m_leftStream);
-    cv::cuda::cvtColor(vd.resizedRight_gpu, vd.resizedRightGray_gpu, cv::COLOR_BGRA2GRAY, 0, vd.m_rightStream);
-
     if (vd.m_isVerticalStereo) {
-      cv::cuda::transpose(vd.resizedLeftGray_gpu, vd.resizedTransposedLeftGray_gpu, vd.m_leftStream);
-      cv::cuda::transpose(vd.resizedRightGray_gpu, vd.resizedTransposedRightGray_gpu, vd.m_rightStream);
+      cv::cuda::transpose(vd.resizedLeft_gpu, vd.resizedTransposedLeft_gpu, vd.m_leftStream);
+      cv::cuda::transpose(vd.resizedRight_gpu, vd.resizedTransposedRight_gpu, vd.m_rightStream);
     }
 
     vd.m_leftJoinEvent.record(vd.m_leftStream);
@@ -424,8 +413,8 @@ void DepthMapGenerator::processFrame() {
     m_depthMapSHM->segment()->m_activeViewCount += 1;
 
     DepthMapSHM::ViewParams& viewParams = m_depthMapSHM->segment()->m_viewParams[vd.m_shmViewIndex];
-    cv::cuda::GpuMat& leftGpu = vd.m_isVerticalStereo ? vd.resizedTransposedLeftGray_gpu : vd.resizedLeftGray_gpu;
-    cv::cuda::GpuMat& rightGpu = vd.m_isVerticalStereo ? vd.resizedTransposedRightGray_gpu : vd.resizedRightGray_gpu;
+    cv::cuda::GpuMat& leftGpu = vd.m_isVerticalStereo ? vd.resizedTransposedLeft_gpu : vd.resizedLeft_gpu;
+    cv::cuda::GpuMat& rightGpu = vd.m_isVerticalStereo ? vd.resizedTransposedRight_gpu : vd.resizedRight_gpu;
 
     viewParams.width = leftGpu.cols;
     viewParams.height = leftGpu.rows;
@@ -479,8 +468,6 @@ void DepthMapGenerator::processFrame() {
 
     DepthMapSHM::ViewParams& viewParams = m_depthMapSHM->segment()->m_viewParams[vd.m_shmViewIndex];
 
-    RHICUDA::copyGpuMatToSurface(vd.rectLeft_gpu, vd.m_iTexture, m_globalStream);
-
     if (vd.m_isVerticalStereo) {
       cv::Mat transposedDispMat(viewParams.height, viewParams.width, (m_algorithm == 0) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
       cv::Mat dispMat = transposedDispMat.t(); // TODO might be more efficient to transpose in the DGPUWorker while the data is still on the GPU
@@ -506,8 +493,8 @@ void DepthMapGenerator::processFrame() {
     }
 
     if (m_populateDebugTextures) {
-      RHICUDA::copyGpuMatToSurface(vd.resizedLeftGray_gpu, vd.m_leftGray, m_globalStream);
-      RHICUDA::copyGpuMatToSurface(vd.resizedRightGray_gpu, vd.m_rightGray, m_globalStream);
+      RHICUDA::copyGpuMatToSurface(vd.resizedLeft_gpu, vd.m_leftGray, m_globalStream);
+      RHICUDA::copyGpuMatToSurface(vd.resizedRight_gpu, vd.m_rightGray, m_globalStream);
     }
   }
 
@@ -543,8 +530,10 @@ void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderVi
   ub.trim_maxXY = glm::vec2((m_iFBAlgoWidth - 1) - m_trimRight, (m_iFBAlgoHeight - 1) - m_trimBottom);
 
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
-  rhi()->loadTexture(ksImageTex, vd.m_iTexture);
   rhi()->loadTexture(ksDisparityTex, vd.m_disparityTexture);
+
+  rhi()->loadTexture(ksImageTex, m_cameraSystem->cameraProvider()->rgbTexture(vd.m_leftCameraIndex), linearClampSampler);
+  rhi()->loadTexture(ksDistortionMap, m_cameraSystem->viewAtIndex(viewIdx).stereoDistortionMap[0]);
 
   rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
 }

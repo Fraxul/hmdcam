@@ -17,7 +17,7 @@ public:
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_cameraSurfaces[sensorIndex]; }
-  virtual void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&);
+  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex);
   cv::Mat cvMat(size_t sensorIndex) const;
 
   void flagRDMABuffersDirty() { m_rdmaBuffersDirty = true; }
@@ -32,6 +32,9 @@ protected:
 
   std::vector<RDMABuffer::ptr> m_cameraRDMABuffers;
   std::vector<RHISurface::ptr> m_cameraSurfaces;
+
+  std::vector<cv::cuda::GpuMat> m_gpuMatTmp;
+  std::vector<cv::cuda::GpuMat> m_gpuMatGreyscaleTmp;
 
   bool m_rdmaBuffersDirty;
 
