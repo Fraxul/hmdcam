@@ -361,11 +361,11 @@ void DepthMapGenerator::processFrame() {
     cv::cuda::GpuMat origLeft_gpu = m_cameraSystem->cameraProvider()->gpuMatGreyscale(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]);
     cv::cuda::GpuMat origRight_gpu = m_cameraSystem->cameraProvider()->gpuMatGreyscale(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1]);
 
-    cv::cuda::remap(origLeft_gpu, vd.rectLeft_gpu, vd.m_leftMap1_gpu, vd.m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), vd.m_leftStream);
-    cv::cuda::remap(origRight_gpu, vd.rectRight_gpu, vd.m_rightMap1_gpu, vd.m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), vd.m_rightStream);
+    cv::cuda::remap(origLeft_gpu, vd.rectLeft_gpu, vd.m_leftMap1_gpu, vd.m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_globalStream);
+    cv::cuda::remap(origRight_gpu, vd.rectRight_gpu, vd.m_rightMap1_gpu, vd.m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_globalStream);
 
-    cv::cuda::resize(vd.rectLeft_gpu, vd.resizedLeft_gpu, cv::Size(m_iFBAlgoWidth, m_iFBAlgoHeight), 0, 0, cv::INTER_LINEAR, vd.m_leftStream);
-    cv::cuda::resize(vd.rectRight_gpu, vd.resizedRight_gpu, cv::Size(m_iFBAlgoWidth, m_iFBAlgoHeight), 0, 0, cv::INTER_LINEAR, vd.m_rightStream);
+    cv::cuda::resize(vd.rectLeft_gpu, vd.resizedLeft_gpu, cv::Size(m_iFBAlgoWidth, m_iFBAlgoHeight), 0, 0, cv::INTER_LINEAR, m_globalStream);
+    cv::cuda::resize(vd.rectRight_gpu, vd.resizedRight_gpu, cv::Size(m_iFBAlgoWidth, m_iFBAlgoHeight), 0, 0, cv::INTER_LINEAR, m_globalStream);
 
     if (vd.m_isVerticalStereo) {
       // cv::cuda::transpose is unusable due to forced CPU-GPU sync when switching the CUDA stream that NPPI is targeting, so we skip the CV wrappers and use NPPI directly.
@@ -373,27 +373,14 @@ void DepthMapGenerator::processFrame() {
       sz.width  = vd.resizedLeft_gpu.cols;
       sz.height = vd.resizedLeft_gpu.rows;
 
-      nppSetStream((cudaStream_t) vd.m_leftStream.cudaPtr());
-      nppiTranspose_8u_C1R(vd.resizedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedLeft_gpu.step), vd.resizedTransposedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedTransposedLeft_gpu.step), sz);
+      if (nppGetStream() != ((cudaStream_t) m_globalStream.cudaPtr())) {
+        nppSetStream((cudaStream_t) m_globalStream.cudaPtr());
+      }
 
-      nppSetStream((cudaStream_t) vd.m_rightStream.cudaPtr());
+      nppiTranspose_8u_C1R(vd.resizedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedLeft_gpu.step), vd.resizedTransposedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedTransposedLeft_gpu.step), sz);
       nppiTranspose_8u_C1R(vd.resizedRight_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedRight_gpu.step), vd.resizedTransposedRight_gpu.ptr<Npp8u>(), static_cast<int>(vd.resizedTransposedRight_gpu.step), sz);
     }
-
-    vd.m_leftJoinEvent.record(vd.m_leftStream);
-    vd.m_rightJoinEvent.record(vd.m_rightStream);
   }
-
-  for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
-    ViewData& vd = m_viewData[viewIdx];
-
-    if (!vd.m_isStereoView)
-      continue;
-
-    m_globalStream.waitEvent(vd.m_leftJoinEvent);
-    m_globalStream.waitEvent(vd.m_rightJoinEvent);
-  }
-
 
   if (m_enableProfiling) {
     m_setupFinishedEvent.record(m_globalStream);
