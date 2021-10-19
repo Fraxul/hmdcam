@@ -488,6 +488,12 @@ void DepthMapGenerator::processFrame() {
     }
 
     if (m_populateDebugTextures) {
+      if (!vd.m_leftGray)
+        vd.m_leftGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+
+      if (!vd.m_rightGray)
+        vd.m_rightGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+
       RHICUDA::copyGpuMatToSurface(vd.resizedLeft_gpu, vd.m_leftGray, m_globalStream);
       RHICUDA::copyGpuMatToSurface(vd.resizedRight_gpu, vd.m_rightGray, m_globalStream);
     }

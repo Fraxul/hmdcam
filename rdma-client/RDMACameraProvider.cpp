@@ -24,6 +24,9 @@ RDMACameraProvider::RDMACameraProvider(RDMAContext* ctx, SerializationBuffer cfg
 
     m_cameraSurfaces.push_back(rhi()->newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8)));
   }
+  m_gpuMatTmp.resize(streamCount());
+  m_gpuMatGreyscaleTmp.resize(streamCount());
+
 }
 
 RDMACameraProvider::~RDMACameraProvider() {
