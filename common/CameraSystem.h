@@ -61,6 +61,7 @@ public:
     }
 
     // Stereo data, only valid if (isStereo)
+    glm::vec3 stereoTranslationInitialGuess; // Populated by user from mechanical design parameters, if known.
     cv::Mat stereoRotation, stereoTranslation;  // Calibrated -- from cv::stereoCalibrate
     cv::Mat essentialMatrix, fundamentalMatrix; // Calibrated -- from cv::stereoCalibrate
     cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify

@@ -70,8 +70,8 @@ static glm::vec3 glmVec3FromCV(const cv::Mat& m) {
   return res;
 }
 
-static cv::Vec3f cvVec3FromGlm(const glm::vec3& v) {
-  return cv::Vec3f(&v[0]);
+static cv::Vec3d cvVec3FromGlm(const glm::vec3& v) {
+  return cv::Vec3d(v[0], v[1], v[2]);
 }
 
 

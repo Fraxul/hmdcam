@@ -117,14 +117,16 @@ bool CameraSystem::loadCalibrationData() {
           vfn["isStereo"] >> v.isStereo;
 
           if (v.isStereo) {
+            cv::Mat tmpMat;
+
             vfn["leftCameraIndex"] >> v.cameraIndices[0];
             vfn["rightCameraIndex"] >> v.cameraIndices[1];
+            vfn["stereoTranslationInitialGuess"] >> tmpMat; v.stereoTranslationInitialGuess = glmVec3FromCV(tmpMat);
             vfn["stereoRotation"] >> v.stereoRotation;
             vfn["stereoTranslation"] >> v.stereoTranslation;
             vfn["essentialMatrix"] >> v.essentialMatrix;
             vfn["fundamentalMatrix"] >> v.fundamentalMatrix;
 
-            cv::Mat tmpMat;
             vfn["viewTranslation"] >> tmpMat; v.viewTranslation = glmVec3FromCV(tmpMat);
             vfn["viewRotation"] >> tmpMat; v.viewRotation = glmVec3FromCV(tmpMat);
           } else {
@@ -188,6 +190,7 @@ void CameraSystem::saveCalibrationData() {
     if (v.isStereo) {
       fs.write("leftCameraIndex", (int) v.cameraIndices[0]);
       fs.write("rightCameraIndex", (int) v.cameraIndices[1]);
+      fs.write("stereoTranslationInitialGuess", cv::Mat(cvVec3FromGlm(v.stereoTranslationInitialGuess)));
       if (v.haveStereoCalibration()) {
         fs.write("stereoRotation", v.stereoRotation);
         fs.write("stereoTranslation", v.stereoTranslation);
@@ -896,6 +899,12 @@ void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
     cv::CALIB_FIX_ASPECT_RATIO |
     cv::CALIB_RATIONAL_MODEL;
 
+  if (glm::length(v.stereoTranslationInitialGuess) > 0.0f) {
+    feedbackTx = cv::Mat(cvVec3FromGlm(v.stereoTranslationInitialGuess));
+    feedbackRx = cv::Mat::eye(3, 3, CV_64F); // initial guess is identity rotation
+    flags |= cv::CALIB_USE_EXTRINSIC_GUESS;
+  }
+
   m_feedbackRmsError = cv::stereoCalibrate(m_calibState->m_objectPoints,
     m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
     leftC.intrinsicMatrix, leftC.distCoeffs,
@@ -944,6 +953,12 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
       cv::CALIB_FIX_PRINCIPAL_POINT |
       cv::CALIB_FIX_ASPECT_RATIO |
       cv::CALIB_RATIONAL_MODEL;
+
+    if (glm::length(v.stereoTranslationInitialGuess) > 0.0f) {
+      v.stereoTranslation = cvVec3FromGlm(v.stereoTranslationInitialGuess);
+      v.stereoRotation = cv::Mat::eye(3, 3, CV_64F); // initial guess is identity rotation
+      flags |= cv::CALIB_USE_EXTRINSIC_GUESS;
+    }
 
     double rms = cv::stereoCalibrate(m_calibState->m_objectPoints,
       m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
