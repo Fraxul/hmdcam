@@ -565,11 +565,14 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
       static_cast<float>(cameraProvider()->streamWidth()  / 2) - m_feedbackPrincipalPoint.x,
       static_cast<float>(cameraProvider()->streamHeight() / 2) - m_feedbackPrincipalPoint.y);
 
-    ImGui::Text("Per-View Errors");
-    if (m_perViewErrors.rows > 0) {
+    if (ImGui::BeginChild("Per-View Errors", ImVec2(0, 192))) {
       for (int i = 0; i < m_perViewErrors.rows; ++i) {
         ImGui::Text(" [%d] %f", i, m_perViewErrors.at<double>(i, 0));
       }
+    }
+    ImGui::EndChild();
+
+    if (m_perViewErrors.rows > 0) {
       if (ImGui::Button("Drop last sample")) {
         // drop sample
         m_allCharucoCorners.pop_back();
@@ -833,11 +836,14 @@ void CameraSystem::StereoCalibrationContext::renderStatusUI() {
   ImGui::Text("RMS Error: %f", m_feedbackRmsError);
   ImGui::Text("Stereo ROI (L): [%u x %u from (%u, %u)", m_feedbackValidROI[0].width, m_feedbackValidROI[0].height, m_feedbackValidROI[0].x, m_feedbackValidROI[0].y);
   ImGui::Text("Stereo ROI (R): [%u x %u from (%u, %u)", m_feedbackValidROI[1].width, m_feedbackValidROI[1].height, m_feedbackValidROI[1].x, m_feedbackValidROI[1].y);
-  ImGui::Text("Per-View Errors");
-  if (m_perViewErrors.rows > 0) {
+  if (ImGui::BeginChild("Per-View Errors", ImVec2(0, 192))) {
     for (int i = 0; i < m_perViewErrors.rows; ++i) {
       ImGui::Text(" [%d] %f, %f", i, m_perViewErrors.at<double>(i, 0), m_perViewErrors.at<double>(i, 1));
     }
+  }
+  ImGui::EndChild();
+
+  if (m_perViewErrors.rows > 0) {
     if (ImGui::Button("Drop highest-error sample")) {
       double maxError = 0;
       int maxErrorRow = 0;
