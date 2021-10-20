@@ -164,8 +164,8 @@ int main(int argc, char* argv[]) {
     unsigned int coreTemp; // in degrees C
     NVML_CHECK(nvmlDeviceGetTemperature(hDevice, NVML_TEMPERATURE_GPU, &coreTemp));
 
-    // setting lower bound of duty cycle to 20% to keep the fan on
-    float dutyCycle = glm::mix(0.2f, 1.0f, glm::smoothstep(30.0f, 70.0f, static_cast<float>(coreTemp)));
+    // setting lower bound of duty cycle to 10% to keep the fan on
+    float dutyCycle = glm::mix(0.1f, 1.0f, glm::smoothstep(30.0f, 60.0f, static_cast<float>(coreTemp)));
 
     if (!quiet) {
       printf("GPU temp %u => duty cycle %u%%\n", coreTemp, static_cast<unsigned int>(dutyCycle * 100.0f));
