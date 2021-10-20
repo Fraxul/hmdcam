@@ -810,12 +810,19 @@ RHISurface::ptr CameraSystem::IntrinsicCalibrationContext::overlaySurfaceAtIndex
 
 
 
-CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* cs, size_t viewIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_viewIdx(viewIdx) {
-
-  // Store cancellation cache
-  m_previousViewData = cameraSystem()->viewAtIndex(viewIdx);
+CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* cs, size_t viewIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_viewIdx(viewIdx), m_allowIntrinsicModification(false) {
 
   CameraSystem::View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+
+  // Store cancellation cache
+  m_previousViewData = v;
+  Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
+  Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
+  m_origLeftIntrinsicMatrix = leftC.intrinsicMatrix;
+  m_origLeftDistCoeffs = leftC.distCoeffs;
+  m_origRightIntrinsicMatrix = rightC.intrinsicMatrix;
+  m_origRightDistCoeffs = rightC.distCoeffs;
+
   m_calibState = new CharucoMultiViewCalibration(cameraSystem(), {v.cameraIndices[0], v.cameraIndices[1]});
   m_calibState->m_undistortCapturedViews = false; // operate in native space
 
@@ -859,6 +866,7 @@ void CameraSystem::StereoCalibrationContext::renderStatusUI() {
       internalUpdateCaptureState();
     }
   }
+  ImGui::Checkbox("Allow camera intrinsic modification", &m_allowIntrinsicModification);
 }
 
 
@@ -900,10 +908,19 @@ void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
 
   int flags =
     cv::CALIB_USE_INTRINSIC_GUESS | // load previously-established intrinsics
-    cv::CALIB_FIX_INTRINSIC |       // and don't modify them
     cv::CALIB_FIX_PRINCIPAL_POINT |
     cv::CALIB_FIX_ASPECT_RATIO |
     cv::CALIB_RATIONAL_MODEL;
+
+  if (!m_allowIntrinsicModification) {
+    flags |= cv::CALIB_FIX_INTRINSIC;
+  }
+
+  // copy intrinsics so they can be modified without destroying the originals
+  cv::Mat adjLeftIntrinsicMatrix = leftC.intrinsicMatrix;
+  cv::Mat adjLeftDistCoeffs = leftC.distCoeffs;
+  cv::Mat adjRightIntrinsicMatrix = rightC.intrinsicMatrix;
+  cv::Mat adjRightDistCoeffs = rightC.distCoeffs;
 
   if (glm::length(v.stereoTranslationInitialGuess) > 0.0f) {
     feedbackTx = cv::Mat(cvVec3FromGlm(v.stereoTranslationInitialGuess));
@@ -913,8 +930,8 @@ void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
 
   m_feedbackRmsError = cv::stereoCalibrate(m_calibState->m_objectPoints,
     m_calibState->m_calibrationPoints[0], m_calibState->m_calibrationPoints[1],
-    leftC.intrinsicMatrix, leftC.distCoeffs,
-    rightC.intrinsicMatrix, rightC.distCoeffs,
+    adjLeftIntrinsicMatrix, adjLeftDistCoeffs,
+    adjRightIntrinsicMatrix, adjRightDistCoeffs,
     cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
     feedbackRx, feedbackTx, feedbackE, feedbackF, m_perViewErrors, flags);
 
@@ -955,10 +972,13 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
 
     int flags =
       cv::CALIB_USE_INTRINSIC_GUESS | // load previously-established intrinsics
-      cv::CALIB_FIX_INTRINSIC |       // and don't modify them
       cv::CALIB_FIX_PRINCIPAL_POINT |
       cv::CALIB_FIX_ASPECT_RATIO |
       cv::CALIB_RATIONAL_MODEL;
+
+    if (!m_allowIntrinsicModification) {
+      flags |= cv::CALIB_FIX_INTRINSIC;
+    }
 
     if (glm::length(v.stereoTranslationInitialGuess) > 0.0f) {
       v.stereoTranslation = cvVec3FromGlm(v.stereoTranslationInitialGuess);
@@ -976,6 +996,8 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
     printf("RMS error reported by stereoCalibrate: %g\n", rms);
     std::cout << " Per-view error: " << std::endl << perViewErrors << std::endl;
 
+    cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[0]);
+    cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[1]);
     cameraSystem()->updateViewStereoDistortionParameters(m_viewIdx);
 
     return true;
@@ -991,11 +1013,34 @@ void CameraSystem::StereoCalibrationContext::didAcceptCalibrationPreview() {
 
 void CameraSystem::StereoCalibrationContext::didRejectCalibrationPreview() {
   // Returning from preview to capture mode.
+
+  // Restore original intrinsics and derived values
+  View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+  Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
+  Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
+  leftC.intrinsicMatrix = m_origLeftIntrinsicMatrix;
+  leftC.distCoeffs = m_origLeftDistCoeffs;
+  rightC.intrinsicMatrix = m_origRightIntrinsicMatrix;
+  rightC.distCoeffs = m_origRightDistCoeffs;
+  cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[0]);
+  cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[1]);
 }
 
 void CameraSystem::StereoCalibrationContext::didCancelCalibrationSession() {
+  View& v = cameraSystem()->viewAtIndex(m_viewIdx);
+
   // Restore previously saved calibration snapshot
-  cameraSystem()->viewAtIndex(m_viewIdx) = m_previousViewData;
+  v = m_previousViewData;
+
+  // Restore original intrinsics and derived values
+  Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
+  Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
+  leftC.intrinsicMatrix = m_origLeftIntrinsicMatrix;
+  leftC.distCoeffs = m_origLeftDistCoeffs;
+  rightC.intrinsicMatrix = m_origRightIntrinsicMatrix;
+  rightC.distCoeffs = m_origRightDistCoeffs;
+  cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[0]);
+  cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[1]);
 
   if (cameraSystem()->viewAtIndex(m_viewIdx).haveStereoCalibration())
     cameraSystem()->updateViewStereoDistortionParameters(m_viewIdx);

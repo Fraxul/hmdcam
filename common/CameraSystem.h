@@ -270,11 +270,14 @@ public:
     void internalUpdateCaptureState();
 
     size_t m_viewIdx;
+    bool m_allowIntrinsicModification;
 
     CharucoMultiViewCalibration* m_calibState;
 
     // Cached data of previous calibration to be restored if the context is cancelled.
     View m_previousViewData;
+    cv::Mat m_origLeftIntrinsicMatrix, m_origRightIntrinsicMatrix;
+    cv::Mat m_origLeftDistCoeffs, m_origRightDistCoeffs;
 
     // Feedback data during capture
     glm::vec3 m_feedbackTx, m_feedbackRx;
