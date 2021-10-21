@@ -25,6 +25,10 @@ public:
   bool loadCalibrationData();
   void saveCalibrationData();
 
+  // incremented every time calibration data is changed (in updateViewStereoDistortionParameters / updateCameraIntrinsicDistortionParameters).
+  // use to invalidate derived data caches in clients
+  unsigned int calibrationDataRevision() const { return m_calibrationDataRevision; }
+
 
   struct Camera {
     Camera() : fovX(0), fovY(0) {}
@@ -63,7 +67,7 @@ public:
     // Stereo data, only valid if (isStereo)
     glm::vec3 stereoTranslationInitialGuess; // Populated by user from mechanical design parameters, if known.
     cv::Mat stereoRotation, stereoTranslation;  // Calibrated -- from cv::stereoCalibrate
-    cv::Mat essentialMatrix, fundamentalMatrix; // Calibrated -- from cv::stereoCalibrate
+    // cv::Mat essentialMatrix, fundamentalMatrix; // Calibrated -- from cv::stereoCalibrate. Not used.
     cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify
     cv::Mat stereoDisparityToDepth;
     cv::Rect stereoValidROI[2];
@@ -366,15 +370,17 @@ public:
   ICameraProvider* cameraProvider() const { return m_cameraProvider; }
 
   cv::Mat captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, RHISurface::ptr distortionMap = RHISurface::ptr());
+
+  void updateCameraIntrinsicDistortionParameters(size_t cameraIdx); // Generate camera-specific derived data after calibration
+  void updateViewStereoDistortionParameters(size_t viewIdx); // Generate view-specific derived data after calibration
+
 protected:
   ICameraProvider* m_cameraProvider;
+  unsigned int m_calibrationDataRevision;
 
   std::vector<Camera> m_cameras;
   std::vector<View> m_views;
 
-
-  void updateCameraIntrinsicDistortionParameters(size_t cameraIdx); // Generate camera-specific derived data after calibration
-  void updateViewStereoDistortionParameters(size_t viewIdx); // Generate view-specific derived data after calibration
   RHISurface::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2);
 
 private:

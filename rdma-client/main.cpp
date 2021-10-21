@@ -222,7 +222,7 @@ int main(int argc, char** argv) {
 
   std::vector<CharucoMultiViewCalibration*> charucoProcessors;
   charucoProcessors.resize(cameraSystem->views());
-  bool enableCharucoDetection = true;
+  bool enableCharucoDetection = false; // default-off for interaction performance
 
   // CV processing init
   depthMapGenerator = new DepthMapGenerator(cameraSystem, shm);
@@ -324,7 +324,7 @@ int main(int argc, char** argv) {
           if (ImGui::DragFloat("Camera Horizontal FoV", &fov, /*speed=*/1.0f, /*min=*/20.0f, /*max=*/170.0f, /*format=*/"%.1fdeg")) {
             sceneCamera->setFieldOfView(fov);
           }
-
+#if 0
           FxRenderView renderView = sceneCamera->toRenderView(static_cast<float>(io.DisplaySize.x) / static_cast<float>(io.DisplaySize.y));
           {
             glm::mat4 m = renderView.viewMatrix;
@@ -342,6 +342,7 @@ int main(int argc, char** argv) {
                 m[i][0], m[i][1], m[i][2], m[i][3]);
             }
           }
+#endif
 
           ImGui::Checkbox("Charuco detection", &enableCharucoDetection);
           ImGui::SliderInt("Charuco Disp Scale", &triangulationDisparityScaleInv, 1, 256); // TODO remove
@@ -358,6 +359,24 @@ int main(int argc, char** argv) {
           ImGui::PushID(viewIdx);
 
           ImGui::Text("View %zu", viewIdx);
+
+          glm::vec3 stereoTxMM = glmVec3FromCV(v.stereoTranslation) * 1000.0f;
+          if (ImGui::DragFloat3("Stereo Baseline Tx", &stereoTxMM[0], /*speed=*/ 0.1f, /*min=*/ -1000.0f, /*max=*/ 1000.0f, "%.1fmm")) {
+            v.stereoTranslation = cvVec3FromGlm(stereoTxMM * 0.001f);
+          }
+
+          static float baselineScale = 1.0f;
+          ImGui::DragFloat("Baseline Scale", &baselineScale, /*speed=*/0.005f,  /*min=*/0.5f, /*max=*/1.5f);
+          ImGui::Text("Baseline length: unscaled %.1fmm, scaled %.1fmm",
+            glm::length(stereoTxMM), glm::length(stereoTxMM) * baselineScale);
+
+          if (ImGui::Button("Apply Scale / Recompute stereo parameters")) {
+            v.stereoTranslation *= baselineScale;
+            baselineScale = 1.0f;
+            cameraSystem->updateViewStereoDistortionParameters(viewIdx);
+          }
+
+
           glm::vec3 txMM = v.viewTranslation * 1000.0f;
           if (ImGui::DragFloat3("Tx", &txMM[0], /*speed=*/ 0.1f, /*min=*/ -1000.0f, /*max=*/ 1000.0f, "%.1fmm")) {
             v.viewTranslation = txMM * 0.001f;

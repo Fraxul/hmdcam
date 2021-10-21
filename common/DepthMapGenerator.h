@@ -109,6 +109,9 @@ protected:
   };
 
   std::vector<ViewData> m_viewData;
+  unsigned int m_viewDataRevision;
+
+  void recomputePerViewData();
 
   // Profiling events and data
   bool m_enableProfiling;

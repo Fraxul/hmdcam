@@ -181,6 +181,11 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
     }
   }
 
+  recomputePerViewData();
+}
+
+void DepthMapGenerator::recomputePerViewData() {
+
   // Per-view data
   m_viewData.resize(m_cameraSystem->views());
 
@@ -231,6 +236,7 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
     }
   }
 
+  m_viewDataRevision = m_cameraSystem->calibrationDataRevision();
 }
 
 DepthMapGenerator::~DepthMapGenerator() {
@@ -285,6 +291,10 @@ void DepthMapGenerator::processFrame() {
     } catch (...) {
       // cv::cuda::Event::elapsedTime will throw if the event is not ready; just skip reading the event timers in that case.
     }
+  }
+
+  if (m_viewData.empty() || (m_viewDataRevision != m_cameraSystem->calibrationDataRevision())) {
+    recomputePerViewData();
   }
 
   if (m_didChangeSettings) {

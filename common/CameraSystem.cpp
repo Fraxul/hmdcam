@@ -41,7 +41,7 @@ FxAtomicString ksDistortionMap("distortionMap");
 FxAtomicString ksImageTex("imageTex");
 
 
-CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibration.yml"), m_cameraProvider(cam) {
+CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibration.yml"), m_cameraProvider(cam), m_calibrationDataRevision(0) {
 
   // Initialize ChAruCo data on first use
   if (!s_charucoDictionary)
@@ -124,8 +124,8 @@ bool CameraSystem::loadCalibrationData() {
             vfn["stereoTranslationInitialGuess"] >> tmpMat; v.stereoTranslationInitialGuess = glmVec3FromCV(tmpMat);
             vfn["stereoRotation"] >> v.stereoRotation;
             vfn["stereoTranslation"] >> v.stereoTranslation;
-            vfn["essentialMatrix"] >> v.essentialMatrix;
-            vfn["fundamentalMatrix"] >> v.fundamentalMatrix;
+            //vfn["essentialMatrix"] >> v.essentialMatrix;
+            //vfn["fundamentalMatrix"] >> v.fundamentalMatrix;
 
             vfn["viewTranslation"] >> tmpMat; v.viewTranslation = glmVec3FromCV(tmpMat);
             vfn["viewRotation"] >> tmpMat; v.viewRotation = glmVec3FromCV(tmpMat);
@@ -194,8 +194,8 @@ void CameraSystem::saveCalibrationData() {
       if (v.haveStereoCalibration()) {
         fs.write("stereoRotation", v.stereoRotation);
         fs.write("stereoTranslation", v.stereoTranslation);
-        fs.write("essentialMatrix", v.essentialMatrix);
-        fs.write("fundamentalMatrix", v.fundamentalMatrix);
+        //fs.write("essentialMatrix", v.essentialMatrix);
+        //fs.write("fundamentalMatrix", v.fundamentalMatrix);
       }
       fs.write("viewTranslation", cv::Mat(cvVec3FromGlm(v.viewTranslation)));
       fs.write("viewRotation", cv::Mat(cvVec3FromGlm(v.viewRotation)));
@@ -242,6 +242,8 @@ void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
   }
   
   c.intrinsicDistortionMap = generateGPUDistortionMap(map1, map2);
+
+  m_calibrationDataRevision += 1;
 }
 
 void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
@@ -315,6 +317,8 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     
     v.stereoDistortionMap[eyeIdx] = generateGPUDistortionMap(map1, map2);
   }
+
+  m_calibrationDataRevision += 1;
 }
 
 RHISurface::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map2) {
