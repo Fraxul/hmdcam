@@ -315,6 +315,11 @@ int main(int argc, char** argv) {
           if (ImGui::InputFloat3("Camera Target", &t[0]))
             sceneCamera->setTargetPosition(t);
 
+          if (ImGui::Button("Reset Camera")) {
+            sceneCamera->setPosition(glm::vec3(0, 0, 0));
+            sceneCamera->setTargetPosition(glm::vec3(0, 0, -5));
+          }
+
           float fov = sceneCamera->fieldOfView();
           if (ImGui::DragFloat("Camera Horizontal FoV", &fov, /*speed=*/1.0f, /*min=*/20.0f, /*max=*/170.0f, /*format=*/"%.1fdeg")) {
             sceneCamera->setFieldOfView(fov);
@@ -537,8 +542,10 @@ int main(int argc, char** argv) {
         ImGui::Begin("ChAruCo");
 
         static int gizmoType = 1;
+        static bool gizmoDepthTest = true;
         ImGui::RadioButton("Triangulated", &gizmoType, 0);
         ImGui::RadioButton("Linear remap", &gizmoType, 1);
+        ImGui::Checkbox("Depth-test gizmos", &gizmoDepthTest);
 
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
           if (viewIdx != 0)
@@ -652,6 +659,7 @@ int main(int argc, char** argv) {
         if (pointsStaging.size()) {
           RHIBuffer::ptr pointsBuf = rhi()->newBufferWithContents(pointsStaging.data(), pointsStaging.size() * sizeof(float) * 4);
 
+          rhi()->bindDepthStencilState(gizmoDepthTest ? standardGreaterDepthStencilState : disabledDepthStencilState);
           // render points as locator gizmos
           drawTriadGizmosForPoints(pointsBuf, pointsStaging.size(), renderView.viewProjectionMatrix, /*scale=*/-0.025f /*25mm*/);
         }
