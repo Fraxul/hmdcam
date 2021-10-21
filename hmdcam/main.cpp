@@ -785,8 +785,21 @@ int main(int argc, char* argv[]) {
           }
 
           if (drawUI || calibrationContext) {
-            // Draw the UI on the center-bottom of the debug surface
+            // Default to drawing the UI on the center-bottom of the debug surface
             RHIRect uiDestRect = RHIRect::xywh((debugSurface->width() / 2) - (guiTex->width() / 2), debugSurface->height() - guiTex->height(), guiTex->width(), guiTex->height());
+
+            // If a calibration context is active, try to find a camera region to draw the UI over that's not currently being calibrated.
+            if (calibrationContext) {
+              for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
+                if (!calibrationContext->involvesCamera(cameraIdx)) {
+                  const RHIRect& cameraRect = debugSurfaceCameraRects[cameraIdx];
+                  uiDestRect.x = cameraRect.x + ((cameraRect.width - uiDestRect.width) / 2); // center
+                  uiDestRect.y = cameraRect.y;
+                  break;
+                }
+              }
+            }
+
             rhi()->setViewport(uiDestRect);
 
             rhi()->bindBlendState(standardAlphaOverBlendState);
