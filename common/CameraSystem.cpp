@@ -535,6 +535,7 @@ CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSys
 
   m_feedbackRmsError = -1.0;
   m_incrementalUpdateInProgress = false;
+  m_calibrationModel = 1; // default to thin_prism
 }
 
 CameraSystem::IntrinsicCalibrationContext::~IntrinsicCalibrationContext() {
@@ -576,32 +577,45 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
     }
     ImGui::EndChild();
 
-    if (m_perViewErrors.rows > 0) {
-      if (ImGui::Button("Drop last sample")) {
-        // drop sample
-        m_allCharucoCorners.pop_back();
-        m_allCharucoIds.pop_back();
+    if (!inCalibrationPreviewMode()) {
+      if (m_perViewErrors.rows > 0) {
+        if (ImGui::Button("Drop last sample")) {
+          // drop sample
+          m_allCharucoCorners.pop_back();
+          m_allCharucoIds.pop_back();
 
-        // update calibration feedback
-        m_incrementalUpdateInProgress = true;
-        FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
-      }
-      if (ImGui::Button("Drop highest-error sample")) {
-        double maxError = 0;
-        int maxErrorRow = 0;
-        for (int i = 0; i < m_perViewErrors.rows; ++i) {
-          double e = m_perViewErrors.at<double>(i, 0);
-          if (e > maxError) {
-            e = maxError;
-            maxErrorRow = i;
-          }
+          // update calibration feedback
+          m_incrementalUpdateInProgress = true;
+          FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
         }
+        if (ImGui::Button("Drop highest-error sample")) {
+          double maxError = 0;
+          int maxErrorRow = 0;
+          for (int i = 0; i < m_perViewErrors.rows; ++i) {
+            double e = m_perViewErrors.at<double>(i, 0);
+            if (e > maxError) {
+              e = maxError;
+              maxErrorRow = i;
+            }
+          }
 
-        // drop sample
-        m_allCharucoCorners.erase(m_allCharucoCorners.begin() + maxErrorRow);
-        m_allCharucoIds.erase(m_allCharucoIds.begin() + maxErrorRow);
+          // drop sample
+          m_allCharucoCorners.erase(m_allCharucoCorners.begin() + maxErrorRow);
+          m_allCharucoIds.erase(m_allCharucoIds.begin() + maxErrorRow);
 
-        // update calibration feedback
+          // update calibration feedback
+          m_incrementalUpdateInProgress = true;
+          FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
+        }
+      }
+      bool modelDirty = ImGui::RadioButton("Rational", &m_calibrationModel, 0);
+      ImGui::SameLine();
+      modelDirty |= ImGui::RadioButton("+ ThinPrism", &m_calibrationModel, 1);
+      ImGui::SameLine();
+      modelDirty |= ImGui::RadioButton("+ Tilted", &m_calibrationModel, 2);
+
+      if (modelDirty) {
+        // update if the distortion model type changed
         m_incrementalUpdateInProgress = true;
         FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
       }
@@ -708,9 +722,20 @@ void CameraSystem::IntrinsicCalibrationContext::asyncUpdateIncrementalCalibratio
       cv::CALIB_FIX_PRINCIPAL_POINT |
       cv::CALIB_FIX_ASPECT_RATIO |
       cv::CALIB_RATIONAL_MODEL;
+    int distCoeffSize = 8; // rational
+
+    if (m_calibrationModel >= 1) {
+      distCoeffSize = 12; // rational + thin_prism
+      flags |= cv::CALIB_THIN_PRISM_MODEL;
+    }
+
+    if (m_calibrationModel >= 2) {
+      distCoeffSize = 14; // rational + thin_prism + tilted
+      flags |= cv::CALIB_TILTED_MODEL;
+    }
 
     c.intrinsicMatrix = cv::Mat::eye(3, 3, CV_64F);
-    c.distCoeffs = cv::Mat::zeros(14, 1, CV_64F);
+    c.distCoeffs = cv::Mat::zeros(distCoeffSize, 1, CV_64F);
 
 
     m_feedbackRmsError = cv::aruco::calibrateCameraCharuco(m_allCharucoCorners, m_allCharucoIds,
@@ -916,6 +941,12 @@ void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
     cv::CALIB_FIX_ASPECT_RATIO |
     cv::CALIB_RATIONAL_MODEL;
 
+  if (leftC.distCoeffs.total() >= 12 || rightC.distCoeffs.total() >= 12)
+    flags |= cv::CALIB_THIN_PRISM_MODEL;
+
+  if (leftC.distCoeffs.total() >= 14 || rightC.distCoeffs.total() >= 14)
+    flags |= cv::CALIB_TILTED_MODEL;
+
   if (!m_allowIntrinsicModification) {
     flags |= cv::CALIB_FIX_INTRINSIC;
   }
@@ -979,6 +1010,12 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
       cv::CALIB_FIX_PRINCIPAL_POINT |
       cv::CALIB_FIX_ASPECT_RATIO |
       cv::CALIB_RATIONAL_MODEL;
+
+    if (leftC.distCoeffs.total() >= 12 || rightC.distCoeffs.total() >= 12)
+      flags |= cv::CALIB_THIN_PRISM_MODEL;
+
+    if (leftC.distCoeffs.total() >= 14 || rightC.distCoeffs.total() >= 14)
+      flags |= cv::CALIB_TILTED_MODEL;
 
     if (!m_allowIntrinsicModification) {
       flags |= cv::CALIB_FIX_INTRINSIC;

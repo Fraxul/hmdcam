@@ -228,6 +228,8 @@ public:
     double m_feedbackFovX, m_feedbackFovY; // degrees
     cv::Point2d m_feedbackPrincipalPoint;
     bool m_incrementalUpdateInProgress;
+
+    int m_calibrationModel; // 0 = rational, 1 = rational+thin_prism, 2=rational+thin_prism+tilted
   };
 
   class StereoCalibrationContext : public CalibrationContextStateMachineBase {
