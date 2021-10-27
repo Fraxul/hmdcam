@@ -41,6 +41,7 @@ if is_tegra:
   # Only build hmdcam application on Tegra
   SConscript('SConscript-hmdcam', variant_dir = 'build/hmdcam', duplicate = 0)
   SConscript('SConscript-dgpu-fans', variant_dir = 'build/dgpu-fans', duplicate = 0)
+  SConscript('SConscript-pductl', variant_dir = 'build/pductl', duplicate = 0)
 else:
   # Only build test apps on desktop
   SConscript('SConscript-stereo-geometry', variant_dir = 'build/stereo-geometry', duplicate = 0)

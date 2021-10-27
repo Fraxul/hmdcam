@@ -1,0 +1,16 @@
+Import('env')
+
+pductlEnv = env.Clone()
+
+# Link this app against the DGPU CUDA libraries instead of the default libraries (which on Tegra will be the iGPU libraries)
+pductlEnv.Append(
+  LINKFLAGS=['-Wl,-rpath=/usr/local/nvidia-dgpu-support']
+)
+
+pductlEnv.Program(
+  target = '../bin/pductl', # relative to build/pductl
+  source = Glob('pductl/*.cpp') + ['/usr/local/nvidia-dgpu-support/libnvidia-ml.so.1'],
+  LIBS = []
+)
+
+

@@ -1,0 +1,13 @@
+# copy to /etc/systemd/system
+# then run sudo systemctl enable pductl.service
+
+[Unit]
+Description=pductl
+After=nvpmodel.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pductl -q
+
+[Install]
+WantedBy=multi-user.target
