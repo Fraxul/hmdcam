@@ -1,5 +1,6 @@
 #include "imgui.h"
 #include "common/DepthMapGenerator.h"
+#include "common/DepthWorkerControl.h"
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
 #include "common/glmCvInterop.h"
@@ -87,7 +88,7 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
 
   m_didChangeSettings = true; // force initial algorithm setup
 
-  // Initial algorithm settings
+  // DGPU backend -- initial algorithm settings
   m_algorithm = 2;
   m_useDisparityFilter = true;
   m_disparityFilterRadius = 3;
@@ -106,6 +107,14 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
   m_sgmP2 = 120;
   m_sgmUniquenessRatio = 5; // 5-15
   m_sgmUseHH4 = true;
+
+  // DepthAI backend -- initial settings
+
+  m_confidenceThreshold = 230;
+  m_medianFilter = 5;
+  m_bilateralFilterSigma = 0;
+  m_enableLRCheck = false;
+  m_leftRightCheckThreshold = 4;
 
   // Render settings
   m_trimLeft = 8;
@@ -301,22 +310,32 @@ void DepthMapGenerator::processFrame() {
     m_sbmBlockSize |= 1; // enforce odd blockSize
     m_disparityFilterRadius |= 1; // enforce odd filter size
 
-    switch (m_algorithm) {
-      default:
-        m_algorithm = 0;
-      case 0:
-        // uses CV_8UC1 disparity
-        m_disparityPrescale = 1.0f; // / 16.0f;
-        break;
-      case 1: {
-        if (m_sbpLevels > 4) // more than 4 levels seems to trigger an internal crash
-          m_sbpLevels = 4;
-        m_disparityPrescale = 1.0f; // / 16.0f;
-      } break;
-      case 2:
-        m_disparityPrescale = 1.0f / 16.0f; // TODO: not sure if this is correct -- matches results from CSBP, roughly.
-        break;
-    };
+    if (currentDepthWorkerBackend() == kDepthWorkerDGPU) {
+      switch (m_algorithm) {
+        default:
+          m_algorithm = 0;
+        case 0:
+          // uses CV_8UC1 disparity
+          m_disparityPrescale = 1.0f; // / 16.0f;
+          m_disparityBytesPerPixel = 1;
+          break;
+        case 1: {
+          if (m_sbpLevels > 4) // more than 4 levels seems to trigger an internal crash
+            m_sbpLevels = 4;
+          m_disparityPrescale = 1.0f; // / 16.0f;
+          m_disparityBytesPerPixel = 2;
+        } break;
+        case 2:
+          m_disparityPrescale = 1.0f / 16.0f; // TODO: not sure if this is correct -- matches results from CSBP, roughly.
+          m_disparityBytesPerPixel = 2;
+          break;
+      };
+    } else if (currentDepthWorkerBackend() == kDepthWorkerDepthAI) {
+      m_disparityPrescale = 1.0f;
+      m_disparityBytesPerPixel = 1;
+    } else {
+      assert(false && "DepthMapGenerator::processFrame(): settings update not implemented for this depth backend");
+    }
 
     for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
       ViewData& vd = m_viewData[viewIdx];
@@ -324,13 +343,7 @@ void DepthMapGenerator::processFrame() {
         continue;
 
       vd.m_disparityTextureMipTargets.clear();
-      if (m_algorithm == 0) {
-        // CV_8uc1 disparity map type for StereoBM
-        vd.m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor::mipDescriptor(kSurfaceFormat_R8i));
-      } else {
-        // CV_16sc1 disparity map type for everything else
-        vd.m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor::mipDescriptor(kSurfaceFormat_R16i));
-      }
+      vd.m_disparityTexture = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor::mipDescriptor(m_disparityBytesPerPixel == 1 ? kSurfaceFormat_R8i : kSurfaceFormat_R16i));
 
       for (uint32_t level = 0; level < vd.m_disparityTexture->mipLevels(); ++level) {
         vd.m_disparityTextureMipTargets.push_back(rhi()->compileRenderTarget({ RHIRenderTargetDescriptorElement(vd.m_disparityTexture, level) }));
@@ -353,6 +366,12 @@ void DepthMapGenerator::processFrame() {
     m_depthMapSHM->segment()->m_sgmP2 = m_sgmP2;
     m_depthMapSHM->segment()->m_sgmUniquenessRatio = m_sgmUniquenessRatio;
     m_depthMapSHM->segment()->m_sgmUseHH4 = m_sgmUseHH4;
+
+    m_depthMapSHM->segment()->m_confidenceThreshold = m_confidenceThreshold;
+    m_depthMapSHM->segment()->m_medianFilter = m_medianFilter;
+    m_depthMapSHM->segment()->m_bilateralFilterSigma = m_bilateralFilterSigma;
+    m_depthMapSHM->segment()->m_leftRightCheckThreshold = m_leftRightCheckThreshold;
+    m_depthMapSHM->segment()->m_enableLRCheck = m_enableLRCheck;
 
     m_didChangeSettings = false;
   }
@@ -424,7 +443,7 @@ void DepthMapGenerator::processFrame() {
     viewParams.width = leftGpu.cols;
     viewParams.height = leftGpu.rows;
     viewParams.inputPitchBytes = leftGpu.step;
-    viewParams.outputPitchBytes = viewParams.width * ((m_algorithm == 0) ? 1 : 2); // Tightly packed output so it can be passed to RHI::loadTextureData
+    viewParams.outputPitchBytes = viewParams.width * m_disparityBytesPerPixel; // Tightly packed output so it can be passed to RHI::loadTextureData
 
     // Allocate space in the SHM region for the I/O buffers.
     size_t inputBufferSize = ((viewParams.height * viewParams.inputPitchBytes) + 4095) & (~4095); // rounded up to pagesize
@@ -438,7 +457,7 @@ void DepthMapGenerator::processFrame() {
 
     cv::Mat leftMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputLeftOffset, viewParams.inputPitchBytes);
     cv::Mat rightMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputRightOffset, viewParams.inputPitchBytes);
-    cv::Mat dispMat(viewParams.height, viewParams.width, (m_algorithm == 0) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
+    cv::Mat dispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
 
     leftGpu.download(leftMat, m_globalStream);
     rightGpu.download(rightMat, m_globalStream);
@@ -474,12 +493,12 @@ void DepthMapGenerator::processFrame() {
     DepthMapSHM::ViewParams& viewParams = m_depthMapSHM->segment()->m_viewParams[vd.m_shmViewIndex];
 
     if (vd.m_isVerticalStereo) {
-      cv::Mat transposedDispMat(viewParams.height, viewParams.width, (m_algorithm == 0) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
+      cv::Mat transposedDispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
       cv::Mat dispMat = transposedDispMat.t(); // TODO might be more efficient to transpose in the DGPUWorker while the data is still on the GPU
-      rhi()->loadTextureData(vd.m_disparityTexture, (m_algorithm == 0) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, dispMat.data);
+      rhi()->loadTextureData(vd.m_disparityTexture, (m_disparityBytesPerPixel == 1) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, dispMat.data);
 
     } else {
-      rhi()->loadTextureData(vd.m_disparityTexture, (m_algorithm == 0) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, m_depthMapSHM->segment()->data() + viewParams.outputOffset);
+      rhi()->loadTextureData(vd.m_disparityTexture, (m_disparityBytesPerPixel == 1) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, m_depthMapSHM->segment()->data() + viewParams.outputOffset);
     }
 
     // Filter invalid disparities: generate mip-chain
@@ -552,32 +571,47 @@ void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderVi
 void DepthMapGenerator::renderIMGUI() {
   ImGui::PushID(this);
 
-  ImGui::Text("Stereo Algorithm");
-  m_didChangeSettings |= ImGui::RadioButton("BM", &m_algorithm, 0);
-  m_didChangeSettings |= ImGui::RadioButton("ConstantSpaceBeliefPropagation", &m_algorithm, 1);
-  m_didChangeSettings |= ImGui::RadioButton("SGM", &m_algorithm, 2);
+  if (currentDepthWorkerBackend() == kDepthWorkerDGPU) {
+    ImGui::Text("Stereo Algorithm");
+    m_didChangeSettings |= ImGui::RadioButton("BM", &m_algorithm, 0);
+    m_didChangeSettings |= ImGui::RadioButton("ConstantSpaceBeliefPropagation", &m_algorithm, 1);
+    m_didChangeSettings |= ImGui::RadioButton("SGM", &m_algorithm, 2);
 
-  switch (m_algorithm) {
-    case 0: // StereoBM
-      m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &m_sbmBlockSize, /*step=*/2);
-      break;
-    case 1: // StereoConstantSpaceBP
-      m_didChangeSettings |= ImGui::SliderInt("nr_plane", &m_scsbpNrPlane, 1, 16);
-      m_didChangeSettings |= ImGui::SliderInt("SBP Iterations", &m_sbpIterations, 1, 8);
-      m_didChangeSettings |= ImGui::SliderInt("SBP Levels", &m_sbpLevels, 1, 8);
-      break;
-    case 2: // StereoSGM
-      m_didChangeSettings |= ImGui::SliderInt("SGM P1", &m_sgmP1, 1, 255);
-      m_didChangeSettings |= ImGui::SliderInt("SGM P2", &m_sgmP2, 1, 255);
-      m_didChangeSettings |= ImGui::SliderInt("SGM Uniqueness Ratio", &m_sgmUniquenessRatio, 5, 15);
-      break;
-  };
+    switch (m_algorithm) {
+      case 0: // StereoBM
+        m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &m_sbmBlockSize, /*step=*/2);
+        break;
+      case 1: // StereoConstantSpaceBP
+        m_didChangeSettings |= ImGui::SliderInt("nr_plane", &m_scsbpNrPlane, 1, 16);
+        m_didChangeSettings |= ImGui::SliderInt("SBP Iterations", &m_sbpIterations, 1, 8);
+        m_didChangeSettings |= ImGui::SliderInt("SBP Levels", &m_sbpLevels, 1, 8);
+        break;
+      case 2: // StereoSGM
+        m_didChangeSettings |= ImGui::SliderInt("SGM P1", &m_sgmP1, 1, 255);
+        m_didChangeSettings |= ImGui::SliderInt("SGM P2", &m_sgmP2, 1, 255);
+        m_didChangeSettings |= ImGui::SliderInt("SGM Uniqueness Ratio", &m_sgmUniquenessRatio, 5, 15);
+        break;
+    };
 
-  m_didChangeSettings |= ImGui::Checkbox("Disparity filter (GPU)", &m_useDisparityFilter);
+    m_didChangeSettings |= ImGui::Checkbox("Disparity filter (GPU)", &m_useDisparityFilter);
 
-  if (m_useDisparityFilter) {
-    m_didChangeSettings |= ImGui::SliderInt("Filter Radius (odd)", &m_disparityFilterRadius, 1, 9);
-    m_didChangeSettings |= ImGui::SliderInt("Filter Iterations", &m_disparityFilterIterations, 1, 8);
+    if (m_useDisparityFilter) {
+      m_didChangeSettings |= ImGui::SliderInt("Filter Radius (odd)", &m_disparityFilterRadius, 1, 9);
+      m_didChangeSettings |= ImGui::SliderInt("Filter Iterations", &m_disparityFilterIterations, 1, 8);
+    }
+  } else if (currentDepthWorkerBackend() == kDepthWorkerDepthAI) {
+    m_didChangeSettings |= ImGui::SliderInt("Confidence Threshold", &m_confidenceThreshold, 0, 255);
+    ImGui::Text("Median Filter");
+    m_didChangeSettings |= ImGui::RadioButton("None", &m_medianFilter, 0); ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("3x3", &m_medianFilter, 3); ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("5x5", &m_medianFilter, 5); ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("7x7", &m_medianFilter, 7);
+
+    m_didChangeSettings |= ImGui::SliderInt("Bilateral Filter Sigma", &m_bilateralFilterSigma, 0, 65535);
+    m_didChangeSettings |= ImGui::Checkbox("L-R Check", &m_enableLRCheck);
+    if (m_enableLRCheck) {
+      m_didChangeSettings |= ImGui::SliderInt("L-R Check Threshold", &m_leftRightCheckThreshold, 0, 128);
+    }
   }
 
   // Render settings. These don't affect the algorithm so we don't need to set m_didChangeSettings when they change.
@@ -586,7 +620,7 @@ void DepthMapGenerator::renderIMGUI() {
   ImGui::SliderInt("Trim Right",  &m_trimRight,  0, 64);
   ImGui::SliderInt("Trim Bottom", &m_trimBottom, 0, 64);
 
-  ImGui::Checkbox("CUDA Profiling", &m_enableProfiling);
+  ImGui::Checkbox("Profiling", &m_enableProfiling);
   if (m_enableProfiling) {
     // TODO use cuEventElapsedTime and skip if the return is not CUDA_SUCCESS --
     // cv::cuda::Event::elapsedTime throws an exception on CUDA_ERROR_NOT_READY

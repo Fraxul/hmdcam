@@ -15,7 +15,7 @@
 #include "common/FxCamera.h"
 #include "common/FxThreading.h"
 #include "common/DepthMapGenerator.h"
-#include "common/DGPUWorkerControl.h"
+#include "common/DepthWorkerControl.h"
 #include "common/glmCvInterop.h"
 
 #include "rhi/RHI.h"
@@ -107,20 +107,34 @@ extern int triangulationDisparityScaleInv; // TODO remove
 // Main code
 int main(int argc, char** argv) {
 
-  if (argc <= 1) {
-    printf("usage: %s hostname\n", argv[0]);
+  const char* rdmaHost = NULL;
+  DepthWorkerBackend depthBackend = kDepthWorkerDGPU;
+
+  for (int i = 1; i < argc; ++i) {
+    if (!strcmp(argv[i], "--depth-backend")) {
+      if (i == (argc - 1)) {
+        printf("--depth-backend: requires argument\n");
+        return 1;
+      }
+      depthBackend = depthBackendStringToEnum(argv[++i]);
+    } else {
+      rdmaHost = argv[i];
+    }
+  }
+
+  if (!rdmaHost) {
+    printf("usage: %s [--depth-backend none|dgpu|depthai] hostname\n", argv[0]);
     return -1;
   }
 
   FxThreading::detail::init();
 
-  shm = SHMSegment<DepthMapSHM>::createSegment("cuda-dgpu-worker", 16*1024*1024);
-  printf("Waiting for DGPU worker...\n");
-  if (!spawnAndWaitForDGPUWorker(&shm->segment()->m_workerReadySem)) {
+  shm = SHMSegment<DepthMapSHM>::createSegment("depth-worker", 16*1024*1024);
+  printf("Waiting for depth worker...\n");
+  if (!spawnAndWaitForDepthWorker(depthBackend, &shm->segment()->m_workerReadySem)) {
     return 1;
   }
 
-  const char* rdmaHost = argv[1];
 
   // RDMA context / connection
   rdmaContext = RDMAContext::createClientContext(rdmaHost);

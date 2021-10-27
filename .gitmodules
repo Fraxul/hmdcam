@@ -18,3 +18,6 @@
 [submodule "implot"]
 	path = implot
 	url = https://github.com/epezent/implot.git
+[submodule "depthai-core"]
+	path = depthai-core
+	url = https://github.com/luxonis/depthai-core.git

@@ -49,4 +49,5 @@ else:
 SConscript('SConscript-rdma-client', variant_dir = 'build/rdma-client', duplicate = 0)
 SConscript('SConscript-dgpu-worker', variant_dir = 'build/dgpu-worker', duplicate = 0)
 SConscript('SConscript-eyectl', variant_dir = 'build/eyectl', duplicate = 0)
+SConscript('SConscript-depthai-worker', variant_dir = 'build/depthai-worker', duplicate = 0)
 

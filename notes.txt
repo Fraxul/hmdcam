@@ -6,12 +6,17 @@ If it doesn't already exist, unpack Tegra_Multimedia_API_R32.2.3_aarch64.tbz2 (o
 
 Don't forget to set up the submodules after cloning:
 
-git submodule init
-git submodule update
+git submodule update --init --recursive
 
 Install prerequisite packages:
 
-sudo apt-get install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb
+sudo apt-get install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev
+
+If you're on L4T, get a new enough cmake for the DepthAI build (3.10.2 as shipped in L4T/bionic is too old):
+  sudo apt remove cmake*
+  sudo apt install python3-pip
+  sudo -H pip3 install --upgrade pip
+  sudo -H pip3 install cmake
 
 Additional prereqs for the RDMA framework and rdma-client
 sudo apt-get install libsdl2-dev librdmacm-dev
@@ -31,6 +36,10 @@ ATTRS{idVendor}=="045e", ATTRS{idProduct}=="0659", MODE="0666", GROUP="plugdev"
 # Lenovo Explorer control interface - USB
 ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="b800", MODE="0666", GROUP="plugdev"
 ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="b801", MODE="0666", GROUP="plugdev"
+
+# Intel Movidius Myraid VPU
+SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666", GROUP="plugdev"
+
 
 Make sure that the user you're running as is members of the "plugdev" and "input" groups.
 plugdev is required to open the Vive's /dev/hidraw* node

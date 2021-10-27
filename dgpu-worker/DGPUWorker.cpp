@@ -52,7 +52,7 @@ struct PerViewData {
 int main(int argc, char* argv[]) {
   int ppid = getppid();
 
-  shm = SHMSegment<DepthMapSHM>::openSegment("cuda-dgpu-worker");
+  shm = SHMSegment<DepthMapSHM>::openSegment("depth-worker");
   if (!shm) {
     printf("dgpu-worker: Unable to open SHM segment\n");
     return -1;

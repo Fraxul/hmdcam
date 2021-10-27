@@ -53,6 +53,8 @@ protected:
   // Algorithm settings
   bool m_didChangeSettings;
   int m_algorithm;
+  int m_disparityBytesPerPixel;
+
   bool m_useDisparityFilter;
   int m_disparityFilterRadius;
   int m_disparityFilterIterations;
@@ -70,6 +72,14 @@ protected:
   int m_sgmP2;
   int m_sgmUniquenessRatio;
   bool m_sgmUseHH4;
+
+  // DepthAI worker data
+  int m_confidenceThreshold; // 0...255. Higher values allow lower-confidence samples through the filter.
+  int m_medianFilter; // valid: {0=disabled, 3=3x3 kernel, 5=5x5 kernel, 7=7x7 kernel}
+  int m_bilateralFilterSigma; // 0...65535. "larger value of the parameter means that farther colors within the pixel neighborhood will be mixed together, resulting in larger areas of semi-equal color."
+  int m_leftRightCheckThreshold; // 0...255. only used if LR check is enabled. "Defines the maximum difference between the confidence of pixels from left-right and right-left confidence maps."
+  bool m_enableLRCheck;
+
 
   // Render settings
   int m_trimLeft, m_trimTop;
