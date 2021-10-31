@@ -1,0 +1,15 @@
+Import('env')
+
+eyectlEnv = env.Clone()
+
+eyectlEnv.Append(
+  CPPPATH=['#eyectl/fadecandy-lib']
+)
+
+eyectlEnv.Program(
+  target = '../bin/eyectl', # relative to build/eyectl
+  source = Glob('eyectl/*.cpp'), 
+  LIBS=['stdc++', 'pthread', 'rt'],
+)
+
+
