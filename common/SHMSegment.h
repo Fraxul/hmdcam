@@ -52,8 +52,6 @@ public:
 
   T* segment() const { return m_segment; }
 
-  T* operator->() const { return *m_segment; }
-
   size_t segmentSize() const { return m_size; }
 
 
