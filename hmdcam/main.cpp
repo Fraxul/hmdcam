@@ -433,6 +433,9 @@ int main(int argc, char* argv[]) {
         drawUI = !drawUI;
       }
 
+      // Force UI on if we're calibrating.
+      drawUI |= (!!calibrationContext);
+
       if (!drawUI) {
         // calling testButton eats the inputs, so only do that if we're not drawing the UI.
         if (testButton(kButtonDown)) {
@@ -593,14 +596,25 @@ int main(int argc, char* argv[]) {
         ImGui::Checkbox("Debug output: Distortion correction", &debugUseDistortion);
         ImGui::End();
 
-        rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
-        rhi()->beginRenderPass(guiRT, kLoadClear);
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        rhi()->endRenderPass(guiRT);
       } else {
-        ImGui::EndFrame();
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, 0), 0, /*pivot=*/ImVec2(0.5f, 0.0f)); // top-center aligned
+        ImGui::Begin("StatusBar", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+
+        char timebuf[64];
+        time_t t = time(NULL);
+        strftime(timebuf, 64, "%a %b %e %T", localtime(&t));
+        ImGui::TextUnformatted(timebuf);
+        ImGui::SameLine(); ImGui::Separator(); ImGui::SameLine();
+        ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
+
+        ImGui::End();
       }
+
+      rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+      rhi()->beginRenderPass(guiRT, kLoadClear);
+      ImGui::Render();
+      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+      rhi()->endRenderPass(guiRT);
 
       if ((frameCounter & 0x7fUL) == 0) {
 #ifdef LATENCY_DEBUG
@@ -742,18 +756,16 @@ int main(int argc, char* argv[]) {
 */
 
         // UI overlay
-        if (drawUI || calibrationContext) {
-          rhi()->bindBlendState(standardAlphaOverBlendState);
-          rhi()->bindDepthStencilState(disabledDepthStencilState);
-          rhi()->bindRenderPipeline(uiLayerPipeline);
-          rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
-          UILayerUniformBlock uiLayerBlock;
-          float uiScaleBase = 0.75f;
-          uiLayerBlock.modelViewProjection = renderView.viewProjectionMatrix * glm::translate(glm::vec3(0.0f, 0.0f, -1.2f)) * glm::scale(glm::vec3(uiScaleBase * uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScaleBase * uiScale, uiScaleBase * uiScale));
+        rhi()->bindBlendState(standardAlphaOverBlendState);
+        rhi()->bindDepthStencilState(disabledDepthStencilState);
+        rhi()->bindRenderPipeline(uiLayerPipeline);
+        rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
+        UILayerUniformBlock uiLayerBlock;
+        float uiScaleBase = 0.75f;
+        uiLayerBlock.modelViewProjection = renderView.viewProjectionMatrix * glm::translate(glm::vec3(0.0f, 0.0f, -1.2f)) * glm::scale(glm::vec3(uiScaleBase * uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScaleBase * uiScale, uiScaleBase * uiScale));
 
-          rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
-          rhi()->drawNDCQuad();
-        }
+        rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
+        rhi()->drawNDCQuad();
 
         rhi()->endRenderPass(eyeRT[eyeIdx]);
       }
