@@ -18,6 +18,6 @@ if depthaiEnv['IS_TEGRA']:
 depthaiEnv.Program(
   target = '../bin/depthai-worker', # relative to build/depthai-worker
   source = Glob('depthai-worker/*.cpp') + depthaiStaticLibs,
-  LIBS=['stdc++', 'pthread', 'rt', 'z', 'opencv_core', 'opencv_imgproc'] + depthaiLibDeps
+  LIBS=['stdc++', 'pthread', 'rt', 'z', 'opencv_core', 'opencv_imgproc', 'boost_thread', 'boost_system'] + depthaiLibDeps
 )
 
