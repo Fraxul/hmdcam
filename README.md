@@ -2,32 +2,43 @@
 
 
 This application is designed for camera passthrough to a head-mounted display.
-It runs on the Nvidia Jetson family of SoCs and has been developed/tested against the HTC Vive (but should work on any HMD supported by Monado).
+It runs on the Nvidia Jetson family of SoCs and has been developed/tested against the HTC Vive and Lenovo Explorer (but should work on any HMD supported by Monado).
 
 Features:
 - Distortion-corrected monoscopic and stereoscopic views positioned in 3d space
 - Depth-mapped stereoscopic views to support off-axis viewing and multiview stitching
-  - This requires an additional discrete GPU for processing, since the Jetson iGPU isn't powerful enough.
+  - Both horizontal (left-right) and vertical (top-bottom) stereo pairs are supported
+  - This requires an additional discrete GPU or VPUs for processing, since the Jetson iGPU isn't powerful enough.
 - Configuration menu with built-in calibration tools
 - Remote viewing via RTSP (embedded live555 server + nvenc)
 - Remote debugging via RDMA-over-Infiniband (`rdma-client` binary)
 
 Important repository structure:
-| Path        | Description  |
-| ----------- | ------------ |
-| hmdcam      |  Main application -- runs on the Jetson |
-| rdma-client | Remote-debugging application; streams uncompressed framebuffers from `hmdcam` using RDMA over Infiniband. |
-| dgpu-worker | Stereo disparity computation worker. Runs under `hmdcam` or `rdma-client` |
-| dgpu-fans   | Simple daemon to control a dGPU fan connected to the Jetson's PWM interface |
-| rhi         | Render Hardware Interface -- wrappers over OpenGL. |
-| common      | Library functions (mostly camera related) |
-| rdma        | RDMA library/framework |
+| Path           | Description  |
+| -------------- | ------------ |
+| hmdcam         |  Main application -- runs on the Jetson |
+| rdma-client    | Remote-debugging application; streams uncompressed framebuffers from `hmdcam` using RDMA over Infiniband. |
+| dgpu-worker    | Stereo disparity computation worker for CUDA discrete GPUs. Runs under `hmdcam` or `rdma-client` |
+| depthai-worker | Stereo disparity computation worker for Luxonis DepthAI VPUs. Runs under `hmdcam` or `rdma-client` |
+| dgpu-fans      | Simple daemon to control a dGPU fan connected to the Jetson's PWM interface |
+| rhi            | Render Hardware Interface -- wrappers over OpenGL. |
+| common         | Library functions (mostly camera related) |
+| rdma           | RDMA library/framework |
 
 Requirements:
 - A Jetson board with one or more CSI cameras
-  - The cameras should be capable of capturing at the display rate of your HMD (90fps for the Vive)
+  - The cameras should be capable of capturing at the display rate of your HMD (90fps for the Vive or Explorer)
   - 4-lane IMX290 sensors are preferred: they can capture 1920x1080 at up to 120fps
   - 2-lane IMX219 sensors are a good fallback option, capturing 1280x720 at up to 120fps
 - A head-mounted display supported by Monado
-- (Optional) an Nvidia discrete GPU for stereo processing
-  - A GTX1050 MXM3 module can handle 1 stereo pair at 90+ FPS
+- (Optional) an Nvidia discrete GPU or Luxonis DepthAI VPUs for stereo processing
+  - A GTX1050 MXM3 module can handle 2 stereo pairs with 1:4 sampling (480x270 depth resolution) at 90+ FPS, but consumes ~40 watts.
+  - One VPU per stereo pair with 1:4 sampling (480x270 depth resolution). Each VPU consumes about 2 watts (tested using [OAK-FFC-3P](https://docs.luxonis.com/projects/hardware/en/latest/pages/DM1090.html) modules without attached cameras).
+
+The reference test/development platform is:
+- Jetson AGX Xavier devkit
+- eConSystems e-CAM20\_CUXVR camera kit: quad 4-lane IMX290 sensors, 1920x1080 at up to 120fps. Arranged as two vertical stereo pairs.
+- Lenovo Explorer HMD
+- 2x Luxonis OAK-FFC-3P VPU modules for stereo processing
+- Mellanox ConnectX-3 FDR Infiniband card (CX353A-FCBT) for remote debugging
+
