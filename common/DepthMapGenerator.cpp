@@ -484,7 +484,6 @@ void DepthMapGenerator::processFrame() {
   }
 
   // Copy results to render surfaces
-
   for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
     ViewData& vd = m_viewData[viewIdx];
     if (!vd.m_isStereoView)
@@ -501,8 +500,34 @@ void DepthMapGenerator::processFrame() {
       rhi()->loadTextureData(vd.m_disparityTexture, (m_disparityBytesPerPixel == 1) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, m_depthMapSHM->segment()->data() + viewParams.outputOffset);
     }
 
-    // Filter invalid disparities: generate mip-chain
-    for (uint32_t targetLevel = 1; targetLevel < vd.m_disparityTexture->mipLevels(); ++targetLevel) {
+    if (m_populateDebugTextures) {
+      if (!vd.m_leftGray)
+        vd.m_leftGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+
+      if (!vd.m_rightGray)
+        vd.m_rightGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+
+      RHICUDA::copyGpuMatToSurface(vd.resizedLeft_gpu, vd.m_leftGray, m_globalStream);
+      RHICUDA::copyGpuMatToSurface(vd.resizedRight_gpu, vd.m_rightGray, m_globalStream);
+    }
+  }
+
+
+  // Filter invalid disparities: generate mip-chains
+  uint32_t maxLevels = 0;
+  for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
+    ViewData& vd = m_viewData[viewIdx];
+    if (vd.m_isStereoView)
+      maxLevels = std::max<uint32_t>(maxLevels, vd.m_disparityTexture->mipLevels());
+  }
+
+  // Organized by mip level to give the driver a chance at overlapping the render passes
+  for (uint32_t targetLevel = 1; targetLevel < maxLevels; ++targetLevel) {
+    for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
+      ViewData& vd = m_viewData[viewIdx];
+      if (!vd.m_isStereoView || vd.m_disparityTexture->mipLevels() < targetLevel)
+        continue;
+
       rhi()->beginRenderPass(vd.m_disparityTextureMipTargets[targetLevel], kLoadInvalidate);
       rhi()->bindRenderPipeline(disparityMipPipeline);
       rhi()->loadTexture(ksImageTex, vd.m_disparityTexture);
@@ -513,18 +538,6 @@ void DepthMapGenerator::processFrame() {
       rhi()->loadUniformBlockImmediate(ksDisparityMipUniformBlock, &ub, sizeof(ub));
       rhi()->drawNDCQuad();
       rhi()->endRenderPass(vd.m_disparityTextureMipTargets[targetLevel]);
-
-    }
-
-    if (m_populateDebugTextures) {
-      if (!vd.m_leftGray)
-        vd.m_leftGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
-
-      if (!vd.m_rightGray)
-        vd.m_rightGray = rhi()->newTexture2D(m_iFBAlgoWidth, m_iFBAlgoHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
-
-      RHICUDA::copyGpuMatToSurface(vd.resizedLeft_gpu, vd.m_leftGray, m_globalStream);
-      RHICUDA::copyGpuMatToSurface(vd.resizedRight_gpu, vd.m_rightGray, m_globalStream);
     }
   }
 
