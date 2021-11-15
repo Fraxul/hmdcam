@@ -11,6 +11,7 @@
 #include <chrono>
 #include <thread>
 #include <boost/thread/barrier.hpp>
+#include <pthread.h>
 
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
@@ -206,6 +207,22 @@ void viewProcessingThread(size_t viewIdx) {
 
 
 int main(int argc, char* argv[]) {
+  // Set thread affinity.
+  // On Tegra, we get a small but noticeable performance improvement by pinning this application to CPU0-1, and the parent hmdcam application to all other CPUs.
+  // I assume this is because CPU0 handles interrupts for the XHCI driver; we want to try and limit its workload to mostly USB-related things to reduce latency.
+  {
+    cpu_set_t cpuset;
+    // Create affinity mask for CPU0-1
+    CPU_ZERO(&cpuset);
+    CPU_SET(0, &cpuset);
+    CPU_SET(1, &cpuset);
+
+    if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
+      perror("pthread_setaffinity");
+    }
+  }
+
+
   int ppid = getppid();
 
   shm = SHMSegment<DepthMapSHM>::openSegment("depth-worker");
