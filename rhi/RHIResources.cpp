@@ -6,6 +6,7 @@
 static /*CVar*/ int r_textureAnisotropy = 8;
 
 RHIRenderPipeline::ptr uiLayerPipeline;
+RHIRenderPipeline::ptr uiLayerStereoPipeline;
 RHIRenderPipeline::ptr overlayCompositePipeline;
 RHIRenderPipeline::ptr triadGizmoPipeline;
 RHIBuffer::ptr fullscreenPassVBO;
@@ -45,6 +46,7 @@ FxAtomicString ksBloomThresholdUniformBlock("BloomThresholdUniformBlock");
 FxAtomicString ksFrustumVisualizeUniformBlock("FrustumVisualizeUniformBlock");
 FxAtomicString ksLineGizmoUniformBlock("LineGizmoUniformBlock");
 FxAtomicString ksUILayerUniformBlock("UILayerUniformBlock");
+FxAtomicString ksUILayerStereoUniformBlock("UILayerStereoUniformBlock");
 
 RHIVertexLayout positionOnlyVertexLayout;
 
@@ -260,11 +262,16 @@ void initRHIResources() {
 
   // Set up shaders and static pipelines
 
-  RHIShaderDescriptor uiLayerShaderDescriptor;
-  uiLayerShaderDescriptor.addSourceFile(RHIShaderDescriptor::kVertexShader, "shaders/uiLayer.vtx.glsl");
-  uiLayerShaderDescriptor.addSourceFile(RHIShaderDescriptor::kFragmentShader, "shaders/uiLayer.frag.glsl");
-  uiLayerShaderDescriptor.setVertexLayout(ndcQuadVertexLayout);
-  uiLayerPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(uiLayerShaderDescriptor), tristripPipelineDescriptor);
+  uiLayerPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor("shaders/uiLayer.vtx.glsl", "shaders/uiLayer.frag.glsl", ndcQuadVertexLayout)), tristripPipelineDescriptor);
+
+  {
+    RHIShaderDescriptor desc;
+    desc.addSourceFile(RHIShaderDescriptor::kVertexShader, "shaders/uiLayerStereo.vtx.glsl");
+    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/uiLayerStereo.geom.glsl");
+    desc.addSourceFile(RHIShaderDescriptor::kFragmentShader, "shaders/uiLayerStereo.frag.glsl");
+    desc.setVertexLayout(ndcQuadVertexLayout);
+    uiLayerStereoPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
 
   RHIShaderDescriptor overlayCompositeShaderDescriptor;
   overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kVertexShader, "shaders/lightPass.vtx.glsl");

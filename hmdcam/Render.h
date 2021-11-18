@@ -1,12 +1,14 @@
 #pragma once
 #include <glm/glm.hpp>
 #include "rhi/FxAtomicString.h"
+#include "rhi/RHIRect.h"
 #include "rhi/RHIRenderPipeline.h"
 #include "rhi/RHIRenderTarget.h"
 
 extern glm::mat4 eyeProjection[2];
 extern glm::mat4 eyeView[2];
-extern RHIRenderTarget::ptr eyeRT[2];
+extern RHIRenderTarget::ptr eyeRT;
+extern RHIRect eyeViewports[2];
 extern RHIRenderTarget::ptr windowRenderTarget;
 
 bool RenderInit();

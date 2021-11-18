@@ -46,6 +46,7 @@ public:
   virtual void blitTex(RHISurface::ptr, uint8_t sourceLayer, RHIRect destRect, RHIRect sourceRect);
 
   virtual void setViewport(const RHIRect&);
+  virtual void setViewports(const RHIRect*, size_t count);
   virtual void setDepthBias(float slopeScale, float constantBias);
   virtual void bindRenderPipeline(RHIRenderPipeline::ptr);
   virtual void bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr);

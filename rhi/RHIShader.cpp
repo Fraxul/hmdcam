@@ -184,6 +184,7 @@ std::map<RHIShaderDescriptor::ShadingUnit, std::string> RHIShaderDescriptor::pre
         outStream << "#define " << it->first << " " << it->second << "\n";
       }
       outStream << "#define RHI_VERTEX_SHADER " << (source.unit == kVertexShader ? "1" : "0") << "\n";
+      outStream << "#define RHI_GEOMETRY_SHADER " << (source.unit == kGeometryShader ? "1" : "0") << "\n";
       outStream << "#define RHI_FRAGMENT_SHADER " << (source.unit == kFragmentShader ? "1" : "0") << "\n";
       outStream << "#define RHI_COMPUTE_SHADER " << (source.unit == kComputeShader ? "1" : "0") << "\n";
 

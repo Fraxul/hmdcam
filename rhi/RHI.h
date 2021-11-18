@@ -4,6 +4,7 @@
 #include "rhi/RHIComputePipeline.h"
 #include "rhi/RHIDepthStencilState.h"
 #include "rhi/RHIQuery.h"
+#include "rhi/RHIRect.h"
 #include "rhi/RHIRenderPipeline.h"
 #include "rhi/RHIRenderTarget.h"
 #include "rhi/RHIShader.h"
@@ -41,25 +42,6 @@ enum RHIIndexBufferType {
 };
 
 size_t RHIIndexBufferTypeSize(RHIIndexBufferType);
-
-struct RHIRect {
-  RHIRect() : x(0), y(0), width(0), height(0) {}
-  static RHIRect xywh(uint32_t x, uint32_t y, uint32_t w, uint32_t h) { return RHIRect(x, y, w, h); }
-  static RHIRect ltrb(uint32_t l, uint32_t t, uint32_t r, uint32_t b) { return RHIRect(l, t, r - l, b - t); }
-  static RHIRect sized(uint32_t w, uint32_t h) { return RHIRect(0, 0, w, h); }
-
-  bool empty() const { return (width == 0) && (height == 0); }
-
-  uint32_t x, y;
-  uint32_t width, height;
-
-  uint32_t left() const { return x; }
-  uint32_t top() const { return y; }
-  uint32_t right() const { return x + width; }
-  uint32_t bottom() const { return y + height; }
-protected:
-  RHIRect(uint32_t x_, uint32_t y_, uint32_t w_, uint32_t h_) : x(x_), y(y_), width(w_), height(h_) {}
-};
 
 class RHI {
 public:
@@ -104,8 +86,8 @@ public:
 
   // these functions are valid between beginRenderPass and endRenderPass
   virtual void setViewport(const RHIRect&) = 0;
-  // virtual void setViewports(const RHIRect*, size_t count) = 0; // Not available on ES3
-  // void setViewports(const std::vector<RHIRect>& rects) { setViewports(rects.data(), rects.size()); } // Not available on ES3
+  virtual void setViewports(const RHIRect*, size_t count) = 0;
+  void setViewports(const std::vector<RHIRect>& rects) { setViewports(rects.data(), rects.size()); }
   virtual void setDepthBias(float slopeScale, float constantBias) = 0;
   virtual void bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr) = 0;
   virtual void bindRenderPipeline(RHIRenderPipeline::ptr) = 0;

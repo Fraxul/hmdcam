@@ -20,6 +20,7 @@ public:
   ~DepthMapGenerator();
 
   void processFrame();
+  void renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
   void renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
   void renderIMGUI();
 
@@ -136,4 +137,5 @@ protected:
 
   bool m_populateDebugTextures;
 
+  void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix);
 };

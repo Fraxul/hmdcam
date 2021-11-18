@@ -452,6 +452,22 @@ void RHIGL::setViewport(const RHIRect& viewport) {
   glViewport(viewport.x, viewport.y, viewport.width, viewport.height);
 }
 
+void RHIGL::setViewports(const RHIRect* viewports, size_t count) {
+  assert(m_activeRenderTarget.get() && "setViewports: can only be called during a render pass.");
+  float* data = reinterpret_cast<float*>(alloca(sizeof(float) * count * 4));
+  for (size_t i = 0; i < count; ++i) {
+    data[(i * 4) + 0] = viewports[i].x;
+    data[(i * 4) + 1] = viewports[i].y;
+    data[(i * 4) + 2] = viewports[i].width;
+    data[(i * 4) + 3] = viewports[i].height;
+  }
+#ifdef glViewportArrayvOES
+  GL(glViewportArrayvOES(0, count, data));
+#else
+  GL(glViewportArrayv(0, count, data));
+#endif
+}
+
 void RHIGL::setDepthBias(float slopeScale, float constantBias) {
   assert(m_activeRenderTarget.get() && "setDepthBias: can only be called during a render pass.");
   if (slopeScale == m_currentDepthBiasSlopeScale && constantBias == m_currentDepthBiasConstant)

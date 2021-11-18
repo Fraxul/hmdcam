@@ -11,6 +11,7 @@
 // Static RHI resource objects
 
 extern RHIRenderPipeline::ptr uiLayerPipeline;
+extern RHIRenderPipeline::ptr uiLayerStereoPipeline;
 extern RHIRenderPipeline::ptr overlayCompositePipeline;
 extern RHIBuffer::ptr fullscreenPassVBO;
 extern RHIBuffer::ptr ndcQuadVBO;
@@ -43,6 +44,11 @@ extern RHISampler::ptr linearMipWrapAnisoSampler;
 extern FxAtomicString ksUILayerUniformBlock;
 struct UILayerUniformBlock {
   glm::mat4 modelViewProjection;
+};
+
+extern FxAtomicString ksUILayerStereoUniformBlock;
+struct UILayerStereoUniformBlock {
+  glm::mat4 modelViewProjection[2];
 };
 
 extern FxAtomicString ksLineGizmoUniformBlock;

@@ -30,7 +30,7 @@ static FxAtomicString ksDisparityTex("disparityTex");
 static FxAtomicString ksImageTex("imageTex");
 extern FxAtomicString ksDistortionMap;
 struct MeshDisparityDepthMapUniformBlock {
-  glm::mat4 modelViewProjection;
+  glm::mat4 modelViewProjection[2];
   glm::mat4 R1inv;
   float Q3, Q7, Q11;
   float CameraDistanceMeters;
@@ -41,6 +41,9 @@ struct MeshDisparityDepthMapUniformBlock {
 
   glm::vec2 trim_minXY;
   glm::vec2 trim_maxXY;
+
+  int renderStereo;
+  float pad2, pad3, pad4;
 };
 
 RHIRenderPipeline::ptr disparityMipPipeline;
@@ -69,9 +72,10 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
     rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
     rpd.primitiveRestartEnabled = true;
 
-    RHIShaderDescriptor desc("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshTexture.frag.glsl", RHIVertexLayout({
+    RHIShaderDescriptor desc("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
         RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
       }));
+    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMap.geom.glsl");
 #ifdef GLATTER_EGL_GLES_3_2 // TODO query this at use-time from the RHISurface type
     desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
 #else
@@ -551,14 +555,15 @@ void DepthMapGenerator::processFrame() {
 #endif
 }
 
-void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix) {
+void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix) {
   ViewData& vd = m_viewData[viewIdx];
 
   rhi()->bindRenderPipeline(disparityDepthMapPipeline);
   rhi()->bindStreamBuffer(0, m_geoDepthMapTexcoordBuffer);
 
   MeshDisparityDepthMapUniformBlock ub;
-  ub.modelViewProjection = renderView.viewProjectionMatrix * modelMatrix;
+  ub.modelViewProjection[0] = renderView0.viewProjectionMatrix * modelMatrix;
+  ub.modelViewProjection[1] = renderView1.viewProjectionMatrix * modelMatrix;
   ub.R1inv = vd.m_R1inv;
 
   ub.Q3 = vd.m_Q[0][3];
@@ -572,12 +577,22 @@ void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderVi
   ub.trim_minXY = glm::vec2(m_trimLeft, m_trimTop);
   ub.trim_maxXY = glm::vec2((m_iFBAlgoWidth - 1) - m_trimRight, (m_iFBAlgoHeight - 1) - m_trimBottom);
 
+  ub.renderStereo = (stereo ? 1 : 0);
+
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd.m_disparityTexture);
 
   rhi()->loadTexture(ksImageTex, m_cameraSystem->cameraProvider()->rgbTexture(vd.m_leftCameraIndex), linearClampSampler);
   rhi()->loadTexture(ksDistortionMap, m_cameraSystem->viewAtIndex(viewIdx).stereoDistortionMap[0]);
+}
 
+void DepthMapGenerator::renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView, const glm::mat4& modelMatrix) {
+  internalRenderSetup(viewIdx, /*stereo=*/ true, leftRenderView, rightRenderView, modelMatrix);
+  rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
+}
+
+void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix) {
+  internalRenderSetup(viewIdx, /*stereo=*/ false, renderView, renderView, modelMatrix);
   rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
 }
 

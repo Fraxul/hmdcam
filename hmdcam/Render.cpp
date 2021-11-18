@@ -44,13 +44,19 @@ RHIRenderPipeline::ptr mesh3chDistortionPipeline;
 FxAtomicString ksOverlayTex("overlayTex");
 FxAtomicString ksMaskTex("maskTex");
 
-// per-eye render targets (pre distortion)
-RHISurface::ptr eyeTex[2];
-RHISurface::ptr eyeDepthRenderbuffer[2];
-RHIRenderTarget::ptr eyeRT[2];
+// combined eye render target (pre distortion)
+RHISurface::ptr eyeTex;
+RHISurface::ptr eyeDepthRenderbuffer;
+RHIRenderTarget::ptr eyeRT;
+RHIRect eyeViewports[2];
 
 // distortion parameter buffers
 RHIBuffer::ptr meshDistortionVertexBuffer, meshDistortionIndexBuffer;
+struct MeshDistortionUniformBlock {
+  glm::vec2 uvOffset;
+  glm::vec2 uvScale;
+};
+static FxAtomicString ksMeshDistortionUniformBlock("MeshDistortionUniformBlock");
 
 // HMD info/state
 struct xrt_instance* xrtInstance = NULL;
@@ -277,12 +283,12 @@ bool RenderInit() {
   // Set up uniform buffers for HMD distortion passes
   recomputeHMDParameters();
 
-  // Create FBOs for per-eye rendering (pre distortion)
-  for (int i = 0; i < 2; ++i) {
-    eyeTex[i] = rhi()->newTexture2D(eye_width, eye_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    eyeDepthRenderbuffer[i] = rhi()->newRenderbuffer2D(eye_width, eye_height, RHISurfaceDescriptor(kSurfaceFormat_Depth16));
-    eyeRT[i] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ eyeTex[i] }, eyeDepthRenderbuffer[i]));
-  }
+  // Create FBOs and viewports for eye rendering (pre distortion)
+  eyeTex = rhi()->newTexture2D(eye_width * 2, eye_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+  eyeDepthRenderbuffer = rhi()->newRenderbuffer2D(eye_width * 2, eye_height, RHISurfaceDescriptor(kSurfaceFormat_Depth16));
+  eyeRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ eyeTex }, eyeDepthRenderbuffer));
+  eyeViewports[0] = RHIRect::xywh(0, 0, eye_width, eye_height);
+  eyeViewports[1] = RHIRect::xywh(eye_width, 0, eye_width, eye_height);
 
   printf("Screen dimensions: %u x %u\n", windowRenderTarget->width(), windowRenderTarget->height());
 
@@ -431,6 +437,7 @@ void renderHMDFrame() {
   }
 
   rhi()->bindStreamBuffer(0, meshDistortionVertexBuffer);
+  rhi()->loadTexture(ksImageTex, eyeTex, linearClampSampler);
 
   // Run distortion passes
   for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
@@ -441,7 +448,10 @@ void renderHMDFrame() {
       xrtHMDevice->hmd->views[eyeIndex].viewport.w_pixels,
       xrtHMDevice->hmd->views[eyeIndex].viewport.h_pixels));
 
-    rhi()->loadTexture(ksImageTex, eyeTex[eyeIndex], linearClampSampler);
+    MeshDistortionUniformBlock ub;
+    ub.uvOffset = glm::vec2(eyeIndex == 0 ? 0.0f : 0.5f, 0.0f);
+    ub.uvScale = glm::vec2(0.5f, 1.0f);
+    rhi()->loadUniformBlockImmediate(ksMeshDistortionUniformBlock, &ub, sizeof(ub));
 
     rhi()->drawIndexedPrimitives(meshDistortionIndexBuffer, kIndexBufferTypeUInt32, xrtHMDevice->hmd->distortion.mesh.num_indices[eyeIndex], xrtHMDevice->hmd->distortion.mesh.offset_indices[eyeIndex]);
   }
