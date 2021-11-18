@@ -14,6 +14,7 @@ size_t rhiSurfaceFormatSize(RHISurfaceFormat format) {
       return 1;
 
     case kSurfaceFormat_R16f:
+    case kSurfaceFormat_Depth16:
       return 2;
 
     case kSurfaceFormat_sRGB8_A8:
@@ -36,6 +37,7 @@ size_t rhiSurfaceFormatSize(RHISurfaceFormat format) {
 
 bool rhiSurfaceFormatHasDepth(RHISurfaceFormat format) {
   switch (format) {
+    case kSurfaceFormat_Depth16:
     case kSurfaceFormat_Depth32f:
     case kSurfaceFormat_Depth32f_Stencil8:
       return true;

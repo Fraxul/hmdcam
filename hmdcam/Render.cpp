@@ -280,7 +280,7 @@ bool RenderInit() {
   // Create FBOs for per-eye rendering (pre distortion)
   for (int i = 0; i < 2; ++i) {
     eyeTex[i] = rhi()->newTexture2D(eye_width, eye_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    eyeDepthRenderbuffer[i] = rhi()->newRenderbuffer2D(eye_width, eye_height, RHISurfaceDescriptor(kSurfaceFormat_Depth32f));
+    eyeDepthRenderbuffer[i] = rhi()->newRenderbuffer2D(eye_width, eye_height, RHISurfaceDescriptor(kSurfaceFormat_Depth16));
     eyeRT[i] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ eyeTex[i] }, eyeDepthRenderbuffer[i]));
   }
 

@@ -70,6 +70,7 @@ RHIRenderTargetGL::~RHIRenderTargetGL() {
     GLenum attachPoint = GL_NONE;
 
     switch (descriptor.depthStencilTarget.surface->format()) {
+      case kSurfaceFormat_Depth16:
       case kSurfaceFormat_Depth32f:
         attachPoint = GL_DEPTH_ATTACHMENT;
         break;
