@@ -292,6 +292,7 @@ int main(int argc, char* argv[]) {
   // TODO move this depth map generator init to CameraSystem
   if (currentDepthWorkerBackend() != kDepthWorkerNone) {
     depthMapGenerator = new DepthMapGenerator(cameraSystem, shm);
+    depthMapGenerator->loadSettings();
   }
 
 
@@ -572,6 +573,8 @@ int main(int argc, char* argv[]) {
           }
           if (ImGui::Button("Save Settings")) {
             cameraSystem->saveCalibrationData();
+            if (depthMapGenerator)
+              depthMapGenerator->saveSettings();
           }
           if (debugEnableDepthMapGenerator && depthMapGenerator) {
             depthMapGenerator->renderIMGUI();

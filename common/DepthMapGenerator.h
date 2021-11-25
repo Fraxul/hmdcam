@@ -33,6 +33,10 @@ public:
 
   float m_disparityPrescale;
 
+
+  bool loadSettings();
+  void saveSettings();
+
 protected:
 
   CameraSystem* m_cameraSystem;

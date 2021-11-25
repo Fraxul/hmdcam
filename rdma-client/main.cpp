@@ -240,6 +240,7 @@ int main(int argc, char** argv) {
 
   // CV processing init
   depthMapGenerator = new DepthMapGenerator(cameraSystem, shm);
+  depthMapGenerator->loadSettings();
   depthMapGenerator->setPopulateDebugTextures(true);
 
   // Setup Dear ImGui context
@@ -405,6 +406,7 @@ int main(int argc, char** argv) {
 
         if (ImGui::Button("Save Settings")) {
           cameraSystem->saveCalibrationData();
+          depthMapGenerator->saveSettings();
         }
 
         depthMapGenerator->renderIMGUI();

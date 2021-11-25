@@ -8,6 +8,7 @@
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
+#include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
@@ -23,6 +24,7 @@
 #define MOGRIFY_X 4
 #define MOGRIFY_Y 4
 
+const char* settingsFilename = "depthMapSettings.yml";
 
 RHIRenderPipeline::ptr disparityDepthMapPipeline;
 FxAtomicString ksMeshDisparityDepthMapUniformBlock("MeshDisparityDepthMapUniformBlock");
@@ -196,6 +198,93 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
 
   recomputePerViewData();
 }
+
+#define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
+
+bool DepthMapGenerator::loadSettings() {
+  cv::FileStorage fs(settingsFilename, cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+  if (!fs.isOpened()) {
+    printf("DepthMapGenerator: unable to open settings file\n");
+    return false;
+  }
+
+  try {
+    cv::FileNode dgpu = fs["dgpu"];
+    if (dgpu.isMap()) {
+      readNode(dgpu, algorithm);
+      readNode(dgpu, useDisparityFilter);
+      readNode(dgpu, disparityFilterRadius);
+      readNode(dgpu, disparityFilterIterations);
+      readNode(dgpu, sbmBlockSize);
+      readNode(dgpu, sbpIterations);
+      readNode(dgpu, sbpLevels);
+      readNode(dgpu, scsbpNrPlane);
+      readNode(dgpu, sgmP1);
+      readNode(dgpu, sgmP2);
+      readNode(dgpu, sgmUniquenessRatio);
+      readNode(dgpu, sgmUseHH4);
+    }
+
+    cv::FileNode dai = fs["depthai"];
+    if (dai.isMap()) {
+      readNode(dai, confidenceThreshold);
+      readNode(dai, medianFilter);
+      readNode(dai, bilateralFilterSigma);
+      readNode(dai, enableLRCheck);
+      readNode(dai, leftRightCheckThreshold);
+    }
+
+    cv::FileNode rsn = fs["renderSettings"];
+    if (rsn.isMap()) {
+      readNode(rsn, trimLeft);
+      readNode(rsn, trimTop);
+      readNode(rsn, trimRight);
+      readNode(rsn, trimBottom);
+    }
+
+  } catch (const std::exception& ex) {
+    printf("Unable to load depth map settings: %s\n", ex.what());
+    return false;
+  }
+  return true;
+}
+#undef readNode
+
+#define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_##settingName)
+void DepthMapGenerator::saveSettings() {
+  cv::FileStorage fs(settingsFilename, cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+
+  fs.startWriteStruct(cv::String("dgpu"), cv::FileNode::MAP, cv::String());
+    writeNode(fs, algorithm);
+    writeNode(fs, useDisparityFilter);
+    writeNode(fs, disparityFilterRadius);
+    writeNode(fs, disparityFilterIterations);
+    writeNode(fs, sbmBlockSize);
+    writeNode(fs, sbpIterations);
+    writeNode(fs, sbpLevels);
+    writeNode(fs, scsbpNrPlane);
+    writeNode(fs, sgmP1);
+    writeNode(fs, sgmP2);
+    writeNode(fs, sgmUniquenessRatio);
+    writeNode(fs, sgmUseHH4);
+  fs.endWriteStruct();
+
+  fs.startWriteStruct(cv::String("depthai"), cv::FileNode::MAP, cv::String());
+    writeNode(fs, confidenceThreshold);
+    writeNode(fs, medianFilter);
+    writeNode(fs, bilateralFilterSigma);
+    writeNode(fs, enableLRCheck);
+    writeNode(fs, leftRightCheckThreshold);
+  fs.endWriteStruct();
+
+  fs.startWriteStruct(cv::String("renderSettings"), cv::FileNode::MAP, cv::String());
+    writeNode(fs, trimLeft);
+    writeNode(fs, trimTop);
+    writeNode(fs, trimRight);
+    writeNode(fs, trimBottom);
+  fs.endWriteStruct();
+}
+#undef writeNode
 
 void DepthMapGenerator::recomputePerViewData() {
 
