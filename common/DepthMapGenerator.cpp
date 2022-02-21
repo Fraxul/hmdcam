@@ -19,6 +19,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <thread>
+#include <epoxy/gl.h> // epoxy_is_desktop_gl
 
 #define NUM_DISP 128 //Max disparity. Must be in {64, 128, 256} for CUDA algorithms.
 #define MOGRIFY_X 4
@@ -78,11 +79,11 @@ DepthMapGenerator::DepthMapGenerator(CameraSystem* cs, SHMSegment<DepthMapSHM>* 
         RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
       }));
     desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMap.geom.glsl");
-#ifdef GLATTER_EGL_GLES_3_2 // TODO query this at use-time from the RHISurface type
-    desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
-#else
-    desc.setFlag("SAMPLER_TYPE", "sampler2D");
-#endif
+
+    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
+      desc.setFlag("SAMPLER_TYPE", "sampler2D");
+    else
+      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
 
     disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
   }
@@ -638,10 +639,9 @@ void DepthMapGenerator::processFrame() {
     m_processingFinishedEvent.record(m_globalStream);
   }
 
-#ifndef GLATTER_EGL_GLES_3_2
   // stupid workaround for profiling on desktop RDMAclient
-  m_globalStream.waitForCompletion();
-#endif
+  if (epoxy_is_desktop_gl())
+    m_globalStream.waitForCompletion();
 }
 
 void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix) {

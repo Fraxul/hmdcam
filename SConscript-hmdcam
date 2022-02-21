@@ -8,7 +8,6 @@ MONADO_BASE='/mnt/scratch/monado'
 MONADO_BUILD='/mnt/nvme/monado-minimal-build'
 
 tegraEnv.Append(
-  CPPDEFINES=['GLATTER_EGL_GLES_3_2'],
   CPPPATH=[
     'hmdcam',
     MONADO_BUILD + '/src/xrt/include', # Contains generated config headers
@@ -40,6 +39,6 @@ liveMediaStatics = [
 tegraEnv.Program(
   target = '../bin/hmdcam', # relative to build/hmdcam
   source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('common/*.cpp') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/egl/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp') + Glob('tegra_mmapi/*.cpp') + liveMediaStatics + monadoStatics,
-  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'boost_thread', 'GLESv2', 'EGL', 'dl', 'pthread', 'rt', 'hidapi-libusb', 'usb-1.0', 'udev', 'nvargus', 'nvbuf_utils', 'v4l2', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudawarping', 'cuda', 'cudart', 'nppc', 'nppidei', 'ibverbs', 'rdmacm']
+  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'boost_thread', 'GLESv2', 'EGL', 'dl', 'pthread', 'rt', 'hidapi-libusb', 'usb-1.0', 'udev', 'nvargus', 'nvbuf_utils', 'v4l2', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudawarping', 'cuda', 'cudart', 'nppc', 'nppidei', 'ibverbs', 'rdmacm', 'epoxy']
 )
 

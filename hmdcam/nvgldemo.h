@@ -31,9 +31,8 @@
 #include <math.h>
 #include <assert.h>
 
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-#include <GLES3/gl3.h>
+#include <epoxy/egl.h>
+#include <epoxy/gl.h>
 
 #ifdef __cplusplus
 extern "C" {

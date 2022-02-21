@@ -5,12 +5,10 @@ If it doesn't already exist, unpack Tegra_Multimedia_API_R32.2.3_aarch64.tbz2 (o
 
 
 Don't forget to set up the submodules after cloning:
-
-git submodule update --init --recursive
+  git submodule update --init --recursive
 
 Install prerequisite packages:
-
-sudo apt-get install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev
+  sudo apt install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev
 
 If you're on L4T, get a new enough cmake for the DepthAI build (3.10.2 as shipped in L4T/bionic is too old):
   sudo apt remove cmake*
@@ -19,7 +17,10 @@ If you're on L4T, get a new enough cmake for the DepthAI build (3.10.2 as shippe
   sudo -H pip3 install cmake
 
 Additional prereqs for the RDMA framework and rdma-client
-sudo apt-get install libsdl2-dev librdmacm-dev
+  sudo apt install libsdl2-dev librdmacm-dev
+
+Optional: If you want to build the DepthAI backend, run the included script to build required libraries first:
+  ./build-depthai-core.sh
 
 udev permissions:
 

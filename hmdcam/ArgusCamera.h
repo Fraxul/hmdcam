@@ -1,6 +1,6 @@
 #pragma once
 #include <vector>
-#include <EGL/egl.h>
+#include <epoxy/egl.h>
 #include <Argus/Argus.h>
 #include "rhi/egl/RHIEGLImageSurfaceGL.h"
 #include "rhi/RHIRenderTarget.h"

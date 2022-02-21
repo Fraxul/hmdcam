@@ -22,8 +22,7 @@
 #ifndef __NVGLDEMO_WIN_EGLDEVICE_H
 #define __NVGLDEMO_WIN_EGLDEVICE_H
 
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
+#include <epoxy/egl.h>
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>

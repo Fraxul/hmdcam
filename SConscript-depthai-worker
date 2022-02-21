@@ -3,7 +3,6 @@ depthaiEnv = env.Clone()
 depthaiSDK = '#build/depthai-core/install'
 
 depthaiEnv.Append(
-  #CPPDEFINES=['GLATTER_MESA_GLX_GL'],
   CPPPATH=[
     depthaiSDK + '/include',
     depthaiSDK + '/include/depthai-shared/3rdparty',

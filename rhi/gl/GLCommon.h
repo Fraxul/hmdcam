@@ -1,7 +1,7 @@
 #pragma once
 
-#define EGL_EGLEXT_PROTOTYPES
-#include <glatter/glatter.h>
+#include <epoxy/gl.h>
+#include <epoxy/egl.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -15,8 +15,6 @@
 #endif
 
 void checkGLError(const char* op, const char* file, int line);
-#ifdef GLATTER_EGL_GLES_3_2
 void checkEGLError(const char* op, const char* file, int line);
-#endif
 void initGL();
 

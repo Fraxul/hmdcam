@@ -8,6 +8,7 @@
 #include <iostream>
 #include <set>
 #include <assert.h>
+#include <epoxy/gl.h> // epoxy_is_desktop_gl
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -59,11 +60,11 @@ CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibrat
       "shaders/ndcQuad.vtx.glsl",
       "shaders/camGreyscale.frag.glsl",
       ndcQuadVertexLayout);
-#ifdef GLATTER_EGL_GLES_3_2 // TODO query this at use-time from the RHISurface type
-    desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
-#else
-    desc.setFlag("SAMPLER_TYPE", "sampler2D");
-#endif
+    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
+      desc.setFlag("SAMPLER_TYPE", "sampler2D");
+    else
+      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
+
     camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
@@ -72,11 +73,10 @@ CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibrat
       "shaders/ndcQuad.vtx.glsl",
       "shaders/camGreyscaleUndistort.frag.glsl",
       ndcQuadVertexLayout);
-#ifdef GLATTER_EGL_GLES_3_2
-    desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
-#else
-    desc.setFlag("SAMPLER_TYPE", "sampler2D");
-#endif
+    if (epoxy_is_desktop_gl())
+      desc.setFlag("SAMPLER_TYPE", "sampler2D");
+    else
+      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
     camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 

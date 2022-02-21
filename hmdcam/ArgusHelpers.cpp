@@ -164,8 +164,11 @@ void ArgusHelpers::printCameraDeviceInfo(Argus::CameraDevice* cameraDevice, cons
         printf("%sMaxAwbRegions:             %u\n", indent, iCameraProperties->getMaxAwbRegions());
         Argus::Range<int32_t> i32Range = iCameraProperties->getFocusPositionRange();
         printf("%sFocusPositionRange:        [%d, %d]\n", indent, i32Range.min(), i32Range.max());
-        Argus::Range<float> fRange = iCameraProperties->getLensApertureRange();
-        printf("%sLensApertureRange:         [%f, %f]\n", indent, fRange.min(), fRange.max());
+
+        Argus::Range<float> fRange;
+        // Renamed in libargus at some point
+        //fRange = iCameraProperties->getLensApertureRange();
+        //printf("%sLensApertureRange:         [%f, %f]\n", indent, fRange.min(), fRange.max());
         fRange = iCameraProperties->getIspDigitalGainRange();
         printf("%sIspDigitalGainRange:       [%f, %f]\n", indent, fRange.min(), fRange.max());
         fRange = iCameraProperties->getExposureCompensationRange();

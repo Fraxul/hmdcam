@@ -3,7 +3,6 @@ Import('env')
 dgpuEnv = env.Clone()
 
 #dgpuEnv.Append(
-#  CPPDEFINES=['GLATTER_MESA_GLX_GL'],
 #  CPPPATH=['rdma-client', '/usr/include/SDL2']
 #)
 
