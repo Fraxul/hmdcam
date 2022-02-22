@@ -1,11 +1,17 @@
+import os
+import platform
+import sys
 Import('env')
 
 # Building on Tegra; build hmdcam application
 tegraEnv = env.Clone()
 
 # Import locally built Monado static libraries
-MONADO_BASE='/mnt/scratch/monado'
-MONADO_BUILD='/mnt/nvme/monado-minimal-build'
+MONADO_BASE='#monado'
+MONADO_BUILD='#build/monado'
+
+if not os.path.exists(str(Dir(MONADO_BUILD))):
+  sys.exit('Monado build artifacts are not present. Please run ./build-monado.sh first.')
 
 tegraEnv.Append(
   CPPPATH=[
@@ -21,10 +27,10 @@ monadoStatics = \
     Glob(MONADO_BUILD + '/src/xrt/drivers/*.a') + \
     Glob(MONADO_BUILD + '/src/xrt/state_trackers/oxr/*.a') + \
     [
-      MONADO_BUILD + '/src/xrt/auxiliary/libaux_tracking.a',
       MONADO_BUILD + '/src/xrt/auxiliary/libaux_os.a',
       MONADO_BUILD + '/src/xrt/auxiliary/libaux_util.a',
       MONADO_BUILD + '/src/xrt/auxiliary/libaux_vive.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/libaux_tracking.a', # Needs to be after libaux_vive.a
       MONADO_BUILD + '/src/xrt/auxiliary/libaux_math.a', # Needs to be after libaux_tracking.a for symbol resolution.
       MONADO_BUILD + '/src/xrt/auxiliary/bindings/libaux_generated_bindings.a' # Needs to be after libaux_util.a
     ]

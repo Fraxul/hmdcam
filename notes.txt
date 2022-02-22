@@ -8,7 +8,7 @@ Don't forget to set up the submodules after cloning:
   git submodule update --init --recursive
 
 Install prerequisite packages:
-  sudo apt install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev
+  sudo apt install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev
 
 If you're on L4T, get a new enough cmake for the DepthAI build (3.10.2 as shipped in L4T/bionic is too old):
   sudo apt remove cmake*
@@ -18,6 +18,9 @@ If you're on L4T, get a new enough cmake for the DepthAI build (3.10.2 as shippe
 
 Additional prereqs for the RDMA framework and rdma-client
   sudo apt install libsdl2-dev librdmacm-dev
+
+Build the embedded Monado library required for distortion processing
+  ./build-monado.sh
 
 Optional: If you want to build the DepthAI backend, run the included script to build required libraries first:
   ./build-depthai-core.sh

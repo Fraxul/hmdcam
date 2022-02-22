@@ -10,6 +10,7 @@
 #include "xrt/xrt_device.h"
 #include "math/m_api.h"
 #include "util/u_distortion_mesh.h"
+#include "util/u_device.h"
 
 #include "NvEncSession.h"
 #include "liveMedia.hh"
@@ -259,15 +260,15 @@ bool RenderInit() {
     }
 
     printf("Distortion mesh data:\n");
-    printf("vertices=%u stride=%u num_uv_channels=%u num_indices={%u, %u} offset_indices={%u, %u} total_num_indices=%u\n",
-      hmd->distortion.mesh.num_vertices, hmd->distortion.mesh.stride, hmd->distortion.mesh.num_uv_channels,
-      hmd->distortion.mesh.num_indices[0], hmd->distortion.mesh.num_indices[1],
-      hmd->distortion.mesh.offset_indices[0], hmd->distortion.mesh.offset_indices[1],
-      hmd->distortion.mesh.total_num_indices);
+    printf("vertices=%u stride=%u uv_channels_count=%u index_counts={%u, %u} index_offsets={%u, %u} index_count_total=%u\n",
+      hmd->distortion.mesh.vertex_count, hmd->distortion.mesh.stride, hmd->distortion.mesh.uv_channels_count,
+      hmd->distortion.mesh.index_counts[0], hmd->distortion.mesh.index_counts[1],
+      hmd->distortion.mesh.index_offsets[0], hmd->distortion.mesh.index_offsets[1],
+      hmd->distortion.mesh.index_count_total);
 
     // Upload vertex and index buffers for distortion
-    meshDistortionVertexBuffer = rhi()->newBufferWithContents(hmd->distortion.mesh.vertices, hmd->distortion.mesh.num_vertices * hmd->distortion.mesh.stride);
-    meshDistortionIndexBuffer = rhi()->newBufferWithContents(hmd->distortion.mesh.indices, hmd->distortion.mesh.total_num_indices * sizeof(uint32_t));
+    meshDistortionVertexBuffer = rhi()->newBufferWithContents(hmd->distortion.mesh.vertices, hmd->distortion.mesh.vertex_count * hmd->distortion.mesh.stride);
+    meshDistortionIndexBuffer = rhi()->newBufferWithContents(hmd->distortion.mesh.indices, hmd->distortion.mesh.index_count_total * sizeof(uint32_t));
 
     // Setup global state
     hmd_width = hmd->screens[0].w_pixels;
@@ -368,7 +369,7 @@ void recomputeHMDParameters() {
   };
 
   for (uint32_t eyeIdx = 0; eyeIdx < 2; eyeIdx++) {
-    struct xrt_fov* fov = &xrtHMDevice->hmd->views[eyeIdx].fov;
+    struct xrt_fov* fov = &xrtHMDevice->hmd->distortion.fov[eyeIdx];
 
     // from comp_layer_renderer_set_fov
     const float tan_left = tanf(fov->angle_left);
@@ -404,7 +405,7 @@ void recomputeHMDParameters() {
       0.0f,  0.0f,  zNear,  0.0f);
 
     struct xrt_pose eye_pose;
-    xrt_device_get_view_pose(xrtHMDevice, &eye_relation, eyeIdx, &eye_pose);
+    u_device_get_view_pose(&eye_relation, eyeIdx, &eye_pose);
 
     xrt_matrix_4x4 eye_view;
     math_matrix_4x4_view_from_pose(&eye_pose, &eye_view);
@@ -430,7 +431,7 @@ void renderHMDFrame() {
   // Switch to output framebuffer
   rhi()->beginRenderPass(windowRenderTarget, kLoadInvalidate);
 
-  if (xrtHMDevice->hmd->distortion.mesh.num_uv_channels == 1) {
+  if (xrtHMDevice->hmd->distortion.mesh.uv_channels_count == 1) {
     rhi()->bindRenderPipeline(mesh1chDistortionPipeline);
   } else {
     rhi()->bindRenderPipeline(mesh3chDistortionPipeline);
@@ -453,7 +454,7 @@ void renderHMDFrame() {
     ub.uvScale = glm::vec2(0.5f, 1.0f);
     rhi()->loadUniformBlockImmediate(ksMeshDistortionUniformBlock, &ub, sizeof(ub));
 
-    rhi()->drawIndexedPrimitives(meshDistortionIndexBuffer, kIndexBufferTypeUInt32, xrtHMDevice->hmd->distortion.mesh.num_indices[eyeIndex], xrtHMDevice->hmd->distortion.mesh.offset_indices[eyeIndex]);
+    rhi()->drawIndexedPrimitives(meshDistortionIndexBuffer, kIndexBufferTypeUInt32, xrtHMDevice->hmd->distortion.mesh.index_counts[eyeIndex], xrtHMDevice->hmd->distortion.mesh.index_offsets[eyeIndex]);
   }
 
   rhi()->endRenderPass(windowRenderTarget);

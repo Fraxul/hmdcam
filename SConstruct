@@ -1,5 +1,6 @@
-import platform
 import os
+import platform
+import sys
 
 is_tegra = (platform.machine() == 'aarch64')
 

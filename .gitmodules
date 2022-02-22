@@ -16,3 +16,8 @@
 [submodule "depthai-core"]
 	path = depthai-core
 	url = https://github.com/luxonis/depthai-core.git
+[submodule "monado"]
+	path = monado
+	url = https://gitlab.freedesktop.org/fraxul/monado.git
+	ignore = untracked
+	branch = standalone
