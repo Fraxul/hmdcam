@@ -49,10 +49,12 @@ public:
   virtual void setViewports(const RHIRect*, size_t count);
   virtual void setDepthBias(float slopeScale, float constantBias);
   virtual void bindRenderPipeline(RHIRenderPipeline::ptr);
-  virtual void bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr);
+  virtual void bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr, size_t baseOffsetBytes);
   virtual void bindDepthStencilState(RHIDepthStencilState::ptr);
   virtual void bindBlendState(RHIBlendState::ptr);
   virtual void setCullState(RHICullState);
+  virtual void setScissorRect(const RHIRect&);
+  virtual void clearScissorRect();
 
   virtual void bindComputePipeline(RHIComputePipeline::ptr);
 
@@ -107,6 +109,7 @@ protected:
   RHIBlendStateGL::ptr m_activeBlendState;
   RHIDepthStencilStateGL::ptr m_activeDepthStencilState;
   RHIBufferGL::ptr m_activeStreamBuffers[16];
+  size_t m_activeStreamBufferOffsets[16];
   RHIBufferGL::ptr m_activeUniformBuffers[16];
 
   GLuint m_immediateScratchBufferId;

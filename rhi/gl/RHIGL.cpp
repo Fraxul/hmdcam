@@ -415,6 +415,7 @@ void RHIGL::beginRenderPass(RHIRenderTarget::ptr renderTarget, RHIRenderTargetLo
   GL(glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE));
   GL(glDepthMask(GL_TRUE));
   GL(glStencilMask(0xffffffff));
+  GL(glDisable(GL_SCISSOR_TEST));
 
   // execute clears
   uint32_t clearBits = 0;
@@ -505,6 +506,7 @@ void RHIGL::internalPerformBlit(GLuint sourceFBO, bool sourceIsMultisampled, RHI
 
   GL(glBindFramebuffer(GL_READ_FRAMEBUFFER, sourceFBO));
   GL(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_activeRenderTarget->glFramebufferId()));
+  GL(glDisable(GL_SCISSOR_TEST));
 
   glBlitFramebuffer(
     sourceRect.left(), sourceRect.top(), sourceRect.right(), sourceRect.bottom(),
@@ -550,6 +552,7 @@ void RHIGL::bindRenderPipeline(RHIRenderPipeline::ptr pipeline) {
   // debug help: unbind all stream buffers when switching pipelines to make sure that we didn't miss a bind operation
   for (size_t i = 0; i < 16; ++i) {
     m_activeStreamBuffers[i].reset();
+    m_activeStreamBufferOffsets[i] = 0;
   }
 
   if (samePipeline)
@@ -612,10 +615,11 @@ void RHIGL::bindRenderPipeline(RHIRenderPipeline::ptr pipeline) {
 
 }
 
-void RHIGL::bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr buffer) {
+void RHIGL::bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr buffer, size_t baseOffsetBytes) {
   assert(!m_inComputePass && "bindStreamBuffer(): cannot be used during compute pass encoding");
   assert(streamIndex < 16);
   m_activeStreamBuffers[streamIndex] = static_cast<RHIBufferGL*>(buffer.get());
+  m_activeStreamBufferOffsets[streamIndex] = baseOffsetBytes;
 }
 
 static GLenum rhiCompareFunctionToGL(RHIDepthStencilCompareFunction func) {
@@ -785,6 +789,15 @@ void RHIGL::setCullState(RHICullState cullState) {
   }
 }
 
+void RHIGL::setScissorRect(const RHIRect& scissorRect) {
+  glScissor(scissorRect.x, scissorRect.y, scissorRect.width, scissorRect.height);
+  glEnable(GL_SCISSOR_TEST);
+}
+
+void RHIGL::clearScissorRect() {
+  glDisable(GL_SCISSOR_TEST);
+}
+
 void RHIGL::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::ptr sampler) {
   int32_t location = m_inComputePass ?
     m_activeComputePipeline->shaderGL()->samplerAttributeLocation(name) :
@@ -873,7 +886,7 @@ static GLenum convertPrimitiveTopology(RHIPrimitiveTopology topo) {
 void RHIGL::internalSetupRenderPipelineState() {
   for (const RHIRenderPipelineGL::StreamBufferDescriptor& bufferDesc : m_activeRenderPipeline->streamBufferDescriptors()) {
     assert(m_activeStreamBuffers[bufferDesc.index] && "RHIGL::internalSetupRenderPipelineState: Missing stream buffer binding");
-    glBindVertexBuffer(bufferDesc.index, m_activeStreamBuffers[bufferDesc.index]->glId(), /*offset=*/0, bufferDesc.stride);
+    glBindVertexBuffer(bufferDesc.index, m_activeStreamBuffers[bufferDesc.index]->glId(), /*offset=*/m_activeStreamBufferOffsets[bufferDesc.index], bufferDesc.stride);
   }
 }
 

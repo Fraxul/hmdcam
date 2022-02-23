@@ -241,8 +241,8 @@ int main(int argc, char* argv[]) {
   io.IniFilename = NULL; // Disable INI file load/save
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Keyboard navigation (mapped from the InputListener media remote interface)
   // io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; // Gamepad navigation (not used right now)
-  ImGui_ImplOpenGL3_Init(NULL);
   ImGui_ImplInputListener_Init();
+  ImGui_ImplFxRHI_Init();
 
   io.DisplaySize = ImVec2(512.0f, 512.0f); // Not the full size, but the size of our overlay RT
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f);
@@ -464,7 +464,7 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplFxRHI_NewFrame();
       ImGui_ImplInputListener_NewFrame();
       ImGui::NewFrame();
 
@@ -636,7 +636,7 @@ int main(int argc, char* argv[]) {
       rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
       rhi()->beginRenderPass(guiRT, kLoadClear);
       ImGui::Render();
-      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+      ImGui_ImplFxRHI_RenderDrawData(guiRT, ImGui::GetDrawData());
       rhi()->endRenderPass(guiRT);
 
       if ((frameCounter & 0x7fUL) == 0) {

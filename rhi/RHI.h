@@ -89,11 +89,13 @@ public:
   virtual void setViewports(const RHIRect*, size_t count) = 0;
   void setViewports(const std::vector<RHIRect>& rects) { setViewports(rects.data(), rects.size()); }
   virtual void setDepthBias(float slopeScale, float constantBias) = 0;
-  virtual void bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr) = 0;
+  virtual void bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr, size_t baseOffsetBytes = 0) = 0;
   virtual void bindRenderPipeline(RHIRenderPipeline::ptr) = 0;
   virtual void bindDepthStencilState(RHIDepthStencilState::ptr) = 0;
   virtual void bindBlendState(RHIBlendState::ptr) = 0;
   virtual void setCullState(RHICullState) = 0;
+  virtual void setScissorRect(const RHIRect&) = 0;
+  virtual void clearScissorRect() = 0;
 
   // these functions are valid between beginComputePass and endComputePass
   virtual void bindComputePipeline(RHIComputePipeline::ptr) = 0;

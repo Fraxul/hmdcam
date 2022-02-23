@@ -1,8 +1,10 @@
 #pragma once
-#define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
-#define IMGUI_IMPL_OPENGL_ES3
 #include "imgui.h"
-#include "imgui/backends/imgui_impl_opengl3.h"
+#include "rhi/RHIRenderTarget.h"
 void ImGui_ImplInputListener_Init();
 void ImGui_ImplInputListener_NewFrame();
+
+void ImGui_ImplFxRHI_Init();
+void ImGui_ImplFxRHI_NewFrame();
+void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawData* draw_data);
 
