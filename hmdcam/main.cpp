@@ -245,7 +245,7 @@ int main(int argc, char* argv[]) {
   ImGui_ImplFxRHI_Init();
 
   io.DisplaySize = ImVec2(512.0f, 512.0f); // Not the full size, but the size of our overlay RT
-  io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f);
+  io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f); // Use HiDPI rendering
 
   // Open the cameras
   argusCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), s_cameraFramerate);
@@ -443,7 +443,8 @@ int main(int argc, char* argv[]) {
 
     bool drawUI = false;
     bool debugEnableDepthMapGenerator = true;
-    float uiScale = 1.0f;
+    float uiScale = 0.75f;
+    float uiDepth = 2.0f;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
 
     while (!want_quit) {
@@ -540,55 +541,61 @@ int main(int argc, char* argv[]) {
             ImGui::SliderInt("Separator Width", (int*) &sbsSeparatorWidth, 0, 32);
           }
 
-          for (size_t cameraIdx = 0; cameraIdx < cameraSystem->cameras(); ++cameraIdx) {
-            char caption[64];
-            sprintf(caption, "Calibrate camera %zu", cameraIdx);
-            if (ImGui::Button(caption)) {
-              calibrationContext.reset(cameraSystem->calibrationContextForCamera(cameraIdx));
-            }
-          }
-          for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
-            CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
-            if (v.isStereo) {
-              char caption[64];
-              sprintf(caption, "Calibrate stereo view %zu", viewIdx);
-              if (ImGui::Button(caption)) {
-                calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
-              }
-            }
 
-            if (v.isStereo && viewIdx != 0) {
-              // Autocalibration for secondary stereo views
+          if (ImGui::CollapsingHeader("Calibration")) {
+
+            for (size_t cameraIdx = 0; cameraIdx < cameraSystem->cameras(); ++cameraIdx) {
               char caption[64];
-              sprintf(caption, "Calibrate offset for stereo view %zu", viewIdx);
+              sprintf(caption, "Calibrate camera %zu", cameraIdx);
               if (ImGui::Button(caption)) {
-                calibrationContext.reset(cameraSystem->calibrationContextForStereoViewOffset(0, viewIdx));
+                calibrationContext.reset(cameraSystem->calibrationContextForCamera(cameraIdx));
               }
-            } else {
-              // Direct view transform editing
-              ImGui::PushID(viewIdx);
-              ImGui::Text("View %zu Transform", viewIdx);
-              // convert to and from millimeters for editing
-              glm::vec3 txMM = v.viewTranslation * 1000.0f;
-              if (ImGui::DragFloat3("Tx", &txMM[0], /*speed=*/ 0.1f, /*min=*/ -500.0f, /*max=*/ 500.0f, "%.1fmm")) {
-                v.viewTranslation = txMM / 1000.0f;
-              }
-              ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/0.1f, /*min=*/ -75.0f, /*max=*/ 75.0f, "%.1fdeg");
-              ImGui::PopID();
             }
-          }
-          if (ImGui::Button("Save Settings")) {
-            cameraSystem->saveCalibrationData();
-            if (depthMapGenerator)
-              depthMapGenerator->saveSettings();
-          }
-          if (debugEnableDepthMapGenerator && depthMapGenerator) {
-            depthMapGenerator->renderIMGUI();
-          }
+            for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+              CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+              if (v.isStereo) {
+                char caption[64];
+                sprintf(caption, "Calibrate stereo view %zu", viewIdx);
+                if (ImGui::Button(caption)) {
+                  calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
+                }
+              }
+
+              if (v.isStereo && viewIdx != 0) {
+                // Autocalibration for secondary stereo views
+                char caption[64];
+                sprintf(caption, "Calibrate offset for stereo view %zu", viewIdx);
+                if (ImGui::Button(caption)) {
+                  calibrationContext.reset(cameraSystem->calibrationContextForStereoViewOffset(0, viewIdx));
+                }
+              } else {
+                // Direct view transform editing
+                ImGui::PushID(viewIdx);
+                ImGui::Text("View %zu Transform", viewIdx);
+                // convert to and from millimeters for editing
+                glm::vec3 txMM = v.viewTranslation * 1000.0f;
+                if (ImGui::DragFloat3("Tx", &txMM[0], /*speed=*/ 0.1f, /*min=*/ -500.0f, /*max=*/ 500.0f, "%.1fmm")) {
+                  v.viewTranslation = txMM / 1000.0f;
+                }
+                ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/0.1f, /*min=*/ -75.0f, /*max=*/ 75.0f, "%.1fdeg");
+                ImGui::PopID();
+              }
+            }
+            if (ImGui::Button("Save Settings")) {
+              cameraSystem->saveCalibrationData();
+              if (depthMapGenerator)
+                depthMapGenerator->saveSettings();
+            }
+            if (debugEnableDepthMapGenerator && depthMapGenerator) {
+              depthMapGenerator->renderIMGUI();
+            }
+          } // Calibration header
+
+          if (ImGui::CollapsingHeader("UI Settings")) {
+            ImGui::SliderFloat("UI Scale", &uiScale, 0.5f, 2.5f);
+            ImGui::SliderFloat("UI Depth", &uiDepth, 1.0f, 10.0f);
+          } // UI Settings header
         }
-
-
-        ImGui::SliderFloat("UI Scale", &uiScale, 0.5f, 1.5f);
 
         {
           const auto& meta = argusCamera->frameMetadata(0);
@@ -597,7 +604,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Skip perf data to save UI space if we're calibrating
-        if (!calibrationContext) {
+        if (!calibrationContext && ImGui::CollapsingHeader("Performance")) {
           ImPlot::SetNextPlotLimitsY(0, 12.0f);
           if (ImPlot::BeginPlot("##FrameTiming", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
               ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
@@ -800,8 +807,7 @@ int main(int argc, char* argv[]) {
         rhi()->setViewports(eyeViewports, 2);
 
         UILayerStereoUniformBlock ub;
-        float uiScaleBase = 0.75f;
-        glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -1.2f)) * glm::scale(glm::vec3(uiScaleBase * uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScaleBase * uiScale, uiScaleBase * uiScale));
+        glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth)) * glm::scale(glm::vec3(uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScale, uiScale));
         ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
         ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
 
