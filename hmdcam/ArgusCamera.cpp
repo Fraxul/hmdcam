@@ -34,6 +34,9 @@ extern FxAtomicString ksImageTex;
 
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framerate) :
   m_display(display_), m_context(context_),
+  m_shouldResubmitCaptureRequest(false),
+  m_captureIsRepeating(false),
+  m_exposureCompensation(0.0f),
   m_adjustCaptureInterval(false),
   m_didAdjustCaptureIntervalThisFrame(false),
   m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = 128),
@@ -221,14 +224,15 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
       die("Failed to get source settings request interface");
   iSourceSettings->setSensorMode(sensorMode);
 
+  // Update autocontrol settings
+  setExposureCompensation(m_exposureCompensation);
+
   m_captureDurationMinNs = iSensorMode->getFrameDurationRange().min();
   m_captureDurationMaxNs = iSensorMode->getFrameDurationRange().max();
 
   // Set the initial capture duration to the requested frame interval. This will be wrong since there's some overhead;
   // we'll recompute it later once we start getting back capture timestamps.
   setCaptureDurationNs(m_targetCaptureIntervalNs);
-
-  m_captureIsRepeating = false;
 }
 
 void ArgusCamera::setRepeatCapture(bool value) {
@@ -396,13 +400,19 @@ bool ArgusCamera::readFrame() {
         setCaptureDurationNs(newDuration);
         m_didAdjustCaptureIntervalThisFrame = true;
 
-        // Start a repeating capture
-        if (Argus::interface_cast<Argus::ICaptureSession>(m_captureSession)->repeat(m_captureRequest) != Argus::STATUS_OK)
-          die("Failed to update repeat capture request");
+        m_shouldResubmitCaptureRequest = true;
 
       }
     }
   }
+
+  if (m_shouldResubmitCaptureRequest && m_captureIsRepeating) {
+    // Resubmit repeating capture request for dirty controls/settings
+    if (Argus::interface_cast<Argus::ICaptureSession>(m_captureSession)->repeat(m_captureRequest) != Argus::STATUS_OK)
+      die("Failed to update repeat capture request");
+  }
+
+  m_shouldResubmitCaptureRequest = false;
   m_previousSensorTimestampNs = m_frameMetadata[0].sensorTimestamp;
 
   return res;
@@ -417,6 +427,16 @@ void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {
 
 void ArgusCamera::stop() {
   setRepeatCapture(false);
+}
+
+
+void ArgusCamera::setExposureCompensation(float stops) {
+  Argus::IAutoControlSettings* iAutoControlSettings = Argus::interface_cast<Argus::IAutoControlSettings>(Argus::interface_cast<Argus::IRequest>(m_captureRequest)->getAutoControlSettings());
+  assert(iAutoControlSettings);
+
+  iAutoControlSettings->setExposureCompensation(stops);
+  m_exposureCompensation = stops;
+  m_shouldResubmitCaptureRequest = true;
 }
 
 

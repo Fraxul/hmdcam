@@ -525,6 +525,12 @@ int main(int argc, char* argv[]) {
           calibrationContext->processUI();
 
         } else {
+          {
+            float ev = argusCamera->exposureCompensation();
+            if (ImGui::SliderFloat("Exposure", &ev, -10.0f, 10.0f, "%.1f", ImGuiSliderFlags_None)) {
+              argusCamera->setExposureCompensation(ev);
+            }
+          }
           //ImGui::Text("Config");
           ImGui::Checkbox("SBS", &renderSBS);
           ImGui::Checkbox("Mask", &useMask);

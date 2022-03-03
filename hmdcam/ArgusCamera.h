@@ -50,13 +50,19 @@ public:
   bool willAdjustCaptureInterval() const { return m_adjustCaptureInterval; }
   void setAdjustCaptureInterval(bool value) { m_adjustCaptureInterval = value; }
 
+  void setExposureCompensation(float stops);
+  float exposureCompensation() const { return m_exposureCompensation; }
+
 private:
   EGLDisplay m_display;
   EGLContext m_context;
 
   std::vector<RHIEGLImageSurfaceGL::ptr> m_textures;
   unsigned int m_streamWidth, m_streamHeight;
-  bool m_captureIsRepeating;
+  bool m_shouldResubmitCaptureRequest : 1;
+  bool m_captureIsRepeating : 1;
+
+  float m_exposureCompensation;
 
   uint64_t m_targetCaptureIntervalNs;
 
