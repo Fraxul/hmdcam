@@ -29,6 +29,7 @@
 #include "common/DepthWorkerControl.h"
 #include "common/FxThreading.h"
 #include "common/ScrollingBuffer.h"
+#include "common/glmCvInterop.h"
 #include "InputListener.h"
 #include "Render.h"
 
@@ -43,12 +44,6 @@
 
 //#define LATENCY_DEBUG
 
-// Camera config
-// Size parameters for sensor mode selection.
-// Note that changing the sensor mode will invalidate the calibration
-// (Pixel coordinates are baked into the calibration data)
-size_t s_cameraWidth, s_cameraHeight;
-
 // Requested capture rate for the camera. This should be the framerate of the display device, with as much precision as possible.
 // TODO: autodetect this. (current value pulled from running `fbset`)
 const double s_cameraFramerate = 89.527;
@@ -56,9 +51,9 @@ const double s_cameraFramerate = 89.527;
 // Camera render parameters
 float zoomFactor = 1.0f;
 float stereoOffset = 0.0f;
-bool renderSBS = false;
 bool useMask = true;
-int sbsSeparatorWidth = 4;
+float panoClipScale = 1.0f;
+float panoTxScale = 5.0f;
 bool debugUseDistortion = true;
 
 // Camera info/state
@@ -249,8 +244,6 @@ int main(int argc, char* argv[]) {
 
   // Open the cameras
   argusCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), s_cameraFramerate);
-  s_cameraWidth = argusCamera->streamWidth();
-  s_cameraHeight = argusCamera->streamHeight();
 
   std::vector<RHIRect> debugSurfaceCameraRects;
   {
@@ -533,13 +526,11 @@ int main(int argc, char* argv[]) {
             }
           }
           //ImGui::Text("Config");
-          ImGui::Checkbox("SBS", &renderSBS);
           ImGui::Checkbox("Mask", &useMask);
+          ImGui::SliderFloat("Pano Tx Scale", &panoTxScale, 0.0f, 10.0f);
+          ImGui::SliderFloat("Pano Clip Scale", &panoClipScale, 0.0f, 1.0f);
           ImGui::SliderFloat("Zoom", &zoomFactor, 0.5f, 2.0f);
           ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
-          if (renderSBS) {
-            ImGui::SliderInt("Separator Width", (int*) &sbsSeparatorWidth, 0, 32);
-          }
 
 
           if (ImGui::CollapsingHeader("Calibration")) {
@@ -559,6 +550,7 @@ int main(int argc, char* argv[]) {
                 if (ImGui::Button(caption)) {
                   calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
                 }
+                ImGui::Checkbox("Panorama", &v.isPanorama);
               }
 
               if (v.isStereo && viewIdx != 0) {
@@ -709,29 +701,74 @@ int main(int argc, char* argv[]) {
           // TODO logic needs work for single-pass stereo
           for (int eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
             for (int viewEyeIdx = 0; viewEyeIdx < (v.isStereo ? 2 : 1); ++viewEyeIdx) {
-              if (renderSBS == false && v.isStereo && (viewEyeIdx != eyeIdx))
-                continue;
-
               // coordsys right now: -X = left, -Z = into screen
               // (camera is at the origin)
               float stereoOffsetSign = v.isStereo ? ((viewEyeIdx == 0 ? -1.0f : 1.0f)) : 0.0f;
               float viewDepth = 10.0f;
-
               const glm::vec3 tx = glm::vec3(stereoOffsetSign * stereoOffset, 0.0f, -viewDepth);
-              double fovX = 75.0f; // default guess if no calibration
+              float aspectRatioYScale = static_cast<float>(argusCamera->streamHeight()) / static_cast<float>(argusCamera->streamWidth());
+              glm::mat4 mvp;
+              float clipMinU = 0.0f;
+              float clipMaxU = 1.0f;
 
-              // Compute FOV-based prescaling -- figure out the billboard size in world units based on the render depth and FOV
-              if (v.isStereo ? v.haveStereoRectificationParameters() : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).haveIntrinsicCalibration()) {
-                fovX = v.isStereo ? v.fovX : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).fovX;
+              if (v.isStereo && v.isPanorama) {
+                //CameraSystem::Camera& cLeft = cameraSystem->cameraAtIndex(v.cameraIndices[0]);
+                //CameraSystem::Camera& cRight = cameraSystem->cameraAtIndex(v.cameraIndices[1]);
+                static bool debug = true;
+
+                // Compute FOV for panorama view. This is the combined X FoVs of the cameras offset by the additional Y-rotation between views.
+                float rx, ry, rz; // radians
+                glm::extractEulerAngleYXZ(glm::mat4(glmMat3FromCVMatrix(v.stereoRotation)), rx, ry, rz);
+
+                if (debug) printf("Pano angles %f %f %f\n", glm::degrees(rx), glm::degrees(ry), glm::degrees(rz));
+
+                float stereoFovX = v.fovX;
+                float panoFovX = stereoFovX + fabs(glm::degrees(rx)); // degrees
+
+                float clipFrac = (panoFovX - stereoFovX) / stereoFovX;
+                clipFrac = 1.0f - ((1.0f - clipFrac) * panoClipScale); // apply scale
+                if (viewEyeIdx == 0) // left camera, clip from max side
+                  clipMaxU = clipFrac;
+                else // right camera, clip from min side
+                  clipMinU = 1.0f - clipFrac;
+
+                // half-width is viewDepth * tanf(0.5 * fovx). maps directly to scale factor since the quad we're rendering is two units across (NDC quad)
+                float panoFovScaleFactor = viewDepth * tan(glm::radians(panoFovX * 0.5f));
+                float fovScaleFactor = 0.5f * panoFovScaleFactor; // half the scale for each view, since it's half of the panorama (approx).
+                if (debug) printf("stereoFovX=%f panoFovX=%f clipFrac=%f min=%f max=%f panoFovScaleFactor=%f\n", stereoFovX, panoFovX, clipFrac, clipMinU, clipMaxU, panoFovScaleFactor);
+
+                float rScale = (viewEyeIdx == 0) ? 0.5f : -0.5f;
+                glm::mat4 rot = glm::mat4(glm::eulerAngleYXZ(rx * rScale, rx * rScale, rz * rScale));
+
+                float tScale = ((viewEyeIdx == 0) ? 0.5f : -0.5f) * panoTxScale;
+
+                // Position the pano quads in view space by rotating by half of the stereo rotation offset in either direction.
+                glm::mat4 model = cameraSystem->viewWorldTransform(viewIdx) * glm::translate(glmVec3FromCV(v.stereoTranslation) * tScale) * glm::translate(tx) * rot * glm::scale(glm::vec3(fovScaleFactor * zoomFactor, fovScaleFactor * zoomFactor * aspectRatioYScale, 1.0f));
+
+                // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
+                mvp = renderViews[viewEyeIdx].viewProjectionMatrix * model;
+
+                debug = false; // XXX once
+
+              } else {
+              if (v.isStereo && (viewEyeIdx != eyeIdx))
+                continue;
+
+                float fovX = 75.0f; // default guess if no calibration
+
+                // Compute FOV-based prescaling -- figure out the billboard size in world units based on the render depth and FOV
+                if (v.isStereo ? v.haveStereoRectificationParameters() : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).haveIntrinsicCalibration()) {
+                  fovX = v.isStereo ? v.fovX : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).fovX;
+                }
+
+                // half-width is viewDepth * tanf(0.5 * fovx). maps directly to scale factor since the quad we're rendering is two units across (NDC quad)
+                float fovScaleFactor = viewDepth * tan(glm::radians(fovX * 0.5f));
+
+                glm::mat4 model = cameraSystem->viewWorldTransform(viewIdx) * glm::translate(tx) * glm::scale(glm::vec3(fovScaleFactor * zoomFactor, fovScaleFactor * zoomFactor * aspectRatioYScale, 1.0f));
+
+                // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
+                mvp = renderViews[viewEyeIdx].viewProjectionMatrix * model;
               }
-
-              // half-width is viewDepth * tanf(0.5 * fovx). maps directly to scale factor since the quad we're rendering is two units across (NDC quad)
-              float fovScaleFactor = viewDepth * tan((fovX * 0.5) * (M_PI/180.0f));
-
-              glm::mat4 model = cameraSystem->viewWorldTransform(viewIdx) * glm::translate(tx) * glm::scale(glm::vec3(fovScaleFactor * zoomFactor, fovScaleFactor * zoomFactor * (static_cast<float>(argusCamera->streamHeight()) / static_cast<float>(argusCamera->streamWidth())) , 1.0f));
-
-              // Intentionally ignoring the eyeView matrix here. Camera to eye stereo offset is controlled directly by the stereoOffset variable
-              glm::mat4 mvp = renderViews[viewEyeIdx].viewProjectionMatrix * model;
 
               RHISurface::ptr overlayTex, distortionTex;
               size_t drawFlags = 0;
@@ -751,35 +788,8 @@ int main(int argc, char* argv[]) {
 
               }
 
-
               rhi()->setViewport(eyeViewports[eyeIdx]);
-              renderDrawCamera(v.cameraIndices[viewEyeIdx], drawFlags, distortionTex, overlayTex, mvp);
-
-    /*
-              float uClipFrac = 0.75f;
-      #if 1
-              // Compute the clipping parameters to cut the views off at the centerline of the view (x=0 in model space)
-              {
-                glm::vec3 worldP0 = glm::vec3(model * glm::vec4(-1.0f, 0.0f, 0.0f, 1.0f));
-                glm::vec3 worldP1 = glm::vec3(model * glm::vec4( 1.0f, 0.0f, 0.0f, 1.0f));
-
-                float xLen = fabs(worldP0.x - worldP1.x);
-                // the coordinate that's closest to X0 will be the one we want to clip
-                float xOver = std::min<float>(fabs(worldP0.x), fabs(worldP1.x));
-
-                uClipFrac = (xLen - xOver)/xLen;
-              }
-      #endif
-
-              if (cameraIdx == 0) { // left
-                ub.minUV = glm::vec2(0.0f,  0.0f);
-                ub.maxUV = glm::vec2(uClipFrac, 1.0f);
-              } else { // right
-                ub.minUV = glm::vec2(1.0f - uClipFrac, 0.0f);
-                ub.maxUV = glm::vec2(1.0f,  1.0f);
-              }
-    */
-
+              renderDrawCamera(v.cameraIndices[viewEyeIdx], drawFlags, distortionTex, overlayTex, mvp, clipMinU, clipMaxU);
             } // view-eye loop
           }
         }

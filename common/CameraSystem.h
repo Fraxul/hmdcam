@@ -46,11 +46,12 @@ public:
   };
 
   struct View {
-    View() : depthMapGenerator(NULL), isStereo(false), viewTranslation(0.0f), viewRotation(0.0f), fovX(0), fovY(0) {}
+    View() : depthMapGenerator(NULL), isStereo(false), isPanorama(false), viewTranslation(0.0f), viewRotation(0.0f), fovX(0), fovY(0) {}
 
     DepthMapGenerator* depthMapGenerator;
 
     bool isStereo;
+    bool isPanorama;
     size_t cameraCount() const { return isStereo ? 2 : 1; }
     unsigned short cameraIndices[2]; // if (isStereo) [0] is left, [1] is right. Otherwise, only use [0].
 

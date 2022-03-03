@@ -119,6 +119,7 @@ bool CameraSystem::loadCalibrationData() {
           if (v.isStereo) {
             cv::Mat tmpMat;
 
+            vfn["isPanorama"] >> v.isPanorama;
             vfn["leftCameraIndex"] >> v.cameraIndices[0];
             vfn["rightCameraIndex"] >> v.cameraIndices[1];
             vfn["stereoTranslationInitialGuess"] >> tmpMat; v.stereoTranslationInitialGuess = glmVec3FromCV(tmpMat);
@@ -188,6 +189,7 @@ void CameraSystem::saveCalibrationData() {
     View& v = viewAtIndex(viewIdx);
     fs.write("isStereo", v.isStereo);
     if (v.isStereo) {
+      fs.write("isPanorama", v.isPanorama);
       fs.write("leftCameraIndex", (int) v.cameraIndices[0]);
       fs.write("rightCameraIndex", (int) v.cameraIndices[1]);
       fs.write("stereoTranslationInitialGuess", cv::Mat(cvVec3FromGlm(v.stereoTranslationInitialGuess)));
