@@ -366,6 +366,7 @@ bool ArgusCamera::readFrame() {
 
     // Update metadata fields for this frame
     m_frameMetadata[cameraIdx].sensorTimestamp = iMetadata->getSensorTimestamp();
+    m_frameMetadata[cameraIdx].frameDurationNs = iMetadata->getFrameDuration();
     m_frameMetadata[cameraIdx].sensorExposureTimeNs = iMetadata->getSensorExposureTime();
     m_frameMetadata[cameraIdx].sensorSensitivityISO = iMetadata->getSensorSensitivity();
     m_frameMetadata[cameraIdx].ispDigitalGain = iMetadata->getIspDigitalGain();

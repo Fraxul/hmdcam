@@ -30,6 +30,7 @@ public:
   // Metadata accessors for the current frame
   struct FrameMetadata_t {
     uint64_t sensorTimestamp;
+    uint64_t frameDurationNs;
     uint64_t sensorExposureTimeNs;
     uint32_t sensorSensitivityISO;
     float ispDigitalGain;

@@ -586,8 +586,8 @@ int main(int argc, char* argv[]) {
 
         {
           const auto& meta = argusCamera->frameMetadata(0);
-          ImGui::Text("Exp=1/%usec %uISO DGain=%f AGain=%f",
-            (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs/1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
+          ImGui::Text("Dur=1/%usec Exp=1/%usec %uISO DGain=%f AGain=%f",
+            (unsigned int) (1000000.0f / static_cast<float>(meta.frameDurationNs/1000)), (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs/1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
         }
 
         // Skip perf data to save UI space if we're calibrating
