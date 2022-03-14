@@ -53,6 +53,13 @@ public:
   void setExposureCompensation(float stops);
   float exposureCompensation() const { return m_exposureCompensation; }
 
+  // centerpoint and size are in normalized coordinates (0...1)
+  // Default is the whole image: center=(0.5, 0.5), size = (1.0, 1.0).
+  // Region will be clipped to the size of the image if it overhangs an edge (ex. if you move the center point without decreasing the size)
+  void setAcRegion(const glm::vec2& center, const glm::vec2& size);
+  const glm::vec2& acRegionCenter() const { return m_acRegionCenter; }
+  const glm::vec2& acRegionSize() const { return m_acRegionSize; }
+
 private:
   EGLDisplay m_display;
   EGLContext m_context;
@@ -63,6 +70,9 @@ private:
   bool m_captureIsRepeating : 1;
 
   float m_exposureCompensation;
+  glm::vec2 m_acRegionCenter;
+  glm::vec2 m_acRegionSize;
+  uint32_t m_minAcRegionWidth, m_minAcRegionHeight;
 
   uint64_t m_targetCaptureIntervalNs;
 

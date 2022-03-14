@@ -396,9 +396,13 @@ int main(int argc, char* argv[]) {
 #endif
 
   {
+    // Load initial autocontrol region of interest
+    argusCamera->setAcRegion(/*center=*/ glm::vec2(0.5f, 0.5f), /*size=*/ glm::vec2(0.5f, 0.5f));
+
+    // Start repeating capture
     argusCamera->setRepeatCapture(true);
 
-    // Camera rendering mode
+    // Accumulators to track frame timing statistics
     uint64_t frameCounter = 0;
     boost::accumulators::accumulator_set<double, boost::accumulators::stats<
         boost::accumulators::tag::min,
@@ -531,7 +535,15 @@ int main(int argc, char* argv[]) {
           ImGui::SliderFloat("Pano Clip Scale", &panoClipScale, 0.0f, 1.0f);
           ImGui::SliderFloat("Zoom", &zoomFactor, 0.5f, 2.0f);
           ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
-
+          {
+            glm::vec2 acCenter = argusCamera->acRegionCenter();
+            glm::vec2 acSize = argusCamera->acRegionSize();
+            bool dirty = ImGui::SliderFloat2("AC Region Center", &acCenter[0], 0.0f, 1.0f);
+            dirty |=     ImGui::SliderFloat2("AC Region Size",   &acSize[0],   0.0f, 1.0f);
+            if (dirty) {
+              argusCamera->setAcRegion(acCenter, acSize);
+            }
+          }
 
           if (ImGui::CollapsingHeader("Calibration")) {
 

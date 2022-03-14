@@ -37,6 +37,10 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
   m_shouldResubmitCaptureRequest(false),
   m_captureIsRepeating(false),
   m_exposureCompensation(0.0f),
+  m_acRegionCenter(glm::vec2(0.5f, 0.5f)),
+  m_acRegionSize(glm::vec2(1.0f, 1.0f)),
+  m_minAcRegionWidth(0),
+  m_minAcRegionHeight(0),
   m_adjustCaptureInterval(false),
   m_didAdjustCaptureIntervalThisFrame(false),
   m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = 128),
@@ -126,6 +130,10 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
   m_streamWidth = iSensorMode->getResolution().width();
   m_streamHeight = iSensorMode->getResolution().height();
 
+  // Save minimum autocontrol region size
+  Argus::Size2D<uint32_t> minAcRegionSize = iCameraProperties->getMinAeRegionSize();
+  m_minAcRegionWidth = minAcRegionSize.width();
+  m_minAcRegionHeight = minAcRegionSize.height();
 
   // Create the capture session using the specified devices
   m_captureSession = iCameraProvider->createCaptureSession(m_cameraDevices);
@@ -226,6 +234,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 
   // Update autocontrol settings
   setExposureCompensation(m_exposureCompensation);
+  setAcRegion(m_acRegionCenter, m_acRegionSize);
 
   m_captureDurationMinNs = iSensorMode->getFrameDurationRange().min();
   m_captureDurationMaxNs = iSensorMode->getFrameDurationRange().max();
@@ -436,6 +445,45 @@ void ArgusCamera::setExposureCompensation(float stops) {
 
   iAutoControlSettings->setExposureCompensation(stops);
   m_exposureCompensation = stops;
+  m_shouldResubmitCaptureRequest = true;
+}
+
+void ArgusCamera::setAcRegion(const glm::vec2& center, const glm::vec2& size) {
+  m_acRegionCenter = glm::clamp(center, glm::vec2(0.0f), glm::vec2(1.0f));
+  m_acRegionSize = glm::clamp(size, glm::vec2(0.0f), glm::vec2(1.0f));
+
+  Argus::IAutoControlSettings* iAutoControlSettings = Argus::interface_cast<Argus::IAutoControlSettings>(Argus::interface_cast<Argus::IRequest>(m_captureRequest)->getAutoControlSettings());
+  assert(iAutoControlSettings);
+
+  const glm::vec2 streamSize = glm::vec2(m_streamWidth, m_streamHeight);
+
+  glm::vec2 acRegionSizePx = glm::max(glm::ceil(m_acRegionSize * streamSize), glm::vec2(m_minAcRegionWidth, m_minAcRegionHeight));
+  glm::vec2 acRegionCenterPx = glm::ceil(m_acRegionCenter * streamSize);
+
+  glm::vec2 lt = glm::max(glm::floor(acRegionCenterPx - (acRegionSizePx * 0.5f)), glm::vec2(0.0f, 0.0f));
+  glm::vec2 rb = glm::min(glm::ceil(acRegionCenterPx + (acRegionSizePx * 0.5f)), streamSize);
+
+  Argus::AcRegion region;
+  region.weight() = 1.0f;
+
+  // Round to 8px block size
+  region.left() = ((uint32_t) lt[0]) & (~(0x07));
+  region.top() = ((uint32_t) lt[1]) & (~(0x07));
+  region.right() = std::min<uint32_t>((((uint32_t) rb[0]) + 7) & (~(0x07)), m_streamWidth);
+  region.bottom() = std::min<uint32_t>((((uint32_t) rb[1]) + 7) & (~(0x07)), m_streamHeight);
+
+  std::vector<Argus::AcRegion> regions;
+  regions.push_back(region);
+
+  Argus::Status status = iAutoControlSettings->setAeRegions(regions);
+  if (status == Argus::STATUS_OK)
+    status = iAutoControlSettings->setAwbRegions(regions);
+  if (status != Argus::STATUS_OK) {
+    printf("Unable to set AC region to LTRB=%u, %u, %u, %u: status code %d\n", region.left(), region.top(), region.right(), region.bottom(), status);
+  }
+  // TODO might also want to do AF regions here if we ever get an autofocus camera
+
+
   m_shouldResubmitCaptureRequest = true;
 }
 
