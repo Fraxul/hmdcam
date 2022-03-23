@@ -108,11 +108,11 @@ GLuint RHIRenderPipelineGL::vao() {
           glVertexAttribFormat(loc + arrayIndex, 4, GL_BYTE, GL_TRUE, elem.offset + (arrayIndex * 4)); break;
 
         case kVertexElementTypeUShort1:
-          glVertexAttribFormat(loc + arrayIndex, 1, GL_UNSIGNED_SHORT, GL_FALSE, elem.offset + (arrayIndex * 2)); break;
+          glVertexAttribIFormat(loc + arrayIndex, 1, GL_UNSIGNED_SHORT, elem.offset + (arrayIndex * 2)); break;
         case kVertexElementTypeUShort2:
-          glVertexAttribFormat(loc + arrayIndex, 2, GL_UNSIGNED_SHORT, GL_FALSE, elem.offset + (arrayIndex * 4)); break;
+          glVertexAttribIFormat(loc + arrayIndex, 2, GL_UNSIGNED_SHORT, elem.offset + (arrayIndex * 4)); break;
         case kVertexElementTypeUShort4:
-          glVertexAttribFormat(loc + arrayIndex, 4, GL_UNSIGNED_SHORT, GL_FALSE, elem.offset + (arrayIndex * 8)); break;
+          glVertexAttribIFormat(loc + arrayIndex, 4, GL_UNSIGNED_SHORT, elem.offset + (arrayIndex * 8)); break;
 
         case kVertexElementTypeUShort1N:
           glVertexAttribFormat(loc + arrayIndex, 1, GL_UNSIGNED_SHORT, GL_TRUE, elem.offset + (arrayIndex * 2)); break;
