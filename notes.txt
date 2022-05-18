@@ -1,23 +1,27 @@
-New machine setup:
+=========================== New machine setup ================================
 
-Make sure that the NVidia SDK manager finishes its post-flash SDK install, or the libraries needed to build will be missing.
-If it doesn't already exist, unpack Tegra_Multimedia_API_R32.2.3_aarch64.tbz2 (or a newer version, from NV developer downloads) to /usr/src, creating /usr/src/tegra_multimedia_api
+Install the Jetson Multimedia API and other required libraries (CUDA for Tegra):
+  Jetpack 5.0 or newer:
+    sudo apt install nvidia-l4t-jetson-multimedia-api nvidia-cuda
+  Older Jetpack versions (4.x series):
+    Make sure that the Nvidia SDK manager finishes its post-flash SDK install, or required libraries will be missing.
+    If the Jetson Multimedia API is not installed (nothing in /usr/src/jetson_multimedia_api or /usr/src/tegra_multimedia_api):
+      Unpack Tegra_Multimedia_API_R32.2.3_aarch64.tbz2 (or a newer version, from NV developer downloads) to /usr/src
 
 
 Don't forget to set up the submodules after cloning:
   git submodule update --init --recursive
 
 Install prerequisite packages:
-  sudo apt install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev
+  sudo apt install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev librdmacm-dev
 
-If you're on L4T, get a new enough cmake for the DepthAI build (3.10.2 as shipped in L4T/bionic is too old):
+If you're on Ubuntu >= 20.04 or L4T >= r34.1 (JetPack >= 5.0), install the packaged cmake:
+  sudo apt install cmake
+Otherwise, use pip3 to get a new enough cmake for the DepthAI build -- 3.10.2 as shipped in 18.04 is too old:
   sudo apt remove cmake*
   sudo apt install python3-pip
   sudo -H pip3 install --upgrade pip
   sudo -H pip3 install cmake
-
-Additional prereqs for the RDMA framework and rdma-client
-  sudo apt install libsdl2-dev librdmacm-dev
 
 Build the embedded Monado library required for distortion processing
   ./build-monado.sh
@@ -25,24 +29,17 @@ Build the embedded Monado library required for distortion processing
 Optional: If you want to build the DepthAI backend, run the included script to build required libraries first:
   ./build-depthai-core.sh
 
-udev permissions:
+Finally, build the project:
+  scons
 
-# udev rules for Vive (contents of /etc/udev/rules.d/83-hmd.rules )
-# update and run `sudo udevadm control --reload`
 
-SUBSYSTEM=="usb", ATTR{idVendor}=="0bb4", MODE="0666", GROUP="plugdev"
-SUBSYSTEM=="usb", ATTR{idVendor}=="28de", MODE="0666", GROUP="plugdev"
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0bb4", MODE="0666", GROUP="plugdev"
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="28de", MODE="0666", GROUP="plugdev"
+Before the first run, set up udev rules to make the HMD usb-hid devices accessible:
+  sudo cp config-examples/83-hmd.rules /etc/udev/rules.d
+  sudo udevadm control --reload
 
-# Microsoft HoloLens Sensors - USB
-ATTRS{idVendor}=="045e", ATTRS{idProduct}=="0659", MODE="0666", GROUP="plugdev"
-# Lenovo Explorer control interface - USB
-ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="b800", MODE="0666", GROUP="plugdev"
-ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="b801", MODE="0666", GROUP="plugdev"
 
-# Intel Movidius Myraid VPU
-SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666", GROUP="plugdev"
+
+==============================================================================
 
 
 Make sure that the user you're running as is members of the "plugdev" and "input" groups.

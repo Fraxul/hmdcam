@@ -2,6 +2,8 @@ import os
 import platform
 import sys
 
+SetOption('num_jobs', os.cpu_count())
+
 is_tegra = (platform.machine() == 'aarch64')
 
 if is_tegra:
