@@ -17,6 +17,12 @@
 #define EGL_CHECK_BOOL(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed (%d)\n", __FILE__, __LINE__, #x, eglGetError()); abort(); }
 #define CheckExtension(extStr) if (!epoxy_has_egl_extension(m_eglDisplay, extStr)) { fprintf(stderr, "Missing required EGL extension %s.\n\nExtension string: %s\n\n", extStr, eglQueryString(m_eglDisplay, EGL_EXTENSIONS)); abort(); }
 
+
+// Allow building on old libepoxy (1.4.3-1) on Jetpack < 5.0
+#ifndef EGL_DRM_MASTER_FD_EXT
+#define EGL_DRM_MASTER_FD_EXT 0x333C
+#endif
+
 static const char* drmConnectorTypeToString(int c) {
   switch (c) {
     default:

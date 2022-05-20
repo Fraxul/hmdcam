@@ -1,12 +1,30 @@
 import os
 import platform
 import sys
+import re
 
-SetOption('num_jobs', os.cpu_count())
+try:
+  # os.cpu_count() is python3 only
+  SetOption('num_jobs', os.cpu_count())
+except:
+  # Python2 backup strat
+  import multiprocessing
+  SetOption('num_jobs', multiprocessing.cpu_count())
 
 is_tegra = (platform.machine() == 'aarch64')
+tegra_release = 0
 
 if is_tegra:
+  try:
+    with open('/etc/nv_tegra_release') as f:
+      res = re.search('R(\d+)', f.readline())
+      tegra_release = int(res.group(1))
+  except:
+    print("Error reading/parsing /etc/nv_tegra_release:", sys.exc_info()[0])
+
+  if tegra_release == 0:
+    print('WARNING: Unable to determine L4T release version!')
+
   tegra_mmapi_paths = [
     '/usr/src/tegra_multimedia_api',
     '/usr/src/jetson_multimedia_api'
@@ -24,7 +42,8 @@ if is_tegra:
     CPPPATH=['#tegra_mmapi', '#live555/include', '/usr/include/drm', tegra_mmapi + '/include', tegra_mmapi + '/argus/include', '/usr/local/cuda/include', '/usr/local/include/opencv4'],
     LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
     CUDA_SDK_PATH='/usr/local/cuda',
-    IS_TEGRA=True
+    IS_TEGRA=True,
+    CPPDEFINES=[('L4T_RELEASE_MAJOR', tegra_release)]
   )
 
 else:

@@ -131,9 +131,13 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
   m_streamHeight = iSensorMode->getResolution().height();
 
   // Save minimum autocontrol region size
+#if L4T_RELEASE_MAJOR < 34
+  m_minAcRegionWidth = m_minAcRegionHeight = 64; // TODO just guessing here since this API didn't exist yet
+#else
   Argus::Size2D<uint32_t> minAcRegionSize = iCameraProperties->getMinAeRegionSize();
   m_minAcRegionWidth = minAcRegionSize.width();
   m_minAcRegionHeight = minAcRegionSize.height();
+#endif
 
   // Create the capture session using the specified devices
   m_captureSession = iCameraProvider->createCaptureSession(m_cameraDevices);
