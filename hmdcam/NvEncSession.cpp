@@ -1,5 +1,6 @@
 #include "NvEncSession.h"
 #include "Render.h"
+#include "RenderBackend.h"
 #include "rhi/RHI.h"
 #include "rhi/gl/RHISurfaceGL.h"
 #include <cassert>
@@ -16,7 +17,6 @@
 #include "NvVideoEncoder.h"
 #include "NvVideoConverter.h"
 #include "NvUtils.h"
-#include "nvgldemo.h"
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 
@@ -184,7 +184,7 @@ bool NvEncSession::submitSurface(RHISurface::ptr surface, bool blockIfQueueFull)
     printf("NvEncSession::submitSurface: queue is full\n");
     res = false; // queue is full
   } else {
-    m_gpuSubmissionQueue.push(std::make_pair(m_currentSurfaceIndex, eglCreateSync(renderEGLDisplay(), EGL_SYNC_FENCE, NULL)));
+    m_gpuSubmissionQueue.push(std::make_pair(m_currentSurfaceIndex, eglCreateSync(renderBackend->eglDisplay(), EGL_SYNC_FENCE, NULL)));
     m_currentSurfaceIndex++;
     if (m_currentSurfaceIndex >= m_rhiSurfaces.size())
       m_currentSurfaceIndex = 0;
@@ -198,12 +198,16 @@ bool NvEncSession::submitSurface(RHISurface::ptr surface, bool blockIfQueueFull)
 
 void NvEncSession::cudaWorker() {
   // Setup an EGL share context
-  EGLContext eglCtx = NvGlDemoCreateShareContext();
+  EGLint ctxAttrs[] = {
+    EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE
+  };
+
+  EGLContext eglCtx = eglCreateContext(renderBackend->eglDisplay(), renderBackend->eglConfig(), renderBackend->eglContext(), ctxAttrs);
   if (!eglCtx) {
     die("rtspServerThreadEntryPoint: unable to create EGL share context\n");
   }
 
-  bool res = eglMakeCurrent(renderEGLDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, eglCtx);
+  bool res = eglMakeCurrent(renderBackend->eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, eglCtx);
   if (!res) {
     die("rtspServerThreadEntryPoint: eglMakeCurrent() failed\n");
   }
@@ -259,7 +263,7 @@ void NvEncSession::cudaWorker() {
     buffer->planes[0].bytesused = buffer->planes[0].fmt.stride * buffer->planes[0].fmt.height;
 
     // Map the EGLImage for the dmabuf fd for CUDA write access
-    EGLImageKHR img = NvEGLImageFromFd(renderEGLDisplay(), buffer->planes[0].fd);
+    EGLImageKHR img = NvEGLImageFromFd(renderBackend->eglDisplay(), buffer->planes[0].fd);
 
     CUgraphicsResource pWriteResource = NULL;
     CUresult status = cuGraphicsEGLRegisterImage(&pWriteResource, img, CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD);
@@ -289,7 +293,7 @@ void NvEncSession::cudaWorker() {
     }
 
     cuEventDestroy(hEvent);
-    eglDestroySync(renderEGLDisplay(), surfaceSync);
+    eglDestroySync(renderBackend->eglDisplay(), surfaceSync);
 
     // Map the GL surface for CUDA read access
     RHISurfaceGL* glSurface = static_cast<RHISurfaceGL*>(surface.get());
@@ -351,14 +355,14 @@ void NvEncSession::cudaWorker() {
     cuGraphicsUnmapResources(1, &pReadResource, 0);
     cuGraphicsUnregisterResource(pReadResource);
     cuGraphicsUnregisterResource(pWriteResource);
-    NvDestroyEGLImage(renderEGLDisplay(), img);
+    NvDestroyEGLImage(renderBackend->eglDisplay(), img);
 
     int ret = m_conv0->output_plane.qBuffer(v4l2_buf, NULL);
     if (ret < 0)
       die("Error while queueing buffer at output plane");
   }
 
-  eglDestroyContext(renderEGLDisplay(), eglCtx);
+  eglDestroyContext(renderBackend->eglDisplay(), eglCtx);
 }
 
 void NvEncSession::start() {

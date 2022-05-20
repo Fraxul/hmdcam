@@ -1,10 +1,10 @@
 #include "Render.h"
+#include "RenderBackend.h"
+#include "RenderBackendDRM.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/gl/GLCommon.h"
 #include "rhi/egl/RHIEGLSurfaceRenderTargetGL.h"
-
-#include "nvgldemo.h"
 
 #include "xrt/xrt_instance.h"
 #include "xrt/xrt_device.h"
@@ -68,7 +68,7 @@ unsigned int eye_width, eye_height;
 glm::mat4 eyeProjection[2];
 glm::mat4 eyeView[2];
 
-NvGlDemoOptions demoOptions;
+RenderBackend* renderBackend = NULL;
 
 // CUDA
 CUdevice cudaDevice;
@@ -99,12 +99,16 @@ static inline uint64_t currentTimeNs() {
 
 void* rtspServerThreadEntryPoint(void* arg) {
   printf("Starting RTSP server event loop\n");
-  EGLContext eglCtx = NvGlDemoCreateShareContext();
+  EGLint ctxAttrs[] = {
+    EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE
+  };
+
+  EGLContext eglCtx = eglCreateContext(renderBackend->eglDisplay(), renderBackend->eglConfig(), renderBackend->eglContext(), ctxAttrs);
   if (!eglCtx) {
     die("rtspServerThreadEntryPoint: unable to create EGL share context\n");
   }
 
-  bool res = eglMakeCurrent(demoState.display, EGL_NO_SURFACE, EGL_NO_SURFACE, eglCtx);
+  bool res = eglMakeCurrent(renderBackend->eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, eglCtx);
   if (!res) {
     die("rtspServerThreadEntryPoint: eglMakeCurrent() failed\n");
   }
@@ -113,26 +117,72 @@ void* rtspServerThreadEntryPoint(void* arg) {
 
   rtspEnv->taskScheduler().doEventLoop();
 
-  eglDestroyContext(demoState.display, eglCtx);
+  eglDestroyContext(renderBackend->eglDisplay(), eglCtx);
 
   return NULL;
 }
 
 bool RenderInit() {
-  memset(&demoOptions, 0, sizeof(demoOptions));
+  // Monado setup -- this needs to occur before EGL initialization because we might need to send a command to turn on the HMD display.
+  struct xrt_hmd_parts* hmd = NULL;
+  {
+    vive_watchman_enable = false; // Skip Watchman initialization, we don't (can't) use lighthouse tracking here.
 
-  demoOptions.displayAlpha = 1.0;
-  demoOptions.nFifo = 1;
+    int ret;
+    const size_t NUM_XDEVS = 32;
+    struct xrt_device *xdevs[NUM_XDEVS];
+    memset(xdevs, 0, sizeof(struct xrt_device*) * NUM_XDEVS);
 
-  // Use the current mode and the entire screen
-  demoOptions.useCurrentMode = 1;
-  demoOptions.windowSize[0] = 0;
-  demoOptions.windowSize[1] = 0;
+    ret = xrt_instance_create(NULL, &xrtInstance);
+    if (ret != 0) {
+      printf("xrt_instance_create() failed: %d\n", ret);
+      return false;
+    }
 
-  if (!NvGlDemoInitializeEGL(0, 0)) {
-    printf("NvGlDemoInitializeEGL() failed\n");
-    return false;
+    ret = xrt_instance_select(xrtInstance, xdevs, NUM_XDEVS);
+    if (ret != 0) {
+      printf("xrt_instance_select() failed: %d\n", ret);
+      return false;
+    }
+
+    // Select the first HMD and destroy the rest of the devices (if any)
+    for (size_t i = 0; i < NUM_XDEVS; i++) {
+      if (xdevs[i] == NULL) {
+        continue;
+      }
+
+      if (xrtHMDevice == NULL && xdevs[i]->device_type == XRT_DEVICE_TYPE_HMD) {
+        printf("Selected HMD device: %s\n", xdevs[i]->str);
+        xrtHMDevice = xdevs[i];
+      } else {
+        printf("\tDestroying unused device %s\n", xdevs[i]->str);
+        xrt_device_destroy(&xdevs[i]);
+      }
+    }
+
+    hmd = xrtHMDevice->hmd;
+    assert(hmd);
+
+    // Dump HMD info
+    printf("HMD screen: %d x %d, %lu ns nominal frame interval (%.3f FPS)\n", hmd->screens[0].w_pixels, hmd->screens[0].h_pixels, hmd->screens[0].nominal_frame_interval_ns, 1000000000.0 / static_cast<double>(hmd->screens[0].nominal_frame_interval_ns));
+    printf("Viewports:\n");
+    for (int viewportIdx = 0; viewportIdx < 2; ++viewportIdx) {
+      printf("[%d] %u x %u pixels @ %u, %u\n", viewportIdx, hmd->views[viewportIdx].viewport.w_pixels, hmd->views[viewportIdx].viewport.h_pixels, hmd->views[viewportIdx].viewport.x_pixels, hmd->views[viewportIdx].viewport.y_pixels);
+    }
+
+    // Setup global state
+    hmd_width = hmd->screens[0].w_pixels;
+    hmd_height = hmd->screens[0].h_pixels;
+
+    // Eye target dimensions are twice the per-eye viewport resolution, rounded up to the next 16 pixel block
+    eye_width = ((hmd->views[0].viewport.w_pixels * 2) + 0xf) & ~0xfUL;
+    eye_height = ((hmd->views[0].viewport.h_pixels * 2) + 0xf) & ~0xfUL;
+    printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
+
   }
+
+  // EGL/DRM setup
+  renderBackend = new RenderBackendDRM();
 
   printf("%s\n", glGetString(GL_RENDERER));
   printf("%s\n", glGetString(GL_VERSION));
@@ -154,8 +204,8 @@ bool RenderInit() {
 
   initRHIGL();
 
-  RHIEGLSurfaceRenderTargetGL::ptr wrt(new RHIEGLSurfaceRenderTargetGL(demoState.display, demoState.surface));
-  wrt->platformSetUpdatedWindowDimensions(demoState.width, demoState.height);
+  RHIEGLSurfaceRenderTargetGL::ptr wrt(new RHIEGLSurfaceRenderTargetGL(renderBackend->eglDisplay(), renderBackend->eglSurface()));
+  wrt->platformSetUpdatedWindowDimensions(renderBackend->surfaceWidth(), renderBackend->surfaceHeight());
   windowRenderTarget = wrt;
 
   // Set up shared resources
@@ -199,52 +249,9 @@ bool RenderInit() {
     delete[] maskData;
   }
 
-  // Monado setup
+
+  // Set up distortion models
   {
-    vive_watchman_enable = false; // Skip Watchman initialization, we don't (can't) use lighthouse tracking here.
-
-    int ret;
-    const size_t NUM_XDEVS = 32;
-    struct xrt_device *xdevs[NUM_XDEVS];
-    memset(xdevs, 0, sizeof(struct xrt_device*) * NUM_XDEVS);
-
-    ret = xrt_instance_create(NULL, &xrtInstance);
-    if (ret != 0) {
-      printf("xrt_instance_create() failed: %d\n", ret);
-      return false;
-    }
-
-    ret = xrt_instance_select(xrtInstance, xdevs, NUM_XDEVS);
-    if (ret != 0) {
-      printf("xrt_instance_select() failed: %d\n", ret);
-      return false;
-    }
-
-    // Select the first HMD and destroy the rest of the devices (if any)
-    for (size_t i = 0; i < NUM_XDEVS; i++) {
-      if (xdevs[i] == NULL) {
-        continue;
-      }
-
-      if (xrtHMDevice == NULL && xdevs[i]->device_type == XRT_DEVICE_TYPE_HMD) {
-        printf("Selected HMD device: %s\n", xdevs[i]->str);
-        xrtHMDevice = xdevs[i];
-      } else {
-        printf("\tDestroying unused device %s\n", xdevs[i]->str);
-        xrt_device_destroy(&xdevs[i]);
-      }
-    }
-
-    struct xrt_hmd_parts* hmd = xrtHMDevice->hmd; 
-    assert(hmd);
-
-    // Dump HMD info
-    printf("HMD screen: %d x %d, %lu ns nominal frame interval (%.3f FPS)\n", hmd->screens[0].w_pixels, hmd->screens[0].h_pixels, hmd->screens[0].nominal_frame_interval_ns, 1000000000.0 / static_cast<double>(hmd->screens[0].nominal_frame_interval_ns));
-    printf("Viewports:\n"); 
-    for (int viewportIdx = 0; viewportIdx < 2; ++viewportIdx) {
-      printf("[%d] %u x %u pixels @ %u, %u\n", viewportIdx, hmd->views[viewportIdx].viewport.w_pixels, hmd->views[viewportIdx].viewport.h_pixels, hmd->views[viewportIdx].viewport.x_pixels, hmd->views[viewportIdx].viewport.y_pixels);
-    }
-
     printf("Distortion models: %s%s%s\n",
       hmd->distortion.models & XRT_DISTORTION_MODEL_NONE ? "None " : "",
       hmd->distortion.models & XRT_DISTORTION_MODEL_MESHUV ? "MeshUV " : "",
@@ -269,17 +276,7 @@ bool RenderInit() {
     // Upload vertex and index buffers for distortion
     meshDistortionVertexBuffer = rhi()->newBufferWithContents(hmd->distortion.mesh.vertices, hmd->distortion.mesh.vertex_count * hmd->distortion.mesh.stride);
     meshDistortionIndexBuffer = rhi()->newBufferWithContents(hmd->distortion.mesh.indices, hmd->distortion.mesh.index_count_total * sizeof(uint32_t));
-
-    // Setup global state
-    hmd_width = hmd->screens[0].w_pixels;
-    hmd_height = hmd->screens[0].h_pixels;
-
-    // Eye target dimensions are twice the per-eye viewport resolution, rounded up to the next 16 pixel block
-    eye_width = ((hmd->views[0].viewport.w_pixels * 2) + 0xf) & ~0xfUL;
-    eye_height = ((hmd->views[0].viewport.h_pixels * 2) + 0xf) & ~0xfUL;
-    printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
-
-  } // Monado setup
+  } // Monado distortion setup
 
   // Set up uniform buffers for HMD distortion passes
   recomputeHMDParameters();
@@ -343,10 +340,8 @@ bool RenderInit() {
 
 void RenderShutdown() {
   // Release OpenGL resources
-  eglMakeCurrent( demoState.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
-  eglDestroySurface( demoState.display, demoState.surface );
-  eglDestroyContext( demoState.display, demoState.context );
-  eglTerminate( demoState.display );
+  delete renderBackend;
+  renderBackend = NULL;
 
   if (xrtHMDevice)
     xrt_device_destroy(&xrtHMDevice);
@@ -354,9 +349,6 @@ void RenderShutdown() {
   if (xrtInstance)
     xrt_instance_destroy(&xrtInstance);
 }
-
-EGLDisplay renderEGLDisplay() { return demoState.display; }
-EGLContext renderEGLContext() { return demoState.context; }
 
 void recomputeHMDParameters() {
   float zNear = 0.0f;

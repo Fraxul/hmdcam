@@ -32,6 +32,7 @@
 #include "common/glmCvInterop.h"
 #include "InputListener.h"
 #include "Render.h"
+#include "RenderBackend.h"
 
 #include "imgui_backend.h"
 #include "implot/implot.h"
@@ -243,7 +244,7 @@ int main(int argc, char* argv[]) {
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f); // Use HiDPI rendering
 
   // Open the cameras
-  argusCamera = new ArgusCamera(renderEGLDisplay(), renderEGLContext(), s_cameraFramerate);
+  argusCamera = new ArgusCamera(renderBackend->eglDisplay(), renderBackend->eglContext(), s_cameraFramerate);
 
   std::vector<RHIRect> debugSurfaceCameraRects;
   {

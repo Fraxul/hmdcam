@@ -43,7 +43,7 @@ env.Append(
   CPPPATH=['#.', '#glm', '#imgui'],
   CPPFLAGS=['-g', '-Wall', '-O2'],
   CPPDEFINES=['NO_OPENSSL'],
-  CXXFLAGS=['-std=c++11'],
+  CXXFLAGS=['-std=c++14'],
   LINKFLAGS=['-g'],
 )
 

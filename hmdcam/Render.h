@@ -5,6 +5,8 @@
 #include "rhi/RHIRenderPipeline.h"
 #include "rhi/RHIRenderTarget.h"
 
+class RenderBackend;
+
 extern glm::mat4 eyeProjection[2];
 extern glm::mat4 eyeView[2];
 extern RHIRenderTarget::ptr eyeRT;
@@ -21,11 +23,7 @@ const std::string& renderDebugURL();
 
 void recomputeHMDParameters();
 
-typedef void* EGLDisplay;
-typedef void* EGLContext;
-
-EGLDisplay renderEGLDisplay();
-EGLContext renderEGLContext();
+extern RenderBackend* renderBackend;
 
 typedef int CUdevice;
 typedef struct CUctx_st *CUcontext;
