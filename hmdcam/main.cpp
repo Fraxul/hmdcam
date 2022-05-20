@@ -763,8 +763,8 @@ int main(int argc, char* argv[]) {
                 debug = false; // XXX once
 
               } else {
-              if (v.isStereo && (viewEyeIdx != eyeIdx))
-                continue;
+                if (v.isStereo && (viewEyeIdx != eyeIdx))
+                  continue;
 
                 float fovX = 75.0f; // default guess if no calibration
 
