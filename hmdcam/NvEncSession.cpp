@@ -3,6 +3,7 @@
 #include "RenderBackend.h"
 #include "rhi/RHI.h"
 #include "rhi/gl/RHISurfaceGL.h"
+#include "rhi/cuda/CudaUtil.h"
 #include <cassert>
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -10,36 +11,38 @@
 #include <cudaGL.h>
 #include <linux/videodev2.h>
 #include <linux/v4l2-controls.h>
+#include <libv4l2.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/prctl.h>
 
 #include "nvbuf_utils.h"
+#include "nvbufsurface.h"
+#include "nvbufsurftransform.h"
+#include "NvLogging.h"
 #include "NvVideoEncoder.h"
 #include "NvVideoConverter.h"
 #include "NvUtils.h"
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
+#define CHECK_ZERO(x) if ((x) != 0) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
+#define CHECK_TRUE(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
+#define CHECK_NOT_NULL(x) if ((x) == NULL) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
 
-NvEncSession::NvEncSession() : m_width(0), m_height(0), m_bitsPerSecond(40000000),
-  m_framerateNumerator(30), m_framerateDenominator(1),
-  m_encoderPixfmt(V4L2_PIX_FMT_H264),
-  m_inputFormat(kInputFormatNV12),
-  m_usingGPUFrameSubmission(false),
-  m_encodedFrameDeliveryCallbackIdGen(0),
-  m_startCount(0),
-  m_inShutdown(false),
-  m_inputFrameSize(0),
-  m_currentSurfaceIndex(0) {
+static const uint32_t kInputBufferCount = 6;
+static const uint32_t kOutputBufferCount = 10;
+
+NvEncSession::NvEncSession() :
+  m_encoderPixfmt(V4L2_PIX_FMT_H264) {
+
+  // NvLogging
+  // log_level = LOG_LEVEL_DEBUG;
 
   pthread_mutex_init(&m_stateLock, NULL);
   pthread_mutex_init(&m_callbackLock, NULL);
 
   pthread_mutex_init(&m_gpuSubmissionQueueLock, NULL);
   pthread_cond_init(&m_gpuSubmissionQueueCond, NULL);
-  pthread_mutex_init(&m_encoderOutputPlaneBufferQueueLock, NULL);
-  pthread_cond_init(&m_encoderOutputPlaneBufferQueueCond, NULL);
-  pthread_mutex_init(&m_conv0OutputPlaneBufferQueueLock, NULL);
-  pthread_cond_init(&m_conv0OutputPlaneBufferQueueCond, NULL);
 }
 
 NvEncSession::~NvEncSession() {
@@ -53,11 +56,6 @@ NvEncSession::~NvEncSession() {
 
   pthread_mutex_destroy(&m_gpuSubmissionQueueLock);
   pthread_cond_destroy(&m_gpuSubmissionQueueCond);
-  pthread_mutex_destroy(&m_encoderOutputPlaneBufferQueueLock);
-  pthread_cond_destroy(&m_encoderOutputPlaneBufferQueueCond);
-  pthread_mutex_destroy(&m_conv0OutputPlaneBufferQueueLock);
-  pthread_cond_destroy(&m_conv0OutputPlaneBufferQueueCond);
-
 }
 
 size_t NvEncSession::registerEncodedFrameDeliveryCallback(const std::function<void(const char*, size_t, struct timeval&)>& cb) {
@@ -82,6 +80,7 @@ void NvEncSession::setUseGPUFrameSubmission(bool value) {
 }
 
 bool NvEncSession::submitFrame(char* data, size_t length, bool blockIfQueueFull) {
+#if 0
   if (inputFrameSize() == 0)
     return false; // Reject frames submitted before startup is finished
 
@@ -96,16 +95,6 @@ bool NvEncSession::submitFrame(char* data, size_t length, bool blockIfQueueFull)
   if (!((length == 0 && m_inShutdown) || length == inputFrameSize())) {
     printf("NvEncSession::submitFrame(): short frame submitted, length %zu (require %zu)\n", length, inputFrameSize());
     return false;
-  }
-
-  pthread_mutex_lock(&m_conv0OutputPlaneBufferQueueLock);
-  while (m_conv0OutputPlaneBufferQueue.empty()) {
-    if (!blockIfQueueFull) {
-      pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
-      return false; // frame dropped
-    }
-
-    pthread_cond_wait(&m_conv0OutputPlaneBufferQueueCond, &m_conv0OutputPlaneBufferQueueLock);
   }
 
   NvBuffer *buffer = m_conv0OutputPlaneBufferQueue.front();
@@ -150,6 +139,10 @@ bool NvEncSession::submitFrame(char* data, size_t length, bool blockIfQueueFull)
     die("Error while queueing buffer at output plane");
 
   return true;
+#else
+  die("NvEncSession::submitFrame: CPU submission not implemented");
+  return false;
+#endif
 }
 
 RHISurface::ptr NvEncSession::acquireSurface() {
@@ -197,6 +190,8 @@ bool NvEncSession::submitSurface(RHISurface::ptr surface, bool blockIfQueueFull)
 }
 
 void NvEncSession::cudaWorker() {
+  prctl(PR_SET_NAME, "NvEncSessn-CUDA", 0, 0, 0);
+
   // Setup an EGL share context
   EGLint ctxAttrs[] = {
     EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE
@@ -215,6 +210,9 @@ void NvEncSession::cudaWorker() {
   // use the default global CUDA context
   cuCtxSetCurrent(cudaContext);
 
+  NvBufSurfTransformConfigParams config_params = {NvBufSurfTransformCompute_VIC, 0, NULL};
+  CHECK_ZERO(NvBufSurfTransformSetSessionParams(&config_params));
+
   while (true) {
     // Wait for next surface index in gpu submission queue
     pthread_mutex_lock(&m_gpuSubmissionQueueLock);
@@ -232,101 +230,69 @@ void NvEncSession::cudaWorker() {
     }
     RHISurface::ptr surface = m_rhiSurfaces[surfaceIdx];
 
+    NvBuffer* encoderInputBuffer = NULL;
 
-    pthread_mutex_lock(&m_conv0OutputPlaneBufferQueueLock);
-    while (m_conv0OutputPlaneBufferQueue.empty()) {
-      //if (!blockIfQueueFull) {
-      //  pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
-      //  pthread_mutex_unlock(&m_stateLock);
-      //  return false; // frame dropped
-      //}
+    if (m_encoderOutputPlaneBufferQueue.empty()) {
+      struct v4l2_buffer v4l2_buf;
+      struct v4l2_plane planes[MAX_PLANES];
+      NvBuffer *buffer;
+      NvBuffer *shared_buffer;
 
-      pthread_cond_wait(&m_conv0OutputPlaneBufferQueueCond, &m_conv0OutputPlaneBufferQueueLock);
+      memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+      memset(planes, 0, sizeof(planes));
+      v4l2_buf.m.planes = planes;
+
+      if (m_enc->output_plane.dqBuffer(v4l2_buf, &buffer, &shared_buffer, -1) < 0) {
+        die("Failed to dequeue buffer from encoder output plane");
+      }
+
+      encoderInputBuffer = m_enc->output_plane.getNthBuffer(v4l2_buf.index);
+    } else {
+      encoderInputBuffer = m_encoderOutputPlaneBufferQueue.front();
+      m_encoderOutputPlaneBufferQueue.pop();
     }
 
-    NvBuffer *buffer = m_conv0OutputPlaneBufferQueue.front();
-    m_conv0OutputPlaneBufferQueue.pop();
-    pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
 
+    if (m_vicInputSurfaces[surfaceIdx]->surfaceList[0].mappedAddr.eglImage == NULL) {
+      CHECK_ZERO(NvBufSurfaceMapEglImage(m_vicInputSurfaces[surfaceIdx], 0));
+    }
 
-    struct v4l2_buffer v4l2_buf;
-    struct v4l2_plane planes[MAX_PLANES];
-
-    memset(&v4l2_buf, 0, sizeof(v4l2_buf));
-    memset(planes, 0, sizeof(planes));
-
-    v4l2_buf.index = buffer->index;
-    v4l2_buf.m.planes = planes;
-    gettimeofday(&v4l2_buf.timestamp, NULL);
-
-    assert(buffer->n_planes == 1); // only support a single RGB plane
-    buffer->planes[0].bytesused = buffer->planes[0].fmt.stride * buffer->planes[0].fmt.height;
-
-    // Map the EGLImage for the dmabuf fd for CUDA write access
-    EGLImageKHR img = NvEGLImageFromFd(renderBackend->eglDisplay(), buffer->planes[0].fd);
-
+    // Access VIC input surface (output from this copy)
     CUgraphicsResource pWriteResource = NULL;
-    CUresult status = cuGraphicsEGLRegisterImage(&pWriteResource, img, CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD);
-    if (status != CUDA_SUCCESS)
-      die("cuGraphicsEGLRegisterImage failed: %d\n", status);
+    if (!CUDA_CHECK_NONFATAL(cuGraphicsEGLRegisterImage(&pWriteResource, m_vicInputSurfaces[surfaceIdx]->surfaceList[0].mappedAddr.eglImage, CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD))) {
+      // Couldn't get the EGL image. This is probably during shutdown, but we'll save the buffer and try again anyway.
+      m_encoderOutputPlaneBufferQueue.push(encoderInputBuffer);
+      continue;
+    }
 
     CUeglFrame eglFrame;
-    status = cuGraphicsResourceGetMappedEglFrame(&eglFrame, pWriteResource, 0, 0);
-    if (status != CUDA_SUCCESS) {
-      die("cuGraphicsSubResourceGetMappedArray failed: %d\n", status);
-    }
+    CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&eglFrame, pWriteResource, 0, 0));
 
-    //status = cuCtxSynchronize();
-    //if (status != CUDA_SUCCESS) {
-    //  die("cuCtxSynchronize failed: %d\n", status);
-    //}
-
+    // Sync with EGL
     CUevent hEvent;
-    status = cuEventCreateFromEGLSync(&hEvent, surfaceSync, CU_EVENT_BLOCKING_SYNC); // CU_EVENT_DEFAULT);
-    if (status != CUDA_SUCCESS) {
-      die("cuEventCreateFromEGLSync() failed: %d\n", status);
+    if (CUDA_CHECK_NONFATAL(cuEventCreateFromEGLSync(&hEvent, surfaceSync, CU_EVENT_BLOCKING_SYNC))) { // CU_EVENT_DEFAULT);
+      CUDA_CHECK_NONFATAL(cuEventSynchronize(hEvent));
+      cuEventDestroy(hEvent);
     }
 
-    status = cuEventSynchronize(hEvent);
-    if (status != CUDA_SUCCESS) {
-      die("cuEventSynchronize() failed: %d\n", status);
-    }
-
-    cuEventDestroy(hEvent);
     eglDestroySync(renderBackend->eglDisplay(), surfaceSync);
 
     // Map the GL surface for CUDA read access
     RHISurfaceGL* glSurface = static_cast<RHISurfaceGL*>(surface.get());
 
     CUgraphicsResource pReadResource = NULL;
-    status = cuGraphicsGLRegisterImage(&pReadResource, glSurface->glId(), glSurface->glTarget(), CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY);
-    if (status != CUDA_SUCCESS) {
-      die("cuGraphicsGLRegisterImage() failed: %d\n", status);
-    }
-
-    status = cuGraphicsMapResources(1, &pReadResource, 0);
-    if (status != CUDA_SUCCESS) {
-      die("cuGraphicsMapResources() failed: %d\n", status);
-    }
+    CUDA_CHECK(cuGraphicsGLRegisterImage(&pReadResource, glSurface->glId(), glSurface->glTarget(), CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY));
+    CUDA_CHECK(cuGraphicsMapResources(1, &pReadResource, 0));
 
     CUmipmappedArray pReadMip = NULL;
-    status = cuGraphicsResourceGetMappedMipmappedArray(&pReadMip, pReadResource);
-    if (status != CUDA_SUCCESS) {
-      die("cuGraphicsResourceGetMappedMipmappedArray() failed: %d\n", status);
-    }
+    CUDA_CHECK(cuGraphicsResourceGetMappedMipmappedArray(&pReadMip, pReadResource));
 
     CUarray pReadArray = NULL;
-    status = cuMipmappedArrayGetLevel(&pReadArray, pReadMip, 0);
-    if (status != CUDA_SUCCESS) {
-      die("cuMipmappedArrayGetLevel() failed: %d\n", status);
-    }
+    CUDA_CHECK(cuMipmappedArrayGetLevel(&pReadArray, pReadMip, 0));
 
     // for debugging
-    CUDA_ARRAY_DESCRIPTOR readArrayDescriptor;
-    status = cuArrayGetDescriptor(&readArrayDescriptor, pReadArray);
-    if (status != CUDA_SUCCESS) {
-      die("cuArrayGetDescriptor() failed: %d\n", status);
-    }
+    // CUDA_ARRAY_DESCRIPTOR readArrayDescriptor;
+    // CUDA_CHECK(cuArrayGetDescriptor(&readArrayDescriptor, pReadArray));
 
     CUDA_MEMCPY2D copyDescriptor;
     memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
@@ -345,21 +311,63 @@ void NvEncSession::cudaWorker() {
     copyDescriptor.dstPitch = eglFrame.pitch;
   #endif
 
-    copyDescriptor.WidthInBytes = buffer->planes[0].fmt.width * buffer->planes[0].fmt.bytesperpixel;
-    copyDescriptor.Height = buffer->planes[0].fmt.height;
-    status = cuMemcpy2D(&copyDescriptor);
-    if (status != CUDA_SUCCESS) {
-      die("cuMemcpy2D() failed\n");
+    copyDescriptor.WidthInBytes = m_vicInputSurfaces[surfaceIdx]->surfaceList[0].planeParams.width[0] * m_vicInputSurfaces[surfaceIdx]->surfaceList[0].planeParams.bytesPerPix[0];
+    copyDescriptor.Height = m_vicInputSurfaces[surfaceIdx]->surfaceList[0].height;
+    CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+
+    // Issue transform
+    NvBufSurfTransformRect src_rect, dest_rect;
+    src_rect.top = 0;
+    src_rect.left = 0;
+    src_rect.width = m_width;
+    src_rect.height = m_height;
+    dest_rect.top = 0;
+    dest_rect.left = 0;
+    dest_rect.width = m_width;
+    dest_rect.height = m_height;
+
+    NvBufSurfTransformParams xfParams;
+    memset(&xfParams, 0, sizeof(xfParams));
+
+    xfParams.transform_flag = NVBUFSURF_TRANSFORM_FILTER | NVBUFSURF_TRANSFORM_FLIP;
+    xfParams.transform_flip = NvBufSurfTransform_FlipY;
+    xfParams.transform_filter = NvBufSurfTransformInter_Algo3;
+    xfParams.src_rect = &src_rect;
+    xfParams.dst_rect = &dest_rect;
+
+    NvBufSurface* encoderInputSrf = m_encOutputPlaneSurfaces[encoderInputBuffer->index];
+    NvBufSurfTransform_Error xfErr = NvBufSurfTransform(/*src=*/ m_vicInputSurfaces[surfaceIdx], /*dst=*/ encoderInputSrf, &xfParams);
+    if (xfErr != NvBufSurfTransformError_Success) {
+      switch (xfErr) {
+        case NvBufSurfTransformError_ROI_Error: die("NvBufSurfTransformError_ROI_Error");
+        case NvBufSurfTransformError_Invalid_Params: die("NvBufSurfTransformError_Invalid_Params");
+        case NvBufSurfTransformError_Execution_Error: die("NvBufSurfTransformError_Execution_Error");
+        case NvBufSurfTransformError_Unsupported: die("NvBufSurfTransformError_Unsupported");
+        default: die("NvBufSurfTransform bad result %d", xfErr);
+      }
     }
 
-    cuGraphicsUnmapResources(1, &pReadResource, 0);
-    cuGraphicsUnregisterResource(pReadResource);
-    cuGraphicsUnregisterResource(pWriteResource);
-    NvDestroyEGLImage(renderBackend->eglDisplay(), img);
 
-    int ret = m_conv0->output_plane.qBuffer(v4l2_buf, NULL);
+    // V4L2 handoff
+    struct v4l2_buffer v4l2_buf;
+    struct v4l2_plane planes[MAX_PLANES];
+
+    memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+    memset(planes, 0, sizeof(planes));
+
+    v4l2_buf.index = encoderInputBuffer->index;
+    v4l2_buf.m.planes = planes;
+    gettimeofday(&v4l2_buf.timestamp, NULL);
+
+    // bytesused gets reset when the buffer is dequeued, so we have to re-specify it every time before qBuffer
+    for (uint32_t planeIdx = 0; planeIdx < encoderInputBuffer->n_planes; ++planeIdx) {
+      encoderInputBuffer->planes[planeIdx].fd = m_encOutputPlaneSurfaces[encoderInputBuffer->index]->surfaceList[0].bufferDesc;
+      encoderInputBuffer->planes[planeIdx].bytesused = m_encOutputPlaneSurfaces[encoderInputBuffer->index]->surfaceList[0].planeParams.psize[planeIdx];
+    }
+
+    int ret = m_enc->output_plane.qBuffer(v4l2_buf, encoderInputBuffer);
     if (ret < 0)
-      die("Error while queueing buffer at output plane");
+      die("Error while queueing buffer at encoder output plane");
   }
 
   eglDestroyContext(renderBackend->eglDisplay(), eglCtx);
@@ -386,27 +394,25 @@ void NvEncSession::start() {
   m_enc = NvVideoEncoder::createVideoEncoder("enc0");
   if (!m_enc) die("Could not create encoder");
 
-  m_conv0 = NvVideoConverter::createVideoConverter("conv0");
-  if (!m_conv0) die("Could not create Video Converter");
+  NvBufSurfaceAllocateParams vicInputSurfaceParams;
+  memset(&vicInputSurfaceParams, 0, sizeof(vicInputSurfaceParams));
+  vicInputSurfaceParams.params.width = m_width;
+  vicInputSurfaceParams.params.height = m_height;
+  vicInputSurfaceParams.params.layout = NVBUF_LAYOUT_PITCH;
+  vicInputSurfaceParams.params.colorFormat = NVBUF_COLOR_FORMAT_RGBA;
+  vicInputSurfaceParams.params.memType = NVBUF_MEM_SURFACE_ARRAY;
+  vicInputSurfaceParams.memtag = NvBufSurfaceTag_VIDEO_CONVERT;
 
-  // TODO parameterize input format
-  uint32_t outputPixfmt = 0;
-  switch (m_inputFormat) {
-    // V4L2 format enums are in linux/videodev2.h
-    case kInputFormatNV12: outputPixfmt = V4L2_PIX_FMT_NV12M; break;
-    case kInputFormatRGBX8: outputPixfmt = V4L2_PIX_FMT_ABGR32; break;
-    default: die("Invalid input format enum %u", m_inputFormat);
-  };
-
-  ret = m_conv0->setOutputPlaneFormat(outputPixfmt, m_width, m_height, V4L2_NV_BUFFER_LAYOUT_PITCH);
-  if (ret < 0) die("Could not set output plane format for conv0");
-
-  ret = m_conv0->setCapturePlaneFormat(V4L2_PIX_FMT_YUV420M, m_width, m_height, V4L2_NV_BUFFER_LAYOUT_BLOCKLINEAR);
-  if (ret < 0) die("Could not set capture plane format for conv0");
-
-  // XXX: flip the video top to bottom for testing, to prove that the video converter component works
-  ret = m_conv0->setFlipMethod(V4L2_FLIP_METHOD_VERT);
-  if (ret < 0) die("Could not set flip method");
+  m_vicInputSurfaces.resize(kInputBufferCount);
+  for (size_t i = 0; i < kInputBufferCount; ++i) {
+#if L4T_RELEASE < 34
+    // use old API
+    CHECK_ZERO(NvBufSurfaceCreate(&m_vicInputSurfaces[i], 1, &vicInputSurfaceParams.params));
+#else
+    CHECK_ZERO(NvBufSurfaceAllocate(&m_vicInputSurfaces[i], 1, &vicInputSurfaceParams));
+#endif
+    m_vicInputSurfaces[i]->numFilled = 1;
+  }
 
   // It is necessary that Capture Plane format be set before Output Plane format.
   // Set encoder capture plane format. It is necessary to set width and height on the capture plane as well.
@@ -452,45 +458,52 @@ void NvEncSession::start() {
   //m_enc->setInsertVuiEnabled(true);
 
   if (usingGPUFrameSubmission()) {
-    // REQBUF and EXPORT conv0 output plane buffers
-    size_t nbufs = 6;
-    ret = m_conv0->output_plane.setupPlane(V4L2_MEMORY_MMAP, nbufs, false, false);
-    if (ret < 0) die("Error while setting up output plane for conv0");
-    // setup matching rendertarget pool
+    // Setup matching rendertarget pool:
+    // Create the images in GL, then use EGL to get the backing dmabufs and convert those into NvBufSurfaces.
+    // We should then be able to pass those NvBufSurfaces directly to the VIC
     m_rhiSurfaces.clear();
+    m_rhiSurfaceEGLImages.clear();
     m_currentSurfaceIndex = 0;
-    for (size_t i = 0; i < nbufs; ++i) {
+
+    EGLContext eglThreadCtx = eglGetCurrentContext();
+    assert(eglThreadCtx != EGL_NO_CONTEXT);
+
+    for (size_t i = 0; i < kInputBufferCount; ++i) {
       RHISurface::ptr srf = rhi()->newTexture2D(m_width, m_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
       m_rhiSurfaces.push_back(srf);
+#if 0
+      EGLAttrib attrs[] = {
+        EGL_GL_TEXTURE_LEVEL, 0,
+        EGL_NONE
+      };
+
+      EGLImage img;
+      CHECK_NOT_NULL(img = eglCreateImage(renderBackend->eglDisplay(), eglThreadCtx, EGL_GL_TEXTURE_2D, (EGLClientBuffer) ((/*eliminate size conversion warning*/ intptr_t) static_cast<RHISurfaceGL*>(srf.get())->glId()), attrs));
+      m_rhiSurfaceEGLImages.push_back(img);
+
+      surfaceDmaBufInfo info;
+      CHECK_TRUE(eglExportDMABUFImageQueryMESA(renderBackend->eglDisplay(), img, &info.fourcc, &info.num_planes, &info.modifiers));
+
+      assert(info.num_planes <= NVBUF_MAX_PLANES);
+      CHECK_TRUE(eglExportDMABUFImageMESA(renderBackend->eglDisplay(), img, info.plane_fds, info.plane_strides, info.plane_offsets));
+
+      assert(info.num_planes == 1); // only support single RGB plane
+      // We'll populate the NvBufSurface pointer later.
+
+      m_rhiSurfaceDmaBufs.push_back(info);
+#endif
     }
-  } else {
-    // REQBUF, EXPORT and MAP conv0 output plane buffers
-    ret = m_conv0->output_plane.setupPlane(V4L2_MEMORY_USERPTR, 6, false, true);
-    if (ret < 0) die("Error while setting up output plane for conv0");
   }
-
-  // REQBUF and EXPORT conv0 capture plane buffers
-  // No need to MAP since buffer will be shared to next component
-  // and not read in application
-  ret = m_conv0->capture_plane.setupPlane(V4L2_MEMORY_MMAP, 6, false, false);
-  if (ret < 0) die("Error while setting up capture plane for conv0");
-
-  // conv0 output plane STREAMON
-  ret = m_conv0->output_plane.setStreamStatus(true);
-  if (ret < 0) die("Error in output plane streamon for conv0");
-
-  // conv0 capture plane STREAMON
-  ret = m_conv0->capture_plane.setStreamStatus(true);
-  if (ret < 0) die("Error in capture plane streamon for conv0");
 
   // REQBUF on encoder output plane buffers
   // DMABUF is used here since it is a shared buffer allocated by another component
-  ret = m_enc->output_plane.setupPlane(V4L2_MEMORY_DMABUF, 6, false, false);
+  // setupPlane can't handle creating the DMABUFs, so we'll do that later.
+  ret = m_enc->output_plane.setupPlane(V4L2_MEMORY_DMABUF, kInputBufferCount, false, false);
   if (ret < 0) die("Could not setup encoder output plane");
 
   // Query, Export and Map the output plane buffers so that we can write
   // encoded data from the buffers
-  ret = m_enc->capture_plane.setupPlane(V4L2_MEMORY_MMAP, 6, true, false);
+  ret = m_enc->capture_plane.setupPlane(V4L2_MEMORY_MMAP, kOutputBufferCount, true, false);
   if (ret < 0) die("Could not setup encoder capture plane");
 
   // output plane STREAMON
@@ -504,34 +517,34 @@ void NvEncSession::start() {
   // startDQThread starts a thread internally which calls the
   // encoder_capture_plane_dq_callback whenever a buffer is dequeued
   // on the plane
-  m_conv0->capture_plane.setDQThreadCallback(conv0_capture_dqbuf_thread_callback_thunk);
-  m_conv0->capture_plane.startDQThread(this);
   m_enc->capture_plane.setDQThreadCallback(encoder_capture_plane_dq_callback_thunk);
   m_enc->capture_plane.startDQThread(this);
 
-  // Enqueue all empty conv0 capture plane buffers
-  for (uint32_t i = 0; i < m_conv0->capture_plane.getNumBuffers(); i++) {
-    struct v4l2_buffer v4l2_buf;
-    struct v4l2_plane planes[MAX_PLANES];
-
-    memset(&v4l2_buf, 0, sizeof(v4l2_buf));
-    memset(planes, 0, MAX_PLANES * sizeof(struct v4l2_plane));
-
-    v4l2_buf.index = i;
-    v4l2_buf.m.planes = planes;
-
-    ret = m_conv0->capture_plane.qBuffer(v4l2_buf, NULL);
-    if (ret < 0) die("Error while queueing buffer at conv0 capture plane");
-  }
-
-  // Add all empty encoder output plane buffers to m_encoderOutputPlaneBufferQueue
+  // Create output plane DMABUFs
+  m_encOutputPlaneSurfaces.resize(m_enc->output_plane.getNumBuffers());
   for (uint32_t i = 0; i < m_enc->output_plane.getNumBuffers(); i++) {
-    m_encoderOutputPlaneBufferQueue.push(m_enc->output_plane.getNthBuffer(i));
-  }
+    NvBuffer* buf = m_enc->output_plane.getNthBuffer(i);
+    assert(buf->index == i); // sanity check for using this index later
 
-  // Add all empty conv0 output plane buffers to m_conv0OutputPlaneBufferQueue
-  for (uint32_t i = 0; i < m_conv0->output_plane.getNumBuffers(); i++) {
-    m_conv0OutputPlaneBufferQueue.push(m_conv0->output_plane.getNthBuffer(i));
+    NvBufSurfaceAllocateParams allocParams;
+    memset(&allocParams, 0, sizeof(allocParams));
+    allocParams.params.width = m_width;
+    allocParams.params.height = m_height;
+    allocParams.params.layout = NVBUF_LAYOUT_PITCH;
+    allocParams.params.colorFormat = NVBUF_COLOR_FORMAT_YUV420;
+    allocParams.params.memType = NVBUF_MEM_SURFACE_ARRAY;
+    allocParams.memtag = NvBufSurfaceTag_VIDEO_ENC;
+
+#if L4T_RELEASE < 34
+    // use old API
+    CHECK_ZERO(NvBufSurfaceCreate(&m_encOutputPlaneSurfaces[i], 1, &allocParams.params));
+#else
+    CHECK_ZERO(NvBufSurfaceAllocate(&m_encOutputPlaneSurfaces[i], 1, &allocParams));
+#endif
+    m_encOutputPlaneSurfaces[i]->numFilled = 1;
+
+    // Add empty encoder output plane buffers to m_encoderOutputPlaneBufferQueue
+    m_encoderOutputPlaneBufferQueue.push(buf);
   }
 
   // Enqueue all the empty encoder capture plane buffers
@@ -547,23 +560,6 @@ void NvEncSession::start() {
 
     ret = m_enc->capture_plane.qBuffer(v4l2_buf, NULL);
     if (ret < 0) die("Error while queueing buffer at capture plane");
-  }
-
-  // Compute the input frame size from a conv0 output plane buffer
-  {
-    NvBuffer* buffer = m_conv0->output_plane.getNthBuffer(0);
-    m_inputFrameSize = 0;
-
-    printf("NvEncSession::start(): Input frame planes:\n");
-    for (size_t planeIdx = 0; planeIdx < buffer->n_planes; ++planeIdx) {
-      NvBuffer::NvBufferPlane &plane = buffer->planes[planeIdx];
-      printf("  %zu: %u x %u, %u bytes/pixel, %u bytes\n", planeIdx, plane.fmt.width, plane.fmt.height, plane.fmt.bytesperpixel, plane.fmt.bytesperpixel * plane.fmt.width * plane.fmt.height);
-
-      // TODO: this assumes input data is tightly packed.
-      size_t bytesPerRow = plane.fmt.bytesperpixel * plane.fmt.width;
-      m_inputFrameSize += bytesPerRow * plane.fmt.height;
-    }
-    printf("NvEncSession::start(): Input frame %zu bytes total\n", m_inputFrameSize);
   }
 
   if (usingGPUFrameSubmission()) {
@@ -592,9 +588,6 @@ void NvEncSession::stop() {
 
   m_inShutdown = true;
 
-  // Submit EOS
-  submitFrame(NULL, 0, true);
-
   if (usingGPUFrameSubmission()) {
     // Stop the CUDA worker thread
     pthread_mutex_lock(&m_gpuSubmissionQueueLock);
@@ -606,136 +599,47 @@ void NvEncSession::stop() {
     printf("NvEncSession: CUDA worker stopped\n");
   }
 
+  m_enc->abort();
+
   // Wait till capture plane DQ Thread finishes
   // i.e. all the capture plane buffers are dequeued
-  m_conv0->waitForIdle(2000);
   m_enc->capture_plane.waitForDQThread(2000);
-  delete m_conv0;
   delete m_enc;
-
-  m_conv0 = NULL;
   m_enc = NULL;
   while (!m_encoderOutputPlaneBufferQueue.empty()) m_encoderOutputPlaneBufferQueue.pop();
-  while (!m_conv0OutputPlaneBufferQueue.empty()) m_conv0OutputPlaneBufferQueue.pop();
 
-  m_inputFrameSize = 0;
+  for (size_t i = 0; i < m_rhiSurfaceDmaBufs.size(); ++i) {
+    for (size_t planeIdx = 0; planeIdx < m_rhiSurfaceDmaBufs[i].num_planes; ++i) {
+      close(m_rhiSurfaceDmaBufs[i].plane_fds[planeIdx]);
+    }
+  }
+  m_rhiSurfaceDmaBufs.clear();
+
+  for (size_t i = 0; i < m_rhiSurfaceEGLImages.size(); ++i) {
+    eglDestroyImage(renderBackend->eglDisplay(), m_rhiSurfaceEGLImages[i]);
+  }
+  m_rhiSurfaceEGLImages.clear();
+  m_rhiSurfaces.clear();
+
+  for (size_t i = 0; i < m_encOutputPlaneSurfaces.size(); ++i) {
+    NvBufSurfaceDestroy(m_encOutputPlaneSurfaces[i]);
+  }
+  m_encOutputPlaneSurfaces.clear();
+
+  for (size_t i = 0; i < m_vicInputSurfaces.size(); ++i) {
+    NvBufSurfaceUnMapEglImage(m_vicInputSurfaces[i], 0);
+    NvBufSurfaceDestroy(m_vicInputSurfaces[i]);
+  }
+  m_vicInputSurfaces.clear();
+
   printf("NvEncSession: stopped.\n");
   pthread_mutex_unlock(&m_stateLock);
 }
 
-bool NvEncSession::conv0_output_plane_dq() {
-  struct v4l2_buffer v4l2_buf;
-  struct v4l2_plane planes[MAX_PLANES];
-  NvBuffer *buffer;
-
-  memset(&v4l2_buf, 0, sizeof(v4l2_buf));
-  memset(planes, 0, sizeof(planes));
-  v4l2_buf.m.planes = planes;
-  v4l2_buf.length = m_enc->output_plane.getNumPlanes();
-
-  if (m_conv0->output_plane.dqBuffer(v4l2_buf, &buffer, NULL, -1) < 0) {
-    die("Failed to dequeue buffer from conv0 output plane");
-    return false;
-  }
-
-  // Add the dequeued buffer to conv0 empty output buffers queue
-  pthread_mutex_lock(&m_conv0OutputPlaneBufferQueueLock);
-
-  m_conv0OutputPlaneBufferQueue.push(buffer);
-  pthread_cond_broadcast(&m_conv0OutputPlaneBufferQueueCond);
-  pthread_mutex_unlock(&m_conv0OutputPlaneBufferQueueLock);
-
-  return true;
-}
-
-bool NvEncSession::conv0_capture_dqbuf_thread_callback(struct v4l2_buffer *v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer) {
-  NvBuffer *enc_buffer;
-  struct v4l2_buffer enc_qbuf;
-  struct v4l2_plane planes[MAX_PLANES];
-
-  if (!v4l2_buf) {
-    die("Failed to dequeue buffer from conv0 capture plane");
-    return false;
-  }
-
-  // Get an empty enc output plane buffer from m_encoderOutputPlaneBufferQueue
-  pthread_mutex_lock(&m_encoderOutputPlaneBufferQueueLock);
-  while (m_encoderOutputPlaneBufferQueue.empty()) {
-    pthread_cond_wait(&m_encoderOutputPlaneBufferQueueCond, &m_encoderOutputPlaneBufferQueueLock);
-  }
-
-  enc_buffer = m_encoderOutputPlaneBufferQueue.front();
-  m_encoderOutputPlaneBufferQueue.pop();
-  pthread_mutex_unlock(&m_encoderOutputPlaneBufferQueueLock);
-
-  memset(&enc_qbuf, 0, sizeof(enc_qbuf));
-  memset(&planes, 0, sizeof(planes));
-
-  enc_qbuf.index = enc_buffer->index;
-  enc_qbuf.m.planes = planes;
-  memcpy(&enc_qbuf.timestamp, &v4l2_buf->timestamp, sizeof(struct timeval));
-
-  // A reference to buffer is saved which can be used when
-  // buffer is dequeued from enc output plane
-  if (m_enc->output_plane.qBuffer(enc_qbuf, buffer) < 0) {
-    die("Error queueing buffer on encoder output plane");
-    return false;
-  }
-
-  if (v4l2_buf->m.planes[0].bytesused == 0) {
-    if (m_inShutdown) {
-      return false;
-    } else {
-      printf("conv0_capture_dqbuf_thread_callback: spurious EOS\n");
-    }
-  }
-
-  // If we're not at EOS, also handle dequeueing buffers from the output plane.
-  conv0_output_plane_dq();
-
-  return true;
-}
-
-bool NvEncSession::encoder_output_plane_dq() {
-  struct v4l2_buffer v4l2_buf;
-  struct v4l2_plane planes[MAX_PLANES];
-  NvBuffer *buffer;
-  NvBuffer *shared_buffer;
-
-  memset(&v4l2_buf, 0, sizeof(v4l2_buf));
-  memset(planes, 0, sizeof(planes));
-  v4l2_buf.m.planes = planes;
-  v4l2_buf.length = m_enc->output_plane.getNumPlanes();
-
-  if (m_enc->output_plane.dqBuffer(v4l2_buf, &buffer, &shared_buffer, -1) < 0) {
-    die("Failed to dequeue buffer from encoder output plane");
-    return false;
-  }
-
-  struct v4l2_buffer conv0_ret_qbuf;
-
-  memset(&conv0_ret_qbuf, 0, sizeof(conv0_ret_qbuf));
-  memset(&planes, 0, sizeof(planes));
-
-  // Get the index of the conv0 capture plane shared buffer
-  conv0_ret_qbuf.index = shared_buffer->index;
-  conv0_ret_qbuf.m.planes = planes;
-
-  // Add the dequeued buffer to encoder empty output buffers queue
-  // queue the shared buffer back in conv0 capture plane
-  pthread_mutex_lock(&m_encoderOutputPlaneBufferQueueLock);
-  if (m_conv0->capture_plane.qBuffer(conv0_ret_qbuf, NULL) < 0) {
-    die("Error queueing buffer on conv0 capture plane");
-    return false;
-  }
-  m_encoderOutputPlaneBufferQueue.push(buffer);
-  pthread_cond_broadcast(&m_encoderOutputPlaneBufferQueueCond);
-  pthread_mutex_unlock(&m_encoderOutputPlaneBufferQueueLock);
-
-  return true;
-}
-
 bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer) {
+
+  if (m_inShutdown)
+    return false; // cancel operations
 
   if (!v4l2_buf) {
     die("Failed to dequeue buffer from encoder capture plane");
@@ -799,22 +703,7 @@ bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_bu
     return false;
   }
 
-  // GOT EOS from encoder. Stop dqthread.
-  if (buffer->planes[0].bytesused == 0) {
-    if (m_inShutdown)
-      return false;
-    else
-      printf("encoder_capture_plane_dq_callback: spurious EOS\n");
-  }
-
-  // Handle dq for output plane here as well. The component seems to lock up (dqBuffer hangs in v4l ioctl)
-  // once EOS has been reached, so we only dq on the output plane if we haven't gotten EOS on the capture plane.
-  // (The EOS buffer does make it through the component correctly -- only the dq stops working)
-  return encoder_output_plane_dq();
-}
-
-/*static*/ bool NvEncSession::conv0_capture_dqbuf_thread_callback_thunk(struct v4l2_buffer *v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void* arg) {
-  return reinterpret_cast<NvEncSession*>(arg)->conv0_capture_dqbuf_thread_callback(v4l2_buf, buffer, shared_buffer);
+  return true;
 }
 
 /*static*/ bool NvEncSession::encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer *v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void *arg) {

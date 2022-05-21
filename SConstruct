@@ -39,7 +39,7 @@ if is_tegra:
 
   # Environment setup
   env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
-    CPPPATH=['#tegra_mmapi', '#live555/include', '/usr/include/drm', tegra_mmapi + '/include', tegra_mmapi + '/argus/include', '/usr/local/cuda/include', '/usr/local/include/opencv4'],
+    CPPPATH=['/usr/include/drm', tegra_mmapi + '/include', tegra_mmapi + '/argus/include', '/usr/local/cuda/include', '/usr/local/include/opencv4', '#tegra_mmapi', '#live555/include'],
     LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
     CUDA_SDK_PATH='/usr/local/cuda',
     IS_TEGRA=True,
