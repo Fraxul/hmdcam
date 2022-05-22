@@ -6,7 +6,7 @@ public:
   virtual ~RenderBackend() {}
   virtual uint32_t surfaceWidth() const = 0;
   virtual uint32_t surfaceHeight() const = 0;
-  virtual uint32_t refreshRateHz() const = 0;
+  virtual double refreshRateHz() const = 0;
 
   virtual EGLDisplay eglDisplay() const = 0;
   virtual EGLContext eglContext() const = 0;

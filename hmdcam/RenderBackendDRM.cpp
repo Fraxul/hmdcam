@@ -10,6 +10,7 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <unistd.h>
 
 #define DRM_CHECK(x) if ((x) != 0) { fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); abort(); }
@@ -195,7 +196,26 @@ RenderBackendDRM::RenderBackendDRM() {
     m_drmModeInfo = &(m_drmConnector->modes[m_drmModeIdx]);
     m_surfaceWidth = m_drmModeInfo->hdisplay;
     m_surfaceHeight = m_drmModeInfo->vdisplay;
+
     m_refreshRateHz = m_drmModeInfo->vrefresh;
+
+    printf("Selected mode %d:\n", m_drmModeIdx);
+    printf("  Name: %s\n", m_drmModeInfo->name);
+    printf("  Pixel Clock: %u kHz\n", m_drmModeInfo->clock);
+    printf("  Refresh (approx): %u hz\n", m_drmModeInfo->vrefresh);
+    printf("  H Display: %u  SyncStart: %u  End: %u  Total: %u  Skew: %u\n", m_drmModeInfo->hdisplay, m_drmModeInfo->hsync_start, m_drmModeInfo->hsync_end, m_drmModeInfo->htotal, m_drmModeInfo->hskew);
+    printf("  V Display: %u  SyncStart: %u  End: %u  Total: %u  Scan: %u\n", m_drmModeInfo->vdisplay, m_drmModeInfo->vsync_start, m_drmModeInfo->vsync_end, m_drmModeInfo->vtotal, m_drmModeInfo->vscan);
+    printf("  Flags: 0x%x\n", m_drmModeInfo->flags);
+    printf("  Type: %u\n", m_drmModeInfo->type);
+
+    // Compute precise refresh rate from timing parameters
+    m_refreshRateHz = (m_drmModeInfo->clock /*kHz*/ * 1000.0)  / static_cast<double>(m_drmModeInfo->htotal * m_drmModeInfo->vtotal);
+    if (fabs(1.0 - (m_refreshRateHz / static_cast<double>(m_drmModeInfo->vrefresh))) > 0.05) { // 5% tolerance
+      printf("WARNING: Computed precise vrefresh timing (%g hz) doesn't line up with provided approximate timing (%u hz), using the approximate.\n", m_refreshRateHz, m_drmModeInfo->vrefresh);
+      m_refreshRateHz = m_drmModeInfo->vrefresh;
+    } else {
+      printf("  Computed refresh (precise): %g hz\n", m_refreshRateHz);
+    }
   }
   if (m_drmModeIdx < 0){
     fprintf(stderr, "Couldn't find a usable mode.\n");

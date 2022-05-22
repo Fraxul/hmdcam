@@ -45,10 +45,6 @@
 
 //#define LATENCY_DEBUG
 
-// Requested capture rate for the camera. This should be the framerate of the display device, with as much precision as possible.
-// TODO: autodetect this. (current value pulled from running `fbset`)
-const double s_cameraFramerate = 89.527;
-
 // Camera render parameters
 float zoomFactor = 1.0f;
 float stereoOffset = 0.0f;
@@ -244,7 +240,7 @@ int main(int argc, char* argv[]) {
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f); // Use HiDPI rendering
 
   // Open the cameras
-  argusCamera = new ArgusCamera(renderBackend->eglDisplay(), renderBackend->eglContext(), s_cameraFramerate);
+  argusCamera = new ArgusCamera(renderBackend->eglDisplay(), renderBackend->eglContext(), renderBackend->refreshRateHz());
 
   std::vector<RHIRect> debugSurfaceCameraRects;
   {

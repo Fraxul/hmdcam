@@ -10,7 +10,7 @@ public:
 
   virtual uint32_t surfaceWidth() const { return m_surfaceWidth; }
   virtual uint32_t surfaceHeight() const { return m_surfaceHeight; }
-  virtual uint32_t refreshRateHz() const { return m_refreshRateHz; } // approximate/rounded value!
+  virtual double refreshRateHz() const { return m_refreshRateHz; }
 
   virtual EGLDisplay eglDisplay() const { return m_eglDisplay; }
   virtual EGLContext eglContext() const { return m_eglContext; }
@@ -21,7 +21,7 @@ private:
 
   uint32_t m_surfaceWidth = 0;
   uint32_t m_surfaceHeight = 0;
-  uint32_t m_refreshRateHz = 0;
+  double m_refreshRateHz = 0;
 
   // Internal state
   int m_drmFd = -1;
