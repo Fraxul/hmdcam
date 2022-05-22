@@ -98,6 +98,8 @@ static inline uint64_t currentTimeNs() {
 }
 
 void* rtspServerThreadEntryPoint(void* arg) {
+  pthread_setname_np(pthread_self(), "RTSP-Server");
+
   printf("Starting RTSP server event loop\n");
   EGLint ctxAttrs[] = {
     EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE

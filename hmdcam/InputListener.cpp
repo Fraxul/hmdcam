@@ -107,6 +107,7 @@ cleanup:
 
 
 void* inputListenerThread(void*) {
+  pthread_setname_np(pthread_self(), "InputListener");
 
   // Init-once for static button state
   for (size_t buttonIdx = 0; buttonIdx < kButtonCount; ++buttonIdx) {
