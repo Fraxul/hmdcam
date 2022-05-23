@@ -2,11 +2,14 @@
 #include "RenderBackend.h"
 #include <epoxy/egl.h>
 #include <xf86drmMode.h>
+#include "rhi/egl/RHIEGLSurfaceRenderTargetGL.h"
 
 class RenderBackendDRM : public RenderBackend {
 public:
   RenderBackendDRM();
   virtual ~RenderBackendDRM();
+
+  virtual void init();
 
   virtual uint32_t surfaceWidth() const { return m_surfaceWidth; }
   virtual uint32_t surfaceHeight() const { return m_surfaceHeight; }
@@ -16,6 +19,8 @@ public:
   virtual EGLContext eglContext() const { return m_eglContext; }
   virtual EGLSurface eglSurface() const { return m_eglSurface; }
   virtual EGLConfig eglConfig() const { return m_eglConfig; }
+
+  virtual RHIRenderTarget::ptr windowRenderTarget() const { return m_windowRenderTarget; }
 
 private:
 
@@ -34,6 +39,8 @@ private:
 
   EGLOutputLayerEXT m_eglOutputLayer = NULL;
   EGLStreamKHR m_eglStream = NULL;
+
+  RHIEGLSurfaceRenderTargetGL::ptr m_windowRenderTarget;
 
   drmModeRes* m_drmResources = nullptr;
   drmModeConnector* m_drmConnector = nullptr;

@@ -1,5 +1,6 @@
 #pragma once
 #include <glm/glm.hpp>
+#include "RenderBackend.h"
 #include "rhi/FxAtomicString.h"
 #include "rhi/RHIRect.h"
 #include "rhi/RHIRenderPipeline.h"
@@ -13,7 +14,7 @@ extern RHIRenderTarget::ptr eyeRT;
 extern RHIRect eyeViewports[2];
 extern RHIRenderTarget::ptr windowRenderTarget;
 
-bool RenderInit();
+bool RenderInit(ERenderBackend);
 void RenderShutdown();
 void renderHMDFrame();
 void renderSetDebugSurfaceSize(size_t x, size_t y);

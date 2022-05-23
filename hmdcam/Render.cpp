@@ -1,10 +1,9 @@
 #include "Render.h"
 #include "RenderBackend.h"
-#include "RenderBackendDRM.h"
+#include "RenderBackendWayland.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/gl/GLCommon.h"
-#include "rhi/egl/RHIEGLSurfaceRenderTargetGL.h"
 
 #include "xrt/xrt_instance.h"
 #include "xrt/xrt_device.h"
@@ -126,7 +125,7 @@ void* rtspServerThreadEntryPoint(void* arg) {
   return NULL;
 }
 
-bool RenderInit() {
+bool RenderInit(ERenderBackend backendType) {
   // Monado setup -- this needs to occur before EGL initialization because we might need to send a command to turn on the HMD display.
   struct xrt_hmd_parts* hmd = NULL;
   {
@@ -189,7 +188,9 @@ bool RenderInit() {
   }
 
   // EGL/DRM setup
-  renderBackend = new RenderBackendDRM();
+  renderBackend = RenderBackend::create(backendType);
+  renderBackend->init();
+  windowRenderTarget = renderBackend->windowRenderTarget();
 
   printf("%s\n", glGetString(GL_RENDERER));
   printf("%s\n", glGetString(GL_VERSION));
@@ -210,10 +211,6 @@ bool RenderInit() {
   }
 
   initRHIGL();
-
-  RHIEGLSurfaceRenderTargetGL::ptr wrt(new RHIEGLSurfaceRenderTargetGL(renderBackend->eglDisplay(), renderBackend->eglSurface()));
-  wrt->platformSetUpdatedWindowDimensions(renderBackend->surfaceWidth(), renderBackend->surfaceHeight());
-  windowRenderTarget = wrt;
 
   // Set up shared resources
 

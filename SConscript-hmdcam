@@ -16,6 +16,7 @@ if not os.path.exists(str(Dir(MONADO_BUILD))):
 tegraEnv.Append(
   CPPPATH=[
     'hmdcam',
+    'wayland',
     MONADO_BUILD + '/src/xrt/include', # Contains generated config headers
     MONADO_BASE + '/src/xrt/include',
     MONADO_BASE + '/src/xrt/auxiliary',
@@ -60,7 +61,7 @@ tegra_mmapi_src = [
 
 tegraEnv.Program(
   target = '../bin/hmdcam', # relative to build/hmdcam
-  source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('common/*.cpp') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/egl/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp') + tegra_mmapi_src + liveMediaStatics + monadoStatics,
-  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'boost_thread', 'GLESv2', 'EGL', 'drm', 'dl', 'pthread', 'rt', 'hidapi-libusb', 'usb-1.0', 'udev', 'nvargus', 'nvbuf_utils', 'nvbufsurface', 'nvbufsurftransform', 'v4l2', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudawarping', 'cuda', 'cudart', 'nppc', 'nppidei', 'ibverbs', 'rdmacm', 'epoxy']
+  source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('common/*.cpp') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/egl/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp') + Glob('wayland/*.c') + tegra_mmapi_src + liveMediaStatics + monadoStatics,
+  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'boost_thread', 'GLESv2', 'EGL', 'drm', 'wayland-client', 'wayland-egl', 'dl', 'pthread', 'rt', 'hidapi-libusb', 'usb-1.0', 'udev', 'nvargus', 'nvbuf_utils', 'nvbufsurface', 'nvbufsurftransform', 'v4l2', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudawarping', 'cuda', 'cudart', 'nppc', 'nppidei', 'ibverbs', 'rdmacm', 'epoxy']
 )
 

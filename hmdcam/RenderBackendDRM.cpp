@@ -24,6 +24,8 @@
 #define EGL_DRM_MASTER_FD_EXT 0x333C
 #endif
 
+RenderBackend* createDRMBackend() { return new RenderBackendDRM(); }
+
 static const char* drmConnectorTypeToString(int c) {
   switch (c) {
     default:
@@ -48,7 +50,9 @@ static const char* drmConnectorTypeToString(int c) {
   };
 }
 
-RenderBackendDRM::RenderBackendDRM() {
+RenderBackendDRM::RenderBackendDRM() { }
+
+void RenderBackendDRM::init() {
   // This initialization sequence closely follows NVIDIA CUDA sample code.
   // available at https://github.com/NVIDIA/cuda-samples
   // Revision referenced: b312abaa (Feb 3 2022)
@@ -297,6 +301,10 @@ RenderBackendDRM::RenderBackendDRM() {
 
   DRM_CHECK_PTR(m_eglSurface = eglCreateStreamProducerSurfaceKHR(m_eglDisplay, m_eglConfig, m_eglStream, srf_attr));
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext));
+
+
+  m_windowRenderTarget = new RHIEGLSurfaceRenderTargetGL(m_eglDisplay, m_eglSurface);
+  m_windowRenderTarget->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
 }
 
 RenderBackendDRM::~RenderBackendDRM() {

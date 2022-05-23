@@ -149,8 +149,8 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
 
 int main(int argc, char* argv[]) {
 
-
   DepthWorkerBackend depthBackend = kDepthWorkerDGPU;
+  ERenderBackend renderBackendType = kRenderBackendWayland;
   bool enableRDMA = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
@@ -163,6 +163,12 @@ int main(int argc, char* argv[]) {
         return 1;
       }
       depthBackend = depthBackendStringToEnum(argv[++i]);
+    } else if (!strcmp(argv[i], "--render-backend")) {
+      if (i == (argc - 1)) {
+        printf("--render-backend: requires argument\n");
+        return 1;
+      }
+      renderBackendType = renderBackendStringToEnum(argv[++i]);
     } else if (!strcmp(argv[i], "--disable-rdma")) {
       enableRDMA = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
@@ -222,7 +228,7 @@ int main(int argc, char* argv[]) {
   }
 
   startInputListenerThread();
-  if (!RenderInit()) {
+  if (!RenderInit(renderBackendType)) {
     printf("RenderInit() failed\n");
     return 1;
   }
