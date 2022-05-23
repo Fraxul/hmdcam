@@ -42,9 +42,25 @@ liveMediaStatics = [
   '#live555/libBasicUsageEnvironment.a',
   '#live555/libUsageEnvironment.a']
 
+# Pull in a few classes from tegra_mmapi
+tegra_mmapi_class_src_base = tegraEnv['TEGRA_MMAPI'] + '/samples/common/classes'
+VariantDir('tegra_mmapi', tegra_mmapi_class_src_base, duplicate=False)
+tegra_mmapi_src = [
+  'tegra_mmapi/NvBuffer.cpp',
+  'tegra_mmapi/NvElement.cpp',
+  'tegra_mmapi/NvElementProfiler.cpp',
+  'tegra_mmapi/NvLogging.cpp',
+  'tegra_mmapi/NvUtils.cpp',
+  'tegra_mmapi/NvV4l2Element.cpp',
+  'tegra_mmapi/NvV4l2ElementPlane.cpp',
+  'tegra_mmapi/NvVideoConverter.cpp',
+  'tegra_mmapi/NvVideoDecoder.cpp',
+  'tegra_mmapi/NvVideoEncoder.cpp'
+]
+
 tegraEnv.Program(
   target = '../bin/hmdcam', # relative to build/hmdcam
-  source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('common/*.cpp') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/egl/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp') + Glob('tegra_mmapi/*.cpp') + liveMediaStatics + monadoStatics,
-  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'boost_thread', 'GLESv2', 'EGL', 'drm', 'dl', 'pthread', 'rt', 'hidapi-libusb', 'usb-1.0', 'udev', 'nvargus', 'nvbuf_utils', 'v4l2', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudawarping', 'cuda', 'cudart', 'nppc', 'nppidei', 'ibverbs', 'rdmacm', 'epoxy']
+  source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('common/*.cpp') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/egl/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp') + tegra_mmapi_src + liveMediaStatics + monadoStatics,
+  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'boost_thread', 'GLESv2', 'EGL', 'drm', 'dl', 'pthread', 'rt', 'hidapi-libusb', 'usb-1.0', 'udev', 'nvargus', 'nvbuf_utils', 'nvbufsurface', 'nvbufsurftransform', 'v4l2', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudawarping', 'cuda', 'cudart', 'nppc', 'nppidei', 'ibverbs', 'rdmacm', 'epoxy']
 )
 
