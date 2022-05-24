@@ -18,13 +18,11 @@
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 //#define FRAME_WAIT_TIME_STATS 1
 
-#ifdef FRAME_WAIT_TIME_STATS
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
-#endif
 
 static const size_t kBufferCount = 8;
 
@@ -32,17 +30,15 @@ extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
 extern FxAtomicString ksNDCQuadUniformBlock;
 extern FxAtomicString ksImageTex;
 
+IArgusCamera::IArgusCamera() {}
+IArgusCamera::~IArgusCamera() {}
+
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framerate) :
   m_display(display_), m_context(context_),
   m_shouldResubmitCaptureRequest(false),
   m_captureIsRepeating(false),
-  m_exposureCompensation(0.0f),
-  m_acRegionCenter(glm::vec2(0.5f, 0.5f)),
-  m_acRegionSize(glm::vec2(1.0f, 1.0f)),
   m_minAcRegionWidth(0),
   m_minAcRegionHeight(0),
-  m_adjustCaptureInterval(false),
-  m_didAdjustCaptureIntervalThisFrame(false),
   m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = 128),
   m_captureSession(NULL), m_captureRequest(NULL) {
 
@@ -556,5 +552,68 @@ void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, con
   rhi()->endRenderPass(m_tmpBlitRT);
 
   RHICUDA::copySurfaceToGpuMat(m_tmpBlitSurface, gpuMat, const_cast<cv::cuda::Stream&>(stream));
+}
+
+
+// === Mock implementations ===
+
+ArgusCameraMock::ArgusCameraMock(size_t sensorCount, unsigned int w, unsigned int h, double framerate) {
+  m_streamWidth = w;
+  m_streamHeight = h;
+  m_targetCaptureIntervalNs = 1000000000.0 / framerate;
+
+  m_frameMetadata.resize(sensorCount);
+  for (size_t i = 0; i < m_frameMetadata.size(); ++i) {
+    auto& md = m_frameMetadata[i];
+    md.sensorTimestamp = 0;
+    md.frameDurationNs = m_targetCaptureIntervalNs;
+    md.sensorExposureTimeNs = m_targetCaptureIntervalNs;
+    md.sensorSensitivityISO = 100;
+    md.ispDigitalGain = 1.0f;
+    md.sensorAnalogGain = 1.0f;
+  }
+
+  m_textures.resize(sensorCount);
+}
+
+ArgusCameraMock::~ArgusCameraMock() {
+
+}
+
+bool ArgusCameraMock::readFrame() {
+  uint64_t now = currentTimeNs();
+  for (size_t i = 0; i < m_frameMetadata.size(); ++i) {
+    m_frameMetadata[i].sensorTimestamp = now - m_targetCaptureIntervalNs;
+  }
+  for (size_t i = 0; i < m_textures.size(); ++i) {
+    if (m_textures[i])
+      continue;
+
+    RHISurface::ptr srf = rhi()->newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+    RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { srf } ));
+
+    switch (i) {
+      case 0:
+        rhi()->setClearColor(glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)); break;
+      case 1:
+        rhi()->setClearColor(glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)); break;
+      case 2:
+        rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)); break;
+      case 3:
+      default:
+        rhi()->setClearColor(glm::vec4(1.0f, 0.0f, 1.0f, 1.0f)); break;
+    };
+
+    rhi()->beginRenderPass(rt, kLoadClear);
+    rhi()->endRenderPass(rt);
+
+    m_textures[i] = srf;
+  }
+  return true;
+}
+
+cv::cuda::GpuMat ArgusCameraMock::gpuMatGreyscale(size_t sensorIdx) {
+  assert(false && "Not implemented");
+  return cv::cuda::GpuMat();
 }
 

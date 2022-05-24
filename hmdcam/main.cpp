@@ -54,7 +54,7 @@ float panoTxScale = 5.0f;
 bool debugUseDistortion = true;
 
 // Camera info/state
-ArgusCamera* argusCamera;
+IArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
 
 
@@ -153,6 +153,7 @@ int main(int argc, char* argv[]) {
   DepthWorkerBackend depthBackend = kDepthWorkerDGPU;
   bool enableRDMA = true;
   bool debugInitOnly = false;
+  bool debugMockCameras = false;
   int rdmaInterval = 2;
 
   for (int i = 1; i < argc; ++i) {
@@ -166,6 +167,8 @@ int main(int argc, char* argv[]) {
       enableRDMA = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
       debugInitOnly = true;
+    } else if (!strcmp(argv[i], "--debug-mock-cameras")) {
+      debugMockCameras = true;
     } else if (!strcmp(argv[i], "--rdma-interval")) {
       if (i == (argc - 1)) {
         printf("--rdma-interval: requires argument\n");
@@ -240,7 +243,12 @@ int main(int argc, char* argv[]) {
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f); // Use HiDPI rendering
 
   // Open the cameras
-  argusCamera = new ArgusCamera(renderBackend->eglDisplay(), renderBackend->eglContext(), renderBackend->refreshRateHz());
+
+  if (debugMockCameras) {
+    argusCamera = new ArgusCameraMock(4, 1920, 1080, 90.0);
+  } else {
+    argusCamera = new ArgusCamera(renderBackend->eglDisplay(), renderBackend->eglContext(), renderBackend->refreshRateHz());
+  }
 
   std::vector<RHIRect> debugSurfaceCameraRects;
   {

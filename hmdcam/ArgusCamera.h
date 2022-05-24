@@ -11,23 +11,40 @@
 #include <boost/accumulators/statistics/rolling_mean.hpp>
 #include <boost/accumulators/statistics/rolling_count.hpp>
 
-class ArgusCamera : public ICameraProvider {
+
+class IArgusCamera : public ICameraProvider {
 public:
-  ArgusCamera(EGLDisplay, EGLContext, double framerate);
-  virtual ~ArgusCamera();
+  IArgusCamera();
+  virtual ~IArgusCamera();
 
-  bool readFrame();
-
-  void stop();
-
-  virtual size_t streamCount() const { return m_textures.size(); }
-  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
-  virtual void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&);
-  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
+  // === ICameraProvider (partial impl) ===
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
 
-  // Metadata accessors for the current frame
+  // === IArgusCamera ===
+  virtual bool readFrame() = 0;
+  virtual void stop() = 0;
+  virtual void setRepeatCapture(bool) = 0;
+  virtual void setExposureCompensation(float stops) = 0;
+  virtual void setAcRegion(const glm::vec2& center, const glm::vec2& size) = 0;
+  // ====================
+
+
+  // Misc simple accessors hoisted into base interface
+
+  uint64_t targetCaptureIntervalNs() const { return m_targetCaptureIntervalNs; }
+  void setTargetCaptureIntervalNs(uint64_t value) { m_targetCaptureIntervalNs = value; }
+
+  bool didAdjustCaptureIntervalThisFrame() const { return m_didAdjustCaptureIntervalThisFrame; }
+  bool willAdjustCaptureInterval() const { return m_adjustCaptureInterval; }
+  void setAdjustCaptureInterval(bool value) { m_adjustCaptureInterval = value; }
+
+
+  const glm::vec2& acRegionCenter() const { return m_acRegionCenter; }
+  const glm::vec2& acRegionSize() const { return m_acRegionSize; }
+
+  float exposureCompensation() const { return m_exposureCompensation; }
+
   struct FrameMetadata_t {
     uint64_t sensorTimestamp;
     uint64_t frameDurationNs;
@@ -36,61 +53,72 @@ public:
     float ispDigitalGain;
     float sensorAnalogGain;
   };
+
+  // Metadata accessors for the current frame
   // Start timestamp for the sensor capture, in nanoseconds. Referenced to CLOCK_MONOTONIC.
   uint64_t frameSensorTimestamp(size_t sensorIndex) const { return m_frameMetadata[sensorIndex].sensorTimestamp; }
   const FrameMetadata_t& frameMetadata(size_t sensorIndex) const { return m_frameMetadata[sensorIndex]; }
 
+protected:
+  uint64_t m_targetCaptureIntervalNs;
+  unsigned int m_streamWidth = 0, m_streamHeight = 0;
+  float m_exposureCompensation = 0.0f;
+  glm::vec2 m_acRegionCenter = glm::vec2(0.5f, 0.5f);
+  glm::vec2 m_acRegionSize = glm::vec2(1.0f, 1.0f);
 
-  uint64_t targetCaptureIntervalNs() const { return m_targetCaptureIntervalNs; }
-  void setTargetCaptureIntervalNs(uint64_t value) { m_targetCaptureIntervalNs = value; }
+  // Per-stream per-frame metadata, populated for each frame in readFrame()
+  std::vector<FrameMetadata_t> m_frameMetadata;
 
-  void setRepeatCapture(bool);
+  bool m_adjustCaptureInterval = false;
+  bool m_didAdjustCaptureIntervalThisFrame = false;
+};
 
-  bool didAdjustCaptureIntervalThisFrame() const { return m_didAdjustCaptureIntervalThisFrame; }
-  bool willAdjustCaptureInterval() const { return m_adjustCaptureInterval; }
-  void setAdjustCaptureInterval(bool value) { m_adjustCaptureInterval = value; }
+class ArgusCamera : public IArgusCamera {
+public:
+  ArgusCamera(EGLDisplay, EGLContext, double framerate);
+  virtual ~ArgusCamera();
 
-  void setExposureCompensation(float stops);
-  float exposureCompensation() const { return m_exposureCompensation; }
+  // === ICameraProvider ===
+  virtual size_t streamCount() const { return m_textures.size(); }
+  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
+  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
+  // =======================
+
+  // === IArgusCamera ===
+  virtual bool readFrame();
+  virtual void stop();
+  virtual void setRepeatCapture(bool);
+
+  virtual void setExposureCompensation(float stops);
 
   // centerpoint and size are in normalized coordinates (0...1)
   // Default is the whole image: center=(0.5, 0.5), size = (1.0, 1.0).
   // Region will be clipped to the size of the image if it overhangs an edge (ex. if you move the center point without decreasing the size)
-  void setAcRegion(const glm::vec2& center, const glm::vec2& size);
-  const glm::vec2& acRegionCenter() const { return m_acRegionCenter; }
-  const glm::vec2& acRegionSize() const { return m_acRegionSize; }
+  virtual void setAcRegion(const glm::vec2& center, const glm::vec2& size);
+  // ====================
+
+  void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&);
 
 private:
   EGLDisplay m_display;
   EGLContext m_context;
 
   std::vector<RHIEGLImageSurfaceGL::ptr> m_textures;
-  unsigned int m_streamWidth, m_streamHeight;
   bool m_shouldResubmitCaptureRequest : 1;
   bool m_captureIsRepeating : 1;
 
-  float m_exposureCompensation;
-  glm::vec2 m_acRegionCenter;
-  glm::vec2 m_acRegionSize;
   uint32_t m_minAcRegionWidth, m_minAcRegionHeight;
-
-  uint64_t m_targetCaptureIntervalNs;
 
   uint64_t m_currentCaptureDurationNs;
   uint64_t m_captureDurationMinNs, m_captureDurationMaxNs; // from sensor mode
   uint64_t m_previousSensorTimestampNs;
   unsigned int m_samplesAtCurrentDuration;
-  bool m_adjustCaptureInterval;
-  bool m_didAdjustCaptureIntervalThisFrame;
   boost::accumulators::accumulator_set<double, boost::accumulators::stats<
       boost::accumulators::tag::rolling_mean,
       boost::accumulators::tag::rolling_count
     > > m_captureIntervalStats;
 
   void setCaptureDurationNs(uint64_t captureDurationNs);
-
-  // Per-stream per-frame metadata, populated for each frame in readFrame()
-  std::vector<FrameMetadata_t> m_frameMetadata;
 
   // Per-sensor objects
   std::vector<Argus::CameraDevice*> m_cameraDevices;
@@ -141,5 +169,28 @@ private:
   // noncopyable
   ArgusCamera(const ArgusCamera&);
   ArgusCamera& operator=(const ArgusCamera&);
+};
+
+
+class ArgusCameraMock : public IArgusCamera {
+public:
+  ArgusCameraMock(size_t sensorCount, unsigned int w, unsigned int h, double framerate);
+  virtual ~ArgusCameraMock();
+
+  // === ICameraProvider ===
+  virtual size_t streamCount() const { return m_textures.size(); }
+  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
+  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
+
+  // === IArgusCamera ===
+  virtual bool readFrame();
+
+  virtual void stop() {}
+  virtual void setRepeatCapture(bool) {}
+  virtual void setExposureCompensation(float stops) {}
+  virtual void setAcRegion(const glm::vec2& center, const glm::vec2& size) {}
+
+protected:
+  std::vector<RHISurface::ptr> m_textures;
 };
 
