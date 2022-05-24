@@ -49,7 +49,8 @@ FxAtomicString ksMaskTex("maskTex");
 RHISurface::ptr eyeTex;
 RHISurface::ptr eyeDepthRenderbuffer;
 RHIRenderTarget::ptr eyeRT;
-RHIRect eyeViewports[2];
+RHIRect eyeViewports[2]; // viewports in the eye RT
+RHIRect eyePostDistortionViewports[2]; // viewports on the HMD window surface
 
 // distortion parameter buffers
 RHIBuffer::ptr meshDistortionVertexBuffer, meshDistortionIndexBuffer;
@@ -63,6 +64,7 @@ static FxAtomicString ksMeshDistortionUniformBlock("MeshDistortionUniformBlock")
 struct xrt_instance* xrtInstance = NULL;
 struct xrt_device* xrtHMDevice = NULL;
 
+bool isDummyHMD = false;
 unsigned int hmd_width, hmd_height;
 unsigned int eye_width, eye_height;
 glm::mat4 eyeProjection[2];
@@ -155,6 +157,9 @@ bool RenderInit() {
 
       if (xrtHMDevice == NULL && xdevs[i]->device_type == XRT_DEVICE_TYPE_HMD) {
         printf("Selected HMD device: %s\n", xdevs[i]->str);
+        if (strstr(xdevs[i]->str, "Dummy HMD")) {
+          isDummyHMD = true;
+        }
         xrtHMDevice = xdevs[i];
       } else {
         printf("\tDestroying unused device %s\n", xdevs[i]->str);
@@ -278,10 +283,36 @@ bool RenderInit() {
     // Upload vertex and index buffers for distortion
     meshDistortionVertexBuffer = rhi()->newBufferWithContents(hmd->distortion.mesh.vertices, hmd->distortion.mesh.vertex_count * hmd->distortion.mesh.stride);
     meshDistortionIndexBuffer = rhi()->newBufferWithContents(hmd->distortion.mesh.indices, hmd->distortion.mesh.index_count_total * sizeof(uint32_t));
+
+    // Compute post-distortion viewports
+    for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+      eyePostDistortionViewports[eyeIndex] = RHIRect::xywh(
+          hmd->views[eyeIndex].viewport.x_pixels,
+          hmd->views[eyeIndex].viewport.y_pixels,
+          hmd->views[eyeIndex].viewport.w_pixels,
+          hmd->views[eyeIndex].viewport.h_pixels);
+    }
   } // Monado distortion setup
 
   // Set up uniform buffers for HMD distortion passes
   recomputeHMDParameters();
+
+  printf("Screen dimensions: %u x %u\n", windowRenderTarget->width(), windowRenderTarget->height());
+  if (isDummyHMD) {
+    // Resize the dummy HMD eye RTs to match the attached display.
+    hmd_width = windowRenderTarget->width();
+    hmd_height = windowRenderTarget->height();
+    // Use 1:1 eye targets since we have no distortion to compensate for
+    eye_width = hmd_width / 2;
+    eye_height = hmd_height;
+    // Reset the viewports
+    eyePostDistortionViewports[0] = RHIRect::xywh(        0, 0, eye_width, eye_height);
+    eyePostDistortionViewports[1] = RHIRect::xywh(eye_width, 0, eye_width, eye_height);
+  }
+
+  if (!(windowRenderTarget->width() == hmd_width && windowRenderTarget->height() == hmd_height)) {
+    printf("WARNING: Screen and HMD dimensions don't match; check system configuration.\n");
+  }
 
   // Create FBOs and viewports for eye rendering (pre distortion)
   eyeTex = rhi()->newTexture2D(eye_width * 2, eye_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
@@ -289,12 +320,6 @@ bool RenderInit() {
   eyeRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ eyeTex }, eyeDepthRenderbuffer));
   eyeViewports[0] = RHIRect::xywh(0, 0, eye_width, eye_height);
   eyeViewports[1] = RHIRect::xywh(eye_width, 0, eye_width, eye_height);
-
-  printf("Screen dimensions: %u x %u\n", windowRenderTarget->width(), windowRenderTarget->height());
-
-  if (!(windowRenderTarget->width() == hmd_width && windowRenderTarget->height() == hmd_height)) {
-    printf("WARNING: Screen and HMD dimensions don't match; check system configuration.\n");
-  }
 
   // RTSP server and NvEnc setup
   {
@@ -437,11 +462,7 @@ void renderHMDFrame() {
   // Run distortion passes
   for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
 
-    rhi()->setViewport(RHIRect::xywh(
-      xrtHMDevice->hmd->views[eyeIndex].viewport.x_pixels,
-      xrtHMDevice->hmd->views[eyeIndex].viewport.y_pixels,
-      xrtHMDevice->hmd->views[eyeIndex].viewport.w_pixels,
-      xrtHMDevice->hmd->views[eyeIndex].viewport.h_pixels));
+    rhi()->setViewport(eyePostDistortionViewports[eyeIndex]);
 
     MeshDistortionUniformBlock ub;
     ub.uvOffset = glm::vec2(eyeIndex == 0 ? 0.0f : 0.5f, 0.0f);
