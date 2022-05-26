@@ -150,7 +150,7 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
 int main(int argc, char* argv[]) {
 
   DepthWorkerBackend depthBackend = kDepthWorkerDGPU;
-  ERenderBackend renderBackendType = kRenderBackendWayland;
+  ERenderBackend renderBackendType = kRenderBackendVKDirect;
   bool enableRDMA = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
