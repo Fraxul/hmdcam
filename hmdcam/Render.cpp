@@ -101,7 +101,7 @@ static inline uint64_t currentTimeNs() {
 void* rtspServerThreadEntryPoint(void* arg) {
   pthread_setname_np(pthread_self(), "RTSP-Server");
 
-  printf("Starting RTSP server event loop\n");
+  // Initialize EGL share context and CUDA
   EGLint ctxAttrs[] = {
     EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE
   };
@@ -118,10 +118,41 @@ void* rtspServerThreadEntryPoint(void* arg) {
 
   cuCtxSetCurrent(cudaContext);
 
+  // Set up the RTSP server
+  rtspScheduler = BasicTaskScheduler::createNew();
+  rtspEnv = BasicUsageEnvironment::createNew(*rtspScheduler);
+  OutPacketBuffer::maxSize = 1048576;
+
+  while (true) {
+    rtspServer = RTSPServer::createNew(*rtspEnv, 8554);
+    if (rtspServer)
+      break;
+
+    printf("Failed to create RTSP server: %s. Retrying in 15 seconds...\n", rtspEnv->getResultMsg());
+    sleep(15);
+  }
+
+  char const* descriptionString = "Live555 embedded stream";
+  char const* streamName = "0";
+  rtspMediaSession = ServerMediaSession::createNew(*rtspEnv, streamName, streamName, descriptionString);
+  rtspMediaSession->addSubsession(H264VideoNvEncSessionServerMediaSubsession::createNew(*rtspEnv, nvencSession));
+  rtspServer->addServerMediaSession(rtspMediaSession);
+
+  {
+    char* urlTmp = rtspServer->rtspURL(rtspMediaSession);
+    printf("RTSP server is listening at %s\n", urlTmp);
+    printf("Recommended client configuration for low-latency streaming:\n");
+    printf("  ffplay -fflags nobuffer -flags low_delay -framedrop %s\n", urlTmp);
+
+    rtspURL = std::string(urlTmp);
+    delete[] urlTmp;
+  }
+
+  // Run event loop
   rtspEnv->taskScheduler().doEventLoop();
 
+  // Thread shutdown if the event loop returns (which it shouldn't)
   eglDestroyContext(renderBackend->eglDisplay(), eglCtx);
-
   return NULL;
 }
 
@@ -318,48 +349,18 @@ bool RenderInit(ERenderBackend backendType) {
   eyeViewports[0] = RHIRect::xywh(0, 0, eye_width, eye_height);
   eyeViewports[1] = RHIRect::xywh(eye_width, 0, eye_width, eye_height);
 
-  // RTSP server and NvEnc setup
-  {
-    nvencSession = new NvEncSession();
-    nvencSession->setDimensions(1920, 1080); // should be overwritten by renderSetDebugSurfaceSize
-    nvencSession->setInputFormat(NvEncSession::kInputFormatRGBX8);
-    nvencSession->setUseGPUFrameSubmission(true);
-    //nvencSession->setBitrate(bitrate);
-    //nvencSession->setFramerate(fps_n, fps_d);
-    nvencSession->setFramerate(30, 1); // TODO derive this from the screen's framerate.
-    
-
-    // Begin by setting up our usage environment:
-    rtspScheduler = BasicTaskScheduler::createNew();
-    rtspEnv = BasicUsageEnvironment::createNew(*rtspScheduler);
-    OutPacketBuffer::maxSize = 1048576;
-
-    // Create the RTSP server:
-    rtspServer = RTSPServer::createNew(*rtspEnv, 8554);
-    if (rtspServer == NULL) {
-      printf("Failed to create RTSP server: %s\n", rtspEnv->getResultMsg());
-      exit(1);
-    }
-
-    char const* descriptionString = "Live555 embedded stream";
-    char const* streamName = "0";
-    rtspMediaSession = ServerMediaSession::createNew(*rtspEnv, streamName, streamName, descriptionString);
-    rtspMediaSession->addSubsession(H264VideoNvEncSessionServerMediaSubsession::createNew(*rtspEnv, nvencSession));
-    rtspServer->addServerMediaSession(rtspMediaSession);
-
-    char* urlTmp = rtspServer->rtspURL(rtspMediaSession);
-    printf("RTSP server is listening at %s\n", urlTmp);
-    printf("Recommended client configuration for low-latency streaming:\n");
-    printf("  ffplay -fflags nobuffer -flags low_delay -framedrop %s\n", urlTmp);
-
-    rtspURL = std::string(urlTmp);
-    delete[] urlTmp;
-
-    pthread_t server_tid;
-    pthread_create(&server_tid, NULL, &rtspServerThreadEntryPoint, NULL);
-  }
-
   return true;
+}
+
+void RenderInitDebugSurface(uint32_t width, uint32_t height) {
+  nvencSession = new NvEncSession(width, height);
+  //nvencSession->setBitrate(bitrate);
+  //nvencSession->setFramerate(fps_n, fps_d);
+  nvencSession->setFramerate(30, 1); // TODO derive this from the screen's framerate.
+
+  // Set up the RTSP server asynchronously.
+  pthread_t server_tid;
+  pthread_create(&server_tid, NULL, &rtspServerThreadEntryPoint, NULL);
 }
 
 void RenderShutdown() {
@@ -475,11 +476,9 @@ void renderHMDFrame() {
 }
 
 
-void renderSetDebugSurfaceSize(size_t x, size_t y) {
-  nvencSession->setDimensions(x, y);
-}
-
 RHISurface::ptr renderAcquireDebugSurface() {
+  assert(nvencSession != nullptr);
+
   // RTSP server rendering
   // TODO need to rework the frame handoff so the GPU does the buffer copy
   static uint64_t lastFrameSubmissionTimeNs = 0;

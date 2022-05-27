@@ -264,8 +264,8 @@ int main(int argc, char* argv[]) {
       debugColumns = 2;
       debugRows = (argusCamera->streamCount() + 1) / 2; // round up
     }
-    unsigned int dsW = debugColumns * argusCamera->streamWidth();
-    unsigned int dsH = debugRows * argusCamera->streamHeight();
+    uint32_t dsW = debugColumns * argusCamera->streamWidth();
+    uint32_t dsH = debugRows * argusCamera->streamHeight();
     printf("Debug stream: selected a %ux%u layout on a %ux%u surface for %zu cameras\n", debugColumns, debugRows, dsW, dsH, argusCamera->streamCount());
 
     for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
@@ -275,7 +275,7 @@ int main(int argc, char* argv[]) {
       printf("  [%zu] (%ux%u) +(%u, %u)\n", cameraIdx, r.width, r.height, r.x, r.y);
       debugSurfaceCameraRects.push_back(r);
     }
-    renderSetDebugSurfaceSize(dsW, dsH);
+    RenderInitDebugSurface(dsW, dsH);
   }
 
   cameraSystem = new CameraSystem(argusCamera);
