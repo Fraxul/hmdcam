@@ -15,6 +15,9 @@ Don't forget to set up the submodules after cloning:
 Install prerequisite packages:
   sudo apt install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev librdmacm-dev
 
+If you're on Ubuntu <= 20.04 (L4T < r34.1), libepoxy is too old -- install the included package (borrowed from the Ubuntu 20.04 arm64 repository):
+  sudo dpkg -i libepoxy/libepoxy0_1.5.4-1_arm64.deb  libepoxy/libepoxy-dev_1.5.4-1_arm64.deb
+
 If you're on Ubuntu >= 20.04 or L4T >= r34.1 (JetPack >= 5.0), install the packaged cmake:
   sudo apt install cmake
 Otherwise, use pip3 to get a new enough cmake for the DepthAI build -- 3.10.2 as shipped in 18.04 is too old:
