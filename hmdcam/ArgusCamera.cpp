@@ -186,6 +186,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
       }
 
       b.eglImage = NvEGLImageFromFd(m_display, b.nativeBuffer);
+      b.rhiSurface = RHIEGLImageSurfaceGL::newTextureExternalOES(b.eglImage, m_streamWidth, m_streamHeight);
 
       iBufferSettings->setEGLImage(b.eglImage);
       b.argusBuffer = iBufferOutputStream->createBuffer(bufferSettings.get());
@@ -199,16 +200,6 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 
       m_bufferPools[cameraIdx].buffers.push_back(b);
     }
-
-
-    // GL textures which will be associated with EGL images in readFrame()
-    m_textures.push_back(new RHIEGLImageSurfaceGL(m_streamWidth, m_streamHeight, kSurfaceFormat_RGBA8));
-
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_textures[cameraIdx]->glId());
-    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   }
 
   // Set up all of the per-stream metadata containers
@@ -355,12 +346,6 @@ bool ArgusCamera::readFrame() {
 
     Argus::IEGLImageBuffer* eglImageBuffer = Argus::interface_cast<Argus::IEGLImageBuffer>(buffer);
     assert(eglImageBuffer);
-
-    // Update EGL image associated with the GL texture for this stream
-    assert(m_bufferPools[cameraIdx].activeBuffer().eglImage == eglImageBuffer->getEGLImage());
-
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_textures[cameraIdx]->glId());
-    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, m_bufferPools[cameraIdx].activeBuffer().eglImage);
 
     Argus::IBuffer* iBuffer = Argus::interface_cast<Argus::IBuffer>(buffer);
     assert(iBuffer);

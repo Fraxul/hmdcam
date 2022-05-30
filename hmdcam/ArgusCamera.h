@@ -79,8 +79,8 @@ public:
   virtual ~ArgusCamera();
 
   // === ICameraProvider ===
-  virtual size_t streamCount() const { return m_textures.size(); }
-  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
+  virtual size_t streamCount() const { return m_bufferPools.size(); }
+  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().rhiSurface; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
   // =======================
 
@@ -103,7 +103,6 @@ private:
   EGLDisplay m_display;
   EGLContext m_context;
 
-  std::vector<RHIEGLImageSurfaceGL::ptr> m_textures;
   bool m_shouldResubmitCaptureRequest : 1;
   bool m_captureIsRepeating : 1;
 
@@ -134,10 +133,12 @@ private:
       int nativeBuffer;
       EGLImageKHR eglImage;
       CUgraphicsResource cudaResource;
+      RHIEGLImageSurfaceGL::ptr rhiSurface;
     };
 
     std::vector<Entry> buffers;
     Entry& activeBuffer() { return buffers[activeBufferIndex]; }
+    const Entry& activeBuffer() const { return buffers[activeBufferIndex]; }
 
     size_t activeBufferIndex;
     void setActiveBufferIndex(Argus::Buffer* b) {
