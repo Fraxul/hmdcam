@@ -1,5 +1,6 @@
 #include "ArgusCamera.h"
 #include "ArgusHelpers.h"
+#include "common/Timing.h"
 #include "rhi/gl/GLCommon.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -17,12 +18,6 @@
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 //#define FRAME_WAIT_TIME_STATS 1
-
-static inline uint64_t currentTimeNs() {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
-}
 
 static const size_t kBufferCount = 8;
 

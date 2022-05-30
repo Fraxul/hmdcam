@@ -29,6 +29,7 @@
 #include "common/DepthWorkerControl.h"
 #include "common/FxThreading.h"
 #include "common/ScrollingBuffer.h"
+#include "common/Timing.h"
 #include "common/glmCvInterop.h"
 #include "InputListener.h"
 #include "Render.h"
@@ -75,17 +76,6 @@ struct FrameTimingData {
 };
 
 ScrollingBuffer<FrameTimingData> s_timingDataBuffer(512);
-
-
-static inline uint64_t currentTimeNs() {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
-}
-
-static inline float deltaTimeMs(uint64_t startTimeNs, uint64_t endTimeNs) {
-  return static_cast<float>(endTimeNs - startTimeNs) / 1000000.0f;
-}
 
 bool want_quit = false;
 static void signal_handler(int) {

@@ -1,6 +1,7 @@
 #include "Render.h"
 #include "RenderBackend.h"
 #include "RenderBackendWayland.h"
+#include "common/Timing.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/gl/GLCommon.h"
@@ -91,12 +92,6 @@ uint64_t rtspRenderIntervalNs = 33333333; // 30fps
 // -----------
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
-
-static inline uint64_t currentTimeNs() {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
-}
 
 void* rtspServerThreadEntryPoint(void* arg) {
   pthread_setname_np(pthread_self(), "RTSP-Server");
