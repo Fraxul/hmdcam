@@ -26,7 +26,6 @@
 #include "ArgusCamera.h"
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
-#include "common/DepthWorkerControl.h"
 #include "common/FxThreading.h"
 #include "common/ScrollingBuffer.h"
 #include "common/Timing.h"
@@ -139,7 +138,7 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
 
 int main(int argc, char* argv[]) {
 
-  DepthWorkerBackend depthBackend = kDepthWorkerDGPU;
+  DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
   ERenderBackend renderBackendType = kRenderBackendVKDirect;
   bool enableRDMA = true;
   bool debugInitOnly = false;
@@ -181,7 +180,9 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  if (depthBackend == kDepthWorkerDepthAI) {
+  DepthMapGenerator* depthMapGenerator = createDepthMapGenerator(depthBackend);
+
+  if (depthBackend == kDepthBackendDepthAI) {
     // Set thread affinity.
     // On Tegra, we get a small but noticeable performance improvement by pinning the DepthAI backend to CPU0-1 and hmdcam to all other CPUs.
     // This must be done early in initialization so that all of the library worker threads spawned later inherit these settings.
@@ -194,17 +195,6 @@ int main(int argc, char* argv[]) {
 
     if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
       perror("pthread_setaffinity");
-    }
-  }
-
-
-  SHMSegment<DepthMapSHM>* shm = NULL;
-  DepthMapGenerator* depthMapGenerator = NULL;
-  if (depthBackend != kDepthWorkerNone) {
-    shm = SHMSegment<DepthMapSHM>::createSegment("depth-worker", 16*1024*1024);
-    printf("Waiting for depth worker...\n");
-    if (!spawnAndWaitForDepthWorker(depthBackend, &shm->segment()->m_workerReadySem)) {
-      return 1;
     }
   }
 
@@ -283,9 +273,8 @@ int main(int argc, char* argv[]) {
   }
 
 
-  // TODO move this depth map generator init to CameraSystem
-  if (currentDepthWorkerBackend() != kDepthWorkerNone) {
-    depthMapGenerator = new DepthMapGenerator(cameraSystem, shm);
+  if (depthMapGenerator) {
+    depthMapGenerator->initWithCameraSystem(cameraSystem);
     depthMapGenerator->loadSettings();
   }
 

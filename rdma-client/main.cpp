@@ -15,7 +15,6 @@
 #include "common/FxCamera.h"
 #include "common/FxThreading.h"
 #include "common/DepthMapGenerator.h"
-#include "common/DepthWorkerControl.h"
 #include "common/glmCvInterop.h"
 
 #include "rhi/RHI.h"
@@ -108,7 +107,7 @@ extern int triangulationDisparityScaleInv; // TODO remove
 int main(int argc, char** argv) {
 
   const char* rdmaHost = NULL;
-  DepthWorkerBackend depthBackend = kDepthWorkerDGPU;
+  DepthMapGeneratorBackend depthBackend = kDepthBackendDGPU;
 
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--depth-backend")) {
@@ -127,13 +126,9 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  FxThreading::detail::init();
+  depthMapGenerator = createDepthMapGenerator(depthBackend);
 
-  shm = SHMSegment<DepthMapSHM>::createSegment("depth-worker", 16*1024*1024);
-  printf("Waiting for depth worker...\n");
-  if (!spawnAndWaitForDepthWorker(depthBackend, &shm->segment()->m_workerReadySem)) {
-    return 1;
-  }
+  FxThreading::detail::init();
 
 
   // RDMA context / connection
@@ -239,9 +234,11 @@ int main(int argc, char** argv) {
   bool enableCharucoDetection = false; // default-off for interaction performance
 
   // CV processing init
-  depthMapGenerator = new DepthMapGenerator(cameraSystem, shm);
-  depthMapGenerator->loadSettings();
-  depthMapGenerator->setPopulateDebugTextures(true);
+  if (depthMapGenerator) {
+    depthMapGenerator->initWithCameraSystem(cameraSystem);
+    depthMapGenerator->loadSettings();
+    depthMapGenerator->setPopulateDebugTextures(true);
+  }
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();

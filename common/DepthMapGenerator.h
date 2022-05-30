@@ -1,145 +1,116 @@
 #pragma once
-#include <glm/glm.hpp>
-#include "opencv2/core.hpp"
-#include "opencv2/features2d.hpp"
-#include "opencv2/core/affine.hpp"
-#include <opencv2/core/cuda.hpp>
-#include "opencv2/calib3d.hpp"
-#include "rhi/RHISurface.h"
-#include "rhi/RHIBuffer.h"
-#include <vector>
 #include "common/FxRenderView.h"
 #include "common/DepthMapSHM.h"
 #include "common/SHMSegment.h"
+#include "rhi/RHISurface.h"
+#include "rhi/RHIBuffer.h"
+#include <glm/glm.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/features2d.hpp>
+#include <opencv2/core/affine.hpp>
+#include <opencv2/core/cuda.hpp>
+#include <opencv2/calib3d.hpp>
+#include <vector>
 
 class CameraSystem;
+class DepthMapGenerator;
+
+enum DepthMapGeneratorBackend {
+  kDepthBackendNone,
+  kDepthBackendDGPU,
+  kDepthBackendDepthAI
+};
+
+DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr);
+DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend);
 
 class DepthMapGenerator {
 public:
-  DepthMapGenerator(CameraSystem*, SHMSegment<DepthMapSHM>*);
+  DepthMapGenerator(DepthMapGeneratorBackend);
   ~DepthMapGenerator();
 
+  void initWithCameraSystem(CameraSystem*);
   void processFrame();
   void renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
   void renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
   void renderIMGUI();
 
-  RHISurface::ptr disparitySurface(size_t viewIdx) const { return m_viewData[viewIdx].m_disparityTexture; }
-  RHISurface::ptr leftGrayscale(size_t viewIdx) const { return m_viewData[viewIdx].m_leftGray; }
-  RHISurface::ptr rightGrayscale(size_t viewIdx) const { return m_viewData[viewIdx].m_rightGray; }
+  RHISurface::ptr disparitySurface(size_t viewIdx) const { return m_viewData[viewIdx]->m_disparityTexture; }
+  RHISurface::ptr leftGrayscale(size_t viewIdx) const { return m_viewData[viewIdx]->m_leftGray; }
+  RHISurface::ptr rightGrayscale(size_t viewIdx) const { return m_viewData[viewIdx]->m_rightGray; }
 
   // controls availability of leftGrayscale and rightGrayscale
   void setPopulateDebugTextures(bool value) { m_populateDebugTextures = value; }
 
   float m_disparityPrescale;
 
-
   bool loadSettings();
   void saveSettings();
 
+  DepthMapGeneratorBackend backend() const { return m_backend; }
+
 protected:
 
-  CameraSystem* m_cameraSystem;
+  DepthMapGeneratorBackend m_backend;
 
-  uint32_t  m_iFBSideWidth;
-  uint32_t  m_iFBSideHeight;
+  virtual void internalLoadSettings(cv::FileStorage&) = 0;
+  virtual void internalSaveSettings(cv::FileStorage&) = 0;
+  virtual void internalRenderIMGUI() = 0;
+  virtual void internalProcessFrame() = 0;
 
-  uint32_t  m_iFBAlgoWidth;
-  uint32_t  m_iFBAlgoHeight;
+  uint32_t m_algoDownsampleX = 1; // optionally overridden in backend
+  uint32_t m_algoDownsampleY = 1;
 
-  RHIBuffer::ptr m_geoDepthMapTexcoordBuffer;
-  RHIBuffer::ptr m_geoDepthMapTristripIndexBuffer;
-  RHIBuffer::ptr m_geoDepthMapLineIndexBuffer;
-  size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount;
+  uint32_t internalWidth() const { return m_internalWidth; }
+  uint32_t internalHeight() const { return m_internalHeight; }
 
-  // Depth map backend
-  SHMSegment<DepthMapSHM>* m_depthMapSHM;
+  void internalGenerateDisparityMips();
 
-  // Algorithm settings
-  bool m_didChangeSettings;
-  int m_algorithm;
-  int m_disparityBytesPerPixel;
-
-  bool m_useDisparityFilter;
-  int m_disparityFilterRadius;
-  int m_disparityFilterIterations;
-
-  // cuda::StereoBM
-  int m_sbmBlockSize;
-
-  // cuda::StereoConstantSpaceBP
-  int m_sbpIterations;
-  int m_sbpLevels;
-  int m_scsbpNrPlane;
-
-  // cuda::StereoSGM
-  int m_sgmP1;
-  int m_sgmP2;
-  int m_sgmUniquenessRatio;
-  bool m_sgmUseHH4;
-
-  // DepthAI worker data
-  int m_confidenceThreshold; // 0...255. Higher values allow lower-confidence samples through the filter.
-  int m_medianFilter; // valid: {0=disabled, 3=3x3 kernel, 5=5x5 kernel, 7=7x7 kernel}
-  int m_bilateralFilterSigma; // 0...65535. "larger value of the parameter means that farther colors within the pixel neighborhood will be mixed together, resulting in larger areas of semi-equal color."
-  int m_leftRightCheckThreshold; // 0...255. only used if LR check is enabled. "Defines the maximum difference between the confidence of pixels from left-right and right-left confidence maps."
-  bool m_enableLRCheck;
-
-
-  // Render settings
-  int m_trimLeft, m_trimTop;
-  int m_trimRight, m_trimBottom;
+  CameraSystem* m_cameraSystem = NULL;
 
   struct ViewData {
-    ViewData() : m_isStereoView(false), m_isVerticalStereo(false) {}
-    bool m_isStereoView;
-    bool m_isVerticalStereo;
-    size_t m_shmViewIndex;
-    size_t m_leftCameraIndex, m_rightCameraIndex;
+    ViewData() {}
 
-    cv::cuda::GpuMat m_leftMap1_gpu, m_leftMap2_gpu, m_rightMap1_gpu, m_rightMap2_gpu;
+    bool m_isStereoView = false;
+    bool m_isVerticalStereo = false;
+    size_t m_leftCameraIndex = 0, m_rightCameraIndex = 0;
+
     glm::mat4 m_R1inv, m_Q, m_Qinv;
 
     RHISurface::ptr m_disparityTexture;
     RHISurface::ptr m_leftGray, m_rightGray;
 
     std::vector<RHIRenderTarget::ptr> m_disparityTextureMipTargets;
+    float m_CameraDistanceMeters = 0.0f;
 
-    // vr::CameraVideoStreamFrameHeader_t m_lastFrameHeader;
-    // Matrix4 m_lastFrameHeaderMatrix;
-    float m_CameraDistanceMeters;
-
-    //Matrices used in the stereo computation.
-    RHISurface::ptr origLeftBlitSrf;
-    RHISurface::ptr origRightBlitSrf;
-    RHIRenderTarget::ptr origLeftBlitRT;
-    RHIRenderTarget::ptr origRightBlitRT;
-
-    cv::cuda::GpuMat rectLeft_gpu;
-    cv::cuda::GpuMat rectRight_gpu;
-    cv::cuda::GpuMat resizedLeft_gpu;
-    cv::cuda::GpuMat resizedRight_gpu;
-    cv::cuda::GpuMat resizedTransposedLeft_gpu;
-    cv::cuda::GpuMat resizedTransposedRight_gpu;
+  private:
+    ViewData(const ViewData&);
+    ViewData& operator=(const ViewData&);
   };
 
-  std::vector<ViewData> m_viewData;
-  unsigned int m_viewDataRevision;
+  virtual ViewData* newEmptyViewData() = 0; // creates derived struct type
+  virtual void internalUpdateViewData() = 0;
 
-  void recomputePerViewData();
+  unsigned int m_viewDataRevision = 0;
+  std::vector<ViewData*> m_viewData;
 
-  // Profiling events and data
-  bool m_enableProfiling;
-  cv::cuda::Event m_setupStartEvent;
-  cv::cuda::Event m_setupFinishedEvent;
+  RHIBuffer::ptr m_geoDepthMapTexcoordBuffer;
+  RHIBuffer::ptr m_geoDepthMapTristripIndexBuffer;
+  RHIBuffer::ptr m_geoDepthMapLineIndexBuffer;
+  size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount;
 
-  cv::cuda::Event m_copyStartEvent;
-  cv::cuda::Event m_processingFinishedEvent;
-  cv::cuda::Stream m_globalStream;
+  // Render settings
+  int m_trimLeft = 8, m_trimTop = 8;
+  int m_trimRight = 8, m_trimBottom = 8;
 
-  float m_setupTimeMs, m_syncTimeMs, m_algoTimeMs, m_copyTimeMs;
-
-  bool m_populateDebugTextures;
+  bool m_populateDebugTextures = false;
 
   void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix);
+
+private:
+  ViewData* viewDataAtIndex(size_t index) { return m_viewData[index]; }
+  uint32_t m_internalWidth, m_internalHeight;
+
+  DepthMapGenerator(const DepthMapGenerator&);
+  DepthMapGenerator& operator=(const DepthMapGenerator&);
 };
