@@ -717,9 +717,12 @@ int main(int argc, char** argv) {
 
   FxThreading::detail::shutdown();
 
-  SDL_GL_DeleteContext(gl_context);
-  SDL_DestroyWindow(window);
-  SDL_Quit();
+  windowRenderTarget.reset();
+
+  // XXX: We just leak the GL context to prevent a crash at shutdown due to static resource destruction
+  // SDL_GL_DeleteContext(gl_context);
+  // SDL_DestroyWindow(window);
+  // SDL_Quit();
 
   return 0;
 }
