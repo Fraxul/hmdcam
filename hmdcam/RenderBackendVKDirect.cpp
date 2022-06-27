@@ -31,7 +31,7 @@ const std::vector<const char*> requiredInstanceExtensions = {
 
 const std::vector<const char*> requiredDeviceExtensions = {
   VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-  VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME,
+  //VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME, // not useful yet
   VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
   VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
   VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
@@ -96,6 +96,7 @@ void RenderBackendVKDirect::init() {
   }
 
   // Physical device properties enumeration
+#if 0 // Disabled for compatibility with L4T r32.2 -- extension isn't present, but we don't really need it anyway
   {
     auto res = m_gpu.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDrmPropertiesEXT>();
     vk::PhysicalDeviceProperties& pdp = res.get<vk::PhysicalDeviceProperties2>().properties;
@@ -106,6 +107,7 @@ void RenderBackendVKDirect::init() {
     printf("  hasRender=%u   render=(%ld, %ld)\n", drmExt.hasRender, drmExt.renderMajor, drmExt.renderMinor);
 
   }
+#endif
 
   // Select mode and target plane; create display surface.
   {
