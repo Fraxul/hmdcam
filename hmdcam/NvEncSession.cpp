@@ -534,8 +534,10 @@ void NvEncSession::start() {
   while (!m_gpuSubmissionQueue.empty())
     m_gpuSubmissionQueue.pop();
 
-  pthread_create(&m_cudaWorkerThread, NULL, cudaWorker_thunk, this);
-  m_cudaWorkerThreadRunning = true;
+  if (!m_cudaWorkerThreadRunning) {
+    pthread_create(&m_cudaWorkerThread, NULL, cudaWorker_thunk, this);
+    m_cudaWorkerThreadRunning = true;
+  }
 
   printf("NvEncSession: started.\n");
   pthread_mutex_unlock(&m_stateLock);
@@ -562,12 +564,13 @@ void NvEncSession::stop() {
   }
   pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
 
-  // Shut down the encoder
-  m_enc->abort();
-
   // Wait till capture plane DQ Thread finishes
   // i.e. all the capture plane buffers are dequeued
   m_enc->capture_plane.waitForDQThread(2000);
+
+  // Shut down the encoder
+  m_enc->abort();
+
   delete m_enc;
   m_enc = NULL;
   while (!m_encoderOutputPlaneBufferQueue.empty()) m_encoderOutputPlaneBufferQueue.pop();
