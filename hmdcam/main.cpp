@@ -871,6 +871,18 @@ int main(int argc, char* argv[]) {
               }
             }
 
+            // If the UI texture is taller than the debug surface, scale it down proportionally.
+            // (We will hit this case with a common configuration of 1 or 2 1280x720 cameras)
+            if (guiTex->height() >= debugSurface->height()) {
+              uiDestRect.y = 0;
+              uiDestRect.height = debugSurface->height();
+              // apply aspect ratio correction to the X position/size
+              float scale = static_cast<float>(debugSurface->height()) / static_cast<float>(guiTex->height());
+              float xInsetPx = (scale * 0.5f) * static_cast<float>(guiTex->width());
+              uiDestRect.x += xInsetPx;
+              uiDestRect.width -= xInsetPx;
+            }
+
             rhi()->setViewport(uiDestRect);
 
             rhi()->bindBlendState(standardAlphaOverBlendState);
