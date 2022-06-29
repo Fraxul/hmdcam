@@ -49,6 +49,7 @@
 float zoomFactor = 1.0f;
 float stereoOffset = 0.0f;
 bool useMask = true;
+float panoClipOffset = 0.0f;
 float panoClipScale = 1.0f;
 float panoTxScale = 1.0f;
 bool debugUseDistortion = true;
@@ -80,6 +81,7 @@ bool loadSettings() {
     readNode(fs, zoomFactor);
     readNode(fs, stereoOffset);
     readNode(fs, useMask);
+    readNode(fs, panoClipOffset);
     readNode(fs, panoClipScale);
     readNode(fs, panoTxScale);
     readNode(fs, uiScale);
@@ -117,6 +119,7 @@ void saveSettings() {
     writeNode(fs, zoomFactor);
     writeNode(fs, stereoOffset);
     writeNode(fs, useMask);
+    writeNode(fs, panoClipOffset);
     writeNode(fs, panoClipScale);
     writeNode(fs, panoTxScale);
     writeNode(fs, uiScale);
@@ -606,20 +609,23 @@ int main(int argc, char* argv[]) {
               settingsDirty = true;
             }
           }
-          //ImGui::Text("Config");
-          settingsDirty |= ImGui::Checkbox("Mask", &useMask);
-          settingsDirty |= ImGui::SliderFloat("Pano Tx Scale", &panoTxScale, 0.0f, 10.0f);
-          settingsDirty |= ImGui::SliderFloat("Pano Clip Scale", &panoClipScale, 0.0f, 1.0f);
-          settingsDirty |= ImGui::SliderFloat("Zoom", &zoomFactor, 0.5f, 2.0f);
-          settingsDirty |= ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
-          {
-            glm::vec2 acCenter = argusCamera->acRegionCenter();
-            glm::vec2 acSize = argusCamera->acRegionSize();
-            bool dirty = ImGui::SliderFloat2("AC Region Center", &acCenter[0], 0.0f, 1.0f);
-            dirty |=     ImGui::SliderFloat2("AC Region Size",   &acSize[0],   0.0f, 1.0f);
-            if (dirty) {
-              argusCamera->setAcRegion(acCenter, acSize);
-              settingsDirty = true;
+
+          if (ImGui::CollapsingHeader("Render Settings")) {
+            // settingsDirty |= ImGui::Checkbox("Mask", &useMask); // Disabled for now
+            settingsDirty |= ImGui::SliderFloat("Pano Tx Scale", &panoTxScale, 0.0f, 10.0f);
+            settingsDirty |= ImGui::SliderFloat("Pano Clip Offset", &panoClipOffset, -0.5f, 0.5f);
+            settingsDirty |= ImGui::SliderFloat("Pano Clip Scale", &panoClipScale, 0.0f, 1.0f);
+            settingsDirty |= ImGui::SliderFloat("Zoom", &zoomFactor, 0.5f, 2.0f);
+            settingsDirty |= ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
+            {
+              glm::vec2 acCenter = argusCamera->acRegionCenter();
+              glm::vec2 acSize = argusCamera->acRegionSize();
+              bool dirty = ImGui::SliderFloat2("AC Region Center", &acCenter[0], 0.0f, 1.0f);
+              dirty |=     ImGui::SliderFloat2("AC Region Size",   &acSize[0],   0.0f, 1.0f);
+              if (dirty) {
+                argusCamera->setAcRegion(acCenter, acSize);
+                settingsDirty = true;
+              }
             }
           }
 
@@ -836,9 +842,9 @@ int main(int argc, char* argv[]) {
                 float clipFrac = (panoFovX - stereoFovX) / stereoFovX;
                 clipFrac = 1.0f - ((1.0f - clipFrac) * panoClipScale); // apply scale
                 if (viewEyeIdx == 0) // left camera, clip from max side
-                  clipMaxU = clipFrac;
+                  clipMaxU = std::min<float>(clipFrac + panoClipOffset, 1.0f);
                 else // right camera, clip from min side
-                  clipMinU = 1.0f - clipFrac;
+                  clipMinU = std::max<float>(0.0f, (1.0f - clipFrac) + panoClipOffset);
 
                 // half-width is viewDepth * tanf(0.5 * fovx). maps directly to scale factor since the quad we're rendering is two units across (NDC quad)
                 float panoFovScaleFactor = viewDepth * tan(glm::radians(panoFovX * 0.5f));
