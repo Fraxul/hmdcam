@@ -50,7 +50,7 @@ float zoomFactor = 1.0f;
 float stereoOffset = 0.0f;
 bool useMask = true;
 float panoClipScale = 1.0f;
-float panoTxScale = 5.0f;
+float panoTxScale = 1.0f;
 bool debugUseDistortion = true;
 float uiScale = 0.75f;
 float uiDepth = 2.0f;
@@ -846,7 +846,7 @@ int main(int argc, char* argv[]) {
                 if (debug) printf("stereoFovX=%f panoFovX=%f clipFrac=%f min=%f max=%f panoFovScaleFactor=%f\n", stereoFovX, panoFovX, clipFrac, clipMinU, clipMaxU, panoFovScaleFactor);
 
                 float rScale = (viewEyeIdx == 0) ? 0.5f : -0.5f;
-                glm::mat4 rot = glm::mat4(glm::eulerAngleYXZ(rx * rScale, rx * rScale, rz * rScale));
+                glm::mat4 rot = glm::mat4(glm::eulerAngleYXZ(rx * rScale, ry * rScale, rz * rScale));
 
                 float tScale = ((viewEyeIdx == 0) ? 0.5f : -0.5f) * panoTxScale;
 
