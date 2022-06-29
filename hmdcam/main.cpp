@@ -52,6 +52,13 @@ bool useMask = true;
 float panoClipScale = 1.0f;
 float panoTxScale = 5.0f;
 bool debugUseDistortion = true;
+float uiScale = 0.75f;
+float uiDepth = 2.0f;
+
+
+uint64_t settingsDirtyFrame = 0; // 0 if not dirty, frame number otherwise.
+const int kSettingsAutosaveIntervalSeconds = 10;
+uint64_t settingsAutosaveIntervalFrames = 1000; // will be recomputed when we know the framerate based on kSettingsAutosaveIntervalSeconds
 
 // Camera info/state
 IArgusCamera* argusCamera;
@@ -59,6 +66,80 @@ CameraSystem* cameraSystem;
 
 
 RDMAContext* rdmaContext;
+
+#define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
+static const char* hmdcamSettingsFilename = "hmdcamSettings.yml";
+bool loadSettings() {
+  cv::FileStorage fs(hmdcamSettingsFilename, cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+  if (!fs.isOpened()) {
+    printf("Unable to open settings file %s\n", hmdcamSettingsFilename);
+    return false;
+  }
+
+  try {
+    readNode(fs, zoomFactor);
+    readNode(fs, stereoOffset);
+    readNode(fs, useMask);
+    readNode(fs, panoClipScale);
+    readNode(fs, panoTxScale);
+    readNode(fs, uiScale);
+    readNode(fs, uiDepth);
+
+    float ev = argusCamera->exposureCompensation();
+    cv::read(fs["exposureCompensation"], ev, ev);
+    argusCamera->setExposureCompensation(ev);
+
+    glm::vec2 acRegionCenter = argusCamera->acRegionCenter();
+    glm::vec2 acRegionSize = argusCamera->acRegionSize();
+    cv::read(fs["acRegionCenterX"], acRegionCenter.x, acRegionCenter.x);
+    cv::read(fs["acRegionCenterY"], acRegionCenter.y, acRegionCenter.y);
+    cv::read(fs["acRegionSizeX"], acRegionSize.x, acRegionSize.x);
+    cv::read(fs["acRegionSizeY"], acRegionSize.y, acRegionSize.y);
+    argusCamera->setAcRegion(acRegionCenter, acRegionSize);
+
+    // cv doesn't support int64_t, so we cast to double
+    double captureDurationOffset = static_cast<double>(argusCamera->captureDurationOffset());
+    readNode(fs, captureDurationOffset);
+    argusCamera->setCaptureDurationOffset(captureDurationOffset);
+  } catch (const std::exception& ex) {
+    printf("Unable to load hmdcam settings: %s\n", ex.what());
+    return false;
+  }
+  return true;
+}
+#undef readNode
+
+#define writeNode(fileStorage, settingName) fileStorage.write(#settingName, settingName)
+void saveSettings() {
+  try {
+    cv::FileStorage fs(hmdcamSettingsFilename, cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+
+    writeNode(fs, zoomFactor);
+    writeNode(fs, stereoOffset);
+    writeNode(fs, useMask);
+    writeNode(fs, panoClipScale);
+    writeNode(fs, panoTxScale);
+    writeNode(fs, uiScale);
+    writeNode(fs, uiDepth);
+
+    fs.write("exposureCompensation", argusCamera->exposureCompensation());
+
+    glm::vec2 acRegionCenter = argusCamera->acRegionCenter();
+    glm::vec2 acRegionSize = argusCamera->acRegionSize();
+    fs.write("acRegionCenterX", acRegionCenter.x);
+    fs.write("acRegionCenterY", acRegionCenter.y);
+    fs.write("acRegionSizeX", acRegionSize.x);
+    fs.write("acRegionSizeY", acRegionSize.y);
+
+    // cv doesn't support int64_t, so we cast to double
+    double captureDurationOffset = static_cast<double>(argusCamera->captureDurationOffset());
+    writeNode(fs, captureDurationOffset);
+  } catch (const std::exception& ex) {
+    printf("Unable to save hmdcam settings: %s\n", ex.what());
+  }
+  settingsDirtyFrame = 0;
+}
+#undef writeNode
 
 
 // Profiling data
@@ -212,6 +293,8 @@ int main(int argc, char* argv[]) {
     printf("RenderInit() failed\n");
     return 1;
   }
+
+  settingsAutosaveIntervalFrames = kSettingsAutosaveIntervalSeconds * static_cast<unsigned int>(renderBackend->refreshRateHz());
 
   FxThreading::detail::init();
 
@@ -389,6 +472,9 @@ int main(int argc, char* argv[]) {
     // Load initial autocontrol region of interest
     argusCamera->setAcRegion(/*center=*/ glm::vec2(0.5f, 0.5f), /*size=*/ glm::vec2(0.5f, 0.5f));
 
+    // Load settings
+    loadSettings();
+
     // Start repeating capture
     argusCamera->setRepeatCapture(true);
 
@@ -430,8 +516,6 @@ int main(int argc, char* argv[]) {
 
     bool drawUI = false;
     bool debugEnableDepthMapGenerator = true;
-    float uiScale = 0.75f;
-    float uiDepth = 2.0f;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
 
     while (!want_quit) {
@@ -508,6 +592,8 @@ int main(int argc, char* argv[]) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
         ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
+        bool settingsDirty = false;
+
         if (calibrationContext) {
 
           calibrationContext->processUI();
@@ -517,14 +603,15 @@ int main(int argc, char* argv[]) {
             float ev = argusCamera->exposureCompensation();
             if (ImGui::SliderFloat("Exposure", &ev, -10.0f, 10.0f, "%.1f", ImGuiSliderFlags_None)) {
               argusCamera->setExposureCompensation(ev);
+              settingsDirty = true;
             }
           }
           //ImGui::Text("Config");
-          ImGui::Checkbox("Mask", &useMask);
-          ImGui::SliderFloat("Pano Tx Scale", &panoTxScale, 0.0f, 10.0f);
-          ImGui::SliderFloat("Pano Clip Scale", &panoClipScale, 0.0f, 1.0f);
-          ImGui::SliderFloat("Zoom", &zoomFactor, 0.5f, 2.0f);
-          ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
+          settingsDirty |= ImGui::Checkbox("Mask", &useMask);
+          settingsDirty |= ImGui::SliderFloat("Pano Tx Scale", &panoTxScale, 0.0f, 10.0f);
+          settingsDirty |= ImGui::SliderFloat("Pano Clip Scale", &panoClipScale, 0.0f, 1.0f);
+          settingsDirty |= ImGui::SliderFloat("Zoom", &zoomFactor, 0.5f, 2.0f);
+          settingsDirty |= ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
           {
             glm::vec2 acCenter = argusCamera->acRegionCenter();
             glm::vec2 acSize = argusCamera->acRegionSize();
@@ -532,6 +619,7 @@ int main(int argc, char* argv[]) {
             dirty |=     ImGui::SliderFloat2("AC Region Size",   &acSize[0],   0.0f, 1.0f);
             if (dirty) {
               argusCamera->setAcRegion(acCenter, acSize);
+              settingsDirty = true;
             }
           }
 
@@ -579,6 +667,7 @@ int main(int argc, char* argv[]) {
               cameraSystem->saveCalibrationData();
               if (depthMapGenerator)
                 depthMapGenerator->saveSettings();
+              saveSettings();
             }
             if (debugEnableDepthMapGenerator && depthMapGenerator) {
               depthMapGenerator->renderIMGUI();
@@ -586,8 +675,8 @@ int main(int argc, char* argv[]) {
           } // Calibration header
 
           if (ImGui::CollapsingHeader("UI Settings")) {
-            ImGui::SliderFloat("UI Scale", &uiScale, 0.5f, 2.5f);
-            ImGui::SliderFloat("UI Depth", &uiDepth, 1.0f, 10.0f);
+            settingsDirty |= ImGui::SliderFloat("UI Scale", &uiScale, 0.5f, 2.5f);
+            settingsDirty |= ImGui::SliderFloat("UI Depth", &uiDepth, 1.0f, 10.0f);
           } // UI Settings header
         }
 
@@ -624,6 +713,7 @@ int main(int argc, char* argv[]) {
             float offsetUs = static_cast<float>(offsetNs) / 1000.0f;
             if (ImGui::SliderFloat("Offset (us)", &offsetUs, -1000.0f, 1000.0f, "%.1f", ImGuiSliderFlags_None)) {
               argusCamera->setCaptureDurationOffset(static_cast<int64_t>(offsetUs * 1000.0f));
+              settingsDirty = true;
             }
           }
           if (ImGui::Button("Restart Capture")) {
@@ -635,6 +725,12 @@ int main(int argc, char* argv[]) {
         ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
         ImGui::Checkbox("Debug output: Distortion correction", &debugUseDistortion);
         ImGui::End();
+
+        if (settingsDirty) {
+          settingsDirtyFrame = frameCounter;
+        } else if ((settingsDirtyFrame != 0) && (frameCounter >= (settingsDirtyFrame + settingsAutosaveIntervalFrames))) {
+          saveSettings();
+        }
 
       } else {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, 0), 0, /*pivot=*/ImVec2(0.5f, 0.0f)); // top-center aligned
