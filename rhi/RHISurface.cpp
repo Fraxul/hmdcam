@@ -20,6 +20,7 @@ size_t rhiSurfaceFormatSize(RHISurfaceFormat format) {
     case kSurfaceFormat_sRGB8_A8:
     case kSurfaceFormat_RGBA8:
     case kSurfaceFormat_RGB10_A2:
+    case kSurfaceFormat_RG16:
     case kSurfaceFormat_R32f:
     case kSurfaceFormat_Depth32f:
       return 4;

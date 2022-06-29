@@ -330,17 +330,17 @@ RHISurface::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map
 
   // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc) -- this is the output format of cv::initUndistortRectifyMap
   // Combine the maps into a buffer we can upload to opengl. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
-  float* distortionMapTmp = new float[width * height * 2];
+  uint16_t* distortionMapTmp = new uint16_t[width * height * 2];
   for (int y = 0; y < height; ++y) {
     for (int x = 0; x < width; ++x) {
       // .at(row, col) -- Y rows, X columns.
-      distortionMapTmp[(((y * width) + x) * 2) + 0] = map1.at<float>(y, x) / static_cast<float>(width);
-      distortionMapTmp[(((y * width) + x) * 2) + 1] = map2.at<float>(y, x) / static_cast<float>(height);
+      distortionMapTmp[(((y * width) + x) * 2) + 0] = static_cast<uint16_t>(glm::clamp(map1.at<float>(y, x) / static_cast<float>(width), 0.0f, 1.0f) * 65535.0f);
+      distortionMapTmp[(((y * width) + x) * 2) + 1] = static_cast<uint16_t>(glm::clamp(map2.at<float>(y, x) / static_cast<float>(height), 0.0f, 1.0f) * 65535.0f);;
     }
   }
 
-  RHISurface::ptr distortionMap = rhi()->newTexture2D(width, height, RHISurfaceDescriptor(kSurfaceFormat_RG32f));
-  rhi()->loadTextureData(distortionMap, kVertexElementTypeFloat2, distortionMapTmp);
+  RHISurface::ptr distortionMap = rhi()->newTexture2D(width, height, RHISurfaceDescriptor(kSurfaceFormat_RG16));
+  rhi()->loadTextureData(distortionMap, kVertexElementTypeUShort2N, distortionMapTmp);
 
   delete[] distortionMapTmp;
   return distortionMap;

@@ -13,7 +13,7 @@ void main() {
 //  outColor = vec4(fragTexCoord, 0.0, 1.0);
 //  gl_FragColor = texture2D(imageTex, fragTexCoord);
 
-  if (any(notEqual(clamp(distortionCoord, vec2(0.0), vec2(1.0)), distortionCoord))) {
+  if (any(equal(distortionCoord.xyxy, vec4(0.0f, 0.0f, 1.0f, 1.0f)))) { // clip edge pixels
     outColor = vec4(0.0);
   } else {
     outColor = texture(imageTex, distortionCoord) * texture(maskTex, distortionCoord).r;

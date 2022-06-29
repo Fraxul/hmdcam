@@ -15,7 +15,7 @@ void main() {
   overlayColor.a = ceil(dot(overlayColor.rgb, vec3(1.0f)));
 
   vec4 cameraColor;
-  if (any(notEqual(clamp(distortionCoord, vec2(0.0), vec2(1.0)), distortionCoord))) {
+  if (any(equal(distortionCoord.xyxy, vec4(0.0f, 0.0f, 1.0f, 1.0f)))) { // clip edge pixels
     cameraColor = vec4(0.0);
   } else {
     cameraColor = texture(imageTex, distortionCoord);
