@@ -27,6 +27,9 @@ public:
   virtual void setRepeatCapture(bool) = 0;
   virtual void setExposureCompensation(float stops) = 0;
   virtual void setAcRegion(const glm::vec2& center, const glm::vec2& size) = 0;
+
+  virtual void setCaptureDurationOffset(int64_t ns) = 0;
+  virtual int64_t captureDurationOffset() const = 0;
   // ====================
 
 
@@ -95,6 +98,11 @@ public:
   // Default is the whole image: center=(0.5, 0.5), size = (1.0, 1.0).
   // Region will be clipped to the size of the image if it overhangs an edge (ex. if you move the center point without decreasing the size)
   virtual void setAcRegion(const glm::vec2& center, const glm::vec2& size);
+
+
+  void setCaptureDurationOffset(int64_t ns);
+  int64_t captureDurationOffset() const;
+
   // ====================
 
   void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&);
@@ -190,6 +198,9 @@ public:
   virtual void setRepeatCapture(bool) {}
   virtual void setExposureCompensation(float stops) {}
   virtual void setAcRegion(const glm::vec2& center, const glm::vec2& size) {}
+
+  virtual void setCaptureDurationOffset(int64_t ns) {}
+  virtual int64_t captureDurationOffset() const { return 0; }
 
 protected:
   std::vector<RHISurface::ptr> m_textures;

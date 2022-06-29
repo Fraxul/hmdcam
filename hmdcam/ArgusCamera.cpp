@@ -367,9 +367,9 @@ bool ArgusCamera::readFrame() {
   }
 
   m_didAdjustCaptureIntervalThisFrame = false;
-  if (m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > 8) && m_previousSensorTimestampNs)) {
+  if (m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > 256) && m_previousSensorTimestampNs)) {
 
-    if (boost::accumulators::rolling_count(m_captureIntervalStats) > 8) {
+    if (boost::accumulators::rolling_count(m_captureIntervalStats) > 64) {
 
       int64_t durationToTSDeltaOffset = boost::accumulators::rolling_mean(m_captureIntervalStats) - m_currentCaptureDurationNs;
 
@@ -381,8 +381,8 @@ bool ArgusCamera::readFrame() {
       int64_t targetOffset = std::min<int64_t>(std::max<int64_t>(targetDuration - m_currentCaptureDurationNs, -offsetMax), offsetMax);
       // printf("durationToTSDeltaOffset %ld targetDuration %ld targetOffset %ld\n", durationToTSDeltaOffset, targetDuration, targetOffset);
 
-      // Perform an adjustment if we're off by at least 1 microsecond
-      if (std::abs(targetOffset) > 1000) {
+      // Perform an adjustment if we're off by at least 50 microseconds
+      if (std::abs(targetOffset) > 50000) {
         // Clamp new duration to sensor mode limits
         int64_t newDuration = std::min<int64_t>(std::max<int64_t>(m_currentCaptureDurationNs + (targetOffset / 64), m_captureDurationMinNs), m_captureDurationMaxNs);
         // printf("Capture duration adjust %ld (%ld -> %ld)\n", targetOffset/64, m_currentCaptureDurationNs, newDuration);
@@ -412,6 +412,17 @@ void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {
   Argus::interface_cast<Argus::ISourceSettings>(m_captureRequest)->setFrameDurationRange(captureDurationNs);
   m_currentCaptureDurationNs = captureDurationNs;
   m_samplesAtCurrentDuration = -64; // Wait long enough to clear out the rolling window of interval stats
+}
+
+int64_t ArgusCamera::captureDurationOffset() const {
+  return static_cast<int64_t>(m_currentCaptureDurationNs) - static_cast<int64_t>(m_targetCaptureIntervalNs);
+}
+
+void ArgusCamera::setCaptureDurationOffset(int64_t ns) {
+  if (captureDurationOffset() == ns)
+    return; // no change
+
+  setCaptureDurationNs(static_cast<uint64_t>(static_cast<int64_t>(m_targetCaptureIntervalNs) + ns));
 }
 
 void ArgusCamera::stop() {
