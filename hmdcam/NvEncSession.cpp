@@ -21,7 +21,6 @@
 #include "nvbufsurftransform.h"
 #include "NvLogging.h"
 #include "NvVideoEncoder.h"
-#include "NvVideoConverter.h"
 #include "NvUtils.h"
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)

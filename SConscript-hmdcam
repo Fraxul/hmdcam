@@ -54,7 +54,6 @@ tegra_mmapi_src = [
   'tegra_mmapi/NvUtils.cpp',
   'tegra_mmapi/NvV4l2Element.cpp',
   'tegra_mmapi/NvV4l2ElementPlane.cpp',
-  'tegra_mmapi/NvVideoConverter.cpp',
   'tegra_mmapi/NvVideoDecoder.cpp',
   'tegra_mmapi/NvVideoEncoder.cpp'
 ]
