@@ -49,7 +49,19 @@ public:
 
   DepthMapGeneratorBackend backend() const { return m_backend; }
 
-  float disparityPrescale() const { return m_disparityPrescale; }
+  uint32_t maxDisparity() const { return m_maxDisparity; } // maximum disparity value supported by the backend, pixel units
+  float disparityPrescale() const { return m_disparityPrescale; } // multiplier to convert the raw values in disparitySurface to pixel units
+
+  void setDebugDisparityCPUAccessEnabled(bool v) { m_debugDisparityCPUAccessEnabled = v; }
+  bool debugDisparityCPUAccessEnabled() const { return m_debugDisparityCPUAccessEnabled; }
+
+  float debugPeekDisparityTexel(size_t viewIdx, glm::ivec2 texelCoord) const;
+  float debugPeekDisparityUV(size_t viewIdx, glm::vec2 uv) const;
+  glm::vec3 debugPeekLocalPositionUV(size_t viewIdx, glm::vec2 uv) const;
+  glm::vec3 debugPeekLocalPositionTexel(size_t viewIdx, glm::ivec2 texelCoord) const;
+
+  float debugDisparityScale() const { return m_debugDisparityScale; }
+  void setDebugDisparityScale(float v) { m_debugDisparityScale = v; }
 
 protected:
 
@@ -63,8 +75,11 @@ protected:
   // Data format controls that should be set in the backend
   uint32_t m_algoDownsampleX = 1;
   uint32_t m_algoDownsampleY = 1;
+  uint32_t m_maxDisparity = 128;
   float m_disparityPrescale = 1.0f;
 
+  float m_debugDisparityScale = 1.0f;
+  bool m_debugDisparityCPUAccessEnabled = false;
 
   uint32_t inputWidth() const { return m_cameraSystem->cameraProvider()->streamWidth(); }
   uint32_t inputHeight() const { return m_cameraSystem->cameraProvider()->streamHeight(); }
@@ -78,7 +93,9 @@ protected:
 
   struct ViewData {
     ViewData() {}
-    virtual ~ViewData() {}
+    virtual ~ViewData() {
+      free(m_debugCPUDisparity);
+    }
 
     bool m_isStereoView = false;
     bool m_isVerticalStereo = false;
@@ -94,6 +111,11 @@ protected:
 
     std::vector<RHIRenderTarget::ptr> m_disparityTextureMipTargets;
     float m_CameraDistanceMeters = 0.0f;
+
+    void* m_debugCPUDisparity = nullptr;
+    uint8_t m_debugCPUDisparityBytesPerPixel = 0;
+
+    void ensureDebugCPUAccessEnabled(uint8_t disparityBytesPerPixel); // requires disparity texture to exist for array sizing
 
   private:
     ViewData(const ViewData&);
@@ -120,7 +142,7 @@ protected:
   void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix);
 
 private:
-  ViewData* viewDataAtIndex(size_t index) { return m_viewData[index]; }
+  ViewData* viewDataAtIndex(size_t index) const { return m_viewData[index]; }
   uint32_t m_internalWidth, m_internalHeight;
 
   DepthMapGenerator(const DepthMapGenerator&);

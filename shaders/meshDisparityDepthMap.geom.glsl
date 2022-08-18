@@ -15,7 +15,9 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   vec2 trim_maxXY;
 
   int renderStereo;
-  float pad2, pad3, pad4;
+  float maxValidDisparityPixels;
+  int maxValidDisparityRaw;
+  float pad4;
 };
 
 in V2G {

@@ -67,8 +67,8 @@ struct MeshTransformUniformBlock {
 static FxAtomicString ksDisparityScaleUniformBlock("DisparityScaleUniformBlock");
 struct DisparityScaleUniformBlock {
   float disparityScale;
-  int sourceLevel;
-  float pad3;
+  uint32_t sourceLevel;
+  uint32_t maxValidDisparityRaw;
   float pad4;
 };
 
@@ -104,6 +104,73 @@ template <typename T> static std::vector<T> flattenVector(const std::vector<std:
 }
 extern int triangulationDisparityScaleInv; // TODO remove
 
+void drawDisparityImageCursorOverlay(glm::vec2 normalizedPoint) {
+  ImVec2 rectMin = ImGui::GetItemRectMin();
+  ImVec2 rectMax = ImGui::GetItemRectMax();
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+  int px = static_cast<int>(normalizedPoint.x * (static_cast<float>(rectMax.x - rectMin.x))) + rectMin.x;
+  int py = static_cast<int>(normalizedPoint.y * (static_cast<float>(rectMax.y - rectMin.y))) + rectMin.y;
+  int border = 4;
+
+  ImU32 green = IM_COL32(0, 255, 0, 255);
+
+  drawList->AddLine(ImVec2(rectMin.x, py), ImVec2(px - border, py), green);
+  drawList->AddLine(ImVec2(px + border, py), ImVec2(rectMax.x, py), green);
+
+  drawList->AddLine(ImVec2(px, rectMin.y), ImVec2(px, py - border), green);
+  drawList->AddLine(ImVec2(px, py + border), ImVec2(px, rectMax.y), green);
+
+  drawList->AddRect(ImVec2(px - border, py - border), ImVec2(px + border, py + border), green);
+}
+
+void drawDisparityImageCursorOverlayWithOffset(glm::vec2 normalizedPoint, float normalizedOffset) {
+  ImVec2 rectMin = ImGui::GetItemRectMin();
+  ImVec2 rectMax = ImGui::GetItemRectMax();
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+  int px = static_cast<int>(normalizedPoint.x * (static_cast<float>(rectMax.x - rectMin.x))) + rectMin.x;
+  int pxO = static_cast<int>((normalizedPoint.x + normalizedOffset) * (static_cast<float>(rectMax.x - rectMin.x))) + rectMin.x;
+
+  int pxL = px, pxR = pxO;
+  if (pxR < pxL) {
+    std::swap(pxL, pxR);
+  }
+  int py = static_cast<int>(normalizedPoint.y * (static_cast<float>(rectMax.y - rectMin.y))) + rectMin.y;
+  int border = 4;
+
+  ImU32 green =     IM_COL32(  0, 255,   0, 255);
+  ImU32 magenta =   IM_COL32(255,   0, 255, 255);
+
+  // L-R lines
+  drawList->AddLine(ImVec2(rectMin.x, py), ImVec2(pxL - border, py), green);
+  drawList->AddLine(ImVec2(pxL + border, py), ImVec2(pxR - border, py), magenta);
+  drawList->AddLine(ImVec2(pxR + border, py), ImVec2(rectMax.x, py), green);
+
+  // U-D lines
+  drawList->AddLine(ImVec2(px, rectMin.y), ImVec2(px, py - border), green);
+  drawList->AddLine(ImVec2(px, py + border), ImVec2(px, rectMax.y), green);
+  drawList->AddLine(ImVec2(pxO, rectMin.y), ImVec2(pxO, py - border), magenta);
+  drawList->AddLine(ImVec2(pxO, py + border), ImVec2(pxO, rectMax.y), magenta);
+
+  // frames
+  drawList->AddRect(ImVec2(px - border, py - border), ImVec2(px + border, py + border), green);
+  drawList->AddRect(ImVec2(pxO - border, py - border), ImVec2(pxO + border, py + border), magenta);
+}
+
+bool updateHoverPositionForLastItem(glm::vec2& hoverPositionNormalized) {
+  ImVec2 rectMin = ImGui::GetItemRectMin();
+  ImVec2 rectMax = ImGui::GetItemRectMax();
+  if (!ImGui::IsMouseHoveringRect(rectMin, rectMax))
+    return false;
+
+  ImVec2 mp = ImGui::GetMousePos();
+  hoverPositionNormalized = glm::vec2(
+    glm::clamp((mp.x - rectMin.x) / (rectMax.x - rectMin.x), 0.0f, 1.0f),
+    glm::clamp((mp.y - rectMin.y) / (rectMax.y - rectMin.y), 0.0f, 1.0f));
+  return true;
+}
+
 
 
 // Main code
@@ -130,6 +197,7 @@ int main(int argc, char** argv) {
   }
 
   depthMapGenerator = createDepthMapGenerator(depthBackend);
+  depthMapGenerator->setDebugDisparityCPUAccessEnabled(true);
 
   FxThreading::detail::init();
 
@@ -489,9 +557,13 @@ int main(int argc, char** argv) {
 
         if (disparitySurface) {
 
-          static int disparityScale = 2;
           static int disparityScaleSourceLevel = 0;
-          ImGui::SliderInt("Disparity Scale", &disparityScale, 1, 128);
+
+          float debugDisparityScale = depthMapGenerator->debugDisparityScale();
+          if (ImGui::SliderFloat("Debug Disparity Scale", &debugDisparityScale, 0.0f, 2.0f)) {
+            depthMapGenerator->setDebugDisparityScale(debugDisparityScale);
+          }
+
           ImGui::SliderInt("Source Level", &disparityScaleSourceLevel, 0, disparitySurface->mipLevels() - 1);
 
           if (!disparityScaleTarget) {
@@ -503,15 +575,44 @@ int main(int argc, char** argv) {
           rhi()->bindRenderPipeline(disparityScalePipeline);
           rhi()->loadTexture(ksImageTex, disparitySurface);
           DisparityScaleUniformBlock ub;
-          ub.disparityScale = depthMapGenerator->disparityPrescale() *  (1.0f / static_cast<float>(disparityScale));
+          ub.disparityScale = depthMapGenerator->disparityPrescale() * depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparity()));
           ub.sourceLevel = disparityScaleSourceLevel;
+          ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(depthMapGenerator->maxDisparity() - 1) / depthMapGenerator->disparityPrescale());
           rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
           rhi()->drawFullscreenPass();
           rhi()->endRenderPass(disparityScaleTarget);
 
+          // normalized (UV) coordinates of mouseover of any of the disparity views
+          static glm::vec2 disparityHoverUV = glm::vec2(0.0f, 0.0f);
           ImGui_Image(disparityScaleSurface);
+          bool hoverLeft = updateHoverPositionForLastItem(disparityHoverUV);
+          drawDisparityImageCursorOverlay(disparityHoverUV);
+
+          float disparitySample = depthMapGenerator->debugPeekDisparityUV(internalsTargetView, disparityHoverUV);
+          float disparitySampleNormalized = disparitySample / static_cast<float>(disparitySurface->width());
+
           ImGui_Image(depthMapGenerator->leftGrayscale(internalsTargetView));
+          hoverLeft |= updateHoverPositionForLastItem(disparityHoverUV);
+          if (hoverLeft) {
+            drawDisparityImageCursorOverlay(disparityHoverUV);
+          } else {
+            drawDisparityImageCursorOverlayWithOffset(disparityHoverUV, disparitySampleNormalized);
+          }
+
           ImGui_Image(depthMapGenerator->rightGrayscale(internalsTargetView));
+          if (updateHoverPositionForLastItem(disparityHoverUV)) {
+            drawDisparityImageCursorOverlay(disparityHoverUV);
+          } else {
+            drawDisparityImageCursorOverlayWithOffset(disparityHoverUV, -disparitySampleNormalized);
+          }
+
+          glm::vec3 localP = depthMapGenerator->debugPeekLocalPositionUV(internalsTargetView, disparityHoverUV) * 1000.0f;
+          ImGui::Text("Hover UV: {%.2f, %.2f} (%d, %d)\nDisparity: %.3f\nLocal P: %.3fmm, %.3fmm, %.3fmm",
+            disparityHoverUV.x, disparityHoverUV.y,
+            static_cast<int>(disparityHoverUV.x * static_cast<float>(disparityScaleSurface->width())),
+            static_cast<int>(disparityHoverUV.y * static_cast<float>(disparityScaleSurface->height())),
+            disparitySample,
+            localP.x, localP.y, localP.z);
         }
 
 

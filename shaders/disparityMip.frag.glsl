@@ -6,7 +6,8 @@ uniform highp isampler2D imageTex;
 
 layout(std140) uniform DisparityMipUniformBlock {
   int sourceLevel;
-  float pad2, pad3, pad4;
+  int maxValidDisparityRaw;
+  float pad3, pad4;
 };
 
 void main() {
@@ -24,7 +25,7 @@ void main() {
 
   for (int i = 0; i < 4; ++i) {
     int d = texelFetchOffset(imageTex, base, sourceLevel, offsets[i]).r;
-    if (d > 0) {
+    if (d > 0 && d < maxValidDisparityRaw) {
       accum += float(d);
       samples += 1;
     }

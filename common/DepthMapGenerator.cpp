@@ -75,20 +75,23 @@ struct MeshDisparityDepthMapUniformBlock {
 
   glm::vec2 mogrify;
   float disparityPrescale;
-  int disparityTexLevels;
+  uint32_t disparityTexLevels;
 
   glm::vec2 trim_minXY;
   glm::vec2 trim_maxXY;
 
-  int renderStereo;
-  float pad2, pad3, pad4;
+  uint32_t renderStereo;
+  float maxValidDisparityPixels;
+  uint32_t maxValidDisparityRaw;
+  float pad4;
 };
 
 RHIRenderPipeline::ptr disparityMipPipeline;
 FxAtomicString ksDisparityMipUniformBlock("DisparityMipUniformBlock");
 struct DisparityMipUniformBlock {
   uint32_t sourceLevel;
-  float pad2, pad3, pad4;
+  uint32_t maxValidDisparityRaw;
+  float pad3, pad4;
 };
 
 DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) : m_backend(backend_) {
@@ -217,21 +220,6 @@ DepthMapGenerator::~DepthMapGenerator() {
   m_viewData.clear();
 }
 
-/*
-Vector4 DepthMapGenerator::TransformToLocalSpace(float x, float y, int disp)
-{
-  float fDisp = (float) disp / 16.f; //  16-bit fixed-point disparity map (where each disparity value has 4 fractional bits)
-
-  float lz = m_Q[11] * m_CameraDistanceMeters / (fDisp * m_algoDownsampleX);
-  float ly = -(y * m_algoDownsampleY + m_Q[7]) / m_Q[11];
-  float lx = (x * m_algoDownsampleX + m_Q[3]) / m_Q[11];
-  lx *= lz;
-  ly *= lz;
-  lz *= -1;
-  return m_R1inv * Vector4(lx, ly, lz, 1.0);
-}
-*/
-
 void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix) {
   if (!disparityDepthMapPipeline) {
     RHIRenderPipelineDescriptor rpd;
@@ -266,13 +254,15 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.Q11 = vd->m_Q[2][3];
   ub.CameraDistanceMeters = vd->m_CameraDistanceMeters;
   ub.mogrify = glm::vec2(m_algoDownsampleX, m_algoDownsampleY);
-  ub.disparityPrescale = m_disparityPrescale;
+  ub.disparityPrescale = disparityPrescale() * debugDisparityScale();
   ub.disparityTexLevels = vd->m_disparityTexture->mipLevels() - 1;
 
   ub.trim_minXY = glm::vec2(m_trimLeft, m_trimTop);
   ub.trim_maxXY = glm::vec2((vd->m_disparityTexture->width() - 1) - m_trimRight, (vd->m_disparityTexture->height() - 1) - m_trimBottom);
 
   ub.renderStereo = (stereo ? 1 : 0);
+  ub.maxValidDisparityPixels = m_maxDisparity - 1;
+  ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
 
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd->m_disparityTexture);
@@ -376,6 +366,7 @@ void DepthMapGenerator::internalGenerateDisparityMips() {
 
       DisparityMipUniformBlock ub;
       ub.sourceLevel = targetLevel - 1;
+      ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
 
       rhi()->loadUniformBlockImmediate(ksDisparityMipUniformBlock, &ub, sizeof(ub));
       rhi()->drawNDCQuad();
@@ -390,5 +381,67 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
   for (uint32_t level = 0; level < m_disparityTexture->mipLevels(); ++level) {
     m_disparityTextureMipTargets.push_back(rhi()->compileRenderTarget({ RHIRenderTargetDescriptorElement(m_disparityTexture, level) }));
   }
+
+  free(m_debugCPUDisparity);
+  m_debugCPUDisparity = nullptr;
+  m_debugCPUDisparityBytesPerPixel = 0;
+}
+
+void DepthMapGenerator::ViewData::ensureDebugCPUAccessEnabled(uint8_t disparityBytesPerPixel) {
+  if (m_debugCPUDisparity == nullptr || m_debugCPUDisparityBytesPerPixel != disparityBytesPerPixel) {
+    free(m_debugCPUDisparity);
+
+    m_debugCPUDisparityBytesPerPixel = disparityBytesPerPixel;
+    m_debugCPUDisparity = malloc(m_debugCPUDisparityBytesPerPixel * m_disparityTexture->width() * m_disparityTexture->height());
+  }
+}
+
+
+float DepthMapGenerator::debugPeekDisparityTexel(size_t viewIdx, glm::ivec2 texelCoord) const {
+  const ViewData* vd = viewDataAtIndex(viewIdx);
+
+  texelCoord = glm::clamp(texelCoord, glm::ivec2(0, 0), glm::ivec2(vd->m_disparityTexture->width() - 1, vd->m_disparityTexture->height() - 1));
+
+  if (vd->m_debugCPUDisparity == nullptr || vd->m_debugCPUDisparityBytesPerPixel == 0) {
+    return -1.0f;
+  }
+  size_t pIdx = (texelCoord.y * vd->m_disparityTexture->width()) + texelCoord.x;
+  uint32_t v = 0;
+
+  switch (vd->m_debugCPUDisparityBytesPerPixel) {
+    case 1: v = reinterpret_cast<uint8_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
+    case 2: v = reinterpret_cast<uint16_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
+    case 4: v = reinterpret_cast<uint32_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
+    default:
+      assert(false && "DepthMapGenerator::debugPeekDisparity: unhandled m_debugCPUDisparityBytesPerPixel");
+  }
+  return static_cast<float>(v) * m_disparityPrescale;
+}
+
+float DepthMapGenerator::debugPeekDisparityUV(size_t viewIdx, glm::vec2 uv) const {
+  const ViewData* vd = viewDataAtIndex(viewIdx);
+  return debugPeekDisparityTexel(viewIdx, glm::ivec2(uv * (vd->m_disparityTexture->dimensions() - glm::vec2(1.0f, 1.0f))));
+}
+
+glm::vec3 DepthMapGenerator::debugPeekLocalPositionUV(size_t viewIdx, glm::vec2 uv) const {
+  const ViewData* vd = viewDataAtIndex(viewIdx);
+  return debugPeekLocalPositionTexel(viewIdx, glm::ivec2(uv * (vd->m_disparityTexture->dimensions() - glm::vec2(1.0f, 1.0f))));
+}
+
+glm::vec3 DepthMapGenerator::debugPeekLocalPositionTexel(size_t viewIdx, glm::ivec2 texelCoord) const {
+  const ViewData* vd = viewDataAtIndex(viewIdx);
+  float fDisp = debugPeekDisparityTexel(viewIdx, texelCoord);
+
+  float Q3 = vd->m_Q[0][3];
+  float Q7 = vd->m_Q[1][3];
+  float Q11 = vd->m_Q[2][3];
+
+  float lz = Q11 * vd->m_CameraDistanceMeters / (fDisp * m_algoDownsampleX);
+  float ly = ((texelCoord.y * m_algoDownsampleY) + Q7) / Q11;
+  float lx = ((texelCoord.x * m_algoDownsampleX) + Q3) / Q11;
+  lx *= lz;
+  ly *= lz;
+  glm::vec4 pP = vd->m_R1inv * glm::vec4(lx, -ly, -lz, 1.0);
+  return (glm::vec3(pP) / pP.w);
 }
 

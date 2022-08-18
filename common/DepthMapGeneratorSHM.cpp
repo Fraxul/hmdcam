@@ -37,6 +37,7 @@ DepthMapGeneratorSHM::DepthMapGeneratorSHM(DepthMapGeneratorBackend _backend) : 
   // running at quarter res, approx
   m_algoDownsampleX = 4;
   m_algoDownsampleY = 4;
+  m_maxDisparity = NUM_DISP;
 
   m_depthMapSHM = SHMSegment<DepthMapSHM>::createSegment("depth-worker", 16*1024*1024);
 
@@ -431,13 +432,22 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
 
     DepthMapSHM::ViewParams& viewParams = m_depthMapSHM->segment()->m_viewParams[vd->m_shmViewIndex];
 
+    if (m_debugDisparityCPUAccessEnabled)
+      vd->ensureDebugCPUAccessEnabled(m_disparityBytesPerPixel);
+
     if (vd->m_isVerticalStereo) {
       cv::Mat transposedDispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
       cv::Mat dispMat = transposedDispMat.t(); // TODO might be more efficient to transpose in the DGPUWorker while the data is still on the GPU
       rhi()->loadTextureData(vd->m_disparityTexture, (m_disparityBytesPerPixel == 1) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, dispMat.data);
 
+      if (m_debugDisparityCPUAccessEnabled)
+        memcpy(vd->m_debugCPUDisparity, dispMat.data, m_disparityBytesPerPixel * viewParams.width * viewParams.height);
+
     } else {
       rhi()->loadTextureData(vd->m_disparityTexture, (m_disparityBytesPerPixel == 1) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, m_depthMapSHM->segment()->data() + viewParams.outputOffset);
+
+      if (m_debugDisparityCPUAccessEnabled)
+        memcpy(vd->m_debugCPUDisparity, m_depthMapSHM->segment()->data() + viewParams.outputOffset, m_disparityBytesPerPixel * viewParams.width * viewParams.height);
     }
 
     if (m_populateDebugTextures) {

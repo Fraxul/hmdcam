@@ -31,9 +31,12 @@
 #include <string.h>
 #include <unistd.h>
 
+static const uint32_t kVPIMaxDisparity = 128; // must be {64, 128, 256}
+
 DepthMapGeneratorVPI::DepthMapGeneratorVPI() : DepthMapGenerator(kDepthBackendVPI) {
   m_algoDownsampleX = 4;
   m_algoDownsampleY = 4;
+  m_maxDisparity = kVPIMaxDisparity;
   // VPI 2.0 docs say:
   // Returned [disparity] values are in Q10.5 format, i.e., signed fixed point with 5 fractional bits.
   // Divide it by 32.0f to convert it to floating point.
@@ -151,7 +154,8 @@ void DepthMapGeneratorVPI::internalUpdateViewData() {
       }
     }
 
-    uint64_t imageFlags = VPI_BACKEND_CUDA | VPI_REQUIRE_BACKENDS;
+    // TODO we should only enable BACKEND_CPU if disparity debug access is requested
+    uint64_t imageFlags = VPI_BACKEND_CUDA | VPI_BACKEND_CPU | VPI_REQUIRE_BACKENDS;
 
     PER_EYE VPI_CHECK(vpiImageCreate(inputWidth(),    inputHeight(),    VPI_IMAGE_FORMAT_Y8_ER, imageFlags, &vd->m_grey[eyeIdx]));
     PER_EYE VPI_CHECK(vpiImageCreate(inputWidth(),    inputHeight(),    VPI_IMAGE_FORMAT_Y8_ER, imageFlags, &vd->m_rectifiedGrey[eyeIdx]));
@@ -162,7 +166,7 @@ void DepthMapGeneratorVPI::internalUpdateViewData() {
 
     VPIStereoDisparityEstimatorCreationParams creationParams;
     vpiInitStereoDisparityEstimatorCreationParams(&creationParams);
-    creationParams.maxDisparity = 128;
+    creationParams.maxDisparity = kVPIMaxDisparity;
 
     if (vd->m_isVerticalStereo) {
       PER_EYE VPI_CHECK(vpiImageCreate(internalWidth(), internalHeight(), VPI_IMAGE_FORMAT_Y8_ER, imageFlags, &vd->m_resizedTransposed[eyeIdx]));
@@ -214,6 +218,24 @@ void copyVPIImageToSurface(VPIImage img, RHISurface::ptr surface, CUstream strea
   VPI_CHECK(vpiImageUnlock(img));
 }
 
+// Copies to a tightly packed CPU array. Only works with single-plane images.
+void copyVPIImageToCPU(VPIImage img, void* outArray, size_t bytesPerPixel) {
+
+  VPIImageData imgData;
+  VPI_CHECK(vpiImageLockData(img, VPI_LOCK_READ, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgData));
+
+  VPIImagePlanePitchLinear& plane = imgData.buffer.pitch.planes[0];
+
+  int bpp = vpiPixelTypeGetBitsPerPixel(plane.pixelType);
+  assert((bpp/8) == bytesPerPixel); // sanity check
+
+  for (size_t y = 0; y < plane.height; ++y) {
+    void* outRow = reinterpret_cast<uint8_t*>(outArray) + (y * plane.width * bytesPerPixel);
+    memcpy(outRow, reinterpret_cast<uint8_t*>(plane.data) + (y * plane.pitchBytes), plane.width * bytesPerPixel);
+  }
+
+  VPI_CHECK(vpiImageUnlock(img));
+}
 
 
 void DepthMapGeneratorVPI::internalProcessFrame() {
@@ -226,6 +248,12 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
       continue;
 
     copyVPIImageToSurface(vd->m_disparity, vd->m_disparityTexture, m_masterCUStream);
+
+    if (m_debugDisparityCPUAccessEnabled) {
+      vd->ensureDebugCPUAccessEnabled(/*bytesPerPixel=*/ 2);
+      copyVPIImageToCPU(vd->m_disparity, vd->m_debugCPUDisparity, vd->m_debugCPUDisparityBytesPerPixel);
+    }
+
     if (m_populateDebugTextures) {
       if (!vd->m_leftGray)
         vd->m_leftGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));

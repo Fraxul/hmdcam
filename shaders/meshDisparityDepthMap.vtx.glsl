@@ -13,7 +13,9 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   vec2 trim_maxXY;
 
   int renderStereo;
-  float pad2, pad3, pad4;
+  float maxValidDisparityPixels;
+  int maxValidDisparityRaw;
+  float pad4;
 };
 
 layout(location = 0) in vec4 position;
@@ -44,7 +46,7 @@ void main()
   // Walk the mip chain to find a valid disparity value at this location
   for (int level = 0; level < disparityTexLevels; ++level) {
     disparityRaw = texelFetch(disparityTex, mipCoords, level).r;
-    if (disparityRaw > 0)
+    if (disparityRaw > 0 && disparityRaw < maxValidDisparityRaw)
       break;
     mipCoords = mipCoords >> 1;
   }
