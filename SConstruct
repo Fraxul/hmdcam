@@ -67,6 +67,25 @@ env.Append(
   LINKFLAGS=['-g'],
 )
 
+have_opencv_cuda = True
+conf = Configure(env)
+if not conf.CheckLib('opencv_cudaimgproc'):
+  print("OpenCV doesn't appear to have been built with cudaimgproc -- SHM-based backends and the RDMA client will not build.")
+  have_opencv_cuda = False
+conf.Finish()
+if (have_opencv_cuda):
+  env.Append(CPPDEFINES=['HAVE_OPENCV_CUDA'])
+env['HAVE_OPENCV_CUDA'] = have_opencv_cuda
+
+
+have_vpi2 = True
+if not os.path.isdir('/opt/nvidia/vpi2'):
+  have_vpi2 = False
+  print('VPI2 library is not installed at /opt/nvidia/vpi2. VPI2 backend will not build.')
+if (have_vpi2):
+  env.Append(CPPDEFINES=['HAVE_VPI2'])
+env['HAVE_VPI2'] = have_vpi2
+
 # Fix for clang colored diagnostics
 env['ENV']['TERM'] = os.environ['TERM']
 env.Decider('MD5-timestamp')
@@ -87,7 +106,8 @@ else:
   # Only build test apps on desktop
   SConscript('SConscript-stereo-geometry', variant_dir = 'build/stereo-geometry', duplicate = 0)
 
-SConscript('SConscript-rdma-client', variant_dir = 'build/rdma-client', duplicate = 0)
+if have_opencv_cuda:
+  SConscript('SConscript-rdma-client', variant_dir = 'build/rdma-client', duplicate = 0)
 SConscript('SConscript-eyectl', variant_dir = 'build/eyectl', duplicate = 0)
 if (build_dgpu):
   SConscript('SConscript-dgpu-worker', variant_dir = 'build/dgpu-worker', duplicate = 0)

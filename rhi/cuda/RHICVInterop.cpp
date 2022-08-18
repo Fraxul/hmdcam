@@ -1,4 +1,5 @@
 #include "rhi/cuda/RHICVInterop.h"
+#ifdef HAVE_CUDA
 #include "rhi/cuda/CudaUtil.h"
 #include <cuda.h>
 
@@ -75,3 +76,4 @@ void copySurfaceToGpuMat(RHISurface::ptr surface, cv::cuda::GpuMat& gpuMat, CUst
 
 
 };
+#endif // HAVE_CUDA

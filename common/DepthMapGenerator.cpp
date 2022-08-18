@@ -1,22 +1,22 @@
 #include "imgui.h"
 #include "common/DepthMapGenerator.h"
-#include "common/DepthMapGeneratorSHM.h"
+#ifdef HAVE_OPENCV_CUDA
+  #include "common/DepthMapGeneratorSHM.h"
+#endif
+#ifdef HAVE_VPI2
+  #include "common/DepthMapGeneratorVPI.h"
+#endif
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
-#include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
-#include <opencv2/cudaimgproc.hpp>
-#include <opencv2/cudawarping.hpp>
-#include <cuda.h>
-#include <npp.h>
 #include <epoxy/gl.h> // epoxy_is_desktop_gl
 
 const char* settingsFilename = "depthMapSettings.yml";
@@ -28,6 +28,8 @@ DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr) {
     return kDepthBackendDGPU;
   } else if ((!strcasecmp(backendStr, "depthai")) || (!strcasecmp(backendStr, "depth-ai"))) {
     return kDepthBackendDepthAI;
+  } else if ((!strcasecmp(backendStr, "vpi"))) {
+    return kDepthBackendVPI;
   } else {
     fprintf(stderr, "depthBackendStringToEnum: unrecognized worker type \"%s\"\n", backendStr);
     return kDepthBackendNone;
@@ -40,7 +42,19 @@ DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend backend) {
     return NULL;
 
   case kDepthBackendDGPU:
-  case kDepthBackendDepthAI: return new DepthMapGeneratorSHM(backend);
+  case kDepthBackendDepthAI:
+#ifdef HAVE_OPENCV_CUDA
+    return new DepthMapGeneratorSHM(backend);
+#else
+    assert(false && "createDepthMapGenerator: SHM-based backends were disabled at compile time (no opencv_cudaimgproc support).");
+#endif
+
+  case kDepthBackendVPI:
+#ifdef HAVE_VPI2
+    return new DepthMapGeneratorVPI();
+#else
+    assert(false && "createDepthMapGenerator: The VPI backend was disabled at compile time.");
+#endif
 
   default:
     assert(false && "createDepthMapGenerator: Unhandled backend enum");
@@ -79,35 +93,14 @@ struct DisparityMipUniformBlock {
 
 DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) : m_backend(backend_) {
 
-  if (!disparityDepthMapPipeline) {
-    RHIRenderPipelineDescriptor rpd;
-    rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
-    rpd.primitiveRestartEnabled = true;
-
-    RHIShaderDescriptor desc("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
-        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
-      }));
-    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMap.geom.glsl");
-
-    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
-      desc.setFlag("SAMPLER_TYPE", "sampler2D");
-    else
-      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
-
-    disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
-  }
-
-  if (!disparityMipPipeline) {
-    disparityMipPipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/disparityMip.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
-  }
 }
 
 void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
   m_cameraSystem = cs;
 
   // Compute internal dimensions
-  m_internalWidth = m_cameraSystem->cameraProvider()->streamWidth() / m_algoDownsampleX;
-  m_internalHeight = m_cameraSystem->cameraProvider()->streamHeight() / m_algoDownsampleY;
+  m_internalWidth = inputWidth() / m_algoDownsampleX;
+  m_internalHeight = inputHeight() / m_algoDownsampleY;
 
   // Create depth map geometry buffers
   {
@@ -218,7 +211,10 @@ void DepthMapGenerator::saveSettings() {
 #undef writeNode
 
 DepthMapGenerator::~DepthMapGenerator() {
-
+  for (ViewData* vd : m_viewData) {
+    delete vd; // ensure resources are released
+  }
+  m_viewData.clear();
 }
 
 /*
@@ -237,6 +233,24 @@ Vector4 DepthMapGenerator::TransformToLocalSpace(float x, float y, int disp)
 */
 
 void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix) {
+  if (!disparityDepthMapPipeline) {
+    RHIRenderPipelineDescriptor rpd;
+    rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
+    rpd.primitiveRestartEnabled = true;
+
+    RHIShaderDescriptor desc("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
+        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
+      }));
+    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMap.geom.glsl");
+
+    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
+      desc.setFlag("SAMPLER_TYPE", "sampler2D");
+    else
+      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
+
+    disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
+  }
+
   ViewData* vd = m_viewData[viewIdx];
 
   rhi()->bindRenderPipeline(disparityDepthMapPipeline);
@@ -337,6 +351,10 @@ void DepthMapGenerator::processFrame() {
 }
 
 void DepthMapGenerator::internalGenerateDisparityMips() {
+  if (!disparityMipPipeline) {
+    disparityMipPipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/disparityMip.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
+  }
+
   // Filter invalid disparities: generate mip-chains
   uint32_t maxLevels = 0;
   for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
@@ -363,6 +381,14 @@ void DepthMapGenerator::internalGenerateDisparityMips() {
       rhi()->drawNDCQuad();
       rhi()->endRenderPass(vd->m_disparityTextureMipTargets[targetLevel]);
     }
+  }
+}
+
+void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat format) {
+  m_disparityTexture = rhi()->newTexture2D(w, h, RHISurfaceDescriptor::mipDescriptor(format));
+  m_disparityTextureMipTargets.clear();
+  for (uint32_t level = 0; level < m_disparityTexture->mipLevels(); ++level) {
+    m_disparityTextureMipTargets.push_back(rhi()->compileRenderTarget({ RHIRenderTargetDescriptorElement(m_disparityTexture, level) }));
   }
 }
 

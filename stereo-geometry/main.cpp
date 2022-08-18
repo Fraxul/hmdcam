@@ -39,6 +39,7 @@ public:
   virtual size_t streamCount() const { return m_streamCount; }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return RHISurface::ptr(); }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex) { return cv::cuda::GpuMat(); }
+  virtual VPIImage vpiImage(size_t sensorIndex) const { return nullptr; }
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
 protected:

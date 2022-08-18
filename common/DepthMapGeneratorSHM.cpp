@@ -1,3 +1,4 @@
+#ifdef HAVE_OPENCV_CUDA
 #include "common/DepthMapGeneratorSHM.h"
 #include "imgui.h"
 #include "common/CameraSystem.h"
@@ -8,6 +9,7 @@
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
+#include <opencv2/cvconfig.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
@@ -207,7 +209,7 @@ void DepthMapGeneratorSHM::internalUpdateViewData() {
       CameraSystem::Camera& cR = m_cameraSystem->cameraAtIndex(v.cameraIndices[1]);
 
       // TODO validate CameraSystem:::updateViewStereoDistortionParameters against the distortion map initialization code here
-      cv::Size imageSize = cv::Size(m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight());
+      cv::Size imageSize = cv::Size(inputWidth(), inputHeight());
 
       {
         cv::Mat m1, m2;
@@ -220,8 +222,8 @@ void DepthMapGeneratorSHM::internalUpdateViewData() {
       // vd->m_disparityTexture = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R16i));
 
       //Set up what matrices we can to prevent dynamic memory allocation.
-      vd->rectLeft_gpu = cv::cuda::GpuMat(m_cameraSystem->cameraProvider()->streamHeight(), m_cameraSystem->cameraProvider()->streamWidth(), CV_8U);
-      vd->rectRight_gpu = cv::cuda::GpuMat(m_cameraSystem->cameraProvider()->streamHeight(), m_cameraSystem->cameraProvider()->streamWidth(), CV_8U);
+      vd->rectLeft_gpu = cv::cuda::GpuMat(inputHeight(), inputWidth(), CV_8U);
+      vd->rectRight_gpu = cv::cuda::GpuMat(inputHeight(), inputWidth(), CV_8U);
 
       vd->resizedLeft_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
       vd->resizedRight_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
@@ -285,12 +287,7 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
       if (!vd->m_isStereoView)
         continue;
 
-      vd->m_disparityTextureMipTargets.clear();
-      vd->m_disparityTexture = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor::mipDescriptor(m_disparityBytesPerPixel == 1 ? kSurfaceFormat_R8i : kSurfaceFormat_R16i));
-
-      for (uint32_t level = 0; level < vd->m_disparityTexture->mipLevels(); ++level) {
-        vd->m_disparityTextureMipTargets.push_back(rhi()->compileRenderTarget({ RHIRenderTargetDescriptorElement(vd->m_disparityTexture, level) }));
-      }
+      vd->updateDisparityTexture(internalWidth(), internalHeight(), m_disparityBytesPerPixel == 1 ? kSurfaceFormat_R8i : kSurfaceFormat_R16i);
     }
 
     // Copy settings to SHM.
@@ -522,4 +519,6 @@ void DepthMapGeneratorSHM::internalRenderIMGUI() {
     ImGui::Text("Copy: %.3fms", m_copyTimeMs);
   }
 }
+
+#endif // HAVE_OPENCV_CUDA
 

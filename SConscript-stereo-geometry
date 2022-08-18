@@ -9,6 +9,18 @@ sgEnv.Append(
 sgEnv.Program(
   target = '../bin/stereo-geometry',
   source = Glob('stereo-geometry/*.cpp') + Glob('common/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('imgui/*.cpp'),
-  LIBS=['z', 'stdc++', 'boost_chrono', 'boost_system', 'boost_thread', 'GL', 'dl', 'pthread', 'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaarithm', 'opencv_cudaimgproc', 'opencv_cudastereo', 'opencv_cudawarping', 'cuda', 'nppc', 'nppidei', 'SDL2', 'epoxy']
+  LIBS=[
+    'z',
+    'dl',
+    'pthread', 'rt',
+    'boost_chrono', 'boost_system', 'boost_thread',
+    'epoxy',
+    'cuda', 'cudart',
+    'nppc', 'nppidei',
+    'nvvpi',
+    'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudawarping',
+    'ibverbs', 'rdmacm',
+    'SDL2',
+  ]
 )
 

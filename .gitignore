@@ -1,6 +1,8 @@
 *.swp
 *.o
 tags
+config.log
+.sconf_temp
 .sconsign*
 camera*.png
 debug*.png

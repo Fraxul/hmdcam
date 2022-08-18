@@ -5,6 +5,7 @@
 #include "rhi/RHISurface.h"
 #include <vector>
 #include <opencv2/core/mat.hpp>
+#include <vpi/Image.h>
 
 class RDMAContext;
 
@@ -18,6 +19,7 @@ public:
   virtual unsigned int streamHeight() const { return m_streamHeight; }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_cameraSurfaces[sensorIndex]; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex);
+  virtual VPIImage vpiImage(size_t sensorIndex) const;
   cv::Mat cvMat(size_t sensorIndex) const;
 
   void flagRDMABuffersDirty() { m_rdmaBuffersDirty = true; }
@@ -36,7 +38,10 @@ protected:
   std::vector<cv::cuda::GpuMat> m_gpuMatTmp;
   std::vector<cv::cuda::GpuMat> m_gpuMatGreyscaleTmp;
 
-  bool m_rdmaBuffersDirty;
+  std::vector<VPIImage> m_vpiImages;
+
+  bool m_rdmaBuffersDirty = true;
+  bool m_gpuMatGreyscaleDirty = true;
 
 };
 

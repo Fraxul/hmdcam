@@ -85,6 +85,7 @@ public:
   virtual size_t streamCount() const { return m_bufferPools.size(); }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().rhiSurface; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
+  virtual VPIImage vpiImage(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().vpiImage; }
   // =======================
 
   // === IArgusCamera ===
@@ -142,6 +143,7 @@ private:
       EGLImageKHR eglImage;
       CUgraphicsResource cudaResource;
       RHIEGLImageSurfaceGL::ptr rhiSurface;
+      VPIImage vpiImage;
     };
 
     std::vector<Entry> buffers;
@@ -190,6 +192,7 @@ public:
   virtual size_t streamCount() const { return m_textures.size(); }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
+  virtual VPIImage vpiImage(size_t sensorIndex) const;
 
   // === IArgusCamera ===
   virtual bool readFrame();

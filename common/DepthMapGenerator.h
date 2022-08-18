@@ -1,4 +1,5 @@
 #pragma once
+#include "common/CameraSystem.h"
 #include "common/FxRenderView.h"
 #include "common/DepthMapSHM.h"
 #include "common/SHMSegment.h"
@@ -18,7 +19,8 @@ class DepthMapGenerator;
 enum DepthMapGeneratorBackend {
   kDepthBackendNone,
   kDepthBackendDGPU,
-  kDepthBackendDepthAI
+  kDepthBackendDepthAI,
+  kDepthBackendVPI
 };
 
 DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr);
@@ -35,19 +37,19 @@ public:
   void renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
   void renderIMGUI();
 
-  RHISurface::ptr disparitySurface(size_t viewIdx) const { return m_viewData[viewIdx]->m_disparityTexture; }
-  RHISurface::ptr leftGrayscale(size_t viewIdx) const { return m_viewData[viewIdx]->m_leftGray; }
-  RHISurface::ptr rightGrayscale(size_t viewIdx) const { return m_viewData[viewIdx]->m_rightGray; }
+  RHISurface::ptr disparitySurface(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_disparityTexture : RHISurface::ptr(); }
+  RHISurface::ptr leftGrayscale(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_leftGray : RHISurface::ptr(); }
+  RHISurface::ptr rightGrayscale(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_rightGray : RHISurface::ptr(); }
 
   // controls availability of leftGrayscale and rightGrayscale
   void setPopulateDebugTextures(bool value) { m_populateDebugTextures = value; }
-
-  float m_disparityPrescale;
 
   bool loadSettings();
   void saveSettings();
 
   DepthMapGeneratorBackend backend() const { return m_backend; }
+
+  float disparityPrescale() const { return m_disparityPrescale; }
 
 protected:
 
@@ -58,8 +60,14 @@ protected:
   virtual void internalRenderIMGUI() = 0;
   virtual void internalProcessFrame() = 0;
 
-  uint32_t m_algoDownsampleX = 1; // optionally overridden in backend
+  // Data format controls that should be set in the backend
+  uint32_t m_algoDownsampleX = 1;
   uint32_t m_algoDownsampleY = 1;
+  float m_disparityPrescale = 1.0f;
+
+
+  uint32_t inputWidth() const { return m_cameraSystem->cameraProvider()->streamWidth(); }
+  uint32_t inputHeight() const { return m_cameraSystem->cameraProvider()->streamHeight(); }
 
   uint32_t internalWidth() const { return m_internalWidth; }
   uint32_t internalHeight() const { return m_internalHeight; }
@@ -70,12 +78,16 @@ protected:
 
   struct ViewData {
     ViewData() {}
+    virtual ~ViewData() {}
 
     bool m_isStereoView = false;
     bool m_isVerticalStereo = false;
     size_t m_leftCameraIndex = 0, m_rightCameraIndex = 0;
 
     glm::mat4 m_R1inv, m_Q, m_Qinv;
+
+
+    void updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat);
 
     RHISurface::ptr m_disparityTexture;
     RHISurface::ptr m_leftGray, m_rightGray;

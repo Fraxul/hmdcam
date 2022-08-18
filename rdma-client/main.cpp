@@ -51,14 +51,17 @@ extern FxAtomicString ksDistortionMap;
 extern cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_64FC1);
 
+static FxAtomicString ksImageTex("imageTex");
+
+#if 0
 RHIRenderPipeline::ptr meshVertexColorPipeline;
 RHIBuffer::ptr meshQuadVBO;
 
 FxAtomicString ksMeshTransformUniformBlock("MeshTransformUniformBlock");
-static FxAtomicString ksImageTex("imageTex");
 struct MeshTransformUniformBlock {
   glm::mat4 modelViewProjection;
 };
+#endif
 
 
 static FxAtomicString ksDisparityScaleUniformBlock("DisparityScaleUniformBlock");
@@ -166,6 +169,7 @@ int main(int argc, char** argv) {
   windowRenderTarget = new RHISDLWindowRenderTargetGL(window);
   sceneCamera = new FxCamera();
 
+#if 0
   meshVertexColorPipeline = rhi()->compileRenderPipeline("shaders/meshVertexColor.vtx.glsl", "shaders/meshVertexColor.frag.glsl", RHIVertexLayout({
       RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position", 0,                 sizeof(float) * 7),
       RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "color",    sizeof(float) * 3, sizeof(float) * 7)
@@ -181,6 +185,7 @@ int main(int argc, char** argv) {
 
     meshQuadVBO = rhi()->newBufferWithContents(sampleQuadData, sizeof(float) * 7 * 4);
   }
+#endif
 
   RHISurface::ptr disparityScaleSurface;
   RHIRenderTarget::ptr disparityScaleTarget;
@@ -498,7 +503,7 @@ int main(int argc, char** argv) {
           rhi()->bindRenderPipeline(disparityScalePipeline);
           rhi()->loadTexture(ksImageTex, disparitySurface);
           DisparityScaleUniformBlock ub;
-          ub.disparityScale = depthMapGenerator->m_disparityPrescale *  (1.0f / static_cast<float>(disparityScale));
+          ub.disparityScale = depthMapGenerator->disparityPrescale() *  (1.0f / static_cast<float>(disparityScale));
           ub.sourceLevel = disparityScaleSourceLevel;
           rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
           rhi()->drawFullscreenPass();

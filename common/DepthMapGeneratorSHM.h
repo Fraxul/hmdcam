@@ -53,6 +53,7 @@ protected:
 
   struct ViewDataSHM : public ViewData {
     ViewDataSHM() {}
+    virtual ~ViewDataSHM() {}
 
     size_t m_shmViewIndex;
 

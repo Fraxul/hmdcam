@@ -32,6 +32,12 @@ Build the embedded Monado library required for distortion processing
 Optional: If you want to build the DepthAI backend, run the included script to build required libraries first:
   ./build-depthai-core.sh
 
+Optional, for your development host only: If targeting JetPack 5.0+, install the VPI2 packages for rdma-client:
+(These instructions are inlined from https://docs.nvidia.com/jetson/jetpack/install-jetpack/index.html#jetpack-debian-packages as of JetPack 5.0.2 / L4T r35.1)
+  sudo apt-key adv --fetch-key http://repo.download.nvidia.com/jetson/jetson-ota-public.asc
+  sudo apt-add-repository "deb http://repo.download.nvidia.com/jetson/x86_64/focal r35.1 main"
+  sudo apt install vpi2-dev
+
 Finally, build the project:
   scons
 

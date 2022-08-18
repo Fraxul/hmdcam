@@ -1,4 +1,6 @@
 #pragma once
+#include <opencv2/cvconfig.h>
+#ifdef HAVE_CUDA
 #include <opencv2/core/cuda.hpp>
 #include <cuda.h>
 #include "rhi/RHISurface.h"
@@ -14,4 +16,4 @@ namespace RHICUDA {
   void copySurfaceToGpuMat(RHISurface::ptr, cv::cuda::GpuMat& gpuMat, CUstream = 0);
 
 };
-
+#endif // HAVE_CUDA, from opencv2/cvconfig.h

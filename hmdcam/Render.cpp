@@ -5,6 +5,7 @@
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/gl/GLCommon.h"
+#include "common/VPIUtil.h"
 
 #include "xrt/xrt_instance.h"
 #include "xrt/xrt_device.h"
@@ -18,6 +19,9 @@
 #include "BufferRingSource.h"
 #include "H264VideoNvEncSessionServerMediaSubsession.h"
 #include <cuda.h>
+#ifdef HAVE_VPI2
+  #include <vpi/Context.h>
+#endif
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
@@ -75,6 +79,11 @@ RenderBackend* renderBackend = NULL;
 // CUDA
 CUdevice cudaDevice;
 CUcontext cudaContext;
+
+// VPI
+#ifdef HAVE_VPI2
+  VPIContext vpiContext;
+#endif
 
 // Streaming server / NvEnc state
 
@@ -235,6 +244,25 @@ bool RenderInit(ERenderBackend backendType) {
     cuDevicePrimaryCtxRetain(&cudaContext, cudaDevice);
     cuCtxSetCurrent(cudaContext);
   }
+
+  // VPI init
+#ifdef HAVE_VPI2
+  {
+    VPI_CHECK(vpiContextCreateWrapperCUDA(/*flags=*/ 0, cudaContext, &vpiContext));
+    VPI_CHECK(vpiContextSetCurrent(vpiContext));
+    uint64_t flags = 0;
+    vpiContextGetFlags(vpiContext, &flags);
+
+    printf("VPI backends enabled:");
+    if (flags & VPI_BACKEND_CPU)   printf(" CPU");
+    if (flags & VPI_BACKEND_CUDA)  printf(" CUDA");
+    if (flags & VPI_BACKEND_PVA)   printf(" PVA");
+    if (flags & VPI_BACKEND_VIC)   printf(" VIC");
+    if (flags & VPI_BACKEND_NVENC) printf(" NVENC");
+    if (flags & VPI_BACKEND_OFA)   printf(" OFA");
+    printf("\n");
+  }
+#endif
 
   initRHIGL();
 

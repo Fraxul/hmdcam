@@ -10,6 +10,11 @@
 #include <EGLStream/EGLStream.h>
 #include <nvbuf_utils.h>
 #include <cudaEGL.h>
+#include <opencv2/cvconfig.h>
+#ifdef HAVE_VPI2
+#include "common/VPIUtil.h"
+#include <vpi/Image.h>
+#endif // HAVE_VPI2
 
 #include <boost/accumulators/statistics/min.hpp>
 #include <boost/accumulators/statistics/max.hpp>
@@ -177,7 +182,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
       inputParams.width = m_streamWidth;
       inputParams.height = m_streamHeight;
       inputParams.layout = NvBufferLayout_Pitch;
-      inputParams.colorFormat = NvBufferColorFormat_NV12;
+      inputParams.colorFormat = NvBufferColorFormat_NV12_ER;
       inputParams.payloadType = NvBufferPayload_SurfArray;
       inputParams.nvbuf_tag = NvBufferTag_CAMERA;
 
@@ -197,6 +202,20 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
           die("Failed to release Buffer for capture use");
 
       CUDA_CHECK(cuGraphicsEGLRegisterImage(&b.cudaResource, b.eglImage, CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY));
+
+#ifdef HAVE_VPI2
+      VPIImageData vid;
+      memset(&vid, 0, sizeof(vid));
+      vid.buffer.fd = b.nativeBuffer;
+      vid.bufferType = VPI_IMAGE_BUFFER_NVBUFFER;
+      VPI_CHECK(vpiImageCreateWrapper(&vid, NULL, /*flags=*/ 0, &b.vpiImage));
+
+      if (i == 0) { // only report for the first buffer created
+        VPIImageFormat imageFormat;
+        VPI_CHECK(vpiImageGetFormat(b.vpiImage, &imageFormat) );
+        printf("Stream [%zu]: VPIImageFormat is %s\n", cameraIdx, vpiImageFormatGetName(imageFormat));
+      }
+#endif
 
       m_bufferPools[cameraIdx].buffers.push_back(b);
     }
@@ -527,6 +546,7 @@ void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, con
 */
 
 void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {
+#ifdef HAVE_CUDA // from opencv2/cvconfig.h
   if (!m_tmpBlitSurface) {
     m_tmpBlitSurface = rhi()->newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
     m_tmpBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { m_tmpBlitSurface } ));
@@ -543,6 +563,7 @@ void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, con
   rhi()->endRenderPass(m_tmpBlitRT);
 
   RHICUDA::copySurfaceToGpuMat(m_tmpBlitSurface, gpuMat, const_cast<cv::cuda::Stream&>(stream));
+#endif
 }
 
 
@@ -601,6 +622,11 @@ bool ArgusCameraMock::readFrame() {
     m_textures[i] = srf;
   }
   return true;
+}
+
+VPIImage ArgusCameraMock::vpiImage(size_t sensorIndex) const {
+  assert(false && "Not implemented");
+  return NULL;
 }
 
 cv::cuda::GpuMat ArgusCameraMock::gpuMatGreyscale(size_t sensorIdx) {
