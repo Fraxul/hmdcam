@@ -8,3 +8,5 @@ debug*.png
 bin
 build
 *.pyc
+imgui.ini
+
