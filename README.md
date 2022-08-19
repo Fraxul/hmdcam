@@ -8,7 +8,11 @@ Features:
 - Distortion-corrected monoscopic and stereoscopic views positioned in 3d space
 - Depth-mapped stereoscopic views to support off-axis viewing and multiview stitching
   - Both horizontal (left-right) and vertical (top-bottom) stereo pairs are supported
-  - This requires an additional discrete GPU or VPUs for processing, since the Jetson iGPU isn't powerful enough.
+  - Depending on your camera configuration and platform, this may require an additional discrete GPU or VPU for processing.
+  - Supports multiple depth processing backends:
+    - Nvidia VPI 2.0 on the Jetson's integrated GPU (requires JetPack 5.0.2+, Orin or Xavier modules only)
+    - OpenCV+CUDA on an separate Nvidia discrete GPU
+    - Luxonis DepthAI VPU modules
 - Configuration menu with built-in calibration tools
 - Remote viewing via RTSP (embedded live555 server + nvenc)
 - Remote debugging via RDMA-over-Infiniband (`rdma-client` binary)
@@ -36,9 +40,8 @@ Requirements:
   - One VPU per stereo pair with 1:4 sampling (480x270 depth resolution). Each VPU consumes about 2 watts (tested using [OAK-FFC-3P](https://docs.luxonis.com/projects/hardware/en/latest/pages/DM1090.html) modules without attached cameras).
 
 The reference test/development platform is:
-- Jetson AGX Xavier devkit
+- Jetson AGX Orin devkit
 - eConSystems e-CAM20\_CUXVR camera kit: quad 4-lane IMX290 sensors, 1920x1080 at up to 120fps. Arranged as two vertical stereo pairs.
-- Lenovo Explorer HMD
-- 2x Luxonis OAK-FFC-3P VPU modules for stereo processing
+- Lenovo Explorer HMD: 2880x1440 at 90fps
 - Mellanox ConnectX-3 FDR Infiniband card (CX353A-FCBT) for remote debugging
 
