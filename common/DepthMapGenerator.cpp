@@ -445,3 +445,10 @@ glm::vec3 DepthMapGenerator::debugPeekLocalPositionTexel(size_t viewIdx, glm::iv
   return (glm::vec3(pP) / pP.w);
 }
 
+float DepthMapGenerator::debugComputeDepthForDisparity(size_t viewIdx, float disparityPixels) const {
+  const ViewData* vd = viewDataAtIndex(viewIdx);
+  float Q11 = vd->m_Q[2][3];
+  float lz = Q11 * vd->m_CameraDistanceMeters / (disparityPixels * m_algoDownsampleX);
+  return lz;
+}
+

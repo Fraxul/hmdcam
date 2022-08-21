@@ -613,6 +613,10 @@ int main(int argc, char** argv) {
             static_cast<int>(disparityHoverUV.y * static_cast<float>(disparityScaleSurface->height())),
             disparitySample,
             localP.x, localP.y, localP.z);
+
+          static int sampleDisp = 1;
+          ImGui::SliderInt("Test Disp", &sampleDisp, 1, depthMapGenerator->maxDisparity());
+          ImGui::Text("Sample Disp Depth: %.3fmm\n", 1000.0f * depthMapGenerator->debugComputeDepthForDisparity(internalsTargetView, (float) sampleDisp));
         }
 
 
