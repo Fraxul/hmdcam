@@ -3,6 +3,9 @@ import platform
 import sys
 import re
 
+vars = Variables(None, ARGUMENTS)
+vars.Add(BoolVariable('debug', 'Set to build in debug mode (no optimization)', 0))
+
 try:
   # os.cpu_count() is python3 only
   SetOption('num_jobs', os.cpu_count())
@@ -58,14 +61,19 @@ else:
     IS_TEGRA=False
   )
 
+vars.Update(env)
+
 # Common env
 env.Append(
   CPPPATH=['#.', '#glm', '#imgui'],
-  CPPFLAGS=['-g', '-Wall', '-O2'],
+  CPPFLAGS=['-g', '-Wall'],
   CPPDEFINES=['NO_OPENSSL'],
   CXXFLAGS=['-std=c++14'],
   LINKFLAGS=['-g'],
 )
+
+if (not env['debug']):
+  env.Append(CPPFLAGS=['-O2'])
 
 have_opencv_cuda = True
 conf = Configure(env)
