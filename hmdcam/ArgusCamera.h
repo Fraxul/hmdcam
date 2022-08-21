@@ -128,6 +128,9 @@ private:
 
   void setCaptureDurationNs(uint64_t captureDurationNs);
 
+  // Shared camera provider
+  Argus::UniqueObj<Argus::CameraProvider> m_cameraProvider;
+
   // Per-sensor objects
   std::vector<Argus::CameraDevice*> m_cameraDevices;
   std::vector<Argus::OutputStream*> m_outputStreams;
@@ -168,11 +171,13 @@ private:
   // Which buffers need to be released to the stream next readFrame
   std::vector<Argus::Buffer*> m_releaseBuffers;
 
-  // Session common objects
-  Argus::UniqueObj<Argus::CameraProvider> m_cameraProvider;
-  Argus::CaptureSession* m_captureSession;
-  Argus::Request* m_captureRequest;
-  Argus::EventQueue* m_completionEventQueue; // for EVENT_TYPE_CAPTURE_COMPLETE
+  // Sessions and per-session objects
+  std::vector<Argus::CaptureSession*> m_captureSessions;
+  std::vector<Argus::Request*> m_sessionCaptureRequests;
+  std::vector<Argus::EventQueue*> m_sessionCompletionEventQueues; // for EVENT_TYPE_CAPTURE_COMPLETE
+
+  static const size_t kCamerasPerSession = 2;
+  static size_t sessionIndexForCamera(size_t cameraIdx) { return cameraIdx / kCamerasPerSession; }
 
   mutable RHISurface::ptr m_tmpBlitSurface;
   mutable RHIRenderTarget::ptr m_tmpBlitRT;
