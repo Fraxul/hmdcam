@@ -652,6 +652,8 @@ int main(int argc, char* argv[]) {
               }
             }
             for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+              ImGui::PushID(viewIdx);
+
               CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
               if (v.isStereo) {
                 char caption[64];
@@ -659,7 +661,8 @@ int main(int argc, char* argv[]) {
                 if (ImGui::Button(caption)) {
                   calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
                 }
-                ImGui::Checkbox("Panorama", &v.isPanorama);
+                sprintf(caption, "View %zu is Panorama", viewIdx);
+                ImGui::Checkbox(caption, &v.isPanorama);
               }
 
               if (v.isStereo && viewIdx != 0) {
@@ -671,7 +674,6 @@ int main(int argc, char* argv[]) {
                 }
               } else {
                 // Direct view transform editing
-                ImGui::PushID(viewIdx);
                 ImGui::Text("View %zu Transform", viewIdx);
                 // convert to and from millimeters for editing
                 glm::vec3 txMM = v.viewTranslation * 1000.0f;
@@ -679,8 +681,9 @@ int main(int argc, char* argv[]) {
                   v.viewTranslation = txMM / 1000.0f;
                 }
                 ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/0.1f, /*min=*/ -75.0f, /*max=*/ 75.0f, "%.1fdeg");
-                ImGui::PopID();
               }
+
+              ImGui::PopID(); // viewIdx
             }
             if (ImGui::Button("Save Settings")) {
               cameraSystem->saveCalibrationData();
