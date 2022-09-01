@@ -71,7 +71,7 @@ tegraEnv.Append(LIBS=[
   'nvbuf_utils', 'nvbufsurface', 'nvbufsurftransform',
   'v4l2',
   'cuda', 'cudart',
-  'nppc', 'nppidei',
+  'nppc', 'nppidei', 'nppitc',
   'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco',
   'ibverbs', 'rdmacm',
 ])
@@ -79,7 +79,7 @@ tegraEnv.Append(LIBS=[
 if (env['HAVE_VPI2']):
   tegraEnv.Append(LIBS=['nvvpi'])
 if (env['HAVE_OPENCV_CUDA']):
-  tegraEnv.Append(LIBS=['opencv_cudaimgproc', 'opencv_cudawarping'])
+  tegraEnv.Append(LIBS=['opencv_cudafilters', 'opencv_cudaimgproc', 'opencv_cudawarping'])
 
 tegraEnv.Program(
   target = '../bin/hmdcam', # relative to build/hmdcam

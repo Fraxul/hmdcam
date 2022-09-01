@@ -30,6 +30,8 @@
 #include "common/ScrollingBuffer.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
+#include "FocusAssistDebugOverlay.h"
+#include "IDebugOverlay.h"
 #include "InputListener.h"
 #include "Render.h"
 #include "RenderBackend.h"
@@ -529,6 +531,7 @@ int main(int argc, char* argv[]) {
     bool drawUI = false;
     bool debugEnableDepthMapGenerator = true;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
+    boost::scoped_ptr<IDebugOverlay> debugOverlay;
 
     while (!want_quit) {
       FrameTimingData timingData;
@@ -756,8 +759,24 @@ int main(int argc, char* argv[]) {
         }
 
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
-        ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
-        ImGui::Checkbox("Debug output: Distortion correction", &debugUseDistortion);
+
+        if (ImGui::CollapsingHeader("Remote Debug")) {
+          ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
+          ImGui::Checkbox("Distortion correction", &debugUseDistortion);
+          if (ImGui::RadioButton("No overlay", !debugOverlay)) {
+            debugOverlay.reset();
+          }
+#ifdef HAVE_OPENCV_CUDA
+          if (ImGui::RadioButton("Focus Assist", debugOverlay && debugOverlay->overlayType() == kDebugOverlayFocusAssist)) {
+            if ((!debugOverlay) || debugOverlay->overlayType() != kDebugOverlayFocusAssist)
+              debugOverlay.reset(new FocusAssistDebugOverlay(argusCamera));
+          }
+#endif // HAVE_OPENCV_CUDA
+
+          if (debugOverlay)
+            debugOverlay->renderIMGUI();
+        }
+
         ImGui::End();
 
         if (settingsDirty) {
@@ -973,6 +992,9 @@ int main(int argc, char* argv[]) {
       {
         RHISurface::ptr debugSurface = renderAcquireDebugSurface();
         if (debugSurface) {
+          if (debugOverlay)
+            debugOverlay->update();
+
           RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({debugSurface}));
           rhi()->beginRenderPass(rt, kLoadInvalidate);
 
@@ -985,6 +1007,8 @@ int main(int argc, char* argv[]) {
             if (calibrationContext && calibrationContext->involvesCamera(cameraIdx)) {
               overlayTex = calibrationContext->overlaySurfaceAtIndex(calibrationContext->overlaySurfaceIndexForCamera(cameraIdx));
               distortionTex = calibrationContext->previewDistortionMapForCamera(cameraIdx);
+            } else if (debugOverlay) {
+              overlayTex = debugOverlay->overlaySurfaceForCamera(cameraIdx);
             } else if (debugUseDistortion) {
               // Distortion-corrected view
               distortionTex = cameraSystem->cameraAtIndex(cameraIdx).intrinsicDistortionMap;
