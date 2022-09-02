@@ -82,6 +82,7 @@ protected:
   pthread_mutex_t m_gpuSubmissionQueueLock;
   pthread_cond_t m_gpuSubmissionQueueCond;
   pthread_t m_cudaWorkerThread;
+  pthread_mutex_t m_cudaWorkerActiveLock;
   bool m_cudaWorkerThreadRunning = false;
 
   std::queue<NvBuffer*> m_encoderOutputPlaneBufferQueue;

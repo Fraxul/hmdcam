@@ -44,6 +44,7 @@ NvEncSession::NvEncSession(uint32_t _width, uint32_t _height) :
   pthread_mutex_init(&m_gpuSubmissionQueueLock, NULL);
   pthread_cond_init(&m_gpuSubmissionQueueCond, NULL);
 
+  pthread_mutex_init(&m_cudaWorkerActiveLock, NULL);
 
   // Allocate surface pool
   NvBufSurfaceAllocateParams vicInputSurfaceParams;
@@ -149,6 +150,8 @@ NvEncSession::~NvEncSession() {
 
   pthread_mutex_destroy(&m_stateLock);
   pthread_mutex_destroy(&m_callbackLock);
+
+  pthread_mutex_destroy(&m_cudaWorkerActiveLock);
 
   pthread_mutex_destroy(&m_gpuSubmissionQueueLock);
   pthread_cond_destroy(&m_gpuSubmissionQueueCond);
@@ -283,6 +286,8 @@ void NvEncSession::cudaWorker() {
       fprintf(stderr, "NvEncSession::cudaWorker(): thread stop requested\n");
       break;
     }
+    pthread_mutex_lock(&m_cudaWorkerActiveLock);
+
     RHISurface::ptr surface = m_rhiSurfaces[surfaceIdx];
 
     NvBuffer* encoderInputBuffer = NULL;
@@ -409,6 +414,7 @@ void NvEncSession::cudaWorker() {
     int ret = m_enc->output_plane.qBuffer(v4l2_buf, encoderInputBuffer);
     if (ret < 0)
       die("Error while queueing buffer at encoder output plane");
+    pthread_mutex_unlock(&m_cudaWorkerActiveLock);
   }
 
   for (size_t i = 0; i < vicInputSurfaceResources.size(); ++i) {
@@ -558,9 +564,11 @@ void NvEncSession::stop() {
 
   // Ensure the CUDA worker thread has drained its work queue
   pthread_mutex_lock(&m_gpuSubmissionQueueLock);
+  pthread_mutex_lock(&m_cudaWorkerActiveLock); // Wait for the CUDA worker to finish and return to servicing the submission queue
   while (!m_gpuSubmissionQueue.empty()) {
     m_gpuSubmissionQueue.pop();
   }
+  pthread_mutex_unlock(&m_cudaWorkerActiveLock);
   pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
 
   // Wait till capture plane DQ Thread finishes
