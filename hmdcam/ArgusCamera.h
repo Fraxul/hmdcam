@@ -211,6 +211,8 @@ public:
   virtual int64_t captureDurationOffset() const { return 0; }
 
 protected:
+  uint64_t m_previousFrameReadTime = 0;
   std::vector<RHISurface::ptr> m_textures;
+  std::vector<VPIImage> m_vpiImages;
 };
 

@@ -289,15 +289,15 @@ void ArgusCamera::setRepeatCapture(bool value) {
         die("Failed to start repeat capture request");
     }
   } else {
-    // Issue all stop-repeat requests
+    // Issue all stop-repeat requests and wait for the sessions to become idle
     for (size_t sessionIdx = 0; sessionIdx < m_captureSessions.size(); ++sessionIdx) {
       Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIdx]);
-      iCaptureSession->stopRepeat();
+      iCaptureSession->cancelRequests();
     }
-    // Wait for all sessions to become idle
+    // Give the sessions time to return to idle
     for (size_t sessionIdx = 0; sessionIdx < m_captureSessions.size(); ++sessionIdx) {
       Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIdx]);
-      iCaptureSession->waitForIdle();
+      iCaptureSession->waitForIdle(m_targetCaptureIntervalNs * 2);
     }
   }
 
@@ -638,6 +638,8 @@ ArgusCameraMock::ArgusCameraMock(size_t sensorCount, unsigned int w, unsigned in
   }
 
   m_textures.resize(sensorCount);
+
+  m_vpiImages.resize(sensorCount);
 }
 
 ArgusCameraMock::~ArgusCameraMock() {
@@ -646,6 +648,13 @@ ArgusCameraMock::~ArgusCameraMock() {
 
 bool ArgusCameraMock::readFrame() {
   uint64_t now = currentTimeNs();
+
+  // Frame pacing
+  uint64_t delta = now - m_previousFrameReadTime;
+  if (delta < m_targetCaptureIntervalNs) {
+    delayNs(m_targetCaptureIntervalNs - delta);
+  }
+
   for (size_t i = 0; i < m_frameMetadata.size(); ++i) {
     m_frameMetadata[i].sensorTimestamp = now - m_targetCaptureIntervalNs;
   }
@@ -672,12 +681,17 @@ bool ArgusCameraMock::readFrame() {
     rhi()->endRenderPass(rt);
 
     m_textures[i] = srf;
+
+    // Argus NVBuffers wrapped into VPIImage are VPI_IMAGE_FORMAT_NV12_ER
+    VPI_CHECK(vpiImageCreate(streamWidth(), streamHeight(), VPI_IMAGE_FORMAT_NV12_ER, VPI_BACKEND_CUDA, &m_vpiImages[i]));
   }
+
+  m_previousFrameReadTime = now;
   return true;
 }
 
 VPIImage ArgusCameraMock::vpiImage(size_t sensorIndex) const {
-  assert(false && "Not implemented");
+  return m_vpiImages[sensorIndex];
   return NULL;
 }
 

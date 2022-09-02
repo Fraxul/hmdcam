@@ -55,8 +55,8 @@ float panoClipOffset = 0.0f;
 float panoClipScale = 1.0f;
 float panoTxScale = 1.0f;
 bool debugUseDistortion = true;
-float uiScale = 0.75f;
-float uiDepth = 2.0f;
+float uiScale = 0.2f;
+float uiDepth = 0.4f;
 
 
 uint64_t settingsDirtyFrame = 0; // 0 if not dirty, frame number otherwise.
@@ -238,6 +238,7 @@ int main(int argc, char* argv[]) {
   bool enableRDMA = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
+  bool debugNoRepeatingCapture = false;
   int rdmaInterval = 2;
 
   for (int i = 1; i < argc; ++i) {
@@ -257,6 +258,8 @@ int main(int argc, char* argv[]) {
       enableRDMA = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
       debugInitOnly = true;
+    } else if (!strcmp(argv[i], "--debug-no-repeating-capture")) {
+      debugNoRepeatingCapture = true;
     } else if (!strcmp(argv[i], "--debug-mock-cameras")) {
       debugMockCameras = true;
     } else if (!strcmp(argv[i], "--rdma-interval")) {
@@ -489,9 +492,6 @@ int main(int argc, char* argv[]) {
     // Load settings
     loadSettings();
 
-    // Start repeating capture
-    argusCamera->setRepeatCapture(true);
-
     // Accumulators to track frame timing statistics
     uint64_t frameCounter = 0;
     boost::accumulators::accumulator_set<double, boost::accumulators::stats<
@@ -530,9 +530,42 @@ int main(int argc, char* argv[]) {
 
     bool drawUI = false;
     bool debugEnableDepthMapGenerator = true;
+    int restartSkipFrameCounter = 0;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
     boost::scoped_ptr<IDebugOverlay> debugOverlay;
 
+
+    // Warm up the depth map generator. It might need to do expensive initialization tasks once it sees the
+    // camera system configuration (like compiling CUDA kernels), so we run a few frames through it
+    // before settling in to the timing-sensitive repeating capture loop.
+    if (depthMapGenerator) {
+      argusCamera->setRepeatCapture(false);
+      argusCamera->readFrame();
+      uint64_t processFrameStart = currentTimeNs();
+      depthMapGenerator->processFrame();
+      printf("Depth Map Generator warmup took %.3f ms\n", deltaTimeMs(processFrameStart, currentTimeNs()));
+#if 1
+      argusCamera->readFrame();
+      processFrameStart = currentTimeNs();
+      depthMapGenerator->processFrame();
+      printf("Depth Map Generator 2nd frame took %.3f ms\n", deltaTimeMs(processFrameStart, currentTimeNs()));
+#else
+      for (size_t i = 0; i < 100; ++i) {
+        uint64_t readFrameStart = currentTimeNs();
+        argusCamera->readFrame();
+        processFrameStart = currentTimeNs();
+        depthMapGenerator->processFrame();
+        uint64_t end = currentTimeNs();
+        printf("[%zu] readFrame %.3f ms processFrame %.3f ms total %.3f ms\n", i, deltaTimeMs(readFrameStart, processFrameStart), deltaTimeMs(processFrameStart, end), deltaTimeMs(readFrameStart, end));
+      }
+#endif
+    }
+
+    // Start repeating capture
+    if (!debugNoRepeatingCapture)
+      argusCamera->setRepeatCapture(true);
+
+    // Main display loop
     while (!want_quit) {
       FrameTimingData timingData;
       uint64_t frameStartTimeNs = currentTimeNs();
@@ -562,10 +595,16 @@ int main(int argc, char* argv[]) {
         want_quit = true;
       }
 
-      // Only use repeating captures if we're not in calibration. The variable CPU-side delays for calibration image processing usually end up crashing libargus.
-      argusCamera->setRepeatCapture(!((bool) calibrationContext));
+      if (restartSkipFrameCounter <= 0) {
+        // Only use repeating captures if we're not in calibration. The variable CPU-side delays for calibration image processing usually end up crashing libargus.
+        if (!debugNoRepeatingCapture)
+          argusCamera->setRepeatCapture(!((bool) calibrationContext));
 
-      argusCamera->readFrame();
+        argusCamera->readFrame();
+      } else {
+        restartSkipFrameCounter -= 1;
+      }
+
       timingData.captureTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
 
       if (previousCaptureTimestamp) {
@@ -697,8 +736,8 @@ int main(int argc, char* argv[]) {
           } // Calibration header
 
           if (ImGui::CollapsingHeader("UI Settings")) {
-            settingsDirty |= ImGui::SliderFloat("UI Scale", &uiScale, 0.5f, 2.5f);
-            settingsDirty |= ImGui::SliderFloat("UI Depth", &uiDepth, 1.0f, 10.0f);
+            settingsDirty |= ImGui::SliderFloat("UI Scale", &uiScale, 0.05f, 1.5f);
+            settingsDirty |= ImGui::SliderFloat("UI Depth", &uiDepth, 0.2f, 2.5f);
           } // UI Settings header
         }
 
@@ -759,6 +798,7 @@ int main(int argc, char* argv[]) {
           }
           if (ImGui::Button("Restart Capture")) {
             argusCamera->stop(); // will automatically restart on next frame when we call setRepeatCapture again
+            restartSkipFrameCounter = 3; // skip a few frames before restarting to smooth out the timing glitch we just caused
           }
         }
 

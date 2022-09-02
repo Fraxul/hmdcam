@@ -28,7 +28,7 @@ DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr) {
     return kDepthBackendDGPU;
   } else if ((!strcasecmp(backendStr, "depthai")) || (!strcasecmp(backendStr, "depth-ai"))) {
     return kDepthBackendDepthAI;
-  } else if ((!strcasecmp(backendStr, "vpi"))) {
+  } else if ((!strcasecmp(backendStr, "vpi")) || (!strcasecmp(backendStr, "vpi2"))) {
     return kDepthBackendVPI;
   } else {
     fprintf(stderr, "depthBackendStringToEnum: unrecognized worker type \"%s\"\n", backendStr);
@@ -298,6 +298,7 @@ void DepthMapGenerator::processFrame() {
 
   // Update view data
   if (m_viewData.empty() || (m_viewDataRevision != m_cameraSystem->calibrationDataRevision())) {
+    uint64_t startTimeNs = currentTimeNs();
 
     if (m_viewData.size() > m_cameraSystem->views()) {
       // Trim array
@@ -334,6 +335,8 @@ void DepthMapGenerator::processFrame() {
     this->internalUpdateViewData();
 
     m_viewDataRevision = m_cameraSystem->calibrationDataRevision();
+    uint64_t endTimeNs = currentTimeNs();
+    printf("DepthMapGenerator: viewData update took %.3f ms\n", deltaTimeMs(startTimeNs, endTimeNs));
   }
 
 
