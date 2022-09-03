@@ -278,8 +278,9 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
       if (!vd->m_isStereoView)
         continue;
 
-      vpiEventElapsedTimeMillis(vd->m_frameStartedEvent, vd->m_setupFinishedEvent, &vd->m_setupTimeMs);
-      vpiEventElapsedTimeMillis(vd->m_setupFinishedEvent, vd->m_frameFinishedEvent, &vd->m_stereoTimeMs);
+      vpiEventElapsedTimeMillis(vd->m_frameStartedEvent, vd->m_remapFinishedEvent, &vd->m_remapTimeMs);
+      vpiEventElapsedTimeMillis(vd->m_remapFinishedEvent, vd->m_rescaleFinishedEvent, &vd->m_rescaleTimeMs);
+      vpiEventElapsedTimeMillis(vd->m_rescaleFinishedEvent, vd->m_frameFinishedEvent, &vd->m_stereoTimeMs);
     }
   }
 
@@ -300,6 +301,7 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
 
     // Remap
     PER_EYE VPI_CHECK(vpiSubmitRemap(vd->m_stream, VPI_BACKEND_CUDA, vd->m_remapPayload[eyeIdx], vd->m_grey[eyeIdx], vd->m_rectifiedGrey[eyeIdx], VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0));
+    VPI_CHECK(vpiEventRecord(vd->m_remapFinishedEvent, vd->m_stream));
 
     // Rescale
     PER_EYE VPI_CHECK(vpiSubmitRescale(vd->m_stream, VPI_BACKEND_CUDA, vd->m_rectifiedGrey[eyeIdx], vd->m_resized[eyeIdx], VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0));
@@ -324,7 +326,7 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
     }
 
     // Stereo algo phase
-    VPI_CHECK(vpiEventRecord(vd->m_setupFinishedEvent, vd->m_stream));
+    VPI_CHECK(vpiEventRecord(vd->m_rescaleFinishedEvent, vd->m_stream));
 
     VPIImage* stereoInput = vd->m_isVerticalStereo ? vd->m_resizedTransposed : vd->m_resized;
     VPIImage outDisparity = vd->m_isVerticalStereo ? vd->m_disparityTransposed : vd->m_disparity;
@@ -376,7 +378,7 @@ void DepthMapGeneratorVPI::internalRenderIMGUI() {
       if (!vd->m_isStereoView)
         continue;
 
-      ImGui::Text("View [%zu]: Setup: %.3fms, Stereo %.3fms", viewIdx, vd->m_setupTimeMs, vd->m_stereoTimeMs);
+      ImGui::Text("View [%zu]: Remap: %.3fms, Rescale: %.3fms, Stereo %.3fms", viewIdx, vd->m_remapTimeMs, vd->m_rescaleTimeMs, vd->m_stereoTimeMs);
     }
     ImGui::Text("Total: %.3fms", m_frameTimeMs);
   }
