@@ -17,6 +17,10 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
 
 RenderBackend* createVKDirectBackend() { return new RenderBackendVKDirect(); }
 
+template <typename T> bool contains(const std::vector<T>& container, const T& value) {
+  return std::find(container.begin(), container.end(), value) != container.end();
+}
+
 RenderBackendVKDirect::RenderBackendVKDirect() {
 
 }
@@ -222,6 +226,11 @@ void RenderBackendVKDirect::init() {
     auto capabilities = m_gpu.getSurfaceCapabilitiesKHR(m_surface.get());
     auto presentModes = m_gpu.getSurfacePresentModesKHR(m_surface.get());
 
+    printf("Supported swapchain formats:\n");
+    for (size_t i = 0; i < formats.size(); ++i) {
+      printf("  [%zu] %s %s\n", i, to_string(formats[i].format).c_str(), to_string(formats[i].colorSpace).c_str());
+    }
+
     // image count depending on capabilities
     uint32_t imageCount = std::min(capabilities.maxImageCount, capabilities.minImageCount + 1);
 
@@ -258,13 +267,20 @@ void RenderBackendVKDirect::init() {
       pretransform = capabilities.currentTransform;
     }
 
-    // pick a preferred present mode or use fallback
-    vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
-    for(auto& m : presentModes) {
-      if(m == vk::PresentModeKHR::eMailbox) {
-        presentMode = m;
-      }
+    printf("Supported presentation modes: ");
+    for (auto& m : presentModes) {
+      printf("%s ", to_string(m).c_str());
     }
+
+    // Select a suitable presentation mode. eFifo is required to be supported so that'll be our fallback.
+    vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
+    if (contains(presentModes, vk::PresentModeKHR::eMailbox)) { // Mailbox: optimal
+      presentMode = vk::PresentModeKHR::eMailbox;
+    } else if (contains(presentModes, vk::PresentModeKHR::eImmediate)) { // Immediate might tear, but it'll keep latency low
+      presentMode = vk::PresentModeKHR::eImmediate;
+    }
+
+    printf("\nSelected presentation mode: %s\n", to_string(presentMode).c_str());
 
     // VK_KHR_display
     // create swapchain using the ddisplay surface created before
