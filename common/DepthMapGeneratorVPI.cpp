@@ -266,7 +266,6 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
     }
   }
 
-  cuStreamSynchronize(m_masterCUStream); // TODO messy
   internalGenerateDisparityMips();
 
 
