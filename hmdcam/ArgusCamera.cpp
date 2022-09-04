@@ -239,6 +239,54 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
       CUDA_CHECK(cuGraphicsEGLRegisterImage(&b.cudaResource, b.eglImage, CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY));
       CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&b.eglFrame, b.cudaResource, 0, 0));
 
+      int cvLumaFormat = CV_8U;
+      if (i == 0) { // only report for the first buffer created
+        // Typical eglColorFormat is CU_EGL_COLOR_FORMAT_YUV420_SEMIPLANAR_ER (0x26)
+        // Surface [0]: Y, extended range.
+        // Surface [1]: UV, with VU byte ordering, U/V width = 1/2 Y width, U/V height = 1/2 Y height.
+
+        printf("Stream [%zu]: frameType=%s cuFormat=0x%x eglColorFormat=0x%x width=%u height=%u numChannels=%u planeCount=%u \n", cameraIdx,
+          b.eglFrame.frameType == CU_EGL_FRAME_TYPE_ARRAY ? "Array" : "Pitch", b.eglFrame.cuFormat, b.eglFrame.eglColorFormat, b.eglFrame.width, b.eglFrame.height, b.eglFrame.numChannels, b.eglFrame.planeCount);
+        switch (b.eglFrame.cuFormat) {
+          case CU_AD_FORMAT_UNSIGNED_INT8: cvLumaFormat = CV_8U; break;
+          case CU_AD_FORMAT_UNSIGNED_INT16: cvLumaFormat = CV_16U; break;
+          case CU_AD_FORMAT_UNSIGNED_INT32: cvLumaFormat = CV_32S; break; // no real CV_32U type, so we cheat with CV_32S
+          case CU_AD_FORMAT_SIGNED_INT8: cvLumaFormat = CV_8S; break;
+          case CU_AD_FORMAT_SIGNED_INT16: cvLumaFormat = CV_16S; break;
+          case CU_AD_FORMAT_SIGNED_INT32: cvLumaFormat = CV_32S; break;
+
+          case CU_AD_FORMAT_HALF: cvLumaFormat = CV_16F; break;
+          case CU_AD_FORMAT_FLOAT: cvLumaFormat = CV_32F; break;
+          default:
+            assert(false && "Unhandled cuFormat");
+        }
+      }
+
+      // Create CUtexObject wrapper over the luma plane
+      assert(b.eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH && b.eglFrame.frame.pPitch[0] != nullptr);
+      {
+        CUDA_RESOURCE_DESC resDesc;
+        memset(&resDesc, 0, sizeof(resDesc));
+        resDesc.resType = CU_RESOURCE_TYPE_PITCH2D;
+        resDesc.res.pitch2D.devPtr       = (CUdeviceptr) b.eglFrame.frame.pPitch[0];
+        resDesc.res.pitch2D.format       = b.eglFrame.cuFormat;
+        resDesc.res.pitch2D.numChannels  = b.eglFrame.numChannels;
+        resDesc.res.pitch2D.width        = b.eglFrame.width;
+        resDesc.res.pitch2D.height       = b.eglFrame.height;
+        resDesc.res.pitch2D.pitchInBytes = b.eglFrame.pitch;
+
+        CUDA_TEXTURE_DESC texDesc;
+        memset(&texDesc, 0, sizeof(texDesc));
+        texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
+        texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
+        texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
+        texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
+        // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
+        texDesc.maxAnisotropy = 1;
+
+        CUDA_CHECK(cuTexObjectCreate(&b.cudaLumaTexObject, &resDesc, &texDesc, /*resourceViewDescriptor=*/ nullptr));
+      }
+
 #ifdef HAVE_VPI2
       VPIImageData vid;
       memset(&vid, 0, sizeof(vid));
@@ -312,9 +360,14 @@ ArgusCamera::~ArgusCamera() {
   for (BufferPool& bp : m_bufferPools) {
     for (BufferPool::Entry& b : bp.buffers) {
       b.argusBuffer->destroy();
+      cuTexObjectDestroy(b.cudaLumaTexObject);
       cuGraphicsUnregisterResource(b.cudaResource);
       eglDestroyImageKHR(m_display, b.eglImage);
       NvBufferDestroy(b.nativeBuffer);
+
+#ifdef HAVE_VPI2
+      vpiImageDestroy(b.vpiImage);
+#endif
     }
   }
   m_bufferPools.clear();

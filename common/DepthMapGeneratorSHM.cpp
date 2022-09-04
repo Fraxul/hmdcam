@@ -6,6 +6,7 @@
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
+#include "common/remapArray.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
@@ -225,8 +226,8 @@ void DepthMapGeneratorSHM::internalUpdateViewData() {
       // vd->m_disparityTexture = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R16i));
 
       //Set up what matrices we can to prevent dynamic memory allocation.
-      vd->rectLeft_gpu = cv::cuda::GpuMat(inputHeight(), inputWidth(), CV_8U);
-      vd->rectRight_gpu = cv::cuda::GpuMat(inputHeight(), inputWidth(), CV_8U);
+      vd->rectLeft_gpu = cv::cuda::GpuMat(imageSize, CV_8U);
+      vd->rectRight_gpu = cv::cuda::GpuMat(imageSize, CV_8U);
 
       vd->resizedLeft_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
       vd->resizedRight_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
@@ -306,11 +307,11 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     if (!vd->m_isStereoView)
       continue;
 
-    cv::cuda::GpuMat origLeft_gpu = m_cameraSystem->cameraProvider()->gpuMatGreyscale(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]);
-    cv::cuda::GpuMat origRight_gpu = m_cameraSystem->cameraProvider()->gpuMatGreyscale(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1]);
+    auto leftLumaTexObj = m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]);
+    auto rightLumaTexObj = m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1]);
 
-    cv::cuda::remap(origLeft_gpu, vd->rectLeft_gpu, vd->m_leftMap1_gpu, vd->m_leftMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_globalStream);
-    cv::cuda::remap(origRight_gpu, vd->rectRight_gpu, vd->m_rightMap1_gpu, vd->m_rightMap2_gpu, CV_INTER_LINEAR, cv::BORDER_CONSTANT, /*borderValue=*/ cv::Scalar(), m_globalStream);
+    remapArray(leftLumaTexObj, vd->m_leftMap1_gpu, vd->m_leftMap2_gpu, vd->rectLeft_gpu, (CUstream) m_globalStream.cudaPtr());
+    remapArray(rightLumaTexObj, vd->m_rightMap1_gpu, vd->m_rightMap2_gpu, vd->rectRight_gpu, (CUstream) m_globalStream.cudaPtr());
 
     cv::cuda::resize(vd->rectLeft_gpu, vd->resizedLeft_gpu, cv::Size(internalWidth(), internalHeight()), 0, 0, cv::INTER_LINEAR, m_globalStream);
     cv::cuda::resize(vd->rectRight_gpu, vd->resizedRight_gpu, cv::Size(internalWidth(), internalHeight()), 0, 0, cv::INTER_LINEAR, m_globalStream);

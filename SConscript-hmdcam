@@ -83,6 +83,6 @@ if (env['HAVE_OPENCV_CUDA']):
 
 tegraEnv.Program(
   target = '../bin/hmdcam', # relative to build/hmdcam
-  source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('common/*.cpp') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/egl/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp') + Glob('wayland/*.c') + tegra_mmapi_src + liveMediaStatics + monadoStatics,
+  source = Glob('hmdcam/*.cpp') + Glob('hmdcam/*.c') + Glob('hmdcam/*.cu') + Glob('common/*.cpp') + Glob('common/*.cu') + Glob('rdma/*.cpp') + Glob('rhi/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/egl/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp') + Glob('wayland/*.c') + tegra_mmapi_src + liveMediaStatics + monadoStatics,
 )
 

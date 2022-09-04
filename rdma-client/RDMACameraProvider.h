@@ -20,6 +20,7 @@ public:
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_cameraSurfaces[sensorIndex]; }
+  virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { assert(false && "unimplemented"); return 0; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex);
   virtual VPIImage vpiImage(size_t sensorIndex) const;
   cv::Mat cvMat(size_t sensorIndex) const;

@@ -6,11 +6,13 @@
 #include "common/Timing.h"
 #include "common/VPIUtil.h"
 #include "common/glmCvInterop.h"
+#include "common/remapArray.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
 #include <opencv2/core.hpp>
+#include <opencv2/cudawarping.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
@@ -141,6 +143,10 @@ void DepthMapGeneratorVPI::internalUpdateViewData() {
     if (!vd->m_isStereoView)
       continue;
 
+    // Good initial state for CUDA events (so we don't crash on the first frame trying to call elapsedTime on uninitialized events)
+    vd->m_cudaSetupStartedEvent.record(vd->m_cuStream);
+    vd->m_cudaSetupFinishedEvent.record(vd->m_cuStream);
+
     vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
     {
@@ -151,15 +157,31 @@ void DepthMapGeneratorVPI::internalUpdateViewData() {
         CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
         cv::initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], imageSize, CV_32F, m1, m2);
         vd->m_remapPayload[eyeIdx] = cvRemapToVPIRemapPayload(m1, m2);
+        vd->m_remapMatX[eyeIdx].upload(m1);
+        vd->m_remapMatY[eyeIdx].upload(m2);
       }
+    }
+
+    PER_EYE vd->m_rectifiedMat[eyeIdx].create(inputHeight(), inputWidth(), CV_8U);
+
+    PER_EYE {
+      vd->m_disparityInputMat[eyeIdx].create(internalHeight(), internalWidth(), CV_8U);
+
+      VPIImageData vid;
+      memset(&vid, 0, sizeof(vid));
+      vid.bufferType = VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR;
+      vid.buffer.pitch.format = VPI_IMAGE_FORMAT_Y8_ER;
+      vid.buffer.pitch.numPlanes = 1;
+      vid.buffer.pitch.planes[0].width = internalWidth();
+      vid.buffer.pitch.planes[0].height = internalHeight();
+      vid.buffer.pitch.planes[0].pitchBytes = vd->m_disparityInputMat[eyeIdx].step;
+      vid.buffer.pitch.planes[0].data = vd->m_disparityInputMat[eyeIdx].cudaPtr();
+
+      VPI_CHECK(vpiImageCreateWrapper(&vid, NULL, /*flags=*/ 0, &vd->m_disparityInput[eyeIdx]));
     }
 
     // TODO we should only enable BACKEND_CPU if disparity debug access is requested
     uint64_t imageFlags = VPI_BACKEND_CUDA | VPI_BACKEND_CPU | VPI_REQUIRE_BACKENDS;
-
-    PER_EYE VPI_CHECK(vpiImageCreate(inputWidth(),    inputHeight(),    VPI_IMAGE_FORMAT_Y8_ER, imageFlags, &vd->m_grey[eyeIdx]));
-    PER_EYE VPI_CHECK(vpiImageCreate(inputWidth(),    inputHeight(),    VPI_IMAGE_FORMAT_Y8_ER, imageFlags, &vd->m_rectifiedGrey[eyeIdx]));
-    PER_EYE VPI_CHECK(vpiImageCreate(internalWidth(), internalHeight(), VPI_IMAGE_FORMAT_Y8_ER, imageFlags, &vd->m_resized[eyeIdx]));
 
     VPI_CHECK(vpiImageCreate(internalWidth(), internalHeight(), VPI_IMAGE_FORMAT_S16,    imageFlags, &vd->m_disparity));
     VPI_CHECK(vpiImageCreate(internalWidth(), internalHeight(), VPI_IMAGE_FORMAT_U16,    imageFlags, &vd->m_confidence));
@@ -261,8 +283,8 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
       if (!vd->m_rightGray)
         vd->m_rightGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
 
-      copyVPIImageToSurface(vd->m_resized[0], vd->m_leftGray, m_masterCUStream);
-      copyVPIImageToSurface(vd->m_resized[1], vd->m_rightGray, m_masterCUStream);
+      RHICUDA::copyGpuMatToSurface(vd->m_disparityInputMat[0], vd->m_leftGray, m_masterCUStream);
+      RHICUDA::copyGpuMatToSurface(vd->m_disparityInputMat[1], vd->m_rightGray, m_masterCUStream);
     }
   }
 
@@ -276,10 +298,8 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
       if (!vd->m_isStereoView)
         continue;
 
-      vpiEventElapsedTimeMillis(vd->m_frameStartedEvent, vd->m_convertFinishedEvent, &vd->m_convertTimeMs);
-      vpiEventElapsedTimeMillis(vd->m_convertFinishedEvent, vd->m_remapFinishedEvent, &vd->m_remapTimeMs);
-      vpiEventElapsedTimeMillis(vd->m_remapFinishedEvent, vd->m_rescaleFinishedEvent, &vd->m_rescaleTimeMs);
-      vpiEventElapsedTimeMillis(vd->m_rescaleFinishedEvent, vd->m_frameFinishedEvent, &vd->m_stereoTimeMs);
+      vd->m_cudaSetupTimeMs = cv::cuda::Event::elapsedTime(vd->m_cudaSetupStartedEvent, vd->m_cudaSetupFinishedEvent);
+      vpiEventElapsedTimeMillis(vd->m_stereoStartedEvent, vd->m_stereoFinishedEvent, &vd->m_stereoTimeMs);
     }
   }
 
@@ -289,51 +309,24 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
     if (!vd->m_isStereoView)
       continue;
 
-    VPI_CHECK(vpiEventRecord(vd->m_frameStartedEvent, vd->m_stream));
-    // Setup phase
+    vd->m_cudaSetupStartedEvent.record(vd->m_cuStream);
+    PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), vd->m_remapMatX[eyeIdx], vd->m_remapMatY[eyeIdx], vd->m_rectifiedMat[eyeIdx], (CUstream) vd->m_cuStream.cudaPtr());
+    PER_EYE cv::cuda::resize(vd->m_rectifiedMat[eyeIdx], vd->m_disparityInputMat[eyeIdx], cv::Size(internalWidth(), internalHeight()), 0, 0, cv::INTER_LINEAR, vd->m_cuStream);
+    vd->m_cudaSetupFinishedEvent.record(vd->m_cuStream);
 
-    VPIConvertImageFormatParams convParams;
-    vpiInitConvertImageFormatParams(&convParams);
+    // Run stereo processing through VPI
+    VPI_CHECK(vpiEventRecord(vd->m_stereoStartedEvent, vd->m_stream));
 
-    // Convert to greyscale
-    PER_EYE VPI_CHECK(vpiSubmitConvertImageFormat(vd->m_stream, VPI_BACKEND_CUDA, m_cameraSystem->cameraProvider()->vpiImage(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), vd->m_grey[eyeIdx], &convParams));
-    VPI_CHECK(vpiEventRecord(vd->m_convertFinishedEvent, vd->m_stream));
-
-    // Remap
-    PER_EYE VPI_CHECK(vpiSubmitRemap(vd->m_stream, VPI_BACKEND_CUDA, vd->m_remapPayload[eyeIdx], vd->m_grey[eyeIdx], vd->m_rectifiedGrey[eyeIdx], VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0));
-    VPI_CHECK(vpiEventRecord(vd->m_remapFinishedEvent, vd->m_stream));
-
-    // Rescale
-    PER_EYE VPI_CHECK(vpiSubmitRescale(vd->m_stream, VPI_BACKEND_CUDA, vd->m_rectifiedGrey[eyeIdx], vd->m_resized[eyeIdx], VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0));
-
-    if (vd->m_isVerticalStereo) {
-      // Ensure all CUDA work has been enqueued
-      vpiStreamFlush(vd->m_stream);
-      PER_EYE {
-        VPIImageData input, output;
-
-        VPI_CHECK(vpiImageLockData(vd->m_resized[eyeIdx], VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &input));
-        VPI_CHECK(vpiImageLockData(vd->m_resizedTransposed[eyeIdx], VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &output));
-
-        NppiSize sz; // input image size
-        sz.width  = input.buffer.pitch.planes[0].width;
-        sz.height = input.buffer.pitch.planes[0].height;
-
-        nppiTranspose_16u_C1R_Ctx((const Npp16u*) input.buffer.pitch.planes[0].data, input.buffer.pitch.planes[0].pitchBytes, (Npp16u*) output.buffer.pitch.planes[0].data, output.buffer.pitch.planes[0].pitchBytes, sz, vd->m_nppStreamContext);
-        VPI_CHECK(vpiImageUnlock(vd->m_resized[eyeIdx]));
-        VPI_CHECK(vpiImageUnlock(vd->m_resizedTransposed[eyeIdx]));
-      }
-    }
-
-    // Stereo algo phase
-    VPI_CHECK(vpiEventRecord(vd->m_rescaleFinishedEvent, vd->m_stream));
-
-    VPIImage* stereoInput = vd->m_isVerticalStereo ? vd->m_resizedTransposed : vd->m_resized;
+    VPIImage* stereoInput = vd->m_disparityInput; //vd->m_isVerticalStereo ? vd->m_resizedTransposed : vd->m_resized; // TODO vertical stereo
     VPIImage outDisparity = vd->m_isVerticalStereo ? vd->m_disparityTransposed : vd->m_disparity;
     VPIImage outConfidence = vd->m_isVerticalStereo ? vd->m_confidenceTransposed : vd->m_confidence;
 
     VPI_CHECK(vpiSubmitStereoDisparityEstimator(vd->m_stream, VPI_BACKEND_CUDA, vd->m_disparityEstimator, stereoInput[0], stereoInput[1], outDisparity, outConfidence, &m_params));
+    VPI_CHECK(vpiEventRecord(vd->m_stereoFinishedEvent, vd->m_stream));
+    VPI_CHECK(vpiStreamFlush(vd->m_stream));
 
+ // XXX TODO vertical stereo support
+#if 0
     if (vd->m_isVerticalStereo) {
       // Transpose disparity and confidence images back
       vpiStreamFlush(vd->m_stream);
@@ -358,10 +351,10 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
       VPI_CHECK(vpiImageUnlock(vd->m_disparity));
       VPI_CHECK(vpiImageUnlock(vd->m_confidence));
     }
+#endif
 
-    // Finish and join to master stream
-    VPI_CHECK(vpiEventRecord(vd->m_frameFinishedEvent, vd->m_stream));
-    VPI_CHECK(vpiStreamWaitEvent(m_masterStream, vd->m_frameFinishedEvent));
+    // Join to master stream
+    VPI_CHECK(vpiStreamWaitEvent(m_masterStream, vd->m_stereoFinishedEvent));
   }
   VPI_CHECK(vpiEventRecord(m_masterFrameFinishedEvent, m_masterStream));
 
@@ -382,7 +375,7 @@ void DepthMapGeneratorVPI::internalRenderIMGUIPerformanceGraphs() {
     if (!vd->m_isStereoView)
       continue;
 
-    ImGui::Text("View [%zu]: Convert %.3f Remap %.3fms Rescale %.3fms Stereo %.3fms", viewIdx, vd->m_convertTimeMs, vd->m_remapTimeMs, vd->m_rescaleTimeMs, vd->m_stereoTimeMs);
+    ImGui::Text("View [%zu]: Setup %.3f Stereo %.3fms", viewIdx, vd->m_cudaSetupTimeMs, vd->m_stereoTimeMs);
   }
   ImGui::Text("Total: %.3fms", m_frameTimeMs);
 }

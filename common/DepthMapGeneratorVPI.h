@@ -25,24 +25,18 @@ protected:
 
   struct ViewDataVPI : public ViewData {
     ViewDataVPI() {
-      CUDA_CHECK(cuStreamCreate(&m_cuStream, CU_STREAM_NON_BLOCKING));
-      VPI_CHECK(vpiStreamCreateWrapperCUDA(m_cuStream, /*flags=*/ 0, &m_stream));
-      VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_frameStartedEvent));
-      VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_convertFinishedEvent));
-      VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_remapFinishedEvent));
-      VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_rescaleFinishedEvent));
-      VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_frameFinishedEvent));
+      VPI_CHECK(vpiStreamCreateWrapperCUDA((CUstream) m_cuStream.cudaPtr(), /*flags=*/ 0, &m_stream));
+
+      VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_stereoStartedEvent));
+      VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_stereoFinishedEvent));
 
       // Set up valid initial state for events
-      vpiEventRecord(m_frameStartedEvent, m_stream);
-      vpiEventRecord(m_convertFinishedEvent, m_stream);
-      vpiEventRecord(m_remapFinishedEvent, m_stream);
-      vpiEventRecord(m_rescaleFinishedEvent, m_stream);
-      vpiEventRecord(m_frameFinishedEvent, m_stream);
+      vpiEventRecord(m_stereoStartedEvent, m_stream);
+      vpiEventRecord(m_stereoFinishedEvent, m_stream);
 
       // Init NPP stream context
       memset(&m_nppStreamContext, 0, sizeof(m_nppStreamContext));
-      nppSetStream(m_cuStream);
+      nppSetStream((CUstream) m_cuStream.cudaPtr());
       nppGetStreamContext(&m_nppStreamContext);
     }
 
@@ -50,20 +44,14 @@ protected:
       releaseVPIResources();
 
       vpiStreamDestroy(m_stream); m_stream = NULL;
-      vpiEventDestroy(m_frameStartedEvent); m_frameStartedEvent = NULL;
-      vpiEventDestroy(m_convertFinishedEvent); m_convertFinishedEvent = NULL;
-      vpiEventDestroy(m_remapFinishedEvent); m_remapFinishedEvent = NULL;
-      vpiEventDestroy(m_rescaleFinishedEvent); m_rescaleFinishedEvent = NULL;
-      vpiEventDestroy(m_frameFinishedEvent); m_frameFinishedEvent = NULL;
-      cuStreamDestroy(m_cuStream);
+      vpiEventDestroy(m_stereoStartedEvent); m_stereoStartedEvent = NULL;
+      vpiEventDestroy(m_stereoFinishedEvent); m_stereoFinishedEvent = NULL;
     }
 
     void releaseVPIResources() {
       PER_EYE({
         vpiPayloadDestroy(m_remapPayload[eyeIdx]);    m_remapPayload[eyeIdx] = NULL;
-        vpiImageDestroy(m_grey[eyeIdx]);              m_grey[eyeIdx] = NULL;
-        vpiImageDestroy(m_rectifiedGrey[eyeIdx]);     m_rectifiedGrey[eyeIdx] = NULL;
-        vpiImageDestroy(m_resized[eyeIdx]);           m_resized[eyeIdx] = NULL;
+        vpiImageDestroy(m_disparityInput[eyeIdx]);    m_disparityInput[eyeIdx] = NULL;
         vpiImageDestroy(m_resizedTransposed[eyeIdx]); m_resizedTransposed[eyeIdx] = NULL;
       });
 
@@ -76,28 +64,27 @@ protected:
       vpiImageDestroy(m_confidenceTransposed); m_confidenceTransposed = NULL;
     }
 
-    CUstream m_cuStream = 0;
+    cv::cuda::Stream m_cuStream;
     VPIStream m_stream = nullptr;
     NppStreamContext m_nppStreamContext;
-    VPIEvent m_frameStartedEvent = nullptr;
-    VPIEvent m_convertFinishedEvent = nullptr;
-    VPIEvent m_remapFinishedEvent = nullptr;
-    VPIEvent m_rescaleFinishedEvent = nullptr;
-    VPIEvent m_frameFinishedEvent = nullptr;
+    VPIEvent m_stereoStartedEvent = nullptr;
+    VPIEvent m_stereoFinishedEvent = nullptr;
 
-    float m_convertTimeMs = 0, m_remapTimeMs = 0, m_rescaleTimeMs = 0, m_stereoTimeMs = 0;
+    cv::cuda::Event m_cudaSetupStartedEvent;
+    cv::cuda::Event m_cudaSetupFinishedEvent;
+
+    float m_cudaSetupTimeMs = 0, m_stereoTimeMs = 0;
 
     // Remap payloads for rectification
     VPIPayload m_remapPayload[2] = {nullptr, nullptr};
+    cv::cuda::GpuMat m_remapMatX[2], m_remapMatY[2];
 
-    // Output of format conversion from ArgusCamera shared images (NV12_ER)
-    VPIImage m_grey[2] = {nullptr, nullptr};
+    // Output from remap
+    cv::cuda::GpuMat m_rectifiedMat[2];
 
-    // Output of m_grey remap
-    VPIImage m_rectifiedGrey[2] = {nullptr, nullptr};
-
-    // Output of m_rectifiedGrey resize
-    VPIImage m_resized[2] = {nullptr, nullptr};
+    // Output from resize, wrapped for handoff to VPI
+    cv::cuda::GpuMat m_disparityInputMat[2];
+    VPIImage m_disparityInput[2] = {nullptr, nullptr};
 
     VPIPayload m_disparityEstimator = nullptr;
 
