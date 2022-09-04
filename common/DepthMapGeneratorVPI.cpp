@@ -276,7 +276,8 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
       if (!vd->m_isStereoView)
         continue;
 
-      vpiEventElapsedTimeMillis(vd->m_frameStartedEvent, vd->m_remapFinishedEvent, &vd->m_remapTimeMs);
+      vpiEventElapsedTimeMillis(vd->m_frameStartedEvent, vd->m_convertFinishedEvent, &vd->m_convertTimeMs);
+      vpiEventElapsedTimeMillis(vd->m_convertFinishedEvent, vd->m_remapFinishedEvent, &vd->m_remapTimeMs);
       vpiEventElapsedTimeMillis(vd->m_remapFinishedEvent, vd->m_rescaleFinishedEvent, &vd->m_rescaleTimeMs);
       vpiEventElapsedTimeMillis(vd->m_rescaleFinishedEvent, vd->m_frameFinishedEvent, &vd->m_stereoTimeMs);
     }
@@ -296,6 +297,7 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
 
     // Convert to greyscale
     PER_EYE VPI_CHECK(vpiSubmitConvertImageFormat(vd->m_stream, VPI_BACKEND_CUDA, m_cameraSystem->cameraProvider()->vpiImage(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), vd->m_grey[eyeIdx], &convParams));
+    VPI_CHECK(vpiEventRecord(vd->m_convertFinishedEvent, vd->m_stream));
 
     // Remap
     PER_EYE VPI_CHECK(vpiSubmitRemap(vd->m_stream, VPI_BACKEND_CUDA, vd->m_remapPayload[eyeIdx], vd->m_grey[eyeIdx], vd->m_rectifiedGrey[eyeIdx], VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0));
@@ -380,7 +382,7 @@ void DepthMapGeneratorVPI::internalRenderIMGUIPerformanceGraphs() {
     if (!vd->m_isStereoView)
       continue;
 
-    ImGui::Text("View [%zu]: Remap: %.3fms, Rescale: %.3fms, Stereo %.3fms", viewIdx, vd->m_remapTimeMs, vd->m_rescaleTimeMs, vd->m_stereoTimeMs);
+    ImGui::Text("View [%zu]: Convert %.3f Remap %.3fms Rescale %.3fms Stereo %.3fms", viewIdx, vd->m_convertTimeMs, vd->m_remapTimeMs, vd->m_rescaleTimeMs, vd->m_stereoTimeMs);
   }
   ImGui::Text("Total: %.3fms", m_frameTimeMs);
 }

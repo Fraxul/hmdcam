@@ -28,12 +28,14 @@ protected:
       CUDA_CHECK(cuStreamCreate(&m_cuStream, CU_STREAM_NON_BLOCKING));
       VPI_CHECK(vpiStreamCreateWrapperCUDA(m_cuStream, /*flags=*/ 0, &m_stream));
       VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_frameStartedEvent));
+      VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_convertFinishedEvent));
       VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_remapFinishedEvent));
       VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_rescaleFinishedEvent));
       VPI_CHECK(vpiEventCreate(/*flags=*/ 0, &m_frameFinishedEvent));
 
       // Set up valid initial state for events
       vpiEventRecord(m_frameStartedEvent, m_stream);
+      vpiEventRecord(m_convertFinishedEvent, m_stream);
       vpiEventRecord(m_remapFinishedEvent, m_stream);
       vpiEventRecord(m_rescaleFinishedEvent, m_stream);
       vpiEventRecord(m_frameFinishedEvent, m_stream);
@@ -49,6 +51,7 @@ protected:
 
       vpiStreamDestroy(m_stream); m_stream = NULL;
       vpiEventDestroy(m_frameStartedEvent); m_frameStartedEvent = NULL;
+      vpiEventDestroy(m_convertFinishedEvent); m_convertFinishedEvent = NULL;
       vpiEventDestroy(m_remapFinishedEvent); m_remapFinishedEvent = NULL;
       vpiEventDestroy(m_rescaleFinishedEvent); m_rescaleFinishedEvent = NULL;
       vpiEventDestroy(m_frameFinishedEvent); m_frameFinishedEvent = NULL;
@@ -77,11 +80,12 @@ protected:
     VPIStream m_stream = nullptr;
     NppStreamContext m_nppStreamContext;
     VPIEvent m_frameStartedEvent = nullptr;
+    VPIEvent m_convertFinishedEvent = nullptr;
     VPIEvent m_remapFinishedEvent = nullptr;
     VPIEvent m_rescaleFinishedEvent = nullptr;
     VPIEvent m_frameFinishedEvent = nullptr;
 
-    float m_remapTimeMs = 0, m_rescaleTimeMs = 0, m_stereoTimeMs = 0;
+    float m_convertTimeMs = 0, m_remapTimeMs = 0, m_rescaleTimeMs = 0, m_stereoTimeMs = 0;
 
     // Remap payloads for rectification
     VPIPayload m_remapPayload[2] = {nullptr, nullptr};
