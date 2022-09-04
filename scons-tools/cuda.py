@@ -47,8 +47,8 @@ def generate(env):
     env['ENABLESHAREDNVCCFLAG'] = '-shared'
 
     # default NVCC commands
-    env['STATICNVCCCMD'] = '$NVCC -o $TARGET -c $NVCCFLAGS $STATICNVCCFLAGS $SOURCES'
-    env['SHAREDNVCCCMD'] = '$NVCC -o $TARGET -c $NVCCFLAGS $SHAREDNVCCFLAGS $ENABLESHAREDNVCCFLAG $SOURCES'
+    env['STATICNVCCCMD'] = SCons.Action.Action("$NVCC -o $TARGET -c $NVCCFLAGS $STATICNVCCFLAGS $SOURCES ${_concat('-I', NVCCPATH, '', __env__)}")
+    env['SHAREDNVCCCMD'] = SCons.Action.Action("$NVCC -o $TARGET -c $NVCCFLAGS $SHAREDNVCCFLAGS $ENABLESHAREDNVCCFLAG $SOURCES ${_concat{'-I', NVCCPATH, '', __env__)}")
 
     # helpers
     home=os.environ.get('HOME', '')
