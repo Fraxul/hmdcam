@@ -22,6 +22,9 @@
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/CudaUtil.h"
+#include "rhi/gl/GLCommon.h" // must be included before cudaEGL
+#include <cudaEGL.h>
+#include <cuda_egl_interop.h>
 
 #include "ArgusCamera.h"
 #include "common/CameraSystem.h"
@@ -379,37 +382,115 @@ int main(int argc, char* argv[]) {
   }
 
 
-  // Create the RDMA configuration buffer
+  // Create the RDMA configuration buffer and camera data buffers
   RDMABuffer::ptr configBuf;
+  std::vector<RDMABuffer::ptr> rdmaCameraLumaBuffers;
+  std::vector<RDMABuffer::ptr> rdmaCameraChromaBuffers;
+  CUDA_RESOURCE_DESC lumaResourceDescriptor;
+  memset(&lumaResourceDescriptor, 0, sizeof(lumaResourceDescriptor));
+
+  CUDA_RESOURCE_DESC chromaResourceDescriptor;
+  memset(&chromaResourceDescriptor, 0, sizeof(chromaResourceDescriptor));
+
   if (rdmaContext) {
-    configBuf = rdmaContext->newManagedBuffer("config", 8192, kRDMABufferUsageWriteSource); // TODO this should be read-source once we implement read
-
-    SerializationBuffer cfg;
-    cfg.put_u32(argusCamera->streamCount());
-    cfg.put_u32(argusCamera->streamWidth());
-    cfg.put_u32(argusCamera->streamHeight());
-
-    memcpy(configBuf->data(), cfg.data(), cfg.size());
-    rdmaContext->asyncFlushWriteBuffer(configBuf);
-  }
-
-
-  // Create RDMA camera buffers and render surfaces
-  std::vector<RHISurface::ptr> rdmaRenderSurfaces;
-  std::vector<RHIRenderTarget::ptr> rdmaRenderTargets;
-  std::vector<RDMABuffer::ptr> rdmaCameraBuffers;
-  if (rdmaContext) {
-    rdmaRenderSurfaces.resize(argusCamera->streamCount());
-    rdmaRenderTargets.resize(argusCamera->streamCount());
-    rdmaCameraBuffers.resize(argusCamera->streamCount());
+    CUeglColorFormat eglColorFormat;
 
     for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
-      rdmaRenderSurfaces[cameraIdx] = rhi()->newTexture2D(argusCamera->streamWidth(), argusCamera->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-      rdmaRenderTargets[cameraIdx] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( {rdmaRenderSurfaces[cameraIdx] } ));
+      CUgraphicsResource rsrc = argusCamera->cudaGraphicsResource(cameraIdx);
+      if (!rsrc) {
+        printf("ArgusCamera failed to provide CUgraphicsResource for stream %zu\n", cameraIdx);
+        break;
+      }
+
+      // Using the Runtime API here instead since it gives better information about multiplanar formats
+      cudaEglFrame eglFrame;
+      CUDA_CHECK(cudaGraphicsResourceGetMappedEglFrame(&eglFrame, (cudaGraphicsResource_t) rsrc, /*cubemapIndex=*/ 0, /*mipLevel=*/ 0));
+      assert(eglFrame.frameType == cudaEglFrameTypePitch);
+      assert(eglFrame.planeCount == 2);
+
+      if (cameraIdx == 0) {
+        eglColorFormat = (CUeglColorFormat) eglFrame.eglColorFormat; // CUeglColorFormat and cudaEglColorFormat are interchangeable
+
+        // Convert eglFrame to resource descriptors.
+        // We don't fill the device pointers, we're just going to serialize the contents
+        // of these descriptors to populate the config buffer.
+        lumaResourceDescriptor.resType = CU_RESOURCE_TYPE_PITCH2D;
+        lumaResourceDescriptor.res.pitch2D.devPtr       = 0;
+        lumaResourceDescriptor.res.pitch2D.format       = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[0].channelDesc.f; // TODO
+        lumaResourceDescriptor.res.pitch2D.numChannels  = eglFrame.planeDesc[0].numChannels;
+        lumaResourceDescriptor.res.pitch2D.width        = eglFrame.planeDesc[0].width;
+        lumaResourceDescriptor.res.pitch2D.height       = eglFrame.planeDesc[0].height;
+        lumaResourceDescriptor.res.pitch2D.pitchInBytes = eglFrame.planeDesc[0].pitch;
+
+        // TODO hardcoded assumptions about chroma format -- we should be able to get this from the eglColorFormat!
+        chromaResourceDescriptor.res.pitch2D.devPtr       = 0;
+        chromaResourceDescriptor.res.pitch2D.format       = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[1].channelDesc.f // TODO
+        chromaResourceDescriptor.res.pitch2D.numChannels  = 2; // eglFrame.planeDesc[1].numChannels; // TODO
+        chromaResourceDescriptor.res.pitch2D.width        = eglFrame.planeDesc[1].width;
+        chromaResourceDescriptor.res.pitch2D.height       = eglFrame.planeDesc[1].height;
+        // pitchInBytes NOTE: "...in case of multiplanar *eglFrame, pitch of only first plane is to be considered by the application."
+        // (accessing planeDesc[0] is intentional)
+        chromaResourceDescriptor.res.pitch2D.pitchInBytes = eglFrame.planeDesc[0].pitch;
+
+        printf("Stream [%zu]:   Luma: %zu x %zu NumChannels=%u ChannelDesc=0x%x (%d,%d,%d,%d) pitchInBytes=%zu\n", cameraIdx,
+          lumaResourceDescriptor.res.pitch2D.width, lumaResourceDescriptor.res.pitch2D.height,
+          lumaResourceDescriptor.res.pitch2D.numChannels,
+          eglFrame.planeDesc[0].channelDesc.f, eglFrame.planeDesc[0].channelDesc.x, eglFrame.planeDesc[0].channelDesc.y,
+          eglFrame.planeDesc[0].channelDesc.z, eglFrame.planeDesc[0].channelDesc.w,
+          lumaResourceDescriptor.res.pitch2D.pitchInBytes);
+        printf("Stream [%zu]: Chroma: %zu x %zu NumChannels=%u ChannelDesc=0x%x (%d,%d,%d,%d) pitchInBytes=%zu\n", cameraIdx,
+          chromaResourceDescriptor.res.pitch2D.width, chromaResourceDescriptor.res.pitch2D.height,
+          chromaResourceDescriptor.res.pitch2D.numChannels,
+          eglFrame.planeDesc[1].channelDesc.f, eglFrame.planeDesc[1].channelDesc.x, eglFrame.planeDesc[1].channelDesc.y,
+          eglFrame.planeDesc[1].channelDesc.z, eglFrame.planeDesc[1].channelDesc.w,
+          chromaResourceDescriptor.res.pitch2D.pitchInBytes);
+      }
+
+      // TODO handle other type-sizes
+      assert(lumaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_UNSIGNED_INT8 || lumaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_SIGNED_INT8);
+      assert(chromaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_UNSIGNED_INT8 || chromaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_SIGNED_INT8);
 
       char bufferName[32];
-      sprintf(bufferName, "camera%zu", cameraIdx);
-      rdmaCameraBuffers[cameraIdx] = rdmaContext->newManagedBuffer(bufferName, argusCamera->streamWidth() * argusCamera->streamHeight() * 4, kRDMABufferUsageWriteSource);
+      sprintf(bufferName, "camera%zu_luma", cameraIdx);
+      rdmaCameraLumaBuffers.push_back(rdmaContext->newManagedBuffer(bufferName,
+        lumaResourceDescriptor.res.pitch2D.height * lumaResourceDescriptor.res.pitch2D.pitchInBytes, kRDMABufferUsageWriteSource));
+
+      sprintf(bufferName, "camera%zu_chroma", cameraIdx);
+      rdmaCameraChromaBuffers.push_back(rdmaContext->newManagedBuffer(bufferName, 
+        chromaResourceDescriptor.res.pitch2D.height * chromaResourceDescriptor.res.pitch2D.pitchInBytes, kRDMABufferUsageWriteSource));
+    }
+
+    if (rdmaCameraLumaBuffers.size() == argusCamera->streamCount() && rdmaCameraChromaBuffers.size() == argusCamera->streamCount()) {
+      configBuf = rdmaContext->newManagedBuffer("config", 8192, kRDMABufferUsageWriteSource); // TODO this should be read-source once we implement read
+
+      SerializationBuffer cfg;
+      cfg.put_u32(argusCamera->streamCount());
+      cfg.put_u32(argusCamera->streamWidth());
+      cfg.put_u32(argusCamera->streamHeight());
+
+      cfg.put_u32(eglColorFormat);
+
+      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.format);
+      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.numChannels);
+      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.width);
+      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.height);
+      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.pitchInBytes);
+
+      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.format);
+      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.numChannels);
+      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.width);
+      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.height);
+      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.pitchInBytes);
+
+      memcpy(configBuf->data(), cfg.data(), cfg.size());
+      rdmaContext->asyncFlushWriteBuffer(configBuf);
+    } else {
+      printf("RDMA camera buffer setup failed -- service will be unavailable.\n");
+      rdmaCameraLumaBuffers.clear();
+      rdmaCameraChromaBuffers.clear();
+
+      // TODO this just leaks/orphans the context -- we need to implement context shutdown at some point
+      rdmaContext = nullptr;
     }
   }
 
@@ -612,20 +693,6 @@ int main(int argc, char* argv[]) {
         captureInterval(currentCaptureIntervalMs);
       }
       previousCaptureTimestamp = argusCamera->frameSensorTimestamp(0);
-
-
-      if (rdmaContext && rdmaContext->hasPeerConnections()) {
-        // Issue renders/copies to populate RDMA surfaces
-        for (size_t cameraIdx = 0; cameraIdx < rdmaRenderTargets.size(); ++cameraIdx) {
-          rhi()->beginRenderPass(rdmaRenderTargets[cameraIdx], kLoadInvalidate);
-          // flip Y on MVP to fix coordinate system orientation
-          glm::mat4 mvp = glm::mat4(1.0f);
-          mvp[1][1] = -1.0f;
-          renderDrawCamera(cameraIdx, /*flags=*/0, /*distortion=*/RHISurface::ptr(), /*overlay=*/RHISurface::ptr(), mvp);
-          rhi()->endRenderPass(rdmaRenderTargets[cameraIdx]);
-        }
-
-      }
 
       // TODO move this inside CameraSystem
       if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
@@ -1129,35 +1196,49 @@ int main(int argc, char* argv[]) {
       }
 
       if (rdmaContext && rdmaContext->hasPeerConnections() && rdmaFrame == 0) {
-        // Issue RDMA surface readbacks and write-buffer flushes
-        for (size_t cameraIdx = 0; cameraIdx < rdmaRenderTargets.size(); ++cameraIdx) {
-          CUgraphicsResource pReadResource = rdmaRenderSurfaces[cameraIdx]->cuGraphicsResource();
-          CUDA_CHECK(cuGraphicsMapResources(1, &pReadResource, 0));
+        // Issue RDMA surface copies and write-buffer flushes
+        for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
+          CUeglFrame eglFrame;
+          CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&eglFrame, argusCamera->cudaGraphicsResource(cameraIdx), 0, 0));
 
-          CUmipmappedArray pReadMip = NULL;
-          CUDA_CHECK(cuGraphicsResourceGetMappedMipmappedArray(&pReadMip, pReadResource));
+          { // Luma copy
+            CUDA_MEMCPY2D copyDescriptor;
+            memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
 
-          CUarray pReadArray = NULL;
-          CUDA_CHECK(cuMipmappedArrayGetLevel(&pReadArray, pReadMip, 0));
+            copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+            copyDescriptor.srcDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
+            copyDescriptor.srcPitch = lumaResourceDescriptor.res.pitch2D.pitchInBytes;
 
-          CUDA_MEMCPY2D copyDescriptor;
-          memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
+            copyDescriptor.WidthInBytes = lumaResourceDescriptor.res.pitch2D.width * 1; //8-bit, 1-channel
+            copyDescriptor.Height = lumaResourceDescriptor.res.pitch2D.height;
 
-          copyDescriptor.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-          copyDescriptor.srcArray = pReadArray;
+            copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
+            copyDescriptor.dstHost = rdmaCameraLumaBuffers[cameraIdx]->data();
+            copyDescriptor.dstPitch = lumaResourceDescriptor.res.pitch2D.pitchInBytes;
 
-          copyDescriptor.WidthInBytes = rdmaRenderSurfaces[cameraIdx]->width() * 4 /*bytes/pixel*/;
-          copyDescriptor.Height = rdmaRenderSurfaces[cameraIdx]->height();
+            CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+          }
 
-          copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
-          copyDescriptor.dstHost = rdmaCameraBuffers[cameraIdx]->data();
-          copyDescriptor.dstPitch = copyDescriptor.WidthInBytes;
+          { // Chroma copy
+            CUDA_MEMCPY2D copyDescriptor;
+            memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
 
-          CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+            copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+            copyDescriptor.srcDevice = (CUdeviceptr) eglFrame.frame.pPitch[1];
+            copyDescriptor.srcPitch = chromaResourceDescriptor.res.pitch2D.pitchInBytes;
 
-          cuGraphicsUnmapResources(1, &pReadResource, 0);
+            copyDescriptor.WidthInBytes = chromaResourceDescriptor.res.pitch2D.width * 2; //8-bit, 2-channel
+            copyDescriptor.Height = chromaResourceDescriptor.res.pitch2D.height;
 
-          rdmaContext->asyncFlushWriteBuffer(rdmaCameraBuffers[cameraIdx]);
+            copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
+            copyDescriptor.dstHost = rdmaCameraChromaBuffers[cameraIdx]->data();
+            copyDescriptor.dstPitch = chromaResourceDescriptor.res.pitch2D.pitchInBytes;
+
+            CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+          }
+
+          rdmaContext->asyncFlushWriteBuffer(rdmaCameraLumaBuffers[cameraIdx]);
+          rdmaContext->asyncFlushWriteBuffer(rdmaCameraChromaBuffers[cameraIdx]);
         }
         // Send "buffers dirty" event
         rdmaContext->asyncSendUserEvent(1, SerializationBuffer());

@@ -1,4 +1,5 @@
 #include <cuda.h>
+#include <cuda_runtime.h>
 #include <stdio.h>
 #include "rhi/cuda/CudaUtil.h"
 
@@ -14,3 +15,12 @@ bool checkCUresult(CUresult res, const char* op, const char* file, int line, boo
   return true;
 }
 
+bool checkCUresult(cudaError_t res, const char* op, const char* file, int line, bool fatal) {
+  if (res != cudaSuccess) {
+    fprintf(stderr, "%s (%s:%d): CUDA error %d: %s: %s\n", op, file, line, res, cudaGetErrorName(res), cudaGetErrorString(res));
+    if (fatal)
+      abort();
+    return false;
+  }
+  return true;
+}

@@ -24,6 +24,7 @@ public:
   virtual unsigned int streamHeight() const { return m_streamHeight; }
 
   // === IArgusCamera ===
+  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const = 0;
   virtual bool readFrame() = 0;
   virtual void stop() = 0;
   virtual void setRepeatCapture(bool) = 0;
@@ -92,6 +93,7 @@ public:
   // =======================
 
   // === IArgusCamera ===
+  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().cudaResource; }
   virtual bool readFrame();
   virtual void stop();
   virtual void setRepeatCapture(bool);
@@ -208,6 +210,7 @@ public:
   virtual VPIImage vpiImage(size_t sensorIndex) const;
 
   // === IArgusCamera ===
+  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const { return nullptr; }
   virtual bool readFrame();
 
   virtual void stop() {}

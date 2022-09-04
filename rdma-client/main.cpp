@@ -514,8 +514,8 @@ int main(int argc, char** argv) {
           cv::initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_32F, map1, map2);
 
           cv::Mat res;
-          cv::remap(cameraProvider->cvMat(v.cameraIndices[0]), res, map1, map2, cv::INTER_LINEAR);
-          rhi()->loadTextureData(testSrf, kVertexElementTypeUByte4N, res.data);
+          cv::remap(cameraProvider->cvMatLuma(v.cameraIndices[0]), res, map1, map2, cv::INTER_LINEAR);
+          rhi()->loadTextureData(testSrf, kVertexElementTypeUByte1N, res.data);
         } else {
           // guts of captureGreyscale
           rhi()->beginRenderPass(testRT, kLoadInvalidate);

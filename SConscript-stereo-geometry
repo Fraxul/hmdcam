@@ -8,7 +8,16 @@ sgEnv.Append(
 
 sgEnv.Program(
   target = '../bin/stereo-geometry',
-  source = Glob('stereo-geometry/*.cpp') + Glob('common/*.cpp') + Glob('common/*.cu') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('imgui/*.cpp'),
+  source = Glob('stereo-geometry/*.cpp') +
+    [
+      'common/CameraSystem.cpp',
+      'common/CharucoMultiViewCalibration.cpp',
+      'common/FxCamera.cpp',
+      'common/FxRenderView.cpp',
+      'common/FxThreading.cpp',
+      'common/stb_impl.cpp',
+    ] +
+    Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('imgui/*.cpp'),
   LIBS=[
     'z',
     'dl',

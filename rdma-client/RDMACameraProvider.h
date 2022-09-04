@@ -8,6 +8,8 @@
 #ifdef HAVE_VPI2
 #include <vpi/Image.h>
 #endif
+#include "rhi/gl/GLCommon.h" // must be included before cudaEGL
+#include <cudaEGL.h>
 
 class RDMAContext;
 
@@ -19,11 +21,12 @@ public:
   virtual size_t streamCount() const { return m_streamCount; }
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
-  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_cameraSurfaces[sensorIndex]; }
-  virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { assert(false && "unimplemented"); return 0; }
-  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex);
-  virtual VPIImage vpiImage(size_t sensorIndex) const;
-  cv::Mat cvMat(size_t sensorIndex) const;
+  virtual RHISurface::ptr rgbTexture(size_t streamIdx) const;
+  virtual CUtexObject cudaLumaTexObject(size_t streamIdx) const;
+  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t streamIdx);
+  virtual VPIImage vpiImage(size_t streamIdx) const;
+  cv::Mat cvMatLuma(size_t streamIdx) const;
+  cv::Mat cvMatChroma(size_t streamIdx) const;
 
   void flagRDMABuffersDirty() { m_rdmaBuffersDirty = true; }
   void updateSurfaces();
@@ -35,16 +38,25 @@ protected:
   size_t m_streamCount;
   unsigned int m_streamWidth, m_streamHeight;
 
-  std::vector<RDMABuffer::ptr> m_cameraRDMABuffers;
-  std::vector<RHISurface::ptr> m_cameraSurfaces;
+  CUeglColorFormat m_eglColorFormat;
+  CUDA_RESOURCE_DESC m_lumaResourceDescriptor;
+  CUDA_RESOURCE_DESC m_chromaResourceDescriptor;
+  uint32_t m_lumaCopyWidthBytes, m_chromaCopyWidthBytes;
 
-  std::vector<cv::cuda::GpuMat> m_gpuMatTmp;
-  std::vector<cv::cuda::GpuMat> m_gpuMatGreyscaleTmp;
+  struct StreamData {
+    RDMABuffer::ptr rdmaLumaBuffer;
+    RDMABuffer::ptr rdmaChromaBuffer;
 
-  std::vector<VPIImage> m_vpiImages;
+    RHISurface::ptr rhiSurfaceRGBA;
+    cv::cuda::GpuMat gpuMatLuma, gpuMatChroma, gpuMatRGBA;
+    CUtexObject cudaLumaTexObject = 0;
+    VPIImage vpiImage = nullptr;
+  };
+
+  std::vector<StreamData> m_streamData;
+
+  cv::cuda::GpuMat m_gpuMatRGBTmp; // format conversion intermediary
 
   bool m_rdmaBuffersDirty = true;
-  bool m_gpuMatGreyscaleDirty = true;
-
 };
 
