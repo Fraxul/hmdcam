@@ -314,6 +314,8 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     m_depthMapSHM->segment()->m_bilateralFilterSigma = m_bilateralFilterSigma;
     m_depthMapSHM->segment()->m_leftRightCheckThreshold = m_leftRightCheckThreshold;
     m_depthMapSHM->segment()->m_enableLRCheck = m_enableLRCheck;
+    m_depthMapSHM->segment()->m_enableSpatialFilter = m_enableSpatialFilter;
+    m_depthMapSHM->segment()->m_enableTemporalFilter = m_enableTemporalFilter;
 
     m_didChangeSettings = false;
   }
@@ -517,6 +519,8 @@ void DepthMapGeneratorSHM::internalRenderIMGUI() {
     if (m_enableLRCheck) {
       m_didChangeSettings |= ImGui::SliderInt("L-R Check Threshold", &m_leftRightCheckThreshold, 0, 128);
     }
+    m_didChangeSettings |= ImGui::Checkbox("Spatial Filter", &m_enableSpatialFilter);
+    m_didChangeSettings |= ImGui::Checkbox("Temporal Filter", &m_enableTemporalFilter);
   }
 
   ImGui::Checkbox("Profiling", &m_enableProfiling);

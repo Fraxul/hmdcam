@@ -11,8 +11,6 @@ depthaiEnv.Append(
 )
 depthaiStaticLibs = Glob(depthaiSDK + '/lib/libdepthai*.a') + Glob(depthaiSDK + '/lib/cmake/depthai/dependencies/lib/*.a')
 depthaiLibDeps = ['usb-1.0']
-if depthaiEnv['IS_TEGRA']:
-  depthaiLibDeps += ['dw']
 
 depthaiEnv.Program(
   target = '../bin/depthai-worker', # relative to build/depthai-worker

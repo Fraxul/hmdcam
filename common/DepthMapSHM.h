@@ -69,6 +69,8 @@ public:
   int m_bilateralFilterSigma; // 0...65535. "larger value of the parameter means that farther colors within the pixel neighborhood will be mixed together, resulting in larger areas of semi-equal color."
   int m_leftRightCheckThreshold; // 0...128. only used if LR check is enabled. "Defines the maximum difference between the confidence of pixels from left-right and right-left confidence maps."
   bool m_enableLRCheck;
+  bool m_enableSpatialFilter;
+  bool m_enableTemporalFilter;
 
 
   // Profiling data

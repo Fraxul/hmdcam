@@ -46,6 +46,7 @@ std::mutex deviceBootMutex;
 void viewProcessingThread(size_t viewIdx) {
   DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
   PerViewData& viewData = perViewData[viewIdx];
+  std::shared_ptr<dai::RawStereoDepthConfig> rawStereoConfig = std::make_shared<dai::RawStereoDepthConfig>();
 
   while (true) {
 
@@ -88,11 +89,15 @@ void viewProcessingThread(size_t viewIdx) {
         stereo->setInputResolution(viewData.m_paddedWidth, vp.height);
         stereo->initialConfig.setMedianFilter(dai::MedianFilter::KERNEL_5x5);
 
+        stereo->setDepthAlign(dai::StereoDepthConfig::AlgorithmControl::DepthAlign::RECTIFIED_LEFT);
         stereo->setLeftRightCheck(false);
         stereo->setExtendedDisparity(false);
         stereo->setSubpixel(false);
 
         stereo->setRuntimeModeSwitch(true); // allocate extra resources for runtime mode switching (lr-check, extended, subpixel)
+
+        // cache initial raw config
+        *rawStereoConfig = stereo->initialConfig.get();
 
         // link queues to processing node
         inLeft->out.link(stereo->left);
@@ -121,14 +126,15 @@ void viewProcessingThread(size_t viewIdx) {
 
       if (viewData.m_lastSettingsGeneration != shm->segment()->m_settingsGeneration) {
         // Update config
-        dai::StereoDepthConfig config;
-        config.setConfidenceThreshold(shm->segment()->m_confidenceThreshold);
-        config.setMedianFilter((dai::MedianFilter) shm->segment()->m_medianFilter);
-        config.setBilateralFilterSigma(shm->segment()->m_bilateralFilterSigma);
-        config.setLeftRightCheckThreshold(shm->segment()->m_leftRightCheckThreshold);
-        config.setLeftRightCheck(shm->segment()->m_enableLRCheck);
+        rawStereoConfig->costMatching.confidenceThreshold = shm->segment()->m_confidenceThreshold;
+        rawStereoConfig->postProcessing.median = ((dai::MedianFilter) shm->segment()->m_medianFilter);
+        rawStereoConfig->postProcessing.bilateralSigmaValue = shm->segment()->m_bilateralFilterSigma;
+        rawStereoConfig->algorithmControl.leftRightCheckThreshold = shm->segment()->m_leftRightCheckThreshold;
+        rawStereoConfig->algorithmControl.enableLeftRightCheck = shm->segment()->m_enableLRCheck;
+        rawStereoConfig->postProcessing.spatialFilter.enable = shm->segment()->m_enableSpatialFilter;
+        rawStereoConfig->postProcessing.temporalFilter.enable = shm->segment()->m_enableTemporalFilter;
 
-        viewData.configQueue->send(config);
+        viewData.configQueue->send(std::make_shared<dai::StereoDepthConfig>(rawStereoConfig));
 
         viewData.m_lastSettingsGeneration = shm->segment()->m_settingsGeneration;
       }
@@ -175,10 +181,10 @@ void viewProcessingThread(size_t viewIdx) {
         PerViewData& viewData = perViewData[viewIdx];
         DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
 
-        // StereoBM uses CV_8UC1 disparity map, everything else uses CV_16SC1
-        size_t bytesPerPixel = 1; // TODO support 16bpp
-
         auto frame = viewData.dispQueue->get<dai::ImgFrame>();
+        // Frames are RAW8 unless subpixel is enabled, then they'll be RAW16
+        size_t bytesPerPixel = dai::RawImgFrame::typeToBpp(frame->getType());
+
         assert(frame->getType() == dai::ImgFrame::Type::RAW8 || frame->getType() == dai::ImgFrame::Type::GRAY8);
         assert(frame->getData().size() == frame->getWidth() * frame->getHeight());
         assert(frame->getWidth() == viewData.m_paddedWidth);
@@ -227,7 +233,7 @@ int main(int argc, char* argv[]) {
 
   shm = SHMSegment<DepthMapSHM>::openSegment("depth-worker");
   if (!shm) {
-    printf("dgpu-worker: Unable to open SHM segment\n");
+    printf("depthai-worker: Unable to open SHM segment\n");
     return -1;
   }
 
@@ -247,7 +253,7 @@ int main(int argc, char* argv[]) {
       if (sem_timedwait(&shm->segment()->m_workAvailableSem, &ts) < 0) {
         if (errno == ETIMEDOUT) {
           if (kill(ppid, 0) != 0) {
-            printf("dgpu-worker: parent process %d has exited\n", ppid);
+            printf("depthai-worker: parent process %d has exited\n", ppid);
             return 0;
           }
           continue;
