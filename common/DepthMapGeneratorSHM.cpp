@@ -244,12 +244,13 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
   m_copyTimeMs = 0;
 
   if (m_enableProfiling) {
-    try {
+    // cv::cuda::Event::elapsedTime will throw if the event is not ready
+    if (m_haveValidProfilingData) {
       m_setupTimeMs = cv::cuda::Event::elapsedTime(m_setupStartEvent, m_setupFinishedEvent);
       m_copyTimeMs = cv::cuda::Event::elapsedTime(m_copyStartEvent, m_processingFinishedEvent);
-    } catch (...) {
-      // cv::cuda::Event::elapsedTime will throw if the event is not ready; just skip reading the event timers in that case.
     }
+  } else {
+    m_haveValidProfilingData = false;
   }
 
   if (m_didChangeSettings) {
@@ -466,6 +467,7 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
 
   if (m_enableProfiling) {
     m_processingFinishedEvent.record(m_globalStream);
+    m_haveValidProfilingData = true;
   }
 
   // stupid workaround for profiling on desktop RDMAclient

@@ -77,6 +77,7 @@ protected:
 
   // Profiling events and data
   bool m_enableProfiling = false;
+  bool m_haveValidProfilingData = false;
   cv::cuda::Event m_setupStartEvent;
   cv::cuda::Event m_setupFinishedEvent;
 
