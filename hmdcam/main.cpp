@@ -662,7 +662,7 @@ int main(int argc, char* argv[]) {
             }
           }
 
-          if (ImGui::CollapsingHeader("Render Settings")) {
+          if (ImGui::CollapsingHeader("Render/UI Settings")) {
             // settingsDirty |= ImGui::Checkbox("Mask", &useMask); // Disabled for now
             settingsDirty |= ImGui::SliderFloat("Pano Tx Scale", &panoTxScale, 0.0f, 10.0f);
             settingsDirty |= ImGui::SliderFloat("Pano Clip Offset", &panoClipOffset, -0.5f, 0.5f);
@@ -678,6 +678,11 @@ int main(int argc, char* argv[]) {
                 argusCamera->setAcRegion(acCenter, acSize);
                 settingsDirty = true;
               }
+            }
+            settingsDirty |= ImGui::SliderFloat("UI Scale", &uiScale, 0.05f, 1.5f);
+            settingsDirty |= ImGui::SliderFloat("UI Depth", &uiDepth, 0.2f, 2.5f);
+            if (ImGui::Button("Save Settings")) {
+              saveSettings();
             }
           }
 
@@ -724,21 +729,17 @@ int main(int argc, char* argv[]) {
 
               ImGui::PopID(); // viewIdx
             }
-            if (ImGui::Button("Save Settings")) {
+            if (ImGui::Button("Save Calibration")) {
               cameraSystem->saveCalibrationData();
-              if (depthMapGenerator)
-                depthMapGenerator->saveSettings();
-              saveSettings();
-            }
-            if (debugEnableDepthMapGenerator && depthMapGenerator) {
-              depthMapGenerator->renderIMGUI();
             }
           } // Calibration header
 
-          if (ImGui::CollapsingHeader("UI Settings")) {
-            settingsDirty |= ImGui::SliderFloat("UI Scale", &uiScale, 0.05f, 1.5f);
-            settingsDirty |= ImGui::SliderFloat("UI Depth", &uiDepth, 0.2f, 2.5f);
-          } // UI Settings header
+          if (debugEnableDepthMapGenerator && depthMapGenerator && ImGui::CollapsingHeader("Depth Backend")) {
+            depthMapGenerator->renderIMGUI();
+            if (ImGui::Button("Save Depth Backend Settings")) {
+              depthMapGenerator->saveSettings();
+            }
+          }
         }
 
         {
