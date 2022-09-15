@@ -168,8 +168,22 @@ void RenderBackendDRM::init() {
   }
 
   {
+    int maxRefresh = 0;
+    char* maxRefreshStr = getenv("MAX_REFRESH_RATE");
+    if (maxRefreshStr)
+      maxRefresh = atoi(maxRefreshStr);
+    if (maxRefresh) {
+      fprintf(stderr, "MAX_REFRESH_RATE env set, capping to %d hz\n", maxRefresh);
+    }
+
+
     std::vector<int> modeSort;
     for (int modeIdx = 0; modeIdx < m_drmConnector->count_modes; ++modeIdx) {
+      if (maxRefresh && m_drmConnector->modes[modeIdx].vrefresh > maxRefresh) {
+        const auto& mode = m_drmConnector->modes[modeIdx];
+        printf(" -- Skipping mode [%d] %dx%d@%d%s due to refresh rate cap\n", modeIdx, mode.hdisplay, mode.vdisplay, mode.vrefresh, (mode.type & DRM_MODE_TYPE_PREFERRED) ? " (preferred)" : "");
+        continue;
+      }
       modeSort.push_back(modeIdx);
     }
     std::sort(modeSort.begin(), modeSort.end(), [conn = m_drmConnector](int lmi, int rmi) {
