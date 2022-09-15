@@ -682,8 +682,10 @@ bool ArgusCameraMock::readFrame() {
 
     m_textures[i] = srf;
 
+#ifdef HAVE_VPI2
     // Argus NVBuffers wrapped into VPIImage are VPI_IMAGE_FORMAT_NV12_ER
     VPI_CHECK(vpiImageCreate(streamWidth(), streamHeight(), VPI_IMAGE_FORMAT_NV12_ER, VPI_BACKEND_CUDA, &m_vpiImages[i]));
+#endif
   }
 
   m_previousFrameReadTime = now;

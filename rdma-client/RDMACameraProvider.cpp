@@ -34,6 +34,7 @@ RDMACameraProvider::RDMACameraProvider(RDMAContext* ctx, SerializationBuffer cfg
   // Create initial gpumats before creating VPI wrappers around them
   updateSurfaces();
 
+#ifdef HAVE_VPI2
   for (size_t streamIdx = 0; streamIdx < m_cameraRDMABuffers.size(); ++streamIdx) {
     cv::cuda::GpuMat& gpuMat = m_gpuMatTmp[streamIdx];
 
@@ -50,13 +51,15 @@ RDMACameraProvider::RDMACameraProvider(RDMAContext* ctx, SerializationBuffer cfg
 
     VPI_CHECK(vpiImageCreateWrapper(&data, /*params=*/ NULL, VPI_BACKEND_CUDA | VPI_REQUIRE_BACKENDS, &m_vpiImages[streamIdx]));
   }
-
+#endif
 }
 
 RDMACameraProvider::~RDMACameraProvider() {
+#ifdef HAVE_VPI2
   for (VPIImage img : m_vpiImages) {
     vpiImageDestroy(img);
   }
+#endif
 }
 
 void RDMACameraProvider::updateSurfaces() {

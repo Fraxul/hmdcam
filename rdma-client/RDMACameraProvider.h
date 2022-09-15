@@ -5,7 +5,9 @@
 #include "rhi/RHISurface.h"
 #include <vector>
 #include <opencv2/core/mat.hpp>
+#ifdef HAVE_VPI2
 #include <vpi/Image.h>
+#endif
 
 class RDMAContext;
 
