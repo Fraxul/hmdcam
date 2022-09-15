@@ -28,7 +28,6 @@ protected:
   PerCameraData* m_perCameraData;
 
   cv::cuda::Stream m_cudaStream;
-  NppStreamContext m_nppStreamContext;
 };
 
 #endif // HAVE_OPENCV_CUDA

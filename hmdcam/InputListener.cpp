@@ -528,7 +528,7 @@ static const char* inputKeyName(unsigned int v) {
     case KEY_PAUSECD: return "KEY_PAUSECD";
     case KEY_PROG3: return "KEY_PROG3";
     case KEY_PROG4: return "KEY_PROG4";
-    case KEY_ALL_APPLICATIONS: return "KEY_ALL_APPLICATIONS";
+    //case KEY_ALL_APPLICATIONS: return "KEY_ALL_APPLICATIONS";
     case KEY_SUSPEND: return "KEY_SUSPEND";
     case KEY_CLOSE: return "KEY_CLOSE";
     case KEY_PLAY: return "KEY_PLAY";
@@ -670,10 +670,10 @@ static const char* inputKeyName(unsigned int v) {
     case KEY_TITLE: return "KEY_TITLE";
     case KEY_SUBTITLE: return "KEY_SUBTITLE";
     case KEY_ANGLE: return "KEY_ANGLE";
-    case KEY_FULL_SCREEN: return "KEY_FULL_SCREEN";
+    //case KEY_FULL_SCREEN: return "KEY_FULL_SCREEN";
     case KEY_MODE: return "KEY_MODE";
     case KEY_KEYBOARD: return "KEY_KEYBOARD";
-    case KEY_ASPECT_RATIO: return "KEY_ASPECT_RATIO";
+    //case KEY_ASPECT_RATIO: return "KEY_ASPECT_RATIO";
     case KEY_PC: return "KEY_PC";
     case KEY_TV: return "KEY_TV";
     case KEY_TV2: return "KEY_TV2";
@@ -812,7 +812,7 @@ static const char* inputKeyName(unsigned int v) {
     case BTN_DPAD_LEFT: return "BTN_DPAD_LEFT";
     case BTN_DPAD_RIGHT: return "BTN_DPAD_RIGHT";
     case KEY_ALS_TOGGLE: return "KEY_ALS_TOGGLE";
-    case KEY_ROTATE_LOCK_TOGGLE: return "KEY_ROTATE_LOCK_TOGGLE";
+    //case KEY_ROTATE_LOCK_TOGGLE: return "KEY_ROTATE_LOCK_TOGGLE";
     case KEY_BUTTONCONFIG: return "KEY_BUTTONCONFIG";
     case KEY_TASKMANAGER: return "KEY_TASKMANAGER";
     case KEY_JOURNAL: return "KEY_JOURNAL";
@@ -821,9 +821,9 @@ static const char* inputKeyName(unsigned int v) {
     case KEY_SCREENSAVER: return "KEY_SCREENSAVER";
     case KEY_VOICECOMMAND: return "KEY_VOICECOMMAND";
     case KEY_ASSISTANT: return "KEY_ASSISTANT";
-    case KEY_KBD_LAYOUT_NEXT: return "KEY_KBD_LAYOUT_NEXT";
-    case KEY_EMOJI_PICKER: return "KEY_EMOJI_PICKER";
-    case KEY_DICTATE: return "KEY_DICTATE";
+    //case KEY_KBD_LAYOUT_NEXT: return "KEY_KBD_LAYOUT_NEXT";
+    //case KEY_EMOJI_PICKER: return "KEY_EMOJI_PICKER";
+    //case KEY_DICTATE: return "KEY_DICTATE";
     case KEY_BRIGHTNESS_MIN: return "KEY_BRIGHTNESS_MIN";
     case KEY_BRIGHTNESS_MAX: return "KEY_BRIGHTNESS_MAX";
     case KEY_KBDINPUTASSIST_PREV: return "KEY_KBDINPUTASSIST_PREV";

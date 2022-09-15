@@ -24,11 +24,6 @@ struct FocusAssistDebugOverlay::PerCameraData {
 
 FocusAssistDebugOverlay::FocusAssistDebugOverlay(ICameraProvider* c) : m_cameraProvider(c) {
   m_perCameraData = new PerCameraData[cameraProvider()->streamCount()];
-
-  // Init NPP stream context
-  memset(&m_nppStreamContext, 0, sizeof(m_nppStreamContext));
-  nppSetStream((cudaStream_t) m_cudaStream.cudaPtr());
-  nppGetStreamContext(&m_nppStreamContext);
 }
 
 FocusAssistDebugOverlay::~FocusAssistDebugOverlay() {
@@ -51,13 +46,17 @@ void FocusAssistDebugOverlay::update() {
     d.sobel->apply(srcMat, d.filteredMat, m_cudaStream);
   }
 
+  if (nppGetStream() != ((CUstream) m_cudaStream.cudaPtr())) {
+    nppSetStream((CUstream) m_cudaStream.cudaPtr());
+  }
+
   for (size_t cameraIdx = 0; cameraIdx < cameraProvider()->streamCount(); ++cameraIdx) {
     PerCameraData& d = m_perCameraData[cameraIdx];
     // 1-channel 8-bit unsigned char in-place threshold, "less than" comparison
     NppiSize sz;
     sz.width  = d.filteredMat.cols;
     sz.height = d.filteredMat.rows;
-    nppiThreshold_LTVal_8u_C1IR_Ctx(d.filteredMat.ptr<Npp8u>(), static_cast<int>(d.filteredMat.step), sz, /*comparisonValue=*/ 255, /*replacementValue=*/ 0, m_nppStreamContext);
+    nppiThreshold_LTVal_8u_C1IR(d.filteredMat.ptr<Npp8u>(), static_cast<int>(d.filteredMat.step), sz, /*comparisonValue=*/ 255, /*replacementValue=*/ 0);
   }
 
   for (size_t cameraIdx = 0; cameraIdx < cameraProvider()->streamCount(); ++cameraIdx) {
