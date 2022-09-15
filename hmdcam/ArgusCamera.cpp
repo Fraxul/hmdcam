@@ -237,6 +237,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
           die("Failed to release Buffer for capture use");
 
       CUDA_CHECK(cuGraphicsEGLRegisterImage(&b.cudaResource, b.eglImage, CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY));
+      CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&b.eglFrame, b.cudaResource, 0, 0));
 
 #ifdef HAVE_VPI2
       VPIImageData vid;
@@ -551,8 +552,7 @@ void ArgusCamera::setAcRegion(const glm::vec2& center, const glm::vec2& size) {
 
 
 cv::cuda::GpuMat ArgusCamera::gpuMatGreyscale(size_t sensorIdx) {
-  CUeglFrame eglFrame;
-  CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&eglFrame, m_bufferPools[sensorIdx].activeBuffer().cudaResource, 0, 0));
+  const CUeglFrame& eglFrame = m_bufferPools[sensorIdx].activeBuffer().eglFrame;
   return cv::cuda::GpuMat(eglFrame.height, eglFrame.width, CV_8U, eglFrame.frame.pPitch[0], eglFrame.pitch);
 }
 

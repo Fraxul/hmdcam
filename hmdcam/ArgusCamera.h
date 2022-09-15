@@ -5,6 +5,8 @@
 #include "rhi/egl/RHIEGLImageSurfaceGL.h"
 #include "rhi/RHIRenderTarget.h"
 #include "common/ICameraProvider.h"
+#include <cuda.h>
+#include <cudaEGL.h>
 
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
@@ -145,6 +147,7 @@ private:
       int nativeBuffer;
       EGLImageKHR eglImage;
       CUgraphicsResource cudaResource;
+      CUeglFrame eglFrame;
       RHIEGLImageSurfaceGL::ptr rhiSurface;
       VPIImage vpiImage;
     };
