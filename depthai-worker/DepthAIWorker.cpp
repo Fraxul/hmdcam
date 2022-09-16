@@ -3,58 +3,94 @@
 
 #include "common/SHMSegment.h"
 #include "common/DepthMapSHM.h"
+#include "common/Timing.h"
 
 #include <opencv2/core.hpp>
 #include "depthai/depthai.hpp"
 
 #include <time.h>
 #include <chrono>
-#include <thread>
-#include <boost/thread/barrier.hpp>
 #include <pthread.h>
-
-static inline uint64_t currentTimeNs() {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
-}
-
+#include "nvToolsExt.h"
 
 struct PerViewData {
-  PerViewData() : m_lastSettingsGeneration(0xffffffff), m_paddedWidth(0), m_pipelineWidth(0), m_pipelineHeight(0) {}
-  unsigned int m_lastSettingsGeneration;
-  unsigned int m_paddedWidth;
+  unsigned int m_lastSettingsGeneration = 0xffffffff;
+  unsigned int m_paddedWidth = 0;
 
-  unsigned int m_pipelineWidth, m_pipelineHeight;
-
-
-  std::thread processingThread;
+  unsigned int m_pipelineWidth = 0, m_pipelineHeight = 0;
 
   std::shared_ptr<dai::Device> device;
   std::shared_ptr<dai::DataInputQueue> leftQueue, rightQueue, configQueue;
   std::shared_ptr<dai::DataOutputQueue> dispQueue;
+
+  std::shared_ptr<dai::RawStereoDepthConfig> rawStereoConfig = std::make_shared<dai::RawStereoDepthConfig>();
+  dai::ImgFrame inputFrame[2];
 };
 
-static SHMSegment<DepthMapSHM>* shm;
-PerViewData perViewData[DepthMapSHM::maxViews];
-uint32_t frameSequenceNumber = 0;
-boost::barrier frameStartBarrier(DepthMapSHM::maxViews + 1);
-boost::barrier frameEndBarrier(DepthMapSHM::maxViews + 1);
-std::mutex deviceBootMutex;
+int main(int argc, char* argv[]) {
 
 
-void viewProcessingThread(size_t viewIdx) {
-  DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
-  PerViewData& viewData = perViewData[viewIdx];
-  std::shared_ptr<dai::RawStereoDepthConfig> rawStereoConfig = std::make_shared<dai::RawStereoDepthConfig>();
+  // Set thread affinity.
+  // On Tegra, we get a small but noticeable performance improvement by pinning this application to CPU0-1, and the parent hmdcam application to all other CPUs.
+  // I assume this is because CPU0 handles interrupts for the XHCI driver; we want to try and limit its workload to mostly USB-related things to reduce latency.
+#if 0
+  {
+    cpu_set_t cpuset;
+    // Create affinity mask for CPU0-1
+    CPU_ZERO(&cpuset);
+    CPU_SET(0, &cpuset);
+    CPU_SET(1, &cpuset);
+
+    if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
+      perror("pthread_setaffinity");
+    }
+  }
+#endif
+
+  SHMSegment<DepthMapSHM>* shm = SHMSegment<DepthMapSHM>::openSegment("depth-worker");
+  if (!shm) {
+    printf("depthai-worker: Unable to open SHM segment\n");
+    return -1;
+  }
+
+  // Signal readyness
+  sem_post(&shm->segment()->m_workerReadySem);
+
+  std::vector<PerViewData> perViewData;
+  perViewData.reserve(DepthMapSHM::maxViews);
+
+  uint32_t frameSequenceNumber = 0;
+  int ppid = getppid();
 
   while (true) {
+    {
+      struct timespec ts;
+      ts.tv_sec = 1;
+      ts.tv_nsec = 0;
+      if (sem_timedwait(&shm->segment()->m_workAvailableSem, &ts) < 0) {
+        if (errno == ETIMEDOUT) {
+          if (kill(ppid, 0) != 0) {
+            printf("depthai-worker: parent process %d has exited\n", ppid);
+            return 0;
+          }
+          continue;
+        } else {
+          perror("sem_timedwait");
+          return -1;
+        }
+      }
+    }
+    nvtxMarkA("Frame Start");
 
-    // Wait for frame start
-    frameStartBarrier.wait();
+    uint64_t startTime = currentTimeNs();
 
-    // Make sure view is active
-    if (viewIdx < shm->segment()->m_activeViewCount) {
+    // Trim view list first -- if it shrunk, this will release devices.
+    perViewData.resize(shm->segment()->m_activeViewCount);
+
+    // Per-view initialization
+    for (size_t viewIdx = 0; viewIdx < perViewData.size(); ++viewIdx) {
+      DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
+      PerViewData& viewData = perViewData[viewIdx];
 
       if (!viewData.device || (viewData.m_pipelineWidth != vp.width) || (viewData.m_pipelineHeight != vp.height)) {
         // Newly attached stream, or the pipeline dimensions have changed.
@@ -68,6 +104,18 @@ void viewProcessingThread(size_t viewIdx) {
         viewData.m_pipelineWidth = vp.width;
         viewData.m_pipelineHeight = vp.height;
         viewData.m_paddedWidth = (vp.width + 15) & (~(15UL)); // Pad width up to 16px boundary
+
+        viewData.inputFrame[0].getData().resize(viewData.m_paddedWidth * vp.height);
+        viewData.inputFrame[0].setWidth(viewData.m_paddedWidth);
+        viewData.inputFrame[0].setHeight(vp.height);
+        viewData.inputFrame[0].setType(dai::ImgFrame::Type::GRAY8);
+        viewData.inputFrame[0].setInstanceNum((unsigned int) dai::CameraBoardSocket::LEFT);
+
+        viewData.inputFrame[1].getData().resize(viewData.m_paddedWidth * vp.height);
+        viewData.inputFrame[1].setWidth(viewData.m_paddedWidth);
+        viewData.inputFrame[1].setHeight(vp.height);
+        viewData.inputFrame[1].setType(dai::ImgFrame::Type::GRAY8);
+        viewData.inputFrame[1].setInstanceNum((unsigned int) dai::CameraBoardSocket::RIGHT);
 
         printf("[%zu] Creating stream pipeline: %u x %u (padded: %u x %u)\n", viewIdx, vp.width, vp.height, viewData.m_paddedWidth, vp.height);
 
@@ -97,7 +145,7 @@ void viewProcessingThread(size_t viewIdx) {
         stereo->setRuntimeModeSwitch(true); // allocate extra resources for runtime mode switching (lr-check, extended, subpixel)
 
         // cache initial raw config
-        *rawStereoConfig = stereo->initialConfig.get();
+        *viewData.rawStereoConfig = stereo->initialConfig.get();
 
         // link queues to processing node
         inLeft->out.link(stereo->left);
@@ -107,11 +155,19 @@ void viewProcessingThread(size_t viewIdx) {
         stereo->disparity.link(outDisparity->input);
 
         // Start the pipeline on the first available device
+        viewData.device = std::make_shared<dai::Device>(pipeline);
+
+        printf("[%zu] Default XLink chunk size: %u\n", viewIdx, viewData.device->getXLinkChunkSize());
+        unsigned int chunkSize = viewData.device->getXLinkChunkSize();
         {
-          // Synchronize access to the global device list, so two threads don't pick and try to initialize the same device
-          std::lock_guard<std::mutex> g(deviceBootMutex);
-          viewData.device = std::make_shared<dai::Device>(pipeline);
+          char* e = getenv("XLINK_CHUNK_SIZE");
+          if (e) {
+            chunkSize = atoi(e);
+            printf("[%zu] New XLink chunk size: %u\n", viewIdx, chunkSize);
+            viewData.device->setXLinkChunkSize(chunkSize);
+          }
         }
+
         printf("[%zu] Processing started on device MXID=%s\n", viewIdx, viewData.device->getMxId().c_str());
 
         // Wire up the device queues
@@ -126,151 +182,72 @@ void viewProcessingThread(size_t viewIdx) {
 
       if (viewData.m_lastSettingsGeneration != shm->segment()->m_settingsGeneration) {
         // Update config
-        rawStereoConfig->costMatching.confidenceThreshold = shm->segment()->m_confidenceThreshold;
-        rawStereoConfig->postProcessing.median = ((dai::MedianFilter) shm->segment()->m_medianFilter);
-        rawStereoConfig->postProcessing.bilateralSigmaValue = shm->segment()->m_bilateralFilterSigma;
-        rawStereoConfig->algorithmControl.leftRightCheckThreshold = shm->segment()->m_leftRightCheckThreshold;
-        rawStereoConfig->algorithmControl.enableLeftRightCheck = shm->segment()->m_enableLRCheck;
-        rawStereoConfig->postProcessing.spatialFilter.enable = shm->segment()->m_enableSpatialFilter;
-        rawStereoConfig->postProcessing.temporalFilter.enable = shm->segment()->m_enableTemporalFilter;
 
-        viewData.configQueue->send(std::make_shared<dai::StereoDepthConfig>(rawStereoConfig));
+        viewData.rawStereoConfig->costMatching.confidenceThreshold = shm->segment()->m_confidenceThreshold;
+        viewData.rawStereoConfig->postProcessing.median = ((dai::MedianFilter) shm->segment()->m_medianFilter);
+        viewData.rawStereoConfig->postProcessing.bilateralSigmaValue = shm->segment()->m_bilateralFilterSigma;
+        viewData.rawStereoConfig->algorithmControl.leftRightCheckThreshold = shm->segment()->m_leftRightCheckThreshold;
+        viewData.rawStereoConfig->algorithmControl.enableLeftRightCheck = shm->segment()->m_enableLRCheck;
+        viewData.rawStereoConfig->postProcessing.spatialFilter.enable = shm->segment()->m_enableSpatialFilter;
+        viewData.rawStereoConfig->postProcessing.temporalFilter.enable = shm->segment()->m_enableTemporalFilter;
+
+        viewData.configQueue->send(std::make_shared<dai::StereoDepthConfig>(viewData.rawStereoConfig));
 
         viewData.m_lastSettingsGeneration = shm->segment()->m_settingsGeneration;
       }
+    } // Per-view initialization
+
+    nvtxMarkA("Upload start");
+    // Per-view uploads
+    for (size_t viewIdx = 0; viewIdx < perViewData.size(); ++viewIdx) {
+      DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
+      PerViewData& viewData = perViewData[viewIdx];
+
 
       // Submit input frames
-      {
-        auto submitTime = std::chrono::steady_clock::now();
-        dai::ImgFrame l, r;
-        {
-          l.getData().resize(viewData.m_paddedWidth * vp.height);
-          unsigned char* outBase = l.getData().data();
-          const char* inBase = shm->segment()->data() + vp.inputOffset[0];
-          for (size_t row = 0; row < vp.height; ++row)
-            memcpy(outBase + (row * viewData.m_paddedWidth), inBase + (row * vp.inputPitchBytes), vp.width);
-        }
-        l.setWidth(viewData.m_paddedWidth);
-        l.setHeight(vp.height);
-        l.setType(dai::ImgFrame::Type::GRAY8);
-        l.setInstanceNum((unsigned int) dai::CameraBoardSocket::LEFT);
-        l.setSequenceNum(frameSequenceNumber);
-        l.setTimestamp(submitTime);
+      auto submitTime = std::chrono::steady_clock::now();
 
-        {
-          r.getData().resize(viewData.m_paddedWidth * vp.height);
-          unsigned char* outBase = r.getData().data();
-          const char* inBase = shm->segment()->data() + vp.inputOffset[1];
-          for (size_t row = 0; row < vp.height; ++row)
-            memcpy(outBase + (row * viewData.m_paddedWidth), inBase + (row * vp.inputPitchBytes), vp.width);
-        }
+      for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+        viewData.inputFrame[eyeIdx].setSequenceNum(frameSequenceNumber);
+        viewData.inputFrame[eyeIdx].setTimestamp(submitTime);
 
-        r.setWidth(viewData.m_paddedWidth);
-        r.setHeight(vp.height);
-        r.setType(dai::ImgFrame::Type::GRAY8);
-        r.setInstanceNum((unsigned int) dai::CameraBoardSocket::RIGHT);
-        r.setSequenceNum(frameSequenceNumber);
-        r.setTimestamp(submitTime);
+        unsigned char* outBase = viewData.inputFrame[eyeIdx].getData().data();
+        const char* inBase = shm->segment()->data() + vp.inputOffset[eyeIdx];
+        for (size_t row = 0; row < vp.height; ++row)
+          memcpy(outBase + (row * viewData.m_paddedWidth), inBase + (row * vp.inputPitchBytes), vp.width);
 
-        viewData.leftQueue->send(l);
-        viewData.rightQueue->send(r);
       }
 
+
+      nvtxMarkA("leftQueue send");
+      viewData.leftQueue->send(viewData.inputFrame[0]);
+      nvtxMarkA("rightQueue send");
+      viewData.rightQueue->send(viewData.inputFrame[1]);
+    } // Per-view uploads
+
+
+    nvtxMarkA("Download start");
+
+    for (size_t viewIdx = 0; viewIdx < perViewData.size(); ++viewIdx) {
       // Download results
-      {
-        PerViewData& viewData = perViewData[viewIdx];
-        DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
+      PerViewData& viewData = perViewData[viewIdx];
+      DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
 
-        auto frame = viewData.dispQueue->get<dai::ImgFrame>();
-        // Frames are RAW8 unless subpixel is enabled, then they'll be RAW16
-        size_t bytesPerPixel = dai::RawImgFrame::typeToBpp(frame->getType());
+      nvtxMarkA("Download disparity");
+      auto frame = viewData.dispQueue->get<dai::ImgFrame>();
+      // Frames are RAW8 unless subpixel is enabled, then they'll be RAW16
+      size_t bytesPerPixel = dai::RawImgFrame::typeToBpp(frame->getType());
 
-        assert(frame->getType() == dai::ImgFrame::Type::RAW8 || frame->getType() == dai::ImgFrame::Type::GRAY8);
-        assert(frame->getData().size() == frame->getWidth() * frame->getHeight());
-        assert(frame->getWidth() == viewData.m_paddedWidth);
-        assert(frame->getHeight() == vp.height);
+      assert(frame->getType() == dai::ImgFrame::Type::RAW8 || frame->getType() == dai::ImgFrame::Type::GRAY8);
+      assert(frame->getData().size() == frame->getWidth() * frame->getHeight());
+      assert(frame->getWidth() == viewData.m_paddedWidth);
+      assert(frame->getHeight() == vp.height);
 
-        for (size_t row = 0; row < vp.height; ++row) {
-          memcpy((shm->segment()->data() + vp.outputOffset) + (vp.outputPitchBytes * row), frame->getData().data() + (viewData.m_paddedWidth * bytesPerPixel * row), (vp.width * bytesPerPixel));
-        }
-      }
-    } else {
-      // ensure device is released
-      if (viewData.device) {
-        viewData.device.reset();
-        viewData.leftQueue.reset();
-        viewData.rightQueue.reset();
-        viewData.configQueue.reset();
-        viewData.dispQueue.reset();
+      nvtxMarkA("Copy disparity to SHM");
+      for (size_t row = 0; row < vp.height; ++row) {
+        memcpy((shm->segment()->data() + vp.outputOffset) + (vp.outputPitchBytes * row), frame->getData().data() + (viewData.m_paddedWidth * bytesPerPixel * row), (vp.width * bytesPerPixel));
       }
     }
-
-    // Signal completion
-    frameEndBarrier.wait();
-
-  } // frame loop
-}
-
-
-int main(int argc, char* argv[]) {
-  // Set thread affinity.
-  // On Tegra, we get a small but noticeable performance improvement by pinning this application to CPU0-1, and the parent hmdcam application to all other CPUs.
-  // I assume this is because CPU0 handles interrupts for the XHCI driver; we want to try and limit its workload to mostly USB-related things to reduce latency.
-  {
-    cpu_set_t cpuset;
-    // Create affinity mask for CPU0-1
-    CPU_ZERO(&cpuset);
-    CPU_SET(0, &cpuset);
-    CPU_SET(1, &cpuset);
-
-    if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
-      perror("pthread_setaffinity");
-    }
-  }
-
-
-  int ppid = getppid();
-
-  shm = SHMSegment<DepthMapSHM>::openSegment("depth-worker");
-  if (!shm) {
-    printf("depthai-worker: Unable to open SHM segment\n");
-    return -1;
-  }
-
-  // Launch processing threads
-  for (size_t viewIdx = 0; viewIdx < DepthMapSHM::maxViews; ++viewIdx) {
-    perViewData[viewIdx].processingThread = std::thread(viewProcessingThread, viewIdx);
-  }
-
-  // Signal readyness
-  sem_post(&shm->segment()->m_workerReadySem);
-
-  while (true) {
-    {
-      struct timespec ts;
-      ts.tv_sec = 1;
-      ts.tv_nsec = 0;
-      if (sem_timedwait(&shm->segment()->m_workAvailableSem, &ts) < 0) {
-        if (errno == ETIMEDOUT) {
-          if (kill(ppid, 0) != 0) {
-            printf("depthai-worker: parent process %d has exited\n", ppid);
-            return 0;
-          }
-          continue;
-        } else {
-          perror("sem_timedwait");
-          return -1;
-        }
-      }
-    }
-
-    uint64_t startTime = currentTimeNs();
-
-    // Start processing threads
-    frameStartBarrier.wait();
-
-    // Wait for processing threads to finish
-    frameEndBarrier.wait();
 
     for (size_t viewIdx = 0; viewIdx < shm->segment()->m_activeViewCount; ++viewIdx) {
       //PerViewData& viewData = perViewData[viewIdx];
@@ -279,9 +256,9 @@ int main(int argc, char* argv[]) {
       shm->flush(vp.outputOffset, vp.outputPitchBytes * vp.height);
     }
 
-    uint64_t deltaT = currentTimeNs() - startTime;
-    shm->segment()->m_frameTimeMs = static_cast<double>(deltaT) / 1000000.0;
+    shm->segment()->m_frameTimeMs = deltaTimeMs(startTime, currentTimeNs());
 
+    nvtxMarkA("Frame End");
     // Finished processing all views -- signal completion
     sem_post(&shm->segment()->m_workFinishedSem);
 
@@ -290,5 +267,4 @@ int main(int argc, char* argv[]) {
 
   return 0;
 }
-
 

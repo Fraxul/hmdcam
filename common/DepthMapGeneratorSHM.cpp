@@ -339,8 +339,6 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
   m_syncTimeMs = deltaTimeMs(wait_start, currentTimeNs());
   m_algoTimeMs = m_depthMapSHM->segment()->m_frameTimeMs;
 
-
-
   // Setup view data in the SHM segment
   m_depthMapSHM->segment()->m_activeViewCount = 0;
   size_t lastOffset = 0;

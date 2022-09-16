@@ -56,7 +56,7 @@ protected:
   cv::cuda::Event m_processingFinishedEvent;
   cv::cuda::Stream m_globalStream;
 
-  float m_setupTimeMs, m_syncTimeMs, m_algoTimeMs, m_copyTimeMs;
+  float m_setupTimeMs, m_syncTimeMs, m_algoStartupTimeMs, m_algoTimeMs, m_algoReadbackTimeMs, m_copyTimeMs;
 
 private:
   ViewDataSHM* viewDataAtIndex(size_t index) { return static_cast<ViewDataSHM*>(m_viewData[index]); }

@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <sys/time.h>
 #include <time.h>
+#include <errno.h>
 
 static inline uint64_t currentTimeNs() {
   struct timespec ts;

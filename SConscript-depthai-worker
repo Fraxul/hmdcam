@@ -7,7 +7,7 @@ depthaiEnv.Append(
     depthaiSDK + '/include',
     depthaiSDK + '/include/depthai-shared/3rdparty',
     depthaiSDK + '/lib/cmake/depthai/dependencies/include'],
-  CPPFLAGS=['-std=c++17']
+  CPPFLAGS=['-std=c++17', '-fno-omit-frame-pointer', '-funwind-tables']
 )
 depthaiStaticLibs = Glob(depthaiSDK + '/lib/libdepthai*.a') + Glob(depthaiSDK + '/lib/cmake/depthai/dependencies/lib/*.a')
 depthaiLibDeps = ['usb-1.0']
@@ -15,6 +15,6 @@ depthaiLibDeps = ['usb-1.0']
 depthaiEnv.Program(
   target = '../bin/depthai-worker', # relative to build/depthai-worker
   source = Glob('depthai-worker/*.cpp') + depthaiStaticLibs,
-  LIBS=['stdc++', 'pthread', 'rt', 'z', 'opencv_core', 'opencv_imgproc', 'boost_thread', 'boost_system'] + depthaiLibDeps
+  LIBS=['stdc++', 'pthread', 'rt', 'dl', 'z', 'opencv_core', 'opencv_imgproc', 'boost_system', 'nvToolsExt'] + depthaiLibDeps
 )
 
