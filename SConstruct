@@ -121,6 +121,8 @@ SConscript('SConscript-eyectl', variant_dir = 'build/eyectl', duplicate = 0)
 if (build_dgpu):
   SConscript('SConscript-dgpu-worker', variant_dir = 'build/dgpu-worker', duplicate = 0)
 
+# SHM worker benchmark framework
+SConscript('SConscript-worker-benchmark', variant_dir = 'build/worker-benchmark', duplicate = 0)
 
 # DepthAI worker (optional)
 if os.path.isdir('build/depthai-core/install'):

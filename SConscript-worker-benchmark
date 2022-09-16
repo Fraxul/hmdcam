@@ -1,0 +1,9 @@
+Import('env')
+
+env.Program(
+  target = '../bin/worker-benchmark',
+  source = Glob('worker-benchmark/*.cpp'),
+  LIBS=['pthread', 'rt', 'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs'],
+)
+
+
