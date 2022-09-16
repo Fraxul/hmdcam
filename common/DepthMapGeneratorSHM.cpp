@@ -145,7 +145,7 @@ DepthMapGeneratorSHM::~DepthMapGeneratorSHM() {
   delete m_depthMapSHM;
 }
 
-#define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
+#define readNode(node, settingName) cv::read(node[#settingName], m_depthMapSHM->segment()->m_##settingName, m_depthMapSHM->segment()->m_##settingName)
 void DepthMapGeneratorSHM::internalLoadSettings(cv::FileStorage& fs) {
   cv::FileNode dgpu = fs["dgpu"];
   if (dgpu.isMap()) {
@@ -174,7 +174,7 @@ void DepthMapGeneratorSHM::internalLoadSettings(cv::FileStorage& fs) {
 }
 #undef readNode
 
-#define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_##settingName)
+#define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_depthMapSHM->segment()->m_##settingName)
 void DepthMapGeneratorSHM::internalSaveSettings(cv::FileStorage& fs) {
   fs.startWriteStruct(cv::String("dgpu"), cv::FileNode::MAP, cv::String());
     writeNode(fs, algorithm);
@@ -254,21 +254,16 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
   }
 
   if (m_didChangeSettings) {
-    m_sbmBlockSize |= 1; // enforce odd blockSize
-    m_disparityFilterRadius |= 1; // enforce odd filter size
-
     if (m_backend == kDepthBackendDGPU) {
-      switch (m_algorithm) {
+      switch (m_depthMapSHM->segment()->m_algorithm) {
         default:
-          m_algorithm = 0;
+          m_depthMapSHM->segment()->m_algorithm = 0;
         case 0:
           // uses CV_8UC1 disparity
           m_disparityPrescale = 1.0f; // / 16.0f;
           m_disparityBytesPerPixel = 1;
           break;
         case 1: {
-          if (m_sbpLevels > 4) // more than 4 levels seems to trigger an internal crash
-            m_sbpLevels = 4;
           m_disparityPrescale = 1.0f; // / 16.0f;
           m_disparityBytesPerPixel = 2;
         } break;
@@ -292,30 +287,8 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
       vd->updateDisparityTexture(internalWidth(), internalHeight(), m_disparityBytesPerPixel == 1 ? kSurfaceFormat_R8i : kSurfaceFormat_R16i);
     }
 
-    // Copy settings to SHM.
-    // The worker will read them on the next commit, see the settingsGeneration change, and update itself
+    // Increment generation so the worker re-reads the settings when starting the next frame
     m_depthMapSHM->segment()->m_settingsGeneration += 1;
-    m_depthMapSHM->segment()->m_algorithm = m_algorithm;
-    m_depthMapSHM->segment()->m_numDisparities = NUM_DISP;
-    m_depthMapSHM->segment()->m_useDisparityFilter = m_useDisparityFilter;
-    m_depthMapSHM->segment()->m_disparityFilterRadius = m_disparityFilterRadius;
-    m_depthMapSHM->segment()->m_disparityFilterIterations = m_disparityFilterIterations;
-    m_depthMapSHM->segment()->m_sbmBlockSize = m_sbmBlockSize;
-    m_depthMapSHM->segment()->m_sbpIterations = m_sbpIterations;
-    m_depthMapSHM->segment()->m_sbpLevels = m_sbpLevels;
-    m_depthMapSHM->segment()->m_scsbpNrPlane = m_scsbpNrPlane;
-    m_depthMapSHM->segment()->m_sgmP1 = m_sgmP1;
-    m_depthMapSHM->segment()->m_sgmP2 = m_sgmP2;
-    m_depthMapSHM->segment()->m_sgmUniquenessRatio = m_sgmUniquenessRatio;
-    m_depthMapSHM->segment()->m_sgmUseHH4 = m_sgmUseHH4;
-
-    m_depthMapSHM->segment()->m_confidenceThreshold = m_confidenceThreshold;
-    m_depthMapSHM->segment()->m_medianFilter = m_medianFilter;
-    m_depthMapSHM->segment()->m_bilateralFilterSigma = m_bilateralFilterSigma;
-    m_depthMapSHM->segment()->m_leftRightCheckThreshold = m_leftRightCheckThreshold;
-    m_depthMapSHM->segment()->m_enableLRCheck = m_enableLRCheck;
-    m_depthMapSHM->segment()->m_enableSpatialFilter = m_enableSpatialFilter;
-    m_depthMapSHM->segment()->m_enableTemporalFilter = m_enableTemporalFilter;
 
     m_didChangeSettings = false;
   }
@@ -393,14 +366,14 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     size_t inputBufferSize = ((viewParams.height * viewParams.inputPitchBytes) + 4095) & (~4095); // rounded up to pagesize
     size_t outputBufferSize = ((viewParams.height * viewParams.outputPitchBytes) + 4095) & (~4095);
 
-    viewParams.inputLeftOffset = lastOffset;
-    viewParams.inputRightOffset = viewParams.inputLeftOffset + inputBufferSize;
-    viewParams.outputOffset = viewParams.inputRightOffset + inputBufferSize;
+    viewParams.inputOffset[0]  = lastOffset;
+    viewParams.inputOffset[1] = viewParams.inputOffset[0] + inputBufferSize;
+    viewParams.outputOffset = viewParams.inputOffset[1] + inputBufferSize;
 
     lastOffset = viewParams.outputOffset + outputBufferSize;
 
-    cv::Mat leftMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputLeftOffset, viewParams.inputPitchBytes);
-    cv::Mat rightMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputRightOffset, viewParams.inputPitchBytes);
+    cv::Mat leftMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputOffset[0], viewParams.inputPitchBytes);
+    cv::Mat rightMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputOffset[1], viewParams.inputPitchBytes);
     cv::Mat dispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
 
     leftGpu.download(leftMat, m_globalStream);
@@ -415,8 +388,8 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
   for (size_t shmViewIdx = 0; shmViewIdx < m_depthMapSHM->segment()->m_activeViewCount; ++shmViewIdx) {
     DepthMapSHM::ViewParams& viewParams = m_depthMapSHM->segment()->m_viewParams[shmViewIdx];
 
-    m_depthMapSHM->flush(viewParams.inputLeftOffset, viewParams.inputPitchBytes * viewParams.width);
-    m_depthMapSHM->flush(viewParams.inputRightOffset, viewParams.inputPitchBytes * viewParams.width);
+    m_depthMapSHM->flush(viewParams.inputOffset[0], viewParams.inputPitchBytes * viewParams.width);
+    m_depthMapSHM->flush(viewParams.inputOffset[1], viewParams.inputPitchBytes * viewParams.width);
   }
 
 
@@ -478,49 +451,57 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
 }
 
 void DepthMapGeneratorSHM::internalRenderIMGUI() {
+  DepthMapSHM* shm = m_depthMapSHM->segment();
   if (m_backend == kDepthBackendDGPU) {
     ImGui::Text("Stereo Algorithm");
-    m_didChangeSettings |= ImGui::RadioButton("BM", &m_algorithm, 0);
-    m_didChangeSettings |= ImGui::RadioButton("ConstantSpaceBeliefPropagation", &m_algorithm, 1);
-    m_didChangeSettings |= ImGui::RadioButton("SGM", &m_algorithm, 2);
+    m_didChangeSettings |= ImGui::RadioButton("BM", &shm->m_algorithm, 0);
+    m_didChangeSettings |= ImGui::RadioButton("ConstantSpaceBeliefPropagation", &shm->m_algorithm, 1);
+    m_didChangeSettings |= ImGui::RadioButton("SGM", &shm->m_algorithm, 2);
 
-    switch (m_algorithm) {
+    switch (shm->m_algorithm) {
       case 0: // StereoBM
-        m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &m_sbmBlockSize, /*step=*/2);
+        if ((m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &shm->m_sbmBlockSize, /*step=*/2))) {
+          shm->m_sbmBlockSize |= 1; // enforce odd blockSize
+        }
         break;
       case 1: // StereoConstantSpaceBP
-        m_didChangeSettings |= ImGui::SliderInt("nr_plane", &m_scsbpNrPlane, 1, 16);
-        m_didChangeSettings |= ImGui::SliderInt("SBP Iterations", &m_sbpIterations, 1, 8);
-        m_didChangeSettings |= ImGui::SliderInt("SBP Levels", &m_sbpLevels, 1, 8);
+        m_didChangeSettings |= ImGui::SliderInt("nr_plane", &shm->m_scsbpNrPlane, 1, 16);
+        m_didChangeSettings |= ImGui::SliderInt("SBP Iterations", &shm->m_sbpIterations, 1, 8);
+        if ((m_didChangeSettings |= ImGui::SliderInt("SBP Levels", &shm->m_sbpLevels, 1, 8))) {
+          if (shm->m_sbpLevels > 4) // more than 4 levels seems to trigger an internal crash
+            shm->m_sbpLevels = 4;
+        }
         break;
       case 2: // StereoSGM
-        m_didChangeSettings |= ImGui::SliderInt("SGM P1", &m_sgmP1, 1, 255);
-        m_didChangeSettings |= ImGui::SliderInt("SGM P2", &m_sgmP2, 1, 255);
-        m_didChangeSettings |= ImGui::SliderInt("SGM Uniqueness Ratio", &m_sgmUniquenessRatio, 5, 15);
+        m_didChangeSettings |= ImGui::SliderInt("SGM P1", &shm->m_sgmP1, 1, 255);
+        m_didChangeSettings |= ImGui::SliderInt("SGM P2", &shm->m_sgmP2, 1, 255);
+        m_didChangeSettings |= ImGui::SliderInt("SGM Uniqueness Ratio", &shm->m_sgmUniquenessRatio, 5, 15);
         break;
     };
 
-    m_didChangeSettings |= ImGui::Checkbox("Disparity filter (GPU)", &m_useDisparityFilter);
+    m_didChangeSettings |= ImGui::Checkbox("Disparity filter (GPU)", &shm->m_useDisparityFilter);
 
-    if (m_useDisparityFilter) {
-      m_didChangeSettings |= ImGui::SliderInt("Filter Radius (odd)", &m_disparityFilterRadius, 1, 9);
-      m_didChangeSettings |= ImGui::SliderInt("Filter Iterations", &m_disparityFilterIterations, 1, 8);
+    if (shm->m_useDisparityFilter) {
+      if ((m_didChangeSettings |= ImGui::SliderInt("Filter Radius (odd)", &shm->m_disparityFilterRadius, 1, 9))) {
+        shm->m_disparityFilterRadius |= 1; // enforce odd filter size
+      }
+      m_didChangeSettings |= ImGui::SliderInt("Filter Iterations", &shm->m_disparityFilterIterations, 1, 8);
     }
   } else if (m_backend == kDepthBackendDepthAI) {
-    m_didChangeSettings |= ImGui::SliderInt("Confidence Threshold", &m_confidenceThreshold, 0, 255);
+    m_didChangeSettings |= ImGui::SliderInt("Confidence Threshold", &shm->m_confidenceThreshold, 0, 255);
     ImGui::Text("Median Filter");
-    m_didChangeSettings |= ImGui::RadioButton("None", &m_medianFilter, 0); ImGui::SameLine();
-    m_didChangeSettings |= ImGui::RadioButton("3x3", &m_medianFilter, 3); ImGui::SameLine();
-    m_didChangeSettings |= ImGui::RadioButton("5x5", &m_medianFilter, 5); ImGui::SameLine();
-    m_didChangeSettings |= ImGui::RadioButton("7x7", &m_medianFilter, 7);
+    m_didChangeSettings |= ImGui::RadioButton("None", &shm->m_medianFilter, 0); ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("3x3", &shm->m_medianFilter, 3); ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("5x5", &shm->m_medianFilter, 5); ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("7x7", &shm->m_medianFilter, 7);
 
-    m_didChangeSettings |= ImGui::SliderInt("Bilateral Filter Sigma", &m_bilateralFilterSigma, 0, 65535);
-    m_didChangeSettings |= ImGui::Checkbox("L-R Check", &m_enableLRCheck);
-    if (m_enableLRCheck) {
-      m_didChangeSettings |= ImGui::SliderInt("L-R Check Threshold", &m_leftRightCheckThreshold, 0, 128);
+    m_didChangeSettings |= ImGui::SliderInt("Bilateral Filter Sigma", &shm->m_bilateralFilterSigma, 0, 65535);
+    m_didChangeSettings |= ImGui::Checkbox("L-R Check", &shm->m_enableLRCheck);
+    if (shm->m_enableLRCheck) {
+      m_didChangeSettings |= ImGui::SliderInt("L-R Check Threshold", &shm->m_leftRightCheckThreshold, 0, 128);
     }
-    m_didChangeSettings |= ImGui::Checkbox("Spatial Filter", &m_enableSpatialFilter);
-    m_didChangeSettings |= ImGui::Checkbox("Temporal Filter", &m_enableTemporalFilter);
+    m_didChangeSettings |= ImGui::Checkbox("Spatial Filter", &shm->m_enableSpatialFilter);
+    m_didChangeSettings |= ImGui::Checkbox("Temporal Filter", &shm->m_enableTemporalFilter);
   }
 
   ImGui::Checkbox("Profiling", &m_enableProfiling);

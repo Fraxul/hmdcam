@@ -148,8 +148,8 @@ int main(int argc, char* argv[]) {
       DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
       PerViewData& viewData = perViewData[viewIdx];
 
-      cv::Mat leftMat(vp.height, vp.width, CV_8UC1, shm->segment()->data() + vp.inputLeftOffset, vp.inputPitchBytes);
-      cv::Mat rightMat(vp.height, vp.width, CV_8UC1, shm->segment()->data() + vp.inputRightOffset, vp.inputPitchBytes);
+      cv::Mat leftMat(vp.height, vp.width, CV_8UC1, shm->segment()->data() + vp.inputOffset[0], vp.inputPitchBytes);
+      cv::Mat rightMat(vp.height, vp.width, CV_8UC1, shm->segment()->data() + vp.inputOffset[1], vp.inputPitchBytes);
 
       viewData.m_leftGpu.upload(leftMat, viewData.m_stream);
       viewData.m_rightGpu.upload(rightMat, viewData.m_stream);

@@ -146,7 +146,7 @@ void viewProcessingThread(size_t viewIdx) {
         {
           l.getData().resize(viewData.m_paddedWidth * vp.height);
           unsigned char* outBase = l.getData().data();
-          const char* inBase = shm->segment()->data() + vp.inputLeftOffset;
+          const char* inBase = shm->segment()->data() + vp.inputOffset[0];
           for (size_t row = 0; row < vp.height; ++row)
             memcpy(outBase + (row * viewData.m_paddedWidth), inBase + (row * vp.inputPitchBytes), vp.width);
         }
@@ -160,7 +160,7 @@ void viewProcessingThread(size_t viewIdx) {
         {
           r.getData().resize(viewData.m_paddedWidth * vp.height);
           unsigned char* outBase = r.getData().data();
-          const char* inBase = shm->segment()->data() + vp.inputRightOffset;
+          const char* inBase = shm->segment()->data() + vp.inputOffset[1];
           for (size_t row = 0; row < vp.height; ++row)
             memcpy(outBase + (row * viewData.m_paddedWidth), inBase + (row * vp.inputPitchBytes), vp.width);
         }
