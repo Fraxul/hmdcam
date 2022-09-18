@@ -334,9 +334,30 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
 
 
   // Wait for previous processing to finish
-  uint64_t wait_start = currentTimeNs();
-  sem_wait(&m_depthMapSHM->segment()->m_workFinishedSem);
-  m_syncTimeMs = deltaTimeMs(wait_start, currentTimeNs());
+  m_algoTimeMs = 0;
+
+  {
+    struct timespec timeout;
+    clock_gettime(CLOCK_REALTIME, &timeout);
+    timeout.tv_nsec += 1000000ULL; // 1ms wait time max
+
+    if (timeout.tv_nsec >= 1000000000ULL) {
+      // handle carry
+      timeout.tv_sec += 1;
+      timeout.tv_nsec -= 1000000000ULL;
+    }
+    uint64_t wait_start = currentTimeNs();
+    int res = sem_timedwait(&m_depthMapSHM->segment()->m_workFinishedSem, &timeout);
+    m_syncTimeMs = deltaTimeMs(wait_start, currentTimeNs());
+    if (res < 0) {
+      m_processingTimedOutThisFrame = true;
+
+      return;
+    }
+
+    m_processingTimedOutThisFrame = false;
+  }
+
   m_algoTimeMs = m_depthMapSHM->segment()->m_frameTimeMs;
 
   // Setup view data in the SHM segment
@@ -443,9 +464,10 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     m_haveValidProfilingData = true;
   }
 
+#ifndef L4T_RELEASE_MAJOR
   // stupid workaround for profiling on desktop RDMAclient
-  if (epoxy_is_desktop_gl())
-    m_globalStream.waitForCompletion();
+  m_globalStream.waitForCompletion();
+#endif
 }
 
 void DepthMapGeneratorSHM::internalRenderIMGUI() {
