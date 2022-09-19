@@ -760,26 +760,40 @@ int main(int argc, char* argv[]) {
 
         // Skip perf data to save UI space if we're calibrating
         if (!calibrationContext && ImGui::CollapsingHeader("Performance")) {
-          ImPlot::SetNextPlotLimitsY(0, 12.0f);
-          if (ImPlot::BeginPlot("##FrameTiming", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
-              ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
-              ImPlot::PlotLine("Capture", &s_timingDataBuffer.data()[0].captureTimeMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::PlotLine("Submit",  &s_timingDataBuffer.data()[0].submitTimeMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+          int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
+
+          if (ImPlot::BeginPlot("##FrameTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+              ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
+              ImPlot::SetupFinish();
+
+              ImPlot::PlotLine("Capture", &s_timingDataBuffer.data()[0].captureTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::PlotLine("Submit",  &s_timingDataBuffer.data()[0].submitTimeMs,  s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::EndPlot();
           }
-          if (ImPlot::BeginPlot("###CaptureLatencyInterval", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin)) {
-              ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
-              ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureIntervalAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*-INFINITY,*/ 1, 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+          if (ImPlot::BeginPlot("###CaptureLatencyInterval", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+              ImPlot::SetupFinish();
+
+              ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureIntervalAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::EndPlot();
           }
-          if (ImPlot::BeginPlot("###InterSensorTiming", NULL, NULL, ImVec2(-1,150), 0, /*xFlags=*/ ImPlotAxisFlags_NoTickLabels, /*yFlags=*/ /*ImPlotAxisFlags_NoTickLabels*/ ImPlotAxisFlags_AutoFit)) {
-              ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
+          if (ImPlot::BeginPlot("###InterSensorTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit);
+              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+              ImPlot::SetupFinish();
+
               for (size_t sensorIdx = 1; sensorIdx < argusCamera->streamCount(); ++sensorIdx) {
                 char idbuf[32];
                 sprintf(idbuf, "Sensor %zu", sensorIdx);
-                ImPlot::PlotLine(idbuf, &s_sensorTimingData.data()[0].timestampDelta[sensorIdx-1], s_sensorTimingData.size(), /*-INFINITY,*/ 1, 0, s_sensorTimingData.offset(), sizeof(SensorTimingData));
+                ImPlot::PlotLine(idbuf, &s_sensorTimingData.data()[0].timestampDelta[sensorIdx-1], s_sensorTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_sensorTimingData.offset(), sizeof(SensorTimingData));
               }
               ImPlot::EndPlot();
           }
