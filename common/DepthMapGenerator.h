@@ -36,6 +36,7 @@ public:
   void renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
   void renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
   void renderIMGUI();
+  void renderIMGUIPerformanceGraphs();
 
   RHISurface::ptr disparitySurface(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_disparityTexture : RHISurface::ptr(); }
   RHISurface::ptr leftGrayscale(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_leftGray : RHISurface::ptr(); }
@@ -71,6 +72,7 @@ protected:
   virtual void internalLoadSettings(cv::FileStorage&) = 0;
   virtual void internalSaveSettings(cv::FileStorage&) = 0;
   virtual void internalRenderIMGUI() = 0;
+  virtual void internalRenderIMGUIPerformanceGraphs() = 0;
   virtual void internalProcessFrame() = 0;
 
   // Data format controls that should be set in the backend

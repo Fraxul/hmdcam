@@ -12,6 +12,7 @@ public:
   const T* data() const { return m_data.data(); }
   size_t maxSize() const { return m_maxSize; }
   size_t size() const { return m_data.size(); }
+  static size_t stride() { return sizeof(T); }
 
   void push_back(const T& value) {
     if (m_data.size() < m_maxSize) {

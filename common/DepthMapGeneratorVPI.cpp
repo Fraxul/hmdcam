@@ -268,7 +268,6 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
 
   internalGenerateDisparityMips();
 
-
   if (m_enableProfiling) {
     // Collect profiling data from previous frame
     vpiEventElapsedTimeMillis(m_masterFrameStartEvent, m_masterFrameFinishedEvent, &m_frameTimeMs);
@@ -369,17 +368,21 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
 void DepthMapGeneratorVPI::internalRenderIMGUI() {
   ImGui::SliderInt("Confidence Threshold", &m_params.confidenceThreshold, 0, 65535);
   ImGui::SliderInt("Quality", &m_params.quality, 1, 255); // TODO range?
-
-  ImGui::Checkbox("Profiling", &m_enableProfiling);
-  if (m_enableProfiling) {
-    for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
-      auto vd = viewDataAtIndex(viewIdx);
-      if (!vd->m_isStereoView)
-        continue;
-
-      ImGui::Text("View [%zu]: Remap: %.3fms, Rescale: %.3fms, Stereo %.3fms", viewIdx, vd->m_remapTimeMs, vd->m_rescaleTimeMs, vd->m_stereoTimeMs);
-    }
-    ImGui::Text("Total: %.3fms", m_frameTimeMs);
-  }
 }
+
+void DepthMapGeneratorVPI::internalRenderIMGUIPerformanceGraphs() {
+  if (!m_enableProfiling)
+    return;
+
+  // TODO: graphs
+  for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
+    auto vd = viewDataAtIndex(viewIdx);
+    if (!vd->m_isStereoView)
+      continue;
+
+    ImGui::Text("View [%zu]: Remap: %.3fms, Rescale: %.3fms, Stereo %.3fms", viewIdx, vd->m_remapTimeMs, vd->m_rescaleTimeMs, vd->m_stereoTimeMs);
+  }
+  ImGui::Text("Total: %.3fms", m_frameTimeMs);
+}
+
 #endif // HAVE_VPI2

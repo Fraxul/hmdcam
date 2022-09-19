@@ -1,5 +1,6 @@
 #include "imgui_backend.h"
 #include "imgui.h"
+#include "implot/implot.h"
 #include <stdio.h>
 #include <SDL.h>
 #include <cuda.h>
@@ -316,6 +317,7 @@ int main(int argc, char** argv) {
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
+  ImPlot::CreateContext();
   ImGuiIO& io = ImGui::GetIO(); (void)io;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
   //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
@@ -480,6 +482,8 @@ int main(int argc, char** argv) {
         }
 
         depthMapGenerator->renderIMGUI();
+
+        depthMapGenerator->renderIMGUIPerformanceGraphs();
 
         ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
 

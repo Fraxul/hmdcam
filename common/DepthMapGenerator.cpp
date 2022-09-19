@@ -294,6 +294,13 @@ void DepthMapGenerator::renderIMGUI() {
   ImGui::PopID();
 }
 
+
+void DepthMapGenerator::renderIMGUIPerformanceGraphs() {
+  ImGui::PushID(this);
+  this->internalRenderIMGUIPerformanceGraphs();
+  ImGui::PopID();
+}
+
 void DepthMapGenerator::processFrame() {
 
   // Update view data

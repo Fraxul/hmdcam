@@ -1,5 +1,6 @@
 #pragma once
 #include "common/DepthMapGenerator.h"
+#include "common/ScrollingBuffer.h"
 
 class DepthMapGeneratorSHM : public DepthMapGenerator {
 public:
@@ -18,6 +19,7 @@ protected:
   virtual void internalSaveSettings(cv::FileStorage&);
   virtual void internalProcessFrame();
   virtual void internalRenderIMGUI();
+  virtual void internalRenderIMGUIPerformanceGraphs();
 
   bool m_didChangeSettings = true; // force initial algorithm setup
   int m_disparityBytesPerPixel = 1;
@@ -45,9 +47,20 @@ protected:
   virtual ViewData* newEmptyViewData() { return new ViewDataSHM(); }
   virtual void internalUpdateViewData();
 
+  struct ProfilingData {
+    float m_setupTimeMs = 0;
+    float m_syncTimeMs = 0;
+    float m_algoTimeMs = 0;
+    float m_copyTimeMs = 0;
+    float m_processingTimedOutThisFrame = 0;
+  };
+  ScrollingBuffer<ProfilingData> m_profilingDataBuffer = ScrollingBuffer<ProfilingData>(128);
+
+  ProfilingData m_profilingData;
+
 
   // Profiling events and data
-  bool m_enableProfiling = false;
+  bool m_enableProfiling = true;
   bool m_haveValidProfilingData = false;
   cv::cuda::Event m_setupStartEvent;
   cv::cuda::Event m_setupFinishedEvent;
@@ -55,9 +68,6 @@ protected:
   cv::cuda::Event m_copyStartEvent;
   cv::cuda::Event m_processingFinishedEvent;
   cv::cuda::Stream m_globalStream;
-
-  float m_setupTimeMs, m_syncTimeMs, m_algoTimeMs, m_copyTimeMs;
-  bool m_processingTimedOutThisFrame = false;
 
 private:
   ViewDataSHM* viewDataAtIndex(size_t index) { return static_cast<ViewDataSHM*>(m_viewData[index]); }

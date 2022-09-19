@@ -784,7 +784,8 @@ int main(int argc, char* argv[]) {
               ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::EndPlot();
           }
-          if (ImPlot::BeginPlot("###InterSensorTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+
+          if ((argusCamera->streamCount() > 1) && ImPlot::BeginPlot("###InterSensorTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
               ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
               ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit);
               ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
@@ -814,6 +815,10 @@ int main(int argc, char* argv[]) {
           if (ImGui::Button("Restart Capture")) {
             argusCamera->stop(); // will automatically restart on next frame when we call setRepeatCapture again
             restartSkipFrameCounter = 3; // skip a few frames before restarting to smooth out the timing glitch we just caused
+          }
+
+          if (depthMapGenerator) {
+            depthMapGenerator->renderIMGUIPerformanceGraphs();
           }
         }
 

@@ -21,6 +21,7 @@ protected:
   virtual void internalSaveSettings(cv::FileStorage&);
   virtual void internalProcessFrame();
   virtual void internalRenderIMGUI();
+  virtual void internalRenderIMGUIPerformanceGraphs();
 
   struct ViewDataVPI : public ViewData {
     ViewDataVPI() {

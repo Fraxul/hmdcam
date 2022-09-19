@@ -1,6 +1,7 @@
 #ifdef HAVE_OPENCV_CUDA
 #include "common/DepthMapGeneratorSHM.h"
 #include "imgui.h"
+#include "implot/implot.h"
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
@@ -11,6 +12,7 @@
 #include "rhi/gl/GLCommon.h"
 #include <opencv2/cvconfig.h>
 #include <opencv2/core.hpp>
+#include <opencv2/core/cuda_stream_accessor.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
@@ -239,19 +241,19 @@ void DepthMapGeneratorSHM::internalUpdateViewData() {
 
 
 void DepthMapGeneratorSHM::internalProcessFrame() {
-  m_setupTimeMs = 0;
-  m_algoTimeMs = 0;
-  m_copyTimeMs = 0;
-
   if (m_enableProfiling) {
-    // cv::cuda::Event::elapsedTime will throw if the event is not ready
     if (m_haveValidProfilingData) {
-      m_setupTimeMs = cv::cuda::Event::elapsedTime(m_setupStartEvent, m_setupFinishedEvent);
-      m_copyTimeMs = cv::cuda::Event::elapsedTime(m_copyStartEvent, m_processingFinishedEvent);
+      cuEventElapsedTime(&m_profilingData.m_setupTimeMs, cv::cuda::EventAccessor::getEvent(m_setupStartEvent), cv::cuda::EventAccessor::getEvent(m_setupFinishedEvent));
+      if (m_profilingData.m_processingTimedOutThisFrame == 0) {
+        cuEventElapsedTime(&m_profilingData.m_copyTimeMs, cv::cuda::EventAccessor::getEvent(m_copyStartEvent), cv::cuda::EventAccessor::getEvent(m_processingFinishedEvent));
+      }
     }
+    m_profilingDataBuffer.push_back(m_profilingData);
   } else {
     m_haveValidProfilingData = false;
   }
+
+  m_profilingData = {}; // clear for next frame
 
   if (m_didChangeSettings) {
     if (m_backend == kDepthBackendDGPU) {
@@ -334,8 +336,6 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
 
 
   // Wait for previous processing to finish
-  m_algoTimeMs = 0;
-
   {
     struct timespec timeout;
     clock_gettime(CLOCK_REALTIME, &timeout);
@@ -348,17 +348,17 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     }
     uint64_t wait_start = currentTimeNs();
     int res = sem_timedwait(&m_depthMapSHM->segment()->m_workFinishedSem, &timeout);
-    m_syncTimeMs = deltaTimeMs(wait_start, currentTimeNs());
+    m_profilingData.m_syncTimeMs = deltaTimeMs(wait_start, currentTimeNs());
     if (res < 0) {
-      m_processingTimedOutThisFrame = true;
+      m_profilingData.m_processingTimedOutThisFrame = 1.0f;
 
       return;
     }
 
-    m_processingTimedOutThisFrame = false;
+    m_profilingData.m_processingTimedOutThisFrame = 0.0f;
   }
 
-  m_algoTimeMs = m_depthMapSHM->segment()->m_frameTimeMs;
+  m_profilingData.m_algoTimeMs = m_depthMapSHM->segment()->m_frameTimeMs;
 
   // Setup view data in the SHM segment
   m_depthMapSHM->segment()->m_activeViewCount = 0;
@@ -523,17 +523,35 @@ void DepthMapGeneratorSHM::internalRenderIMGUI() {
     m_didChangeSettings |= ImGui::Checkbox("Spatial Filter", &shm->m_enableSpatialFilter);
     m_didChangeSettings |= ImGui::Checkbox("Temporal Filter", &shm->m_enableTemporalFilter);
   }
+}
 
-  ImGui::Checkbox("Profiling", &m_enableProfiling);
-  if (m_enableProfiling) {
-    // TODO use cuEventElapsedTime and skip if the return is not CUDA_SUCCESS --
-    // cv::cuda::Event::elapsedTime throws an exception on CUDA_ERROR_NOT_READY
-    //float f;
-    //if (cuEventElapsedTime(&f, m_setupStartEvent.event
-    ImGui::Text("Setup: %.3fms", m_setupTimeMs);
-    ImGui::Text("Sync: %.3fms", m_syncTimeMs);
-    ImGui::Text("Algo: %.3fms", m_algoTimeMs);
-    ImGui::Text("Copy: %.3fms", m_copyTimeMs);
+void DepthMapGeneratorSHM::internalRenderIMGUIPerformanceGraphs() {
+  if (!m_enableProfiling)
+    return;
+
+  int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
+
+  if (ImPlot::BeginPlot("##SHMTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+      ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+      ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_profilingDataBuffer.size(), ImPlotCond_Always);
+
+      ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
+
+      // Y2 axis is used for the "Missed Deadline" markers
+      ImPlot::SetupAxis(ImAxis_Y2, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoDecorations);
+      ImPlot::SetupAxisLimits(ImAxis_Y2, 0.0f, 1.0f, ImPlotCond_Always);
+
+      ImPlot::SetupFinish();
+
+      ImPlot::PlotLine("Setup", &m_profilingDataBuffer.data()->m_setupTimeMs, m_profilingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
+      ImPlot::PlotLine("Copy",  &m_profilingDataBuffer.data()->m_copyTimeMs,  m_profilingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
+      ImPlot::PlotLine("Algo",  &m_profilingDataBuffer.data()->m_algoTimeMs,  m_profilingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
+
+      ImPlot::SetAxis(ImAxis_Y2);
+      ImPlot::PlotBars("Missed Deadline", &m_profilingDataBuffer.data()->m_processingTimedOutThisFrame, m_profilingDataBuffer.size(), /*width=*/ 0.7f, /*shift=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
+
+      ImPlot::EndPlot();
   }
 }
 
