@@ -3,21 +3,23 @@
   url = https://github.com/g-truc/glm
   ignore = untracked
 [submodule "imgui"]
-	path = imgui
-	url = https://github.com/ocornut/imgui.git
+  path = imgui
+  url = https://github.com/ocornut/imgui.git
   ignore = untracked
 [submodule "stb"]
-	path = stb
-	url = https://github.com/nothings/stb
+  path = stb
+  url = https://github.com/nothings/stb
   ignore = untracked
 [submodule "implot"]
-	path = implot
-	url = https://github.com/epezent/implot.git
+  path = implot
+  url = https://github.com/epezent/implot.git
+  ignore = untracked
 [submodule "depthai-core"]
-	path = depthai-core
-	url = https://github.com/luxonis/depthai-core.git
+  path = depthai-core
+  url = https://github.com/luxonis/depthai-core.git
+  ignore = untracked
 [submodule "monado"]
-	path = monado
-	url = https://gitlab.freedesktop.org/fraxul/monado.git
-	ignore = untracked
-	branch = standalone
+  path = monado
+  url = https://gitlab.freedesktop.org/fraxul/monado.git
+  ignore = untracked
+  branch = standalone
