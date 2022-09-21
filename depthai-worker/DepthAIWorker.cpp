@@ -140,7 +140,7 @@ int main(int argc, char* argv[]) {
         stereo->setDepthAlign(dai::StereoDepthConfig::AlgorithmControl::DepthAlign::RECTIFIED_LEFT);
         stereo->setLeftRightCheck(false);
         stereo->setExtendedDisparity(false);
-        stereo->setSubpixel(false);
+        stereo->setSubpixel(true);
 
         stereo->setRuntimeModeSwitch(true); // allocate extra resources for runtime mode switching (lr-check, extended, subpixel)
 
@@ -183,8 +183,13 @@ int main(int argc, char* argv[]) {
       if (viewData.m_lastSettingsGeneration != shm->segment()->m_settingsGeneration) {
         // Update config
 
+        viewData.rawStereoConfig->algorithmControl.subpixelFractionalBits = shm->segment()->m_subpixelFractionalBits;
         viewData.rawStereoConfig->costMatching.confidenceThreshold = shm->segment()->m_confidenceThreshold;
-        viewData.rawStereoConfig->postProcessing.median = ((dai::MedianFilter) shm->segment()->m_medianFilter);
+        if (shm->segment()->m_subpixelFractionalBits == 3) {
+          viewData.rawStereoConfig->postProcessing.median = ((dai::MedianFilter) shm->segment()->m_medianFilter);
+        } else {
+          viewData.rawStereoConfig->postProcessing.median = dai::MedianFilter::MEDIAN_OFF; // only supported for 3-bit subpixel mode
+        }
         viewData.rawStereoConfig->postProcessing.bilateralSigmaValue = shm->segment()->m_bilateralFilterSigma;
         viewData.rawStereoConfig->algorithmControl.leftRightCheckThreshold = shm->segment()->m_leftRightCheckThreshold;
         viewData.rawStereoConfig->algorithmControl.enableLeftRightCheck = shm->segment()->m_enableLRCheck;
@@ -238,8 +243,8 @@ int main(int argc, char* argv[]) {
       // Frames are RAW8 unless subpixel is enabled, then they'll be RAW16
       size_t bytesPerPixel = dai::RawImgFrame::typeToBpp(frame->getType());
 
-      assert(frame->getType() == dai::ImgFrame::Type::RAW8 || frame->getType() == dai::ImgFrame::Type::GRAY8);
-      assert(frame->getData().size() == frame->getWidth() * frame->getHeight());
+      assert(frame->getType() == dai::ImgFrame::Type::RAW16);
+      assert(frame->getData().size() == frame->getWidth() * frame->getHeight() * bytesPerPixel);
       assert(frame->getWidth() == viewData.m_paddedWidth);
       assert(frame->getHeight() == vp.height);
 

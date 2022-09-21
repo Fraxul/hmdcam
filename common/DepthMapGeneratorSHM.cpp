@@ -276,8 +276,8 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
           break;
       };
     } else if (m_backend == kDepthBackendDepthAI) {
-      m_disparityPrescale = 1.0f;
-      m_disparityBytesPerPixel = 1;
+      m_disparityPrescale = 1.0f / static_cast<float>(1 << m_depthMapSHM->segment()->m_subpixelFractionalBits);
+      m_disparityBytesPerPixel = 2;
     } else {
       assert(false && "DepthMapGenerator::processFrame(): settings update not implemented for this depth backend");
     }
@@ -509,12 +509,18 @@ void DepthMapGeneratorSHM::internalRenderIMGUI() {
       m_didChangeSettings |= ImGui::SliderInt("Filter Iterations", &shm->m_disparityFilterIterations, 1, 8);
     }
   } else if (m_backend == kDepthBackendDepthAI) {
+    ImGui::Text("Subpixel Bits");
+    m_didChangeSettings |= ImGui::RadioButton("3", &shm->m_subpixelFractionalBits, 3); ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("4", &shm->m_subpixelFractionalBits, 4); ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("5", &shm->m_subpixelFractionalBits, 5);
     m_didChangeSettings |= ImGui::SliderInt("Confidence Threshold", &shm->m_confidenceThreshold, 0, 255);
-    ImGui::Text("Median Filter");
-    m_didChangeSettings |= ImGui::RadioButton("None", &shm->m_medianFilter, 0); ImGui::SameLine();
-    m_didChangeSettings |= ImGui::RadioButton("3x3", &shm->m_medianFilter, 3); ImGui::SameLine();
-    m_didChangeSettings |= ImGui::RadioButton("5x5", &shm->m_medianFilter, 5); ImGui::SameLine();
-    m_didChangeSettings |= ImGui::RadioButton("7x7", &shm->m_medianFilter, 7);
+    if (shm->m_subpixelFractionalBits == 3) {
+      ImGui::Text("Median Filter");
+      m_didChangeSettings |= ImGui::RadioButton("None", &shm->m_medianFilter, 0); ImGui::SameLine();
+      m_didChangeSettings |= ImGui::RadioButton("3x3", &shm->m_medianFilter, 3); ImGui::SameLine();
+      m_didChangeSettings |= ImGui::RadioButton("5x5", &shm->m_medianFilter, 5); ImGui::SameLine();
+      m_didChangeSettings |= ImGui::RadioButton("7x7", &shm->m_medianFilter, 7);
+    }
 
     m_didChangeSettings |= ImGui::SliderInt("Bilateral Filter Sigma", &shm->m_bilateralFilterSigma, 0, 65535);
     m_didChangeSettings |= ImGui::Checkbox("L-R Check", &shm->m_enableLRCheck);

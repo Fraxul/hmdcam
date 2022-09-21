@@ -67,8 +67,9 @@ public:
   bool m_sgmUseHH4 = true;
 
   // === DepthAI backend ===
+  int m_subpixelFractionalBits = 5; // 3...5.
   int m_confidenceThreshold = 245; // 0...255. Higher values allow lower-confidence samples through the filter.
-  int m_medianFilter = 5; // valid: {0=disabled, 3=3x3 kernel, 5=5x5 kernel, 7=7x7 kernel}
+  int m_medianFilter = 0; // valid: {0=disabled, 3=3x3 kernel, 5=5x5 kernel, 7=7x7 kernel}. Only enabled if subpixelFractionalBits == 3
   int m_bilateralFilterSigma = 0; // 0...65535. "larger value of the parameter means that farther colors within the pixel neighborhood will be mixed together, resulting in larger areas of semi-equal color."
   int m_leftRightCheckThreshold = 10; // 0...255. only used if LR check is enabled. "Defines the maximum difference between the confidence of pixels from left-right and right-left confidence maps."
   bool m_enableLRCheck = false;
