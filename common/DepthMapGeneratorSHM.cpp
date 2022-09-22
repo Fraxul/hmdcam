@@ -305,11 +305,8 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     auto leftLumaTexObj = m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]);
     auto rightLumaTexObj = m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1]);
 
-    remapArray(leftLumaTexObj, cv::Size(inputWidth(), inputHeight()), vd->m_undistortRectifyMap_gpu[0], vd->rectLeft_gpu, (CUstream) m_globalStream.cudaPtr());
-    remapArray(rightLumaTexObj, cv::Size(inputWidth(), inputHeight()), vd->m_undistortRectifyMap_gpu[1], vd->rectRight_gpu, (CUstream) m_globalStream.cudaPtr());
-
-    cv::cuda::resize(vd->rectLeft_gpu, vd->resizedLeft_gpu, cv::Size(internalWidth(), internalHeight()), 0, 0, cv::INTER_LINEAR, m_globalStream);
-    cv::cuda::resize(vd->rectRight_gpu, vd->resizedRight_gpu, cv::Size(internalWidth(), internalHeight()), 0, 0, cv::INTER_LINEAR, m_globalStream);
+    remapArray(leftLumaTexObj, cv::Size(inputWidth(), inputHeight()), vd->m_undistortRectifyMap_gpu[0], vd->resizedLeft_gpu, (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ 2);
+    remapArray(rightLumaTexObj, cv::Size(inputWidth(), inputHeight()), vd->m_undistortRectifyMap_gpu[1], vd->resizedRight_gpu, (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ 2);
 
     if (vd->m_isVerticalStereo) {
       // cv::cuda::transpose is unusable due to forced CPU-GPU sync when switching the CUDA stream that NPPI is targeting, so we skip the CV wrappers and use NPPI directly.
