@@ -1,5 +1,6 @@
 #include "ArgusCamera.h"
 #include "ArgusHelpers.h"
+#include "common/EnvVar.h"
 #include "common/Timing.h"
 #include "imgui.h"
 #include "rhi/gl/GLCommon.h"
@@ -57,19 +58,15 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     die("No camera devices are available");
   }
 
-
-  {
-    char* e = getenv("ARGUS_MAX_SENSORS");
-    int maxSensors = 0;
-    if (e)
-      maxSensors = atoi(e);
-
-    if (maxSensors > 0) {
-      if (m_cameraDevices.size() > maxSensors) {
-        printf("DEBUG: Trimming sensor list from ARGUS_MAX_SENSORS=%d env\n", maxSensors);
-        m_cameraDevices.resize(maxSensors);
-      }
+  int maxSensors = 0;
+  if (readEnvironmentVariable("ARGUS_MAX_SENSORS", maxSensors)) {
+    if (m_cameraDevices.size() > maxSensors) {
+      printf("DEBUG: Trimming sensor list from ARGUS_MAX_SENSORS=%d env\n", maxSensors);
+      m_cameraDevices.resize(maxSensors);
     }
+  }
+  if (readEnvironmentVariable("ARGUS_STREAMS_PER_SESSION", m_streamsPerSession)) {
+    printf("DEBUG: Using %u streams per session\n", m_streamsPerSession);
   }
 
   // Get the selected camera device and sensor mode.
@@ -137,7 +134,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 
 
   // Determine how many capture sessions we need
-  size_t requiredCaptureSessions = (m_cameraDevices.size() + (kCamerasPerSession - 1)) / kCamerasPerSession;
+  size_t requiredCaptureSessions = (m_cameraDevices.size() + (m_streamsPerSession - 1)) / m_streamsPerSession;
 
   // Create capture sessions and per-session objects
   for (size_t sessionIdx = 0; sessionIdx < requiredCaptureSessions; ++sessionIdx) {

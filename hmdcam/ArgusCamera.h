@@ -192,8 +192,8 @@ private:
   std::vector<Argus::Request*> m_sessionCaptureRequests;
   std::vector<Argus::EventQueue*> m_sessionCompletionEventQueues; // for EVENT_TYPE_CAPTURE_COMPLETE
 
-  static const size_t kCamerasPerSession = 2;
-  static size_t sessionIndexForCamera(size_t cameraIdx) { return cameraIdx / kCamerasPerSession; }
+  uint32_t m_streamsPerSession = 2;
+  size_t sessionIndexForCamera(size_t cameraIdx) { return cameraIdx / m_streamsPerSession; }
 
   mutable RHISurface::ptr m_tmpBlitSurface;
   mutable RHIRenderTarget::ptr m_tmpBlitRT;
