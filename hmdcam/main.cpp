@@ -852,16 +852,26 @@ int main(int argc, char* argv[]) {
               ImPlot::EndPlot();
           }
 
-          if ((argusCamera->streamCount() > 1) && ImPlot::BeginPlot("###InterSensorTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+          if ((argusCamera->sessionCount() > 1) && ImPlot::BeginPlot("###InterSessionTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
               ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
               ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit);
               ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
               ImPlot::SetupFinish();
 
-              for (size_t sensorIdx = 1; sensorIdx < argusCamera->streamCount(); ++sensorIdx) {
-                char idbuf[32];
-                sprintf(idbuf, "Sensor %zu", sensorIdx);
-                ImPlot::PlotLine(idbuf, &s_sensorTimingData.data()[0].timestampDelta[sensorIdx-1], s_sensorTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_sensorTimingData.offset(), sizeof(SensorTimingData));
+              for (size_t sessionIdx = 0; sessionIdx < argusCamera->sessionCount(); ++sessionIdx) {
+                size_t streamIdx = 0;
+                for (; streamIdx < argusCamera->streamCount(); ++streamIdx) {
+                  if (argusCamera->sessionIndexForStream(streamIdx) == sessionIdx)
+                    break;
+                }
+                if (streamIdx >= argusCamera->streamCount())
+                  continue; // ??? couldn't find a sensor for this stream
+                if (streamIdx == 0)
+                  continue; // the session that contains stream 0 is the timing reference, don't graph that
+
+                char idbuf[64];
+                sprintf(idbuf, "Session %zu (stream %zu vs. stream 0)", sessionIdx, streamIdx);
+                ImPlot::PlotLine(idbuf, &s_sensorTimingData.data()[0].timestampDelta[streamIdx-1], s_sensorTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_sensorTimingData.offset(), sizeof(SensorTimingData));
               }
               ImPlot::EndPlot();
           }

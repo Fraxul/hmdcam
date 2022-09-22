@@ -143,7 +143,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     // Populate device set for this session
     printf("Session %zu devices: ", sessionIdx);
     for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
-      if (sessionIndexForCamera(cameraIdx) == sessionIdx) {
+      if (sessionIndexForStream(cameraIdx) == sessionIdx) {
         sessionDevices.push_back(m_cameraDevices[cameraIdx]);
         printf("%zu ", cameraIdx);
       }
@@ -182,7 +182,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 
   for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
     // Create the OutputStreamSettings object for a buffer OutputStream
-    Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIndexForCamera(cameraIdx)]);
+    Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIndexForStream(cameraIdx)]);
 
     Argus::UniqueObj<Argus::OutputStreamSettings> streamSettings(iCaptureSession->createOutputStreamSettings(Argus::STREAM_TYPE_BUFFER));
     Argus::IBufferOutputStreamSettings *iBufferOutputStreamSettings = Argus::interface_cast<Argus::IBufferOutputStreamSettings>(streamSettings);
@@ -303,7 +303,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     }
 
     // Enable the output stream on the associated session capture request
-    Argus::IRequest *iRequest = Argus::interface_cast<Argus::IRequest>(m_sessionCaptureRequests[sessionIndexForCamera(cameraIdx)]);
+    Argus::IRequest *iRequest = Argus::interface_cast<Argus::IRequest>(m_sessionCaptureRequests[sessionIndexForStream(cameraIdx)]);
     iRequest->enableOutputStream(outputStream);
   }
 

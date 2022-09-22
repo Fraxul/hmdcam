@@ -24,6 +24,8 @@ public:
   virtual unsigned int streamHeight() const { return m_streamHeight; }
 
   // === IArgusCamera ===
+  virtual size_t sessionCount() const = 0;
+  virtual size_t sessionIndexForStream(size_t streamIdx) const = 0;
   virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const = 0;
   virtual bool readFrame() = 0;
   virtual void stop() = 0;
@@ -193,7 +195,8 @@ private:
   std::vector<Argus::EventQueue*> m_sessionCompletionEventQueues; // for EVENT_TYPE_CAPTURE_COMPLETE
 
   uint32_t m_streamsPerSession = 2;
-  size_t sessionIndexForCamera(size_t cameraIdx) { return cameraIdx / m_streamsPerSession; }
+  virtual size_t sessionCount() const { return m_captureSessions.size(); }
+  virtual size_t sessionIndexForStream(size_t streamIdx) const { return streamIdx / m_streamsPerSession; }
 
   mutable RHISurface::ptr m_tmpBlitSurface;
   mutable RHIRenderTarget::ptr m_tmpBlitRT;
@@ -217,6 +220,9 @@ public:
   virtual VPIImage vpiImage(size_t sensorIndex) const;
 
   // === IArgusCamera ===
+  virtual size_t sessionCount() const { return 1; }
+  virtual size_t sessionIndexForStream(size_t streamIdx) const { return 0; }
+
   virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const { return nullptr; }
   virtual bool readFrame();
 
