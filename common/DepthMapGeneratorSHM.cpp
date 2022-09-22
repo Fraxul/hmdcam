@@ -35,6 +35,8 @@
 
 #define NUM_DISP 128 //Max disparity. Must be in {64, 128, 256} for CUDA algorithms.
 
+#define PER_EYE for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
+
 DepthMapGeneratorSHM::DepthMapGeneratorSHM(DepthMapGeneratorBackend _backend) : DepthMapGenerator(_backend) {
 
   // running at quarter res, approx
@@ -209,25 +211,16 @@ void DepthMapGeneratorSHM::internalUpdateViewData() {
       CameraSystem::View& v = m_cameraSystem->viewAtIndex(viewIdx);
       auto vd = viewDataAtIndex(viewIdx);
 
-      CameraSystem::Camera& cL = m_cameraSystem->cameraAtIndex(v.cameraIndices[0]);
-      CameraSystem::Camera& cR = m_cameraSystem->cameraAtIndex(v.cameraIndices[1]);
+      cv::Size rectifiedSize = cv::Size(inputWidth(), inputHeight());
 
-      // TODO validate CameraSystem:::updateViewStereoDistortionParameters against the distortion map initialization code here
-      cv::Size imageSize = cv::Size(inputWidth(), inputHeight());
-
-      {
-        cv::Mat m1, m2;
-        cv::initUndistortRectifyMap(cL.intrinsicMatrix, cL.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_32F, m1, m2);
-        vd->m_leftMap1_gpu.upload(m1); vd->m_leftMap2_gpu.upload(m2);
-        cv::initUndistortRectifyMap(cR.intrinsicMatrix, cR.distCoeffs, v.stereoRectification[1], v.stereoProjection[1], imageSize, CV_32F, m1, m2);
-        vd->m_rightMap1_gpu.upload(m1); vd->m_rightMap2_gpu.upload(m2);
-
+      PER_EYE {
+        CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
+        vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(inputWidth(), inputHeight()));
       }
-      // vd->m_disparityTexture = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R16i));
 
       //Set up what matrices we can to prevent dynamic memory allocation.
-      vd->rectLeft_gpu = cv::cuda::GpuMat(imageSize, CV_8U);
-      vd->rectRight_gpu = cv::cuda::GpuMat(imageSize, CV_8U);
+      vd->rectLeft_gpu = cv::cuda::GpuMat(rectifiedSize, CV_8U);
+      vd->rectRight_gpu = cv::cuda::GpuMat(rectifiedSize, CV_8U);
 
       vd->resizedLeft_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
       vd->resizedRight_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
@@ -310,8 +303,8 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     auto leftLumaTexObj = m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]);
     auto rightLumaTexObj = m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1]);
 
-    remapArray(leftLumaTexObj, vd->m_leftMap1_gpu, vd->m_leftMap2_gpu, vd->rectLeft_gpu, (CUstream) m_globalStream.cudaPtr());
-    remapArray(rightLumaTexObj, vd->m_rightMap1_gpu, vd->m_rightMap2_gpu, vd->rectRight_gpu, (CUstream) m_globalStream.cudaPtr());
+    remapArray(leftLumaTexObj, cv::Size(inputWidth(), inputHeight()), vd->m_undistortRectifyMap_gpu[0], vd->rectLeft_gpu, (CUstream) m_globalStream.cudaPtr());
+    remapArray(rightLumaTexObj, cv::Size(inputWidth(), inputHeight()), vd->m_undistortRectifyMap_gpu[1], vd->rectRight_gpu, (CUstream) m_globalStream.cudaPtr());
 
     cv::cuda::resize(vd->rectLeft_gpu, vd->resizedLeft_gpu, cv::Size(internalWidth(), internalHeight()), 0, 0, cv::INTER_LINEAR, m_globalStream);
     cv::cuda::resize(vd->rectRight_gpu, vd->resizedRight_gpu, cv::Size(internalWidth(), internalHeight()), 0, 0, cv::INTER_LINEAR, m_globalStream);

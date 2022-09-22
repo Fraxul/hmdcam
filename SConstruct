@@ -43,7 +43,6 @@ if is_tegra:
   # Environment setup
   env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
     CPPPATH=['/usr/include/drm', tegra_mmapi + '/include', tegra_mmapi + '/argus/include', '/usr/local/cuda/include', '/usr/local/include/opencv4', '#tegra_mmapi', '#live555/include'],
-    NVCCPATH=['/usr/local/include/opencv4'],
     LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
     CUDA_SDK_PATH='/usr/local/cuda',
     IS_TEGRA=True,
@@ -55,7 +54,6 @@ else:
   # Reduced environment for non-tegra
   env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
     CPPPATH=['/usr/local/include/opencv4', '/usr/local/cuda/include'],
-    NVCCPATH=['/usr/local/include/opencv4'],
     LIBPATH=['/usr/local/lib', '/usr/local/cuda/lib64'],
     CUDA_SDK_PATH='/usr/local/cuda',
     CUDA_TOOLKIT_PATH='/usr/local/cuda',
@@ -71,9 +69,12 @@ env.Append(
   CPPDEFINES=['NO_OPENSSL'],
   CXXFLAGS=['-std=c++14'],
   LINKFLAGS=['-g'],
+  NVCCPATH=['/usr/local/include/opencv4', 'glm'],
 )
 
-if (not env['debug']):
+if (env['debug']):
+  env.Append(NVCCFLAGS=['--debug', '--device-debug'])
+else:
   env.Append(CPPFLAGS=['-O2'])
 
 have_opencv_cuda = True
