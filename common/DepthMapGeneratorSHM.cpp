@@ -211,11 +211,13 @@ void DepthMapGeneratorSHM::internalUpdateViewData() {
       CameraSystem::View& v = m_cameraSystem->viewAtIndex(viewIdx);
       auto vd = viewDataAtIndex(viewIdx);
 
-      cv::Size rectifiedSize = cv::Size(inputWidth(), inputHeight());
+      // Build a half-res undistortRectifyMap to save some processing time
+      unsigned int downsampleFactor = 2;
+      cv::Size rectifiedSize = cv::Size(inputWidth() / downsampleFactor, inputHeight() / downsampleFactor);
 
       PER_EYE {
         CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
-        vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(inputWidth(), inputHeight()));
+        vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(inputWidth(), inputHeight()), downsampleFactor);
       }
 
       //Set up what matrices we can to prevent dynamic memory allocation.
