@@ -16,7 +16,11 @@
   ignore = untracked
 [submodule "depthai-core"]
   path = depthai-core
-  url = https://github.com/luxonis/depthai-core.git
+  url = https://github.com/Fraxul/depthai-core.git
+  ignore = untracked
+[submodule "XLink"]
+  path = XLink
+  url = https://github.com/Fraxul/XLink
   ignore = untracked
 [submodule "monado"]
   path = monado

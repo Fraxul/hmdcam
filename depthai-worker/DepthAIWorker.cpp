@@ -1,17 +1,21 @@
 #include <stdio.h>
 #include <signal.h>
 
+#include "common/FxThreading.h"
 #include "common/SHMSegment.h"
 #include "common/DepthMapSHM.h"
 #include "common/Timing.h"
 
 #include <opencv2/core.hpp>
 #include "depthai/depthai.hpp"
+#include "depthai/xlink/XLinkStream.hpp"
 
 #include <time.h>
 #include <chrono>
 #include <pthread.h>
 #include "nvToolsExt.h"
+
+#define PER_EYE for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
 
 struct PerViewData {
   unsigned int m_lastSettingsGeneration = 0xffffffff;
@@ -20,34 +24,94 @@ struct PerViewData {
   unsigned int m_pipelineWidth = 0, m_pipelineHeight = 0;
 
   std::shared_ptr<dai::Device> device;
-  std::shared_ptr<dai::DataInputQueue> leftQueue, rightQueue, configQueue;
+  std::shared_ptr<dai::DataInputQueue> configQueue;
   std::shared_ptr<dai::DataOutputQueue> dispQueue;
 
   std::shared_ptr<dai::RawStereoDepthConfig> rawStereoConfig = std::make_shared<dai::RawStereoDepthConfig>();
-  dai::ImgFrame inputFrame[2];
+
+  struct InputFrame {
+    InputFrame() : daiRawImgFrame(std::make_shared<dai::RawImgFrame>()), daiFrame(daiRawImgFrame) {}
+
+    std::shared_ptr<dai::DataInputQueue> queue;
+
+    std::shared_ptr<dai::RawImgFrame> daiRawImgFrame;
+    dai::ImgFrame daiFrame;
+
+    std::vector<uint8_t> serializedMetadata;
+    dai::DatatypeEnum serializedDatatype;
+    uint8_t* dmaBuffer = nullptr;
+    uint32_t dmaBufferSize = 0;
+
+    void freeDMABuffer() {
+      if (dmaBuffer) {
+        printf("InputFrame(%p) free dmaBuffer=%p size=%u\n", this, dmaBuffer, dmaBufferSize);
+        queue->xlinkStream().deallocateDMABuffer(dmaBuffer, dmaBufferSize);
+      }
+
+      dmaBuffer = nullptr;
+      dmaBufferSize = 0;
+    }
+    void ensureDMABuffer(uint32_t targetSize) {
+      if (dmaBufferSize >= targetSize)
+        return;
+      freeDMABuffer();
+      dmaBufferSize = (targetSize + 4095) & (~(4095));
+
+      dmaBuffer = queue->xlinkStream().allocateDMABuffer(dmaBufferSize);
+      printf("InputFrame(%p) allocate dmaBuffer=%p size=%u (targetSize=%u)\n", this, dmaBuffer, dmaBufferSize, targetSize);
+    }
+  };
+  InputFrame inputFrame[2];
 };
+
+
+SHMSegment<DepthMapSHM>* shm = nullptr;
+std::vector<PerViewData> perViewData;
+uint32_t frameSequenceNumber = 0;
+
+inline size_t pitchCopy(void* dest, size_t destPitchBytes, const void* src, size_t srcPitchBytes, size_t copyWidthBytes, size_t copyHeightRows) {
+  assert(copyWidthBytes <= destPitchBytes && copyWidthBytes <= srcPitchBytes);
+  for (size_t row = 0; row < copyHeightRows; ++row) {
+    memcpy(reinterpret_cast<uint8_t*>(dest) + (row * destPitchBytes), reinterpret_cast<const uint8_t*>(src) + (row * srcPitchBytes), copyWidthBytes);
+  }
+  return destPitchBytes * copyHeightRows;
+}
+
+void perViewPerEyeUpload(size_t viewEyeIdx);
 
 int main(int argc, char* argv[]) {
 
+  // Set scheduling for worker threads to SCHED_FIFO. This substantially reduces frametime/latency jitter
+  // without interfering with the rest of the system too much, since thread runtimes here are generally
+  // short -- this process spends most of its time waiting on USB I/O. For safety, though, we do limit
+  // it to running on two cores; currently CPU6-CPU7. The parent hmdcam binary masks those CPUs off and
+  // does not schedule on them.
+  //
+  // For this to work correctly, the following sysctl tweak may be required on L4T:
+  //   sudo sysctl -w kernel.sched_rt_runtime_us=-1
+  //
+  // The binary must also be granted the CAP_SYS_NICE capability post-build:
+  //   sudo setcap cap_sys_nice+ep build/bin/depthai-worker
 
-  // Set thread affinity.
-  // On Tegra, we get a small but noticeable performance improvement by pinning this application to CPU0-1, and the parent hmdcam application to all other CPUs.
-  // I assume this is because CPU0 handles interrupts for the XHCI driver; we want to try and limit its workload to mostly USB-related things to reduce latency.
-#if 0
   {
     cpu_set_t cpuset;
-    // Create affinity mask for CPU0-1
+    // Create affinity mask for CPU6-7
     CPU_ZERO(&cpuset);
-    CPU_SET(0, &cpuset);
-    CPU_SET(1, &cpuset);
+    CPU_SET(6, &cpuset);
+    CPU_SET(7, &cpuset);
 
     if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
       perror("pthread_setaffinity");
     }
-  }
-#endif
 
-  SHMSegment<DepthMapSHM>* shm = SHMSegment<DepthMapSHM>::openSegment("depth-worker");
+    struct sched_param p;
+    p.sched_priority = 1;
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &p) != 0) {
+      perror("pthread_setschedparam");
+    }
+  }
+
+  shm = SHMSegment<DepthMapSHM>::openSegment("depth-worker");
   if (!shm) {
     printf("depthai-worker: Unable to open SHM segment\n");
     return -1;
@@ -56,10 +120,9 @@ int main(int argc, char* argv[]) {
   // Signal readyness
   sem_post(&shm->segment()->m_workerReadySem);
 
-  std::vector<PerViewData> perViewData;
+  FxThreading::detail::init();
   perViewData.reserve(DepthMapSHM::maxViews);
 
-  uint32_t frameSequenceNumber = 0;
   int ppid = getppid();
 
   while (true) {
@@ -105,17 +168,14 @@ int main(int argc, char* argv[]) {
         viewData.m_pipelineHeight = vp.height;
         viewData.m_paddedWidth = (vp.width + 15) & (~(15UL)); // Pad width up to 16px boundary
 
-        viewData.inputFrame[0].getData().resize(viewData.m_paddedWidth * vp.height);
-        viewData.inputFrame[0].setWidth(viewData.m_paddedWidth);
-        viewData.inputFrame[0].setHeight(vp.height);
-        viewData.inputFrame[0].setType(dai::ImgFrame::Type::GRAY8);
-        viewData.inputFrame[0].setInstanceNum((unsigned int) dai::CameraBoardSocket::LEFT);
-
-        viewData.inputFrame[1].getData().resize(viewData.m_paddedWidth * vp.height);
-        viewData.inputFrame[1].setWidth(viewData.m_paddedWidth);
-        viewData.inputFrame[1].setHeight(vp.height);
-        viewData.inputFrame[1].setType(dai::ImgFrame::Type::GRAY8);
-        viewData.inputFrame[1].setInstanceNum((unsigned int) dai::CameraBoardSocket::RIGHT);
+        // Setup daiFrame metadata fields
+        PER_EYE {
+          viewData.inputFrame[eyeIdx].daiFrame.getData().resize(viewData.m_paddedWidth * vp.height);
+          viewData.inputFrame[eyeIdx].daiFrame.setWidth(viewData.m_paddedWidth);
+          viewData.inputFrame[eyeIdx].daiFrame.setHeight(vp.height);
+          viewData.inputFrame[eyeIdx].daiFrame.setType(dai::ImgFrame::Type::GRAY8);
+          viewData.inputFrame[eyeIdx].daiFrame.setInstanceNum(eyeIdx == 0 ? ((unsigned int) dai::CameraBoardSocket::LEFT) : ((unsigned int) dai::CameraBoardSocket::RIGHT));
+        }
 
         printf("[%zu] Creating stream pipeline: %u x %u (padded: %u x %u)\n", viewIdx, vp.width, vp.height, viewData.m_paddedWidth, vp.height);
 
@@ -171,10 +231,13 @@ int main(int argc, char* argv[]) {
         printf("[%zu] Processing started on device MXID=%s\n", viewIdx, viewData.device->getMxId().c_str());
 
         // Wire up the device queues
-        viewData.leftQueue   =  viewData.device->getInputQueue("left",   /*maxSize=*/ 8, /*blocking=*/ false);
-        viewData.rightQueue  =  viewData.device->getInputQueue("right",  /*maxSize=*/ 8, /*blocking=*/ false);
-        viewData.configQueue =  viewData.device->getInputQueue("config", /*maxSize=*/ 4, /*blocking=*/ false);
-        viewData.dispQueue   =  viewData.device->getOutputQueue("disp",  /*maxSize=*/ 8, /*blocking=*/ false);
+        viewData.inputFrame[0].queue = viewData.device->getInputQueue("left",   /*maxSize=*/ 8, /*blocking=*/ false);
+        viewData.inputFrame[1].queue = viewData.device->getInputQueue("right",  /*maxSize=*/ 8, /*blocking=*/ false);
+        viewData.configQueue         = viewData.device->getInputQueue("config", /*maxSize=*/ 4, /*blocking=*/ false);
+        viewData.dispQueue           = viewData.device->getOutputQueue("disp",  /*maxSize=*/ 8, /*blocking=*/ false);
+
+        // Stop input threads on L&R queues and take ownership of the underlying XLink streams
+        PER_EYE viewData.inputFrame[eyeIdx].queue->takeStreamOwnership();
 
         // Force config update
         viewData.m_lastSettingsGeneration = shm->segment()->m_settingsGeneration - 1;
@@ -203,61 +266,13 @@ int main(int argc, char* argv[]) {
     } // Per-view initialization
 
     nvtxMarkA("Upload start");
-    // Per-view uploads
-    for (size_t viewIdx = 0; viewIdx < perViewData.size(); ++viewIdx) {
-      DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
-      PerViewData& viewData = perViewData[viewIdx];
 
+    // Run frame loop on each device per-view per-eye
+    FxThreading::runArrayTask(0, perViewData.size() * 2, perViewPerEyeUpload);
 
-      // Submit input frames
-      auto submitTime = std::chrono::steady_clock::now();
-
-      for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-        viewData.inputFrame[eyeIdx].setSequenceNum(frameSequenceNumber);
-        viewData.inputFrame[eyeIdx].setTimestamp(submitTime);
-
-        unsigned char* outBase = viewData.inputFrame[eyeIdx].getData().data();
-        const char* inBase = shm->segment()->data() + vp.inputOffset[eyeIdx];
-        for (size_t row = 0; row < vp.height; ++row)
-          memcpy(outBase + (row * viewData.m_paddedWidth), inBase + (row * vp.inputPitchBytes), vp.width);
-
-      }
-
-
-      nvtxMarkA("leftQueue send");
-      viewData.leftQueue->send(viewData.inputFrame[0]);
-      nvtxMarkA("rightQueue send");
-      viewData.rightQueue->send(viewData.inputFrame[1]);
-    } // Per-view uploads
-
-
-    nvtxMarkA("Download start");
-
-    for (size_t viewIdx = 0; viewIdx < perViewData.size(); ++viewIdx) {
-      // Download results
-      PerViewData& viewData = perViewData[viewIdx];
-      DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
-
-      nvtxMarkA("Download disparity");
-      auto frame = viewData.dispQueue->get<dai::ImgFrame>();
-      // Frames are RAW8 unless subpixel is enabled, then they'll be RAW16
-      size_t bytesPerPixel = dai::RawImgFrame::typeToBpp(frame->getType());
-
-      assert(frame->getType() == dai::ImgFrame::Type::RAW16);
-      assert(frame->getData().size() == frame->getWidth() * frame->getHeight() * bytesPerPixel);
-      assert(frame->getWidth() == viewData.m_paddedWidth);
-      assert(frame->getHeight() == vp.height);
-
-      nvtxMarkA("Copy disparity to SHM");
-      for (size_t row = 0; row < vp.height; ++row) {
-        memcpy((shm->segment()->data() + vp.outputOffset) + (vp.outputPitchBytes * row), frame->getData().data() + (viewData.m_paddedWidth * bytesPerPixel * row), (vp.width * bytesPerPixel));
-      }
-    }
-
+    // Flush SHM writes
     for (size_t viewIdx = 0; viewIdx < shm->segment()->m_activeViewCount; ++viewIdx) {
-      //PerViewData& viewData = perViewData[viewIdx];
       DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
-
       shm->flush(vp.outputOffset, vp.outputPitchBytes * vp.height);
     }
 
@@ -271,5 +286,67 @@ int main(int argc, char* argv[]) {
   } // Work loop
 
   return 0;
+}
+
+void perViewPerEyeUpload(size_t viewEyeIdx) {
+  size_t viewIdx = viewEyeIdx >> 1;
+  size_t eyeIdx = viewEyeIdx & 1;
+
+  DepthMapSHM::ViewParams& vp = shm->segment()->m_viewParams[viewIdx];
+  PerViewData& viewData = perViewData[viewIdx];
+
+  // Submit input frames
+  auto submitTime = std::chrono::steady_clock::now();
+
+  PerViewData::InputFrame& frameData = viewData.inputFrame[eyeIdx];
+
+  nvtxMarkA(eyeIdx == 0 ? "Left Frame Send" : "Right Frame Send");
+
+  // Update and serialize metadata
+  frameData.daiFrame.setSequenceNum(frameSequenceNumber);
+  frameData.daiFrame.setTimestamp(submitTime);
+
+  frameData.daiRawImgFrame->serialize(frameData.serializedMetadata, frameData.serializedDatatype);
+
+  // Borrowed from StreamMessageParser::serializeMessage(const RawBuffer&)
+  uint32_t serializedSize = frameData.daiFrame.getData().size() + frameData.serializedMetadata.size() + 8;
+
+  // (re)allocate dmaBuffer, if necessary
+  frameData.ensureDMABuffer(serializedSize);
+
+  // 4B datatype & 4B metadata size
+  std::array<std::uint8_t, 4> leDatatype;
+  std::array<std::uint8_t, 4> leMetadataSize;
+  for(int i = 0; i < 4; i++) leDatatype[i] = (static_cast<std::int32_t>(frameData.serializedDatatype) >> (i * 8)) & 0xFF;
+  uint32_t metadataSize = frameData.serializedMetadata.size();
+  for(int i = 0; i < 4; i++) leMetadataSize[i] = (metadataSize >> i * 8) & 0xFF;
+
+  // Copy image data from SHM to DMABUF
+  size_t writePtr = 0;
+  writePtr += pitchCopy(frameData.dmaBuffer, viewData.m_paddedWidth, shm->segment()->data() + vp.inputOffset[eyeIdx], vp.inputPitchBytes, vp.width, vp.height);
+#define WRITE(data, size) memcpy(frameData.dmaBuffer + writePtr, data, size); writePtr += size;
+  WRITE(frameData.serializedMetadata.data(), frameData.serializedMetadata.size());
+  WRITE(leDatatype.data(), leDatatype.size());
+  WRITE(leMetadataSize.data(), leMetadataSize.size());
+#undef  WRITE
+  frameData.queue->xlinkStream().write(frameData.dmaBuffer, writePtr);
+
+
+  if (eyeIdx != 0)
+    return; // Use eye0 thread to handle the download
+
+  // Download results
+  nvtxMarkA("Download disparity");
+  auto frame = viewData.dispQueue->get<dai::ImgFrame>();
+  // Frames are RAW8 unless subpixel is enabled, then they'll be RAW16
+  size_t bytesPerPixel = dai::RawImgFrame::typeToBpp(frame->getType());
+
+  assert(frame->getType() == dai::ImgFrame::Type::RAW16);
+  assert(frame->getData().size() == frame->getWidth() * frame->getHeight() * bytesPerPixel);
+  assert(frame->getWidth() == viewData.m_paddedWidth);
+  assert(frame->getHeight() == vp.height);
+
+  nvtxMarkA("Copy disparity to SHM");
+  pitchCopy(shm->segment()->data() + vp.outputOffset, vp.outputPitchBytes, frame->getData().data(), viewData.m_paddedWidth * bytesPerPixel, vp.width * bytesPerPixel, vp.height);
 }
 

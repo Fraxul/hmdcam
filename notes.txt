@@ -51,8 +51,13 @@ Before the first run, set up udev rules to make the HMD usb-hid devices accessib
 ==============================================================================
 
 
+If using the DepthAI backend, you might need to increase the usbfs buffer memory limit. The default of 16MB can be exhausted when using multiple devices.
+  - Either set it via kernel boot parameter (in /boot/extlinux/extlinux.conf): usbcore.usbfs_memory_mb=128
+  - Or add a startup task to run: sudo sh -c 'echo 128 > /sys/module/usbcore/parameters/usbfs_memory_mb'
+
+
 Make sure that the user you're running as is members of the "plugdev" and "input" groups.
-plugdev is required to open the Vive's /dev/hidraw* node
+plugdev is required to open the HMD's /dev/hidraw* node
 input is required to open nodes under /dev/input for the USB-HID remote control
 
 To avoid accidentally powering off the Jetson with the USB-HID remote, disable systemd's response to power/suspend/hibernate/whatever keys:
@@ -103,12 +108,13 @@ nvvp can then be run with sudo /usr/local/cuda/bin/nvvp
 Sample invocation to generate an nvprof tracefile:
 
 (as root, on device)
-  nvprof --system-profiling on --timeout 15 --cpu-profiling on --export-profile /tmp/dgpu-worker.nvvp /home/dweatherford/hmdcam/build/bin/dgpu-worker
+  cd /home/hmdcam/hmdcam
+  nvprof --system-profiling on --timeout 15 --cpu-profiling on --export-profile /tmp/dgpu-worker.nvvp build/bin/dgpu-worker
 
 Sample invocation for profiling hmdcam + dgpu-worker together. Requires CWD to be correct so hmdcam can load shaders.
 (as root, on device)
-  cd /home/dweatherford/hmdcam
-  nvprof --profile-child-processes --system-profiling on --timeout 15 --cpu-profiling on --export-profile /tmp/hmdcam-%p.nvvp /home/dweatherford/hmdcam/build/bin/hmdcam
+  cd /home/hmdcam/hmdcam
+  nvprof --profile-child-processes --system-profiling on --timeout 15 --cpu-profiling on --export-profile /tmp/hmdcam-%p.nvvp build/bin/hmdcam
 
 
 Copy /tmp/dgpu-worker.nvvp back to the host and load it into nvvp.

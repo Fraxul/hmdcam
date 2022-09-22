@@ -285,14 +285,17 @@ int main(int argc, char* argv[]) {
 
   if (depthBackend == kDepthBackendDepthAI) {
     // Set thread affinity.
-    // On Tegra, we get a small but noticeable performance improvement by pinning the DepthAI backend to CPU0-1 and hmdcam to all other CPUs.
+    // On Tegra, we get a small but noticeable performance improvement by pinning the DepthAI backend to its own dedicated CPUs
     // This must be done early in initialization so that all of the library worker threads spawned later inherit these settings.
 
     cpu_set_t cpuset;
-    // Create affinity mask for all CPUs besides CPU0-1
+    // Create affinity mask for all CPUs besides CPU6-7
     CPU_ZERO(&cpuset);
-    for (size_t i = 2; i < CPU_SETSIZE; ++i)
+    for (size_t i = 0; i < CPU_SETSIZE; ++i) {
+      if (i == 6 || i == 7)
+        continue;
       CPU_SET(i, &cpuset);
+    }
 
     if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
       perror("pthread_setaffinity");

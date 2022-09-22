@@ -1,3 +1,7 @@
+import os
+import atexit
+import subprocess
+
 Import('env')
 depthaiEnv = env.Clone()
 depthaiSDK = '#build/depthai-core/install'
@@ -9,12 +13,37 @@ depthaiEnv.Append(
     depthaiSDK + '/lib/cmake/depthai/dependencies/include'],
   CPPFLAGS=['-std=c++17', '-fno-omit-frame-pointer', '-funwind-tables']
 )
-depthaiStaticLibs = Glob(depthaiSDK + '/lib/libdepthai*.a') + Glob(depthaiSDK + '/lib/cmake/depthai/dependencies/lib/*.a')
+depthaiStaticLibs = [
+  depthaiSDK + '/lib/libdepthai-core.a',
+  depthaiSDK + '/lib/libdepthai-opencv.a',
+  depthaiSDK + '/lib/libdepthai-resources.a',
+  depthaiSDK + '/lib/libXLink.a', # This is the locally built XLink. The one in lib/cmake/depthai/dependencies/lib is the packaged version that we don't want.
+  depthaiSDK + '/lib/cmake/depthai/dependencies/lib/libarchive_static.a',
+  depthaiSDK + '/lib/cmake/depthai/dependencies/lib/libbz2.a',
+  depthaiSDK + '/lib/cmake/depthai/dependencies/lib/liblzma.a',
+  depthaiSDK + '/lib/cmake/depthai/dependencies/lib/libspdlog.a',
+  depthaiSDK + '/lib/cmake/depthai/dependencies/lib/libz.a',
+]
 depthaiLibDeps = ['usb-1.0']
 
-depthaiEnv.Program(
+depthaiWorker = depthaiEnv.Program(
   target = '../bin/depthai-worker', # relative to build/depthai-worker
-  source = Glob('depthai-worker/*.cpp') + depthaiStaticLibs,
-  LIBS=['stdc++', 'pthread', 'rt', 'dl', 'z', 'opencv_core', 'opencv_imgproc', 'boost_system', 'nvToolsExt'] + depthaiLibDeps
+  source = Glob('depthai-worker/*.cpp') + ['common/FxThreading.cpp'] + depthaiStaticLibs,
+  LIBS=['stdc++', 'pthread', 'rt', 'dl', 'z', 'opencv_core', 'opencv_imgproc', 'boost_thread', 'boost_system', 'nvToolsExt'] + depthaiLibDeps
 )
+
+def update_caps(workerNode):
+  workerBin = str(workerNode[0])
+  if (os.path.exists(workerBin)):
+    try:
+      res = subprocess.check_output(['getcap', workerBin], stderr=subprocess.STDOUT)
+      if ('cap_sys_nice' in str(res)):
+        #print('Capabilities check OK on '+workerBin)
+        return
+      print('Updating capabilities on '+workerBin)
+      os.system('sudo setcap cap_sys_nice+ep '+workerBin)
+    except Exception as e:
+      print(e)
+
+atexit.register(update_caps, depthaiWorker)
 
