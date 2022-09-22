@@ -24,53 +24,68 @@ static inline __host__ __device__ float unpackUnorm1x16(uint16_t p) {
   return Unpack * 1.5259021896696421759365224689097e-5f; // 1.0 / 65535.0
 }
 
-__global__ void remapArray(CUtexObject src, float2 srcDims, const PtrStep<ushort2> undistortRectifyMap, PtrStepSz<uchar> dst) {
+template <unsigned int DownsampleFactor> __global__ void remapArray(CUtexObject src, float2 srcDims, const PtrStep<ushort2> undistortRectifyMap, PtrStepSz<uchar> dst) {
   const int x = blockDim.x * blockIdx.x + threadIdx.x;
   const int y = blockDim.y * blockIdx.y + threadIdx.y;
 
   if (x < dst.cols && y < dst.rows) {
-    ushort2 unormCoords = undistortRectifyMap.ptr(y)[x];
+    ushort2 unormCoords[DownsampleFactor * DownsampleFactor];
+    #pragma unroll
+    for (uint yOffset = 0; yOffset < DownsampleFactor; ++yOffset) {
+      const ushort2* rowPtr = undistortRectifyMap.ptr((y * DownsampleFactor) + yOffset);
+      #pragma unroll
+      for (uint xOffset = 0; xOffset < DownsampleFactor; ++xOffset) {
+        unormCoords[(yOffset * DownsampleFactor) + xOffset] = rowPtr[(x * DownsampleFactor) + xOffset];
+      }
+    }
 
-    float rawSample = tex2D<float>(src,
-        unpackUnorm1x16(unormCoords.x) * srcDims.x,
-        unpackUnorm1x16(unormCoords.y) * srcDims.y);
+    float samples[DownsampleFactor * DownsampleFactor];
+    #pragma unroll
+    for (uint i = 0; i < (DownsampleFactor * DownsampleFactor); ++i) {
+      samples[i] = tex2D<float>(src,
+        unpackUnorm1x16(unormCoords[i].x) * srcDims.x,
+        unpackUnorm1x16(unormCoords[i].y) * srcDims.y);
+    }
 
-    uchar b = __float2uint_rn(255.0f * __saturatef(rawSample));
+    float val = 0.0f;
+    #pragma unroll
+    for (uint i = 0; i < (DownsampleFactor * DownsampleFactor); ++i) {
+      val += samples[i];
+    }
+    uchar b = __float2uint_rn(255.0f * __saturatef(val / static_cast<float>(DownsampleFactor * DownsampleFactor)));
     dst.ptr(y)[x] = b;
   }
 }
 
-template <typename DestT> __host__ void remapArray(CUtexObject src, float2 srcDims, const PtrStepSz<ushort2> undistortRectifyMap, void* dstCudaPtr, size_t dstStep, CUstream stream) {
-  dim3 block(32, 8);
-  dim3 grid(cv::cuda::device::divUp(undistortRectifyMap.cols, block.x), cv::cuda::device::divUp(undistortRectifyMap.rows, block.y));
-
-  remapArray<<<grid, block, 0, stream>>>(src, srcDims, undistortRectifyMap, PtrStepSz<DestT>(undistortRectifyMap.rows, undistortRectifyMap.cols, (DestT*) dstCudaPtr, dstStep));
-  cudaSafeCall( cudaGetLastError() );
-}
-
-
-void remapArray(CUtexObject src, cv::Size inputImageSize, cv::cuda::GpuMat undistortRectifyMap, cv::cuda::GpuMat dst, CUstream stream) {
-  typedef void (*func_t)(CUtexObject, float2, PtrStepSz<ushort2>, void*, size_t, CUstream);
-  static const func_t funcs[6][4] =
-  {
-      {remapArray<uchar>       , 0 /*remapArray<uchar2>*/ , 0 /*remapArray<uchar3>*/ , 0 /*remapArray<uchar4>*/ },
-      {0 /*remapArray<schar>*/ , 0 /*remapArray<char2>*/  , 0 /*remapArray<char3>*/  , 0 /*remapArray<char4>*/  },
-      {0 /*remapArray<ushort>*/, 0 /*remapArray<ushort2>*/, 0 /*remapArray<ushort3>*/, 0 /*remapArray<ushort4>*/},
-      {0 /*remapArray<short>*/ , 0 /*remapArray<short2>*/ , 0 /*remapArray<short3>*/ , 0 /*remapArray<short4>*/ },
-      {0 /*remapArray<int>*/   , 0 /*remapArray<int2>*/   , 0 /*remapArray<int3>*/   , 0 /*remapArray<int4>*/   },
-      {0 /*remapArray<float>*/ , 0 /*remapArray<float2>*/ , 0 /*remapArray<float3>*/ , 0 /*remapArray<float4>*/ }
-  };
-
+void remapArray(CUtexObject src, cv::Size inputImageSize, cv::cuda::GpuMat undistortRectifyMap, cv::cuda::GpuMat dst, CUstream stream, unsigned int downsampleFactor) {
   assert(undistortRectifyMap.type() == CV_16UC2);
-  assert(dst.size() == undistortRectifyMap.size() && dst.cudaPtr() != nullptr);
+  dst.create(cv::Size(undistortRectifyMap.cols / downsampleFactor, undistortRectifyMap.rows / downsampleFactor), CV_8U);
 
-  const func_t func = funcs[dst.depth()][dst.channels() - 1];
-  if (!func)
-      CV_Error(Error::StsUnsupportedFormat, "Unsupported output type");
+  dim3 block(32, 8);
+  dim3 grid(
+    cv::cuda::device::divUp(dst.cols, block.x),
+    cv::cuda::device::divUp(dst.rows, block.y));
 
-  func(src, make_float2(inputImageSize.width, inputImageSize.height),
-    PtrStepSz<ushort2>(undistortRectifyMap.rows, undistortRectifyMap.cols, (ushort2*) undistortRectifyMap.cudaPtr(), undistortRectifyMap.step),
-    dst.cudaPtr(), dst.step, stream);
+  auto sz = make_float2(inputImageSize.width, inputImageSize.height);
+  auto map = PtrStep<ushort2>((ushort2*) undistortRectifyMap.cudaPtr(), undistortRectifyMap.step);
+  auto out = PtrStepSz<uchar>(dst.rows, dst.cols, (uchar*) dst.cudaPtr(), dst.step);
+
+  switch (downsampleFactor) {
+    case 1:
+      remapArray<1><<<grid, block, 0, stream>>>(src, sz, map, out);
+      break;
+    case 2:
+      remapArray<2><<<grid, block, 0, stream>>>(src, sz, map, out);
+      break;
+    case 3:
+      remapArray<3><<<grid, block, 0, stream>>>(src, sz, map, out);
+      break;
+    case 4:
+      remapArray<4><<<grid, block, 0, stream>>>(src, sz, map, out);
+      break;
+    default:
+    assert(false && "Unhandled downsampleFactor");
+  }
 }
 
 cv::cuda::GpuMat remapArray_initUndistortRectifyMap(cv::InputArray cameraMatrix, cv::InputArray distCoeffs, cv::InputArray rectification, cv::InputArray newProjection, cv::Size inputImageSize, unsigned int downsampleFactor) {

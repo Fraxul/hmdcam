@@ -3,7 +3,7 @@
 #include <opencv2/core/base.hpp>
 #include <opencv2/core/cuda.hpp>
 
-void remapArray(CUtexObject src, cv::Size inputImageSize, cv::cuda::GpuMat undistortRectifyMap, cv::cuda::GpuMat dst, CUstream stream);
+void remapArray(CUtexObject src, cv::Size inputImageSize, cv::cuda::GpuMat undistortRectifyMap, cv::cuda::GpuMat dst, CUstream stream, unsigned int downsampleFactor = 1);
 
 // Builds a GpuMat suitable for feeding to remapArray. Parameters identical to cv::initUndistortRectifyMap
 // Resultant GpuMat size is (inputImageSize / downsampleFactor)
