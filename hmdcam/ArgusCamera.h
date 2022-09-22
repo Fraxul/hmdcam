@@ -33,6 +33,8 @@ public:
 
   virtual void setCaptureDurationOffset(int64_t ns) = 0;
   virtual int64_t captureDurationOffset() const = 0;
+
+  virtual bool renderPerformanceTuningIMGUI() = 0;
   // ====================
 
 
@@ -77,6 +79,8 @@ protected:
 
   bool m_adjustCaptureInterval = false;
   bool m_didAdjustCaptureIntervalThisFrame = false;
+  int m_adjustCaptureCooldownFrames = 96;
+  int m_adjustCaptureEvalWindowFrames = 64;
 };
 
 class ArgusCamera : public IArgusCamera {
@@ -105,6 +109,7 @@ public:
   // Region will be clipped to the size of the image if it overhangs an edge (ex. if you move the center point without decreasing the size)
   virtual void setAcRegion(const glm::vec2& center, const glm::vec2& size);
 
+  virtual bool renderPerformanceTuningIMGUI();
 
   void setCaptureDurationOffset(int64_t ns);
   int64_t captureDurationOffset() const;
@@ -126,10 +131,12 @@ private:
   uint64_t m_captureDurationMinNs, m_captureDurationMaxNs; // from sensor mode
   uint64_t m_previousSensorTimestampNs;
   unsigned int m_samplesAtCurrentDuration;
-  boost::accumulators::accumulator_set<double, boost::accumulators::stats<
+
+  typedef boost::accumulators::accumulator_set<double, boost::accumulators::stats<
       boost::accumulators::tag::rolling_mean,
       boost::accumulators::tag::rolling_count
-    > > m_captureIntervalStats;
+    > > CaptureIntervalStats_t;
+  CaptureIntervalStats_t m_captureIntervalStats;
 
   void setCaptureDurationNs(uint64_t captureDurationNs);
 
@@ -217,6 +224,7 @@ public:
   virtual void setRepeatCapture(bool) {}
   virtual void setExposureCompensation(float stops) {}
   virtual void setAcRegion(const glm::vec2& center, const glm::vec2& size) {}
+  virtual bool renderPerformanceTuningIMGUI() { return false; }
 
   virtual void setCaptureDurationOffset(int64_t ns) {}
   virtual int64_t captureDurationOffset() const { return 0; }

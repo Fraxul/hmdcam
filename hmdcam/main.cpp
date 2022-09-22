@@ -866,19 +866,8 @@ int main(int argc, char* argv[]) {
               ImPlot::EndPlot();
           }
 
-          {
-            bool v = argusCamera->willAdjustCaptureInterval();
-            if (ImGui::Checkbox("Auto-adjust capture interval", &v))
-              argusCamera->setAdjustCaptureInterval(v);
-          }
-          {
-            int64_t offsetNs = argusCamera->captureDurationOffset();
-            float offsetUs = static_cast<float>(offsetNs) / 1000.0f;
-            if (ImGui::SliderFloat("Offset (us)", &offsetUs, -1000.0f, 1000.0f, "%.1f", ImGuiSliderFlags_None)) {
-              argusCamera->setCaptureDurationOffset(static_cast<int64_t>(offsetUs * 1000.0f));
-              settingsDirty = true;
-            }
-          }
+          settingsDirty |= argusCamera->renderPerformanceTuningIMGUI();
+
           if (ImGui::Button("Restart Capture")) {
             argusCamera->stop(); // will automatically restart on next frame when we call setRepeatCapture again
             restartSkipFrameCounter = 3; // skip a few frames before restarting to smooth out the timing glitch we just caused

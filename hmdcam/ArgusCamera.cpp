@@ -1,6 +1,7 @@
 #include "ArgusCamera.h"
 #include "ArgusHelpers.h"
 #include "common/Timing.h"
+#include "imgui.h"
 #include "rhi/gl/GLCommon.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -39,7 +40,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
   m_captureIsRepeating(false),
   m_minAcRegionWidth(0),
   m_minAcRegionHeight(0),
-  m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = 128) {
+  m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = m_adjustCaptureEvalWindowFrames) {
 
   m_targetCaptureIntervalNs = 1000000000.0 / framerate;
 
@@ -485,9 +486,9 @@ bool ArgusCamera::readFrame() {
   }
 
   m_didAdjustCaptureIntervalThisFrame = false;
-  if (m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > 256) && m_previousSensorTimestampNs)) {
+  if (m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > m_adjustCaptureCooldownFrames) && m_previousSensorTimestampNs)) {
 
-    if (boost::accumulators::rolling_count(m_captureIntervalStats) > 64) {
+    if (boost::accumulators::rolling_count(m_captureIntervalStats) >= m_adjustCaptureEvalWindowFrames) {
 
       int64_t durationToTSDeltaOffset = boost::accumulators::rolling_mean(m_captureIntervalStats) - m_currentCaptureDurationNs;
 
@@ -505,10 +506,6 @@ bool ArgusCamera::readFrame() {
         int64_t newDuration = std::min<int64_t>(std::max<int64_t>(m_currentCaptureDurationNs + (targetOffset / 64), m_captureDurationMinNs), m_captureDurationMaxNs);
         // printf("Capture duration adjust %ld (%ld -> %ld)\n", targetOffset/64, m_currentCaptureDurationNs, newDuration);
         setCaptureDurationNs(newDuration);
-        m_didAdjustCaptureIntervalThisFrame = true;
-
-        m_shouldResubmitCaptureRequest = true;
-
       }
     }
   }
@@ -532,7 +529,9 @@ void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {
     Argus::interface_cast<Argus::ISourceSettings>(m_sessionCaptureRequests[sessionIdx])->setFrameDurationRange(captureDurationNs);
   }
   m_currentCaptureDurationNs = captureDurationNs;
-  m_samplesAtCurrentDuration = -64; // Wait long enough to clear out the rolling window of interval stats
+  m_samplesAtCurrentDuration = 0;
+  m_didAdjustCaptureIntervalThisFrame = true;
+  m_shouldResubmitCaptureRequest = true;
 }
 
 int64_t ArgusCamera::captureDurationOffset() const {
@@ -603,6 +602,27 @@ void ArgusCamera::setAcRegion(const glm::vec2& center, const glm::vec2& size) {
   m_shouldResubmitCaptureRequest = true;
 }
 
+bool ArgusCamera::renderPerformanceTuningIMGUI() {
+  bool settingsDirty = false;
+
+  settingsDirty |= ImGui::Checkbox("Auto-adjust capture interval", &m_adjustCaptureInterval);
+
+  if (m_adjustCaptureInterval) {
+    ImGui::SliderInt("Adjustment Cooldown Frames", &m_adjustCaptureCooldownFrames, 1, 64);
+    if (ImGui::SliderInt("Adjustment Tgt Eval Window", &m_adjustCaptureEvalWindowFrames, 1, 256)) {
+      m_captureIntervalStats = CaptureIntervalStats_t(boost::accumulators::tag::rolling_window::window_size = m_adjustCaptureEvalWindowFrames);
+    }
+  }
+
+  float offsetUs = static_cast<float>(captureDurationOffset()) / 1000.0f;
+  if (ImGui::SliderFloat("Offset (us)", &offsetUs, -1000.0f, 1000.0f, "%.1f", ImGuiSliderFlags_None)) {
+    setCaptureDurationOffset(static_cast<int64_t>(offsetUs * 1000.0f));
+    settingsDirty = true;
+  }
+
+
+  return settingsDirty;
+}
 
 cv::cuda::GpuMat ArgusCamera::gpuMatGreyscale(size_t sensorIdx) {
   const CUeglFrame& eglFrame = m_bufferPools[sensorIdx].activeBuffer().eglFrame;
