@@ -33,6 +33,7 @@ const float s_charucoBoardMarkerSideLengthMeters = s_charucoBoardSquareSideLengt
 
 cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary;
 cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
+cv::Ptr<cv::aruco::ArucoDetector> s_arucoDetector;
 
 
 // TODO move this
@@ -50,6 +51,12 @@ CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibrat
 
   if (!s_charucoBoard)
     s_charucoBoard = cv::aruco::CharucoBoard::create(s_charucoBoardSquareCountX, s_charucoBoardSquareCountY, s_charucoBoardSquareSideLengthMeters, s_charucoBoardMarkerSideLengthMeters, s_charucoDictionary);
+
+  if (!s_arucoDetector) {
+    s_arucoDetector = cv::aruco::ArucoDetector::create(s_charucoDictionary, cv::aruco::DetectorParameters::create());
+    // Set some default detection parameters
+    s_arucoDetector->params->cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX; // Enable subpixel refinement for higher precision
+  }
 
   m_cameras.resize(cameraProvider()->streamCount());
 
@@ -777,8 +784,8 @@ void CameraSystem::IntrinsicCalibrationContext::processFramePreviewMode() {
 
   // Run ArUco marker detection
   // Note that we don't feed the camera distortion parameters to the aruco functions here, since the images we're operating on have already been undistorted.
-  cv::aruco::detectMarkers(viewFullRes, s_charucoDictionary, corners, ids, cv::aruco::DetectorParameters::create(), rejected, c.optimizedMatrix, zeroDistortion);
-  cv::aruco::refineDetectedMarkers(viewFullRes, s_charucoBoard, corners, ids, rejected, c.optimizedMatrix, zeroDistortion);
+  s_arucoDetector->detectMarkers(viewFullRes, corners, ids, rejected);
+  s_arucoDetector->refineDetectedMarkers(viewFullRes, s_charucoBoard, corners, ids, rejected, c.optimizedMatrix, zeroDistortion);
 
   // Find corners using detected markers
   if (!ids.empty()) {

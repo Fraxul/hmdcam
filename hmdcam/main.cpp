@@ -802,6 +802,9 @@ int main(int argc, char* argv[]) {
             if (ImGui::Button("Save Calibration")) {
               cameraSystem->saveCalibrationData();
             }
+            if (ImGui::Button("Reload Calibration from Disk")) {
+              cameraSystem->loadCalibrationData();
+            }
           } // Calibration header
 
           if (debugEnableDepthMapGenerator && depthMapGenerator && ImGui::CollapsingHeader("Depth Backend")) {

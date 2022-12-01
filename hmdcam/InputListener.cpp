@@ -271,6 +271,7 @@ void* inputListenerThread(void*) {
             break;
 
           case KEY_ENTER:
+          case BTN_LEFT: // for kbd/mouse combo remote mode-switching
             buttonState[kButtonOK].store(true);
             break;
 
