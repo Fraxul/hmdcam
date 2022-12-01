@@ -25,10 +25,14 @@
 int serialFd;
 bool quiet = false;
 SHMSegment<PDUInfo>* pduInfoShm;
+float minDutyCycle = 0.0f;
+float maxDutyCycle = 1.0f;
+float minTemp = 30.0f;
+float maxTemp = 60.0f;
 
-enum Side {
-  kSideLeft_CPU,
-  kSideRight_GPU
+enum FanID {
+  kFanCPU,
+  kFanGPU
 };
 
 static inline uint64_t currentTimeMs() {
@@ -42,11 +46,11 @@ static inline uint64_t currentTimeMs() {
 static boost::regex infoExpr("Bus ([\\d\\.]+)V ([\\d\\.]+)A ([\\d\\.]+)W UsedPower ([\\d\\.]+)J ([\\d\\.]+)Wh");
 
 // 0-1 range
-bool pwmSetDutyCycle(Side side, float dutyCycle) {
+bool pwmSetDutyCycle(FanID fanID, float dutyCycle) {
   dutyCycle = glm::clamp(dutyCycle, 0.0f, 1.0f);
 
   char buf[32];
-  sprintf(buf, "pwm %s %u\n", (side == kSideLeft_CPU) ? "left" : "right", (unsigned int) (dutyCycle * 255.0f));
+  sprintf(buf, "pwm %s %u\n", (fanID == kFanCPU) ? "fan1" : "fan2", (unsigned int) (dutyCycle * 255.0f));
   if (write(serialFd, buf, strlen(buf)) < 0) {
     fprintf(stderr, "error writing PWM command: %s\n", strerror(errno));
     return false;
@@ -135,12 +139,23 @@ nvmlReturn_t checkNvmlReturn(nvmlReturn_t res, const char* op, const char* file,
 
 int main(int argc, char* argv[]) {
   std::string serialPort = "/dev/ttyTHS0";
+  bool useNVML = true;
 
   for (int i = 1; i < argc; ++i) {
     if ((!strcmp(argv[i], "--quiet")) || (!strcmp(argv[i], "-q"))) {
       quiet = true;
     } else if (!strcmp(argv[i], "--port")) {
       serialPort = argv[++i];
+    } else if (!strcmp(argv[i], "--minDutyCycle")) {
+      minDutyCycle = glm::clamp<float>(atof(argv[++i]), 0.0f, 1.0f);
+    } else if (!strcmp(argv[i], "--maxDutyCycle")) {
+      maxDutyCycle = glm::clamp<float>(atof(argv[++i]), 0.0f, 1.0f);
+    } else if (!strcmp(argv[i], "--minTemp")) {
+      minTemp = glm::clamp<float>(atof(argv[++i]), 0.0f, 100.0f);
+    } else if (!strcmp(argv[i], "--maxTemp")) {
+      maxTemp = glm::clamp<float>(atof(argv[++i]), 0.0f, 100.0f);
+    } else if (!strcmp(argv[i], "--noGPU")) {
+      useNVML = false;
     } else {
       printf("Unrecognized argument: %s\n", argv[i]);
       return -1;
@@ -175,10 +190,9 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  bool useNVML = true;
   nvmlDevice_t hDevice = 0;
 
-  {
+  if (useNVML) {
     nvmlReturn_t initRes = nvmlInit_v2();
     if (initRes != NVML_SUCCESS) {
       printf("nvmlInit_v2() returned nvmlReturn_t %d: %s. NVML will be unavailable.\n", initRes, nvmlErrorString(initRes));
@@ -231,15 +245,17 @@ int main(int argc, char* argv[]) {
     }
 
     // Fan is good all the way down to 0% duty cycle (it doesn't stop)
-    float cpuDutyCycle = glm::mix(0.0f, 1.0f, glm::smoothstep(30.0f, 60.0f, static_cast<float>(cpuCoreTemp)));
-    float gpuDutyCycle = glm::mix(0.0f, 1.0f, glm::smoothstep(30.0f, 60.0f, static_cast<float>(gpuCoreTemp)));
+    float cpuDutyCycle = glm::mix(minDutyCycle, maxDutyCycle, glm::smoothstep(minTemp, maxTemp, static_cast<float>(cpuCoreTemp)));
+    float gpuDutyCycle = glm::mix(minDutyCycle, maxDutyCycle, glm::smoothstep(minTemp, maxTemp, static_cast<float>(gpuCoreTemp)));
 
     if (!quiet) {
       printf("CPU temp %f => duty cycle %u; GPU temp %u => duty cycle %u%%\n", cpuCoreTemp, static_cast<unsigned int>(cpuDutyCycle * 100.0f), gpuCoreTemp, static_cast<unsigned int>(gpuDutyCycle * 100.0f));
     }
 
-    pwmSetDutyCycle(kSideLeft_CPU, cpuDutyCycle);
-    pwmSetDutyCycle(kSideRight_GPU, gpuDutyCycle);
+    pwmSetDutyCycle(kFanCPU, cpuDutyCycle);
+
+    if (useNVML)
+      pwmSetDutyCycle(kFanGPU, gpuDutyCycle);
 
     bool controlSegmentDirty = false;
     if (pduInfoShm->segment()->clearRequested) {
