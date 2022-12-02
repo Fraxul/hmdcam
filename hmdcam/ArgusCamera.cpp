@@ -27,6 +27,8 @@
 //#define FRAME_WAIT_TIME_STATS 1
 
 static const size_t kBufferCount = 8;
+static const uint64_t kCaptureTimeoutNs = 5000000000ULL; // 5 seconds
+static const uint32_t kFailedCaptureThreshold = 3;
 
 extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
 extern FxAtomicString ksNDCQuadUniformBlock;
@@ -34,6 +36,24 @@ extern FxAtomicString ksImageTex;
 
 IArgusCamera::IArgusCamera() {}
 IArgusCamera::~IArgusCamera() {}
+
+
+static const char* argusStatusStr(Argus::Status status) {
+  switch (status) {
+    case Argus::STATUS_OK: return "STATUS_OK";
+    case Argus::STATUS_INVALID_PARAMS: return "STATUS_INVALID_PARAMS";
+    case Argus::STATUS_INVALID_SETTINGS: return "STATUS_INVALID_SETTINGS";
+    case Argus::STATUS_UNAVAILABLE: return "STATUS_UNAVAILABLE";
+    case Argus::STATUS_OUT_OF_MEMORY: return "STATUS_OUT_OF_MEMORY";
+    case Argus::STATUS_UNIMPLEMENTED: return "STATUS_UNIMPLEMENTED";
+    case Argus::STATUS_TIMEOUT: return "STATUS_TIMEOUT";
+    case Argus::STATUS_CANCELLED: return "STATUS_CANCELLED";
+    case Argus::STATUS_DISCONNECTED: return "STATUS_DISCONNECTED";
+    case Argus::STATUS_END_OF_STREAM: return "STATUS_END_OF_STREAM";
+    default: return "(unknown)";
+  }
+}
+
 
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framerate) :
   m_display(display_), m_context(context_),
@@ -344,7 +364,7 @@ void ArgusCamera::setRepeatCapture(bool value) {
     // Give the sessions time to return to idle
     for (size_t sessionIdx = 0; sessionIdx < m_captureSessions.size(); ++sessionIdx) {
       Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIdx]);
-      iCaptureSession->waitForIdle(m_targetCaptureIntervalNs * 2);
+      iCaptureSession->waitForIdle(kCaptureTimeoutNs);
     }
   }
 
@@ -387,9 +407,11 @@ bool ArgusCamera::readFrame() {
   if (!m_captureIsRepeating) {
     for (size_t sessionIdx = 0; sessionIdx < m_captureSessions.size(); ++sessionIdx) {
       Argus::Status status;
-      Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIdx])->capture(m_sessionCaptureRequests[sessionIdx], Argus::TIMEOUT_INFINITE, &status);
-      if (status != Argus::STATUS_OK)
-        die("ArgusCamera::readFrame(): Failed to request capture");
+      Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIdx])->capture(m_sessionCaptureRequests[sessionIdx], kCaptureTimeoutNs, &status);
+      if (status != Argus::STATUS_OK) {
+        printf("ArgusCamera::readFrame(): Status %s while performing non-repeating capture request on session %zu\n", argusStatusStr(status), sessionIdx);
+        return false;
+      }
     }
   }
 
@@ -447,11 +469,17 @@ bool ArgusCamera::readFrame() {
     previousCaptureCompletionTimestamp = 0;
   }
 
-  bool res = true;
+  bool captureOK = true;
   for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
     Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(m_outputStreams[cameraIdx]);
     Argus::Status status = Argus::STATUS_OK;
-    Argus::Buffer* buffer = iBufferOutputStream->acquireBuffer(Argus::TIMEOUT_INFINITE, &status);
+    Argus::Buffer* buffer = iBufferOutputStream->acquireBuffer(kCaptureTimeoutNs, &status);
+    if (status != Argus::STATUS_OK) {
+      printf("ArgusCamera::readFrame(): Status %s while acquiring buffer from sensor %zu\n", argusStatusStr(status), cameraIdx);
+      captureOK = false;
+      break;
+    }
+
     m_bufferPools[cameraIdx].setActiveBufferIndex(buffer);
 
     // Clean up previous capture's buffer and track this one to be released next round
@@ -483,7 +511,7 @@ bool ArgusCamera::readFrame() {
   }
 
   m_didAdjustCaptureIntervalThisFrame = false;
-  if (m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > m_adjustCaptureCooldownFrames) && m_previousSensorTimestampNs)) {
+  if (captureOK && m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > m_adjustCaptureCooldownFrames) && m_previousSensorTimestampNs)) {
 
     if (boost::accumulators::rolling_count(m_captureIntervalStats) >= m_adjustCaptureEvalWindowFrames) {
 
@@ -507,18 +535,61 @@ bool ArgusCamera::readFrame() {
     }
   }
 
-  if (m_shouldResubmitCaptureRequest && m_captureIsRepeating) {
-    // Resubmit repeating capture request for dirty controls/settings
-    for (size_t sessionIdx = 0; sessionIdx < m_captureSessions.size(); ++sessionIdx) {
-      if (Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIdx])->repeat(m_sessionCaptureRequests[sessionIdx]) != Argus::STATUS_OK)
-        die("Failed to update repeat capture request");
+
+  if (!captureOK) {
+    ++m_failedCaptures;
+    if (m_failedCaptures >= kFailedCaptureThreshold) {
+      printf("ArgusCamera::readFrame(): Capture failed (%u/%u), attempting to recover\n", m_failedCaptures, kFailedCaptureThreshold);
+      // Issue all stop-repeat requests and wait for the sessions to become idle
+      for (size_t sessionIdx = 0; sessionIdx < m_captureSessions.size(); ++sessionIdx) {
+        Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIdx]);
+        Argus::Status status = iCaptureSession->cancelRequests();
+        printf("ArgusCamera::readFrame(): cancelRequests(session %zu): %s\n", sessionIdx, argusStatusStr(status));
+      }
+
+
+      // Give the sessions time to return to idle
+      bool waitForIdleOK;
+
+      for (size_t waitForIdleAttempt = 0; waitForIdleAttempt < kFailedCaptureThreshold; ++waitForIdleAttempt) {
+        waitForIdleOK = true;
+        for (size_t sessionIdx = 0; sessionIdx < m_captureSessions.size(); ++sessionIdx) {
+          Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIdx]);
+          Argus::Status status = iCaptureSession->waitForIdle(kCaptureTimeoutNs);
+          printf("ArgusCamera::readFrame(): waitForIdle(session %zu): %s\n", sessionIdx, argusStatusStr(status));
+          if (status != Argus::STATUS_OK)
+            waitForIdleOK = false;
+        }
+
+        if (waitForIdleOK)
+          break;
+      }
+
+      if (!waitForIdleOK) {
+        die("ArgusCamera::readFrame(): Couldn't recover from capture session failure -- terminating the process");
+      }
+
+      m_captureIsRepeating = false;
+      m_failedCaptures = 0;
+    } else {
+      printf("ArgusCamera::readFrame(): Capture failed (%u/%u)\n", m_failedCaptures, kFailedCaptureThreshold);
     }
+  } else {
+    m_failedCaptures = 0;
+
+    if (m_shouldResubmitCaptureRequest && m_captureIsRepeating) {
+      // Resubmit repeating capture request for dirty controls/settings
+      for (size_t sessionIdx = 0; sessionIdx < m_captureSessions.size(); ++sessionIdx) {
+        if (Argus::interface_cast<Argus::ICaptureSession>(m_captureSessions[sessionIdx])->repeat(m_sessionCaptureRequests[sessionIdx]) != Argus::STATUS_OK)
+          die("Failed to update repeat capture request");
+      }
+    }
+
+    m_shouldResubmitCaptureRequest = false;
+    m_previousSensorTimestampNs = m_frameMetadata[0].sensorTimestamp;
   }
 
-  m_shouldResubmitCaptureRequest = false;
-  m_previousSensorTimestampNs = m_frameMetadata[0].sensorTimestamp;
-
-  return res;
+  return captureOK;
 }
 
 void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {

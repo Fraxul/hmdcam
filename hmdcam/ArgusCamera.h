@@ -127,6 +127,8 @@ private:
   bool m_shouldResubmitCaptureRequest : 1;
   bool m_captureIsRepeating : 1;
 
+  uint32_t m_failedCaptures = 0;
+
   uint32_t m_minAcRegionWidth, m_minAcRegionHeight;
 
   uint64_t m_currentCaptureDurationNs;
