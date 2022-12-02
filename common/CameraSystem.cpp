@@ -176,6 +176,19 @@ bool CameraSystem::loadCalibrationData() {
 }
 
 void CameraSystem::saveCalibrationData() {
+
+  {
+    // Try to save a backup of the previous calibration
+    char backupFn[256];
+    time_t t = time(NULL);
+    strftime(backupFn, sizeof(backupFn), "calibration-backup-%Y%m%d-%H%M%S.yml", localtime(&t));
+    if (rename(calibrationFilename.c_str(), backupFn) == 0) {
+      printf("Saved backup of previous calibration to %s\n", backupFn);
+    } else {
+      printf("Couldn't save backup of previous calibration (to %s): %s\n", backupFn, strerror(errno));
+    }
+  }
+
   cv::FileStorage fs(calibrationFilename.c_str(), cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
 
   fs.startWriteStruct("cameras", cv::FileNode::SEQ, cv::String());
