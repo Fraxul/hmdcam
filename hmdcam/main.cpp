@@ -759,8 +759,24 @@ int main(int argc, char* argv[]) {
           if (ImGui::CollapsingHeader("Calibration")) {
 
             for (size_t cameraIdx = 0; cameraIdx < cameraSystem->cameras(); ++cameraIdx) {
-              char caption[64];
-              sprintf(caption, "Calibrate camera %zu", cameraIdx);
+              const size_t captionLen = 128;
+              char caption[captionLen];
+              char* captionPtr = caption;
+
+              captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr , "Calibrate camera %zu", cameraIdx);
+              for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+                CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+                if (v.isStereo) {
+                  if (v.cameraIndices[0] == cameraIdx)
+                    captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr, " (View %zu %s)", viewIdx, v.isVerticalStereo() ? "top" : "left");
+                  if (v.cameraIndices[1] == cameraIdx)
+                    captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr, " (View %zu %s)", viewIdx, v.isVerticalStereo() ? "bottom" : "right");
+                } else {
+                  if (v.cameraIndices[0] == cameraIdx)
+                    captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr, " (View %zu)", viewIdx);
+                }
+              }
+
               if (ImGui::Button(caption)) {
                 calibrationContext.reset(cameraSystem->calibrationContextForCamera(cameraIdx));
               }
