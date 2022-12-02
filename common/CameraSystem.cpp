@@ -861,10 +861,10 @@ CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* c
   m_previousViewData = v;
   Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
   Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
-  m_origLeftIntrinsicMatrix = leftC.intrinsicMatrix;
-  m_origLeftDistCoeffs = leftC.distCoeffs;
-  m_origRightIntrinsicMatrix = rightC.intrinsicMatrix;
-  m_origRightDistCoeffs = rightC.distCoeffs;
+  m_origLeftIntrinsicMatrix = leftC.intrinsicMatrix.clone();
+  m_origLeftDistCoeffs = leftC.distCoeffs.clone();
+  m_origRightIntrinsicMatrix = rightC.intrinsicMatrix.clone();
+  m_origRightDistCoeffs = rightC.distCoeffs.clone();
 
   m_calibState = new CharucoMultiViewCalibration(cameraSystem(), {v.cameraIndices[0], v.cameraIndices[1]});
   m_calibState->m_undistortCapturedViews = false; // operate in native space
@@ -966,10 +966,10 @@ void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
   }
 
   // copy intrinsics so they can be modified without destroying the originals
-  cv::Mat adjLeftIntrinsicMatrix = leftC.intrinsicMatrix;
-  cv::Mat adjLeftDistCoeffs = leftC.distCoeffs;
-  cv::Mat adjRightIntrinsicMatrix = rightC.intrinsicMatrix;
-  cv::Mat adjRightDistCoeffs = rightC.distCoeffs;
+  cv::Mat adjLeftIntrinsicMatrix = leftC.intrinsicMatrix.clone();
+  cv::Mat adjLeftDistCoeffs = leftC.distCoeffs.clone();
+  cv::Mat adjRightIntrinsicMatrix = rightC.intrinsicMatrix.clone();
+  cv::Mat adjRightDistCoeffs = rightC.distCoeffs.clone();
 
   if (glm::length(v.stereoTranslationInitialGuess) > 0.0f) {
     feedbackTx = cv::Mat(cvVec3FromGlm(v.stereoTranslationInitialGuess));
@@ -992,8 +992,8 @@ void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
   cv::Rect stereoValidROI[2];
 
   cv::stereoRectify(
-    leftC.intrinsicMatrix, leftC.distCoeffs,
-    rightC.intrinsicMatrix, rightC.distCoeffs,
+    adjLeftIntrinsicMatrix, adjLeftDistCoeffs,
+    adjRightIntrinsicMatrix, adjRightDistCoeffs,
     cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()),
     feedbackRx, feedbackTx,
     feedbackRect[0], feedbackRect[1],
@@ -1073,10 +1073,12 @@ void CameraSystem::StereoCalibrationContext::didRejectCalibrationPreview() {
   View& v = cameraSystem()->viewAtIndex(m_viewIdx);
   Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
   Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
-  leftC.intrinsicMatrix = m_origLeftIntrinsicMatrix;
-  leftC.distCoeffs = m_origLeftDistCoeffs;
-  rightC.intrinsicMatrix = m_origRightIntrinsicMatrix;
-  rightC.distCoeffs = m_origRightDistCoeffs;
+
+  m_origLeftIntrinsicMatrix.copyTo(leftC.intrinsicMatrix);
+  m_origLeftDistCoeffs.copyTo(leftC.distCoeffs);
+  m_origRightIntrinsicMatrix.copyTo(rightC.intrinsicMatrix);
+  m_origRightDistCoeffs.copyTo(rightC.distCoeffs);
+
   cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[0]);
   cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[1]);
 }
@@ -1090,10 +1092,12 @@ void CameraSystem::StereoCalibrationContext::didCancelCalibrationSession() {
   // Restore original intrinsics and derived values
   Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
   Camera& rightC = cameraSystem()->cameraAtIndex(v.cameraIndices[1]);
-  leftC.intrinsicMatrix = m_origLeftIntrinsicMatrix;
-  leftC.distCoeffs = m_origLeftDistCoeffs;
-  rightC.intrinsicMatrix = m_origRightIntrinsicMatrix;
-  rightC.distCoeffs = m_origRightDistCoeffs;
+
+  m_origLeftIntrinsicMatrix.copyTo(leftC.intrinsicMatrix);
+  m_origLeftDistCoeffs.copyTo(leftC.distCoeffs);
+  m_origRightIntrinsicMatrix.copyTo(rightC.intrinsicMatrix);
+  m_origRightDistCoeffs.copyTo(rightC.distCoeffs);
+
   cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[0]);
   cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[1]);
 
