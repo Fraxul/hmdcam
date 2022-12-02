@@ -57,7 +57,7 @@ template <unsigned int DownsampleFactor> __global__ void remapArray(CUtexObject 
   }
 }
 
-void remapArray(CUtexObject src, cv::Size inputImageSize, cv::cuda::GpuMat undistortRectifyMap, cv::cuda::GpuMat dst, CUstream stream, unsigned int downsampleFactor) {
+void remapArray(CUtexObject src, cv::Size inputImageSize, cv::cuda::GpuMat& undistortRectifyMap, cv::cuda::GpuMat& dst, CUstream stream, unsigned int downsampleFactor) {
   assert(undistortRectifyMap.type() == CV_16UC2);
   dst.create(cv::Size(undistortRectifyMap.cols / downsampleFactor, undistortRectifyMap.rows / downsampleFactor), CV_8U);
 

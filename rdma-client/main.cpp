@@ -17,6 +17,7 @@
 #include "common/FxThreading.h"
 #include "common/DepthMapGenerator.h"
 #include "common/glmCvInterop.h"
+#include "common/remapArray.h"
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -274,6 +275,8 @@ int main(int argc, char** argv) {
     cuDevicePrimaryCtxRetain(&cudaContext, cudaDevice);
     cuCtxSetCurrent(cudaContext);
   }
+  cv::cuda::Stream cvCudaStream;
+  CUstream cuStream = (CUstream) cvCudaStream.cudaPtr();
 
   // Read RDMA config from server
   RDMABuffer::ptr configBuf = rdmaContext->newManagedBuffer("config", 8192, kRDMABufferUsageWriteDestination); // TODO should be read source / use RDMA read instead of relying on push
@@ -506,7 +509,13 @@ int main(int argc, char** argv) {
         static RHISurface::ptr testSrf;
         static RHIRenderTarget::ptr testRT;
         static bool s_CPU = false;
-        ImGui::Checkbox("CPU", &s_CPU);
+        static bool s_CUDA = false;
+        static cv::cuda::GpuMat gpuDst;
+        static cv::cuda::GpuMat gpuUndistortRectifyMap;
+        static cv::Mat remappedGrey, remappedRGBA;
+
+        ImGui::Checkbox("CPU", &s_CPU); ImGui::SameLine();
+        ImGui::Checkbox("CUDA", &s_CUDA);
 
         if (!testSrf) {
           testSrf = rhi()->newTexture2D(cameraProvider->streamWidth(), cameraProvider->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
@@ -514,19 +523,31 @@ int main(int argc, char** argv) {
         }
 
         CameraSystem::View& v = cameraSystem->viewAtIndex(0);
+        CameraSystem::Camera& c = cameraSystem->cameraAtIndex(v.cameraIndices[0]);
+        cv::Size imageSize = cv::Size(cameraProvider->streamWidth(), cameraProvider->streamHeight());
 
         if (s_CPU) {
-
-          CameraSystem::Camera& c = cameraSystem->cameraAtIndex(v.cameraIndices[0]);
-          cv::Size imageSize = cv::Size(cameraProvider->streamWidth(), cameraProvider->streamHeight());
           cv::Mat map1, map2;
 
           cv::initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_32F, map1, map2);
 
-          cv::Mat remappedGrey, remappedRGBA;
           cv::remap(cameraProvider->cvMatLuma(v.cameraIndices[0]), remappedGrey, map1, map2, cv::INTER_LINEAR);
           cv::cvtColor(remappedGrey, remappedRGBA, cv::COLOR_GRAY2RGBA, 4);
           rhi()->loadTextureData(testSrf, kVertexElementTypeUByte4N, remappedRGBA.data);
+
+        } else if (s_CUDA) {
+          if (gpuUndistortRectifyMap.empty())
+            gpuUndistortRectifyMap = remapArray_initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, /*downsampleFactor=*/ 1);
+
+          remappedGrey.create(imageSize, CV_8UC4);
+
+          remapArray(cameraProvider->cudaLumaTexObject(v.cameraIndices[0]), imageSize, gpuUndistortRectifyMap, gpuDst, cuStream, /*downsampleFactor=*/ 1);
+          gpuDst.download(remappedGrey, cvCudaStream);
+          cvCudaStream.waitForCompletion();
+
+          cv::cvtColor(remappedGrey, remappedRGBA, cv::COLOR_GRAY2RGBA, 4);
+          rhi()->loadTextureData(testSrf, kVertexElementTypeUByte4N, remappedRGBA.data);
+
         } else {
           // guts of captureGreyscale
           rhi()->beginRenderPass(testRT, kLoadInvalidate);
