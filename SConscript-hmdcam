@@ -28,11 +28,12 @@ monadoStatics = \
     Glob(MONADO_BUILD + '/src/xrt/drivers/*.a') + \
     Glob(MONADO_BUILD + '/src/xrt/state_trackers/oxr/*.a') + \
     [
-      MONADO_BUILD + '/src/xrt/auxiliary/libaux_os.a',
-      MONADO_BUILD + '/src/xrt/auxiliary/libaux_util.a',
-      MONADO_BUILD + '/src/xrt/auxiliary/libaux_vive.a',
-      MONADO_BUILD + '/src/xrt/auxiliary/libaux_tracking.a', # Needs to be after libaux_vive.a
-      MONADO_BUILD + '/src/xrt/auxiliary/libaux_math.a', # Needs to be after libaux_tracking.a for symbol resolution.
+      MONADO_BUILD + '/src/xrt/auxiliary/os/libaux_os.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/util/libaux_util.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/util/libaux_util_sink.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/vive/libaux_vive.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/tracking/libaux_tracking.a', # Needs to be after libaux_vive.a
+      MONADO_BUILD + '/src/xrt/auxiliary/math/libaux_math.a', # Needs to be after libaux_tracking.a for symbol resolution.
       MONADO_BUILD + '/src/xrt/auxiliary/bindings/libaux_generated_bindings.a' # Needs to be after libaux_util.a
     ]
 

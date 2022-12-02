@@ -8,6 +8,7 @@
 #include "common/VPIUtil.h"
 
 #include "xrt/xrt_instance.h"
+#include "xrt/xrt_system.h"
 #include "xrt/xrt_device.h"
 #include "math/m_api.h"
 #include "util/u_distortion_mesh.h"
@@ -27,7 +28,7 @@
 #include <glm/gtx/transform.hpp>
 #include <sys/time.h>
 
-extern bool vive_watchman_enable; // hacky; symbol added in xrt/drivers/vive/vive_device.c to disable watchman thread (since we don't use lighthouse tracking)
+// extern bool vive_watchman_enable; // hacky; symbol added in xrt/drivers/vive/vive_device.c to disable watchman thread (since we don't use lighthouse tracking)
 
 RHIRenderTarget::ptr windowRenderTarget;
 
@@ -67,6 +68,7 @@ static FxAtomicString ksMeshDistortionUniformBlock("MeshDistortionUniformBlock")
 // HMD info/state
 struct xrt_instance* xrtInstance = NULL;
 struct xrt_device* xrtHMDevice = NULL;
+struct xrt_system_devices* xrtSystemDevices = NULL;
 
 bool isDummyHMD = false;
 unsigned int hmd_width, hmd_height;
@@ -164,12 +166,9 @@ bool RenderInit(ERenderBackend backendType) {
   // Monado setup -- this needs to occur before EGL initialization because we might need to send a command to turn on the HMD display.
   struct xrt_hmd_parts* hmd = NULL;
   {
-    vive_watchman_enable = false; // Skip Watchman initialization, we don't (can't) use lighthouse tracking here.
+    // vive_watchman_enable = false; // Skip Watchman initialization, we don't (can't) use lighthouse tracking here.
 
     int ret;
-    const size_t NUM_XDEVS = 32;
-    struct xrt_device *xdevs[NUM_XDEVS];
-    memset(xdevs, 0, sizeof(struct xrt_device*) * NUM_XDEVS);
 
     ret = xrt_instance_create(NULL, &xrtInstance);
     if (ret != 0) {
@@ -177,32 +176,34 @@ bool RenderInit(ERenderBackend backendType) {
       return false;
     }
 
-    ret = xrt_instance_select(xrtInstance, xdevs, NUM_XDEVS);
+    ret = xrt_instance_create_system(xrtInstance, &xrtSystemDevices, /*compositor=*/ NULL);
     if (ret != 0) {
-      printf("xrt_instance_select() failed: %d\n", ret);
+      printf("xrt_instance_create_system() failed: %d\n", ret);
       return false;
     }
 
-    // Select the first HMD and destroy the rest of the devices (if any)
-    for (size_t i = 0; i < NUM_XDEVS; i++) {
-      if (xdevs[i] == NULL) {
-        continue;
-      }
-
-      if (xrtHMDevice == NULL && xdevs[i]->device_type == XRT_DEVICE_TYPE_HMD) {
-        printf("Selected HMD device: %s\n", xdevs[i]->str);
-        if (strstr(xdevs[i]->str, "Dummy HMD")) {
-          isDummyHMD = true;
+    if (xrtSystemDevices->roles.head != NULL && xrtSystemDevices->roles.head->device_type == XRT_DEVICE_TYPE_HMD && xrtSystemDevices->roles.head->hmd != nullptr) {
+      xrtHMDevice = xrtSystemDevices->roles.head;
+    } else {
+      // Fallback to selecting the first enumerated HMD
+      for (size_t i = 0; i < xrtSystemDevices->xdev_count; i++) {
+        if (xrtSystemDevices->xdevs[i] == NULL) {
+          continue;
         }
-        xrtHMDevice = xdevs[i];
-      } else {
-        printf("\tDestroying unused device %s\n", xdevs[i]->str);
-        xrt_device_destroy(&xdevs[i]);
+
+        if (xrtHMDevice == NULL && xrtSystemDevices->xdevs[i]->device_type == XRT_DEVICE_TYPE_HMD && xrtSystemDevices->xdevs[i]->hmd != nullptr) {
+          printf("Selected HMD device: %s\n", xrtSystemDevices->xdevs[i]->str);
+          xrtHMDevice = xrtSystemDevices->xdevs[i];
+          break;
+        }
       }
     }
 
     hmd = xrtHMDevice->hmd;
     assert(hmd);
+    if (strstr(xrtHMDevice->str, "Simulated HMD")) {
+      isDummyHMD = true;
+    }
 
     // Dump HMD info
     printf("HMD screen: %d x %d, %lu ns nominal frame interval (%.3f FPS)\n", hmd->screens[0].w_pixels, hmd->screens[0].h_pixels, hmd->screens[0].nominal_frame_interval_ns, 1000000000.0 / static_cast<double>(hmd->screens[0].nominal_frame_interval_ns));
@@ -391,8 +392,8 @@ void RenderShutdown() {
   delete renderBackend;
   renderBackend = NULL;
 
-  if (xrtHMDevice)
-    xrt_device_destroy(&xrtHMDevice);
+  if (xrtSystemDevices)
+    xrt_system_devices_destroy(&xrtSystemDevices); // also destroys owned devices
 
   if (xrtInstance)
     xrt_instance_destroy(&xrtInstance);
