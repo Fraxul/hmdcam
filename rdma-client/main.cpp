@@ -332,6 +332,7 @@ int main(int argc, char** argv) {
 
   // Our state
   ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+  bool surfaceUpdateEnabled = true;
 
   // Main loop
   bool done = false;
@@ -371,7 +372,7 @@ int main(int argc, char** argv) {
               if (event.motion.state & SDL_BUTTON_LMASK) {
                 sceneCamera->tumble(glm::vec2(event.motion.xrel, event.motion.yrel));
               } else if (event.motion.state & SDL_BUTTON_RMASK) {
-                sceneCamera->dolly(event.motion.xrel);
+                sceneCamera->dolly(static_cast<float>(event.motion.xrel) * 0.001f);
               } else if (event.motion.state & SDL_BUTTON_MMASK) {
                 sceneCamera->track(glm::vec2(-static_cast<float>(event.motion.xrel) / static_cast<float>(io.DisplaySize.x), static_cast<float>(event.motion.yrel) / static_cast<float>(io.DisplaySize.y)));
               }
@@ -476,9 +477,14 @@ int main(int argc, char** argv) {
           ImGui::PopID();
         }
 
-        if (ImGui::Button("Save Settings")) {
+        if (ImGui::Button("Save Calibration and Settings")) {
           cameraSystem->saveCalibrationData();
           depthMapGenerator->saveSettings();
+        }
+
+        if (ImGui::Button("Reload Calibration and Settings from Disk")) {
+          cameraSystem->loadCalibrationData();
+          depthMapGenerator->loadSettings();
         }
 
         depthMapGenerator->renderIMGUI();
@@ -486,6 +492,10 @@ int main(int argc, char** argv) {
         depthMapGenerator->renderIMGUIPerformanceGraphs();
 
         ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
+
+        ImGui::Separator();
+
+        ImGui::Checkbox("Enable RDMA Surface Updates", &surfaceUpdateEnabled);
 
         ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
         ImGui::End();
@@ -513,9 +523,10 @@ int main(int argc, char** argv) {
 
           cv::initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, v.stereoRectification[0], v.stereoProjection[0], imageSize, CV_32F, map1, map2);
 
-          cv::Mat res;
-          cv::remap(cameraProvider->cvMatLuma(v.cameraIndices[0]), res, map1, map2, cv::INTER_LINEAR);
-          rhi()->loadTextureData(testSrf, kVertexElementTypeUByte1N, res.data);
+          cv::Mat remappedGrey, remappedRGBA;
+          cv::remap(cameraProvider->cvMatLuma(v.cameraIndices[0]), remappedGrey, map1, map2, cv::INTER_LINEAR);
+          cv::cvtColor(remappedGrey, remappedRGBA, cv::COLOR_GRAY2RGBA, 4);
+          rhi()->loadTextureData(testSrf, kVertexElementTypeUByte4N, remappedRGBA.data);
         } else {
           // guts of captureGreyscale
           rhi()->beginRenderPass(testRT, kLoadInvalidate);
@@ -629,7 +640,8 @@ int main(int argc, char** argv) {
 
       // Service RDMA context
       rdmaContext->fireUserEvents();
-      cameraProvider->updateSurfaces();
+      if (surfaceUpdateEnabled)
+        cameraProvider->updateSurfaces();
 
       if (enableCharucoDetection) {
         for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
