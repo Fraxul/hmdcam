@@ -98,13 +98,15 @@ cv::cuda::GpuMat remapArray_initUndistortRectifyMap(cv::InputArray cameraMatrix,
   resMat.create(tgtSize, CV_16UC2);
 
   float sampleScale = 1.0f / static_cast<float>(downsampleFactor * downsampleFactor);
+  float texelBiasX = 0.5f;
+  float texelBiasY = 0.5f;
   for (size_t y = 0; y < tgtSize.height; ++y) {
     for (size_t x = 0; x < tgtSize.width; ++x) {
       float fx = 0, fy = 0;
       for (size_t sampleY = 0; sampleY < downsampleFactor; ++sampleY) {
         for (size_t sampleX = 0; sampleX < downsampleFactor; ++sampleX) {
-          fx += xMat.ptr<float>((y * downsampleFactor) + sampleY)[(x * downsampleFactor) + sampleX];
-          fy += yMat.ptr<float>((y * downsampleFactor) + sampleY)[(x * downsampleFactor) + sampleX];
+          fx += texelBiasX + xMat.ptr<float>((y * downsampleFactor) + sampleY)[(x * downsampleFactor) + sampleX];
+          fy += texelBiasY + yMat.ptr<float>((y * downsampleFactor) + sampleY)[(x * downsampleFactor) + sampleX];
         }
       }
 
