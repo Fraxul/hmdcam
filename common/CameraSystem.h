@@ -384,7 +384,7 @@ protected:
   std::vector<Camera> m_cameras;
   std::vector<View> m_views;
 
-  RHISurface::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2);
+  RHISurface::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize);
 
 private:
   // noncopyable

@@ -250,7 +250,7 @@ void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
     cv::calibrationMatrixValues(c.optimizedMatrix, cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()), 0.0, 0.0, c.fovX, c.fovY, focalLength, principalPoint, aspectRatio);
   }
   
-  c.intrinsicDistortionMap = generateGPUDistortionMap(map1, map2);
+  c.intrinsicDistortionMap = generateGPUDistortionMap(map1, map2, imageSize);
 
   m_calibrationDataRevision += 1;
 }
@@ -324,13 +324,13 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
 
     cv::initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], imageSize, CV_32F, map1, map2);
     
-    v.stereoDistortionMap[eyeIdx] = generateGPUDistortionMap(map1, map2);
+    v.stereoDistortionMap[eyeIdx] = generateGPUDistortionMap(map1, map2, imageSize);
   }
 
   m_calibrationDataRevision += 1;
 }
 
-RHISurface::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map2) {
+RHISurface::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize) {
   assert(map1.rows == map2.rows && map1.cols == map2.cols);
   size_t width = map1.cols;
   size_t height = map1.rows;
@@ -338,11 +338,16 @@ RHISurface::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map
   // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc) -- this is the output format of cv::initUndistortRectifyMap
   // Combine the maps into a buffer we can upload to opengl. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
   uint16_t* distortionMapTmp = new uint16_t[width * height * 2];
+
+  // Apply half-texel bias to line up the coordinate systems. This makes shader-based remapping line up exactly with cv::remap.
+  float texelBiasX = 0.5f;
+  float texelBiasY = 0.5f;
   for (int y = 0; y < height; ++y) {
+    uint16_t* rowP = distortionMapTmp + (y * width * 2);
     for (int x = 0; x < width; ++x) {
       // .at(row, col) -- Y rows, X columns.
-      distortionMapTmp[(((y * width) + x) * 2) + 0] = static_cast<uint16_t>(glm::clamp(map1.at<float>(y, x) / static_cast<float>(width), 0.0f, 1.0f) * 65535.0f);
-      distortionMapTmp[(((y * width) + x) * 2) + 1] = static_cast<uint16_t>(glm::clamp(map2.at<float>(y, x) / static_cast<float>(height), 0.0f, 1.0f) * 65535.0f);;
+      *(rowP++) = static_cast<uint16_t>(glm::clamp((map1.at<float>(y, x) + texelBiasX) / static_cast<float>(sourceImageSize.width), 0.0f, 1.0f) * 65535.0f);
+      *(rowP++) = static_cast<uint16_t>(glm::clamp((map2.at<float>(y, x) + texelBiasY) / static_cast<float>(sourceImageSize.height), 0.0f, 1.0f) * 65535.0f);
     }
   }
 
