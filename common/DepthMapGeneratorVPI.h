@@ -77,7 +77,7 @@ protected:
 
     // Remap payloads for rectification
     VPIPayload m_remapPayload[2] = {nullptr, nullptr};
-    cv::cuda::GpuMat m_remapMatX[2], m_remapMatY[2];
+    cv::cuda::GpuMat m_undistortRectifyMap_gpu[2];
 
     // Output from remap
     cv::cuda::GpuMat m_rectifiedMat[2];

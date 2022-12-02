@@ -149,20 +149,16 @@ void DepthMapGeneratorVPI::internalUpdateViewData() {
 
     vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
-    {
-      cv::Size imageSize = cv::Size(inputWidth(), inputHeight());
-      cv::Mat m1, m2;
-      PER_EYE {
-        // TODO validate CameraSystem:::updateViewStereoDistortionParameters against the distortion map initialization code here
-        CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
-        cv::initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], imageSize, CV_32F, m1, m2);
-        vd->m_remapPayload[eyeIdx] = cvRemapToVPIRemapPayload(m1, m2);
-        vd->m_remapMatX[eyeIdx].upload(m1);
-        vd->m_remapMatY[eyeIdx].upload(m2);
-      }
+    // Build a half-res undistortRectifyMap to save some processing time
+    unsigned int downsampleFactor = 2;
+    cv::Size rectifiedSize = cv::Size(inputWidth() / downsampleFactor, inputHeight() / downsampleFactor);
+
+    PER_EYE {
+      CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
+      vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(inputWidth(), inputHeight()), downsampleFactor);
     }
 
-    PER_EYE vd->m_rectifiedMat[eyeIdx].create(inputHeight(), inputWidth(), CV_8U);
+    PER_EYE vd->m_rectifiedMat[eyeIdx].create(rectifiedSize, CV_8U);
 
     PER_EYE {
       vd->m_disparityInputMat[eyeIdx].create(internalHeight(), internalWidth(), CV_8U);
@@ -310,7 +306,8 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
       continue;
 
     vd->m_cudaSetupStartedEvent.record(vd->m_cuStream);
-    PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), vd->m_remapMatX[eyeIdx], vd->m_remapMatY[eyeIdx], vd->m_rectifiedMat[eyeIdx], (CUstream) vd->m_cuStream.cudaPtr());
+    cv::Size inputSize = cv::Size(inputWidth(), inputHeight());
+    PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), inputSize, vd->m_undistortRectifyMap_gpu[eyeIdx], vd->m_rectifiedMat[eyeIdx], (CUstream) vd->m_cuStream.cudaPtr(), /*downsampleFactor=*/ 2);
     PER_EYE cv::cuda::resize(vd->m_rectifiedMat[eyeIdx], vd->m_disparityInputMat[eyeIdx], cv::Size(internalWidth(), internalHeight()), 0, 0, cv::INTER_LINEAR, vd->m_cuStream);
     vd->m_cudaSetupFinishedEvent.record(vd->m_cuStream);
 
