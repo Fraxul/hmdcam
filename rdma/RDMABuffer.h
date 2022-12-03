@@ -3,6 +3,7 @@
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #include <boost/noncopyable.hpp>
 #include <infiniband/verbs.h>
+#include <string>
 
 class RDMAConnection;
 class RDMAContext;
