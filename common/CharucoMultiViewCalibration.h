@@ -40,6 +40,8 @@ public:
   // Per-camera
   std::vector<RHISurface::ptr> m_fullGreyTex;
   std::vector<RHIRenderTarget::ptr> m_fullGreyRT;
+  std::vector<cv::Mat> m_fullGreyMat; // capture of m_fullGreyTex. After distortion correction, if m_undistortCapturedViews is true.
+
   std::vector<RHISurface::ptr> m_feedbackTex;
   std::vector<cv::Mat> m_feedbackView;
 

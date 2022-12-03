@@ -157,6 +157,7 @@ public:
     bool captureRequested() const { return m_captureRequested; }
     void acknowledgeCaptureRequest() { m_captureRequested = false; }
     bool shouldSaveCalibrationImages() const { return m_saveCalibrationImages; }
+    void saveCalibrationImage(const std::string& nameDetail, size_t sampleIdx, const cv::Mat& image);
 
     virtual void processFrameCaptureMode() = 0;
     virtual void processFramePreviewMode() = 0;
@@ -165,6 +166,8 @@ public:
     virtual void didAcceptCalibrationPreview() = 0;
     virtual void didRejectCalibrationPreview() = 0;
     virtual void didCancelCalibrationSession() = 0;
+
+    std::string m_savedDataBasename;
 
   private:
     bool m_captureRequested;
@@ -222,6 +225,8 @@ public:
     cv::Mat m_previousDistCoeffs;
 
     // Preview data
+    void runIncrementalCalibrationUpdate();
+
     void asyncUpdateIncrementalCalibration();
 
     cv::Mat m_perViewErrors;

@@ -448,6 +448,11 @@ CameraSystem::CalibrationContext::~CalibrationContext() {
 CameraSystem::CalibrationContextStateMachineBase::CalibrationContextStateMachineBase(CameraSystem* cs) : CameraSystem::CalibrationContext(cs), 
   m_captureRequested(false), m_previewRequested(false), m_cancelRequested(false), m_saveCalibrationImages(false), m_inCalibrationPreviewMode(false), m_calibrationPreviewAccepted(false), m_calibrationPreviewRejected(false), m_calibrationFinished(false) {
 
+
+  char fn[256];
+  time_t t = time(NULL);
+  strftime(fn, sizeof(fn), "calibration-data-%Y%m%d-%H%M%S", localtime(&t));
+  m_savedDataBasename = fn;
 }
 
 CameraSystem::CalibrationContextStateMachineBase::~CalibrationContextStateMachineBase() {
@@ -539,9 +544,64 @@ void CameraSystem::CalibrationContextStateMachineBase::processFrame() {
   }
 }
 
+void CameraSystem::CalibrationContextStateMachineBase::saveCalibrationImage(const std::string& nameDetail, size_t sampleIdx, const cv::Mat& image) {
+  char buf[64];
+  sprintf(buf, "-%zu.png", sampleIdx);
 
+  std::string filename = m_savedDataBasename;
+  if (!nameDetail.empty()) {
+    filename += "-" + nameDetail;
+  }
+  filename += buf;
 
+  assert((image.channels() == 1 || image.channels() == 3 || image.channels() == 4) && "Only Grey, RGB, and RGBA images are supported");
+  assert(image.elemSize1() == 1 && "Only 8bpp images are supported");
 
+  // PNG compression is CPU-heavy, so push this off onto a worker thread to maintain interactivity
+  cv::Mat asyncImageCopy = image.clone();
+  FxThreading::runFunction([filename, asyncImageCopy]() {
+    stbi_write_png(filename.c_str(), asyncImageCopy.cols, asyncImageCopy.rows, /*components=*/ asyncImageCopy.channels(), asyncImageCopy.ptr(), /*rowBytes=*/ asyncImageCopy.step);
+    printf("Saved %s\n", filename.c_str());
+  });
+}
+
+static void saveReferenceBoardData(cv::FileStorage& fs) {
+  fs << "referenceBoard" << "{"; {
+    fs << "markers" << "["; {
+      const auto& objPoints = s_charucoBoard->getObjPoints();
+      for (size_t markerIdx = 0; markerIdx < objPoints.size(); ++markerIdx) {
+        fs << "[:";
+        for (size_t i = 0; i < objPoints[markerIdx].size(); ++i) {
+          // Strip Z-axis, it's always zero.
+          const auto& pt = objPoints[markerIdx][i];
+          fs << cv::Point2f(pt.x, pt.y);
+        }
+        fs << "]";
+      }
+    } fs << "]"; // markers
+
+    fs << "corners" << "["; {
+      for (size_t cornerIdx = 0; cornerIdx < s_charucoBoard->chessboardCorners.size(); ++cornerIdx) {
+        fs << "{:"; { // corner struct
+          fs << "P" << s_charucoBoard->chessboardCorners[cornerIdx];
+          fs << "nearestMarkers" << "[:"; { // nearestMarkers list
+
+            for (size_t nearestMarkerIdx = 0; nearestMarkerIdx < s_charucoBoard->nearestMarkerIdx[cornerIdx].size(); ++nearestMarkerIdx) {
+              fs << "{:" // nearestMarker struct
+                << "id" << s_charucoBoard->nearestMarkerIdx[cornerIdx][nearestMarkerIdx]
+                << "cornerId" << s_charucoBoard->nearestMarkerCorners[cornerIdx][nearestMarkerIdx]
+              << "}";
+            }
+
+          } fs << "]"; // nearestMarkers list
+        } fs << "}"; // corner struct
+      }
+    } fs << "]"; // corners
+
+    fs << "rightBottomBorder" << s_charucoBoard->getRightBottomBorder();
+
+  } fs << "}"; // referenceBoard
+}
 
 
 
@@ -549,6 +609,12 @@ void CameraSystem::CalibrationContextStateMachineBase::processFrame() {
 
 
 CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSystem* cs, size_t cameraIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_cameraIdx(cameraIdx) {
+
+  {
+    char buf[64];
+    sprintf(buf, "-intrinsic_%zu", cameraIdx);
+    m_savedDataBasename += buf;
+  }
 
   // Store cancellation cache
   m_previousIntrinsicMatrix = cameraSystem()->cameraAtIndex(cameraIdx).intrinsicMatrix;
@@ -612,8 +678,7 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
           m_allCharucoIds.pop_back();
 
           // update calibration feedback
-          m_incrementalUpdateInProgress = true;
-          FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
+          runIncrementalCalibrationUpdate();
         }
         if (ImGui::Button("Drop highest-error sample")) {
           double maxError = 0;
@@ -631,8 +696,7 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
           m_allCharucoIds.erase(m_allCharucoIds.begin() + maxErrorRow);
 
           // update calibration feedback
-          m_incrementalUpdateInProgress = true;
-          FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
+          runIncrementalCalibrationUpdate();
         }
       }
       bool modelDirty = ImGui::RadioButton("Rational", &m_calibrationModel, 0);
@@ -643,13 +707,51 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
 
       if (modelDirty) {
         // update if the distortion model type changed
-        m_incrementalUpdateInProgress = true;
-        FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
+        runIncrementalCalibrationUpdate();
       }
     }
   }
 }
 
+void CameraSystem::IntrinsicCalibrationContext::runIncrementalCalibrationUpdate() {
+  // Save a snapshot of the calibration inputs to disk
+  std::string dataFn = m_savedDataBasename + ".yml";
+
+  cv::FileStorage fs(dataFn.c_str(), cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+
+  saveReferenceBoardData(fs);
+
+  fs.startWriteStruct("detectedCharucoCorners", cv::FileNode::SEQ, cv::String()); {
+    for (size_t sampleIdx = 0; sampleIdx < m_allCharucoCorners.size(); ++sampleIdx) {
+      fs.startWriteStruct(cv::String(), cv::FileNode::SEQ, cv::String()); {
+        int vectorCount = m_allCharucoCorners[sampleIdx].checkVector(/*channels=*/ 2);
+        assert(vectorCount >= 0);
+        assert(CV_MAT_DEPTH(m_allCharucoCorners[sampleIdx].type()) == CV_32F);
+
+        for (int cornerIdx = 0; cornerIdx < vectorCount; ++cornerIdx) {
+          cv::write(fs, cv::String(), m_allCharucoCorners[sampleIdx].at<cv::Point2f>(cornerIdx));
+        }
+      } fs.endWriteStruct(); // corners sequence
+    }
+  } fs.endWriteStruct(); // detectedCharucoCorners
+
+  fs.startWriteStruct("detectedCharucoIds", cv::FileNode::SEQ, cv::String()); {
+    for (size_t sampleIdx = 0; sampleIdx < m_allCharucoIds.size(); ++sampleIdx) {
+      fs.startWriteStruct(cv::String(), cv::FileNode::SEQ | cv::FileNode::FLOW, cv::String()); {
+        int vectorCount = m_allCharucoIds[sampleIdx].checkVector(/*channels=*/ 1);
+        assert(vectorCount >= 0);
+        assert(CV_MAT_DEPTH(m_allCharucoIds[sampleIdx].type()) == CV_32S);
+
+        for (int cornerIdx = 0; cornerIdx < vectorCount; ++cornerIdx) {
+          fs.write(cv::String(), m_allCharucoIds[sampleIdx].at<int>(cornerIdx));
+        }
+      } fs.endWriteStruct(); // corner IDs sequence
+    }
+  } fs.endWriteStruct(); // detectedCharucoIds
+
+  m_incrementalUpdateInProgress = true;
+  FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
+}
 
 void CameraSystem::IntrinsicCalibrationContext::didAcceptCalibrationPreview() {
   // Calibration accepted. We don't need to do anything else here.
@@ -717,24 +819,10 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
     m_allCharucoIds.push_back(currentCharucoIds);
 
     if (shouldSaveCalibrationImages()) {
-      char filename[128];
-      sprintf(filename, "calib_%zu_%02zu_overlay.png", m_cameraIdx, m_allCharucoCorners.size());
-
-      // composite with the greyscale view and fix the alpha channel before writing
-      for (size_t pixelIdx = 0; pixelIdx < (cameraProvider()->streamWidth() * cameraProvider()->streamHeight()); ++pixelIdx) {
-        uint8_t* p = m_feedbackView.ptr(0) + (pixelIdx * 4);
-        if (!(p[0] || p[1] || p[2])) {
-          p[0] = p[1] = p[2] = viewFullRes.ptr(0)[pixelIdx];
-
-        }
-        p[3] = 0xff;
-      }
-      stbi_write_png(filename, cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), 4, m_feedbackView.ptr(0), /*rowBytes=*/cameraProvider()->streamWidth() * 4);
-      printf("Saved %s\n", filename);
+      saveCalibrationImage(std::string(), /*sampleIdx=*/ m_allCharucoCorners.size(), viewFullRes);
     }
 
-    m_incrementalUpdateInProgress = true;
-    FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
+    runIncrementalCalibrationUpdate();
   }
 }
 
@@ -870,6 +958,12 @@ CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* c
 
   CameraSystem::View& v = cameraSystem()->viewAtIndex(m_viewIdx);
 
+  {
+    char buf[64];
+    sprintf(buf, "-stereo_view%zu_l%u_r%u", viewIdx, v.cameraIndices[0], v.cameraIndices[1]);
+    m_savedDataBasename += buf;
+  }
+
   // Store cancellation cache
   m_previousViewData = v;
   Camera& leftC = cameraSystem()->cameraAtIndex(v.cameraIndices[0]);
@@ -933,24 +1027,11 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
 
     internalUpdateCaptureState();
 
-#if 0 // TODO fix this
     if (shouldSaveCalibrationImages()) {
-      char filename[128];
-      sprintf(filename, "calib_view_%zu_%02u_overlay.png", m_viewIdx, m_objectPoints.size());
-
-      // composite with the greyscale view and fix the alpha channel before writing
-      for (size_t pixelIdx = 0; pixelIdx < (cameraProvider()->streamWidth() * 2) * cameraProvider()->streamHeight(); ++pixelIdx) {
-        uint8_t* p = feedbackViewStereo.ptr(0) + (pixelIdx * 4);
-        if (!(p[0] || p[1] || p[2])) {
-          p[0] = p[1] = p[2] = viewFullResStereo.ptr(0)[pixelIdx];
-
-        }
-        p[3] = 0xff;
-      }
-      stbi_write_png(filename, cameraProvider()->streamWidth()*2, cameraProvider()->streamHeight(), 4, feedbackViewStereo.ptr(0), /*rowBytes=*/cameraProvider()->streamWidth()*2 * 4);
-      printf("Saved %s\n", filename);
+      size_t sampleIdx = m_calibState->m_objectPoints.size();
+      saveCalibrationImage("left", sampleIdx, m_calibState->m_fullGreyMat[0]);
+      saveCalibrationImage("right", sampleIdx, m_calibState->m_fullGreyMat[1]);
     }
-#endif
   }
 }
 
@@ -1132,6 +1213,13 @@ RHISurface::ptr CameraSystem::StereoCalibrationContext::overlaySurfaceAtIndex(si
 
 
 CameraSystem::StereoViewOffsetCalibrationContext::StereoViewOffsetCalibrationContext(CameraSystem* cs, size_t referenceViewIdx, size_t viewIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_referenceViewIdx(referenceViewIdx), m_viewIdx(viewIdx) {
+
+  {
+    char buf[64];
+    sprintf(buf, "-stereoOffset_%zu_refView%zu", viewIdx, referenceViewIdx);
+    m_savedDataBasename += buf;
+  }
+
   m_useLinearRemap = false;
 
   // Store cancellation cache
@@ -1449,6 +1537,16 @@ void CameraSystem::StereoViewOffsetCalibrationContext::processFrameCaptureMode()
 
 
   m_rmsError = computePointSetLinearTransform(m_refPoints, m_tgtPoints, m_tgt2ref);
+
+  if (shouldSaveCalibrationImages()) {
+    // not the real sample index, but it's good enough to differentiate the saved images.
+    size_t sampleIdx = m_refPoints.size();
+
+    saveCalibrationImage("refLeft", sampleIdx, m_refCalibState->m_fullGreyMat[0]);
+    saveCalibrationImage("refRight", sampleIdx, m_refCalibState->m_fullGreyMat[1]);
+    saveCalibrationImage("tgtLeft", sampleIdx, m_tgtCalibState->m_fullGreyMat[0]);
+    saveCalibrationImage("tgtRight", sampleIdx, m_tgtCalibState->m_fullGreyMat[1]);
+  }
 }
 
 void CameraSystem::StereoViewOffsetCalibrationContext::processFramePreviewMode() {

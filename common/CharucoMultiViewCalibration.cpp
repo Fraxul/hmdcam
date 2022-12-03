@@ -17,6 +17,7 @@ CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, cons
   m_fullGreyTex.resize(cameraCount());
   m_fullGreyRT.resize(cameraCount());
   m_feedbackTex.resize(cameraCount());
+  m_fullGreyMat.resize(cameraCount());
   m_feedbackView.resize(cameraCount());
 
   m_calibrationPoints.resize(cameraCount());
@@ -46,7 +47,6 @@ ICameraProvider* CharucoMultiViewCalibration::cameraProvider() const {
 
 bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   // Capture and undistort camera views.
-  std::vector<cv::Mat> eyeFullRes(cameraCount());
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
 
     RHISurface::ptr distortionMap;
@@ -63,7 +63,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
       }
     }
 
-    eyeFullRes[cameraIdx] = cameraSystem()->captureGreyscale(m_cameraIds[cameraIdx], m_fullGreyTex[cameraIdx], m_fullGreyRT[cameraIdx], distortionMap);
+    m_fullGreyMat[cameraIdx] = cameraSystem()->captureGreyscale(m_cameraIds[cameraIdx], m_fullGreyTex[cameraIdx], m_fullGreyRT[cameraIdx], distortionMap);
   }
 
   std::vector<std::vector<std::vector<cv::Point2f> > > corners(cameraCount());
@@ -79,12 +79,12 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
     cv::Mat cm = calibSpaceProjection(cameraIdx);
     cv::Mat dist = calibSpaceDistCoeffs(cameraIdx);
 
-    s_arucoDetector->detectMarkers(eyeFullRes[cameraIdx], corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx]); //, cm, dist);
-    s_arucoDetector->refineDetectedMarkers(eyeFullRes[cameraIdx], s_charucoBoard, corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx], cm, dist);
+    s_arucoDetector->detectMarkers(m_fullGreyMat[cameraIdx], corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx]); //, cm, dist);
+    s_arucoDetector->refineDetectedMarkers(m_fullGreyMat[cameraIdx], s_charucoBoard, corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx], cm, dist);
 
     // Find chessboard corners using detected markers
     if (!ids[cameraIdx].empty()) {
-      cv::aruco::interpolateCornersCharuco(corners[cameraIdx], ids[cameraIdx], eyeFullRes[cameraIdx], s_charucoBoard, currentCharucoCornerPoints[cameraIdx], currentCharucoCornerIds[cameraIdx], cm, dist);
+      cv::aruco::interpolateCornersCharuco(corners[cameraIdx], ids[cameraIdx], m_fullGreyMat[cameraIdx], s_charucoBoard, currentCharucoCornerPoints[cameraIdx], currentCharucoCornerIds[cameraIdx], cm, dist);
     }
   });
 
