@@ -139,6 +139,7 @@ protected:
   // Render settings
   int m_trimLeft = 8, m_trimTop = 8;
   int m_trimRight = 8, m_trimBottom = 8;
+  float m_maxDepthDiscontinuity = 0.2f;
 
   bool m_populateDebugTextures = false;
 

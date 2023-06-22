@@ -15,7 +15,7 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   int renderStereo;
   float maxValidDisparityPixels;
   int maxValidDisparityRaw;
-  float pad4;
+  float maxDepthDiscontinuity;
 };
 
 layout(location = 0) in vec4 position;

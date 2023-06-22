@@ -17,7 +17,7 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   int renderStereo;
   float maxValidDisparityPixels;
   int maxValidDisparityRaw;
-  float pad4;
+  float maxDepthDiscontinuity;
 };
 
 in V2G {
@@ -33,6 +33,10 @@ out G2F {
 // No output block declaration required.
 void main() {
   if (v2g[0].trimmed != 0)
+    return;
+
+  float discontinuity = max(abs(v2g[2].P.z - v2g[0].P.z), abs(v2g[1].P.z - v2g[0].P.z));
+  if (discontinuity > maxDepthDiscontinuity)
     return;
 
   for (int viewport = 0; viewport < 2; ++viewport) {
