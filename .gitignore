@@ -4,8 +4,7 @@ tags
 config.log
 .sconf_temp
 .sconsign*
-camera*.png
-debug*.png
+/*.png
 *.yml
 bin
 build
