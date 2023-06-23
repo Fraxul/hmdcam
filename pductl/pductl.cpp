@@ -24,6 +24,7 @@
 
 int serialFd;
 bool quiet = false;
+bool serialDebug = false;
 SHMSegment<PDUInfo>* pduInfoShm;
 float minDutyCycle = 0.0f;
 float maxDutyCycle = 1.0f;
@@ -42,8 +43,13 @@ static inline uint64_t currentTimeMs() {
 }
 
 
-// Bus 20.03V 0.04A 0.87W UsedPower 3228.17J 0.90Wh PD 20.00V 5.00A
-static boost::regex infoExpr("Bus ([\\d\\.]+)V ([\\d\\.]+)A ([\\d\\.]+)W UsedPower ([\\d\\.]+)J ([\\d\\.]+)Wh");
+// ^^^\n
+// Status Line 1
+// Status Line 2
+// More status lines...
+// $$$\n
+
+static boost::regex infoExpr("\\^\\^\\^[[:space:]]*(.*?)[[:space:]]*\\$\\$\\$");
 
 // 0-1 range
 bool pwmSetDutyCycle(FanID fanID, float dutyCycle) {
@@ -91,11 +97,9 @@ void drainSerialInput() {
     if (!pollRes)
       break;
 
-    // Extra data in the serial input buffer, pass it through
     char buf[1024];
     ssize_t n = read(serialFd, buf, 1023);
     buf[n] = '\0';
-
 
     const char *start = buf, *end = buf + n;
     boost::match_results<const char*> what;
@@ -103,15 +107,15 @@ void drainSerialInput() {
     while(boost::regex_search(start, end, what, infoExpr, flags)) {
       try {
         // what[0] contains the whole string, capture groups start at what[1]
-        pduInfoShm->segment()->busVoltage  = boost::lexical_cast<float>(std::string(what[1].first, what[1].second));
-        pduInfoShm->segment()->busAmperage = boost::lexical_cast<float>(std::string(what[2].first, what[2].second));
-        pduInfoShm->segment()->busPower    = boost::lexical_cast<float>(std::string(what[3].first, what[3].second));
-        pduInfoShm->segment()->usedPowerJ  = boost::lexical_cast<float>(std::string(what[4].first, what[4].second));
-        pduInfoShm->segment()->usedPowerWH = boost::lexical_cast<float>(std::string(what[5].first, what[5].second));
+        std::string statusLines = std::string(what[1].first, what[1].second);
+
+        strncpy(pduInfoShm->segment()->statusLines, statusLines.c_str(), sizeof(pduInfoShm->segment()->statusLines));
+
         pduInfoShm->segment()->lastUpdateTimeMs = currentTimeMs();
         pduInfoShm->flush(PDUInfo::dataSegmentStart(), PDUInfo::dataSegmentSize());
-        //printf("Match: %f %f %f %f %f\n",
-        //  info.busVoltage, info.busAmperage, info.busPower, info.usedPowerJ, info.usedPowerWH);
+
+        if (serialDebug)
+          printf("Match: \"\"\"%s\"\"\"\n", pduInfoShm->segment()->statusLines);
 
         // update search position:
         start = what[0].second;
@@ -123,8 +127,8 @@ void drainSerialInput() {
       }
     }
 
-    if (!quiet)
-      printf("%s", buf);
+    if (serialDebug)
+      printf("%s", buf); // Dump raw serial transactions for debugging
   }
 }
 
@@ -138,12 +142,14 @@ nvmlReturn_t checkNvmlReturn(nvmlReturn_t res, const char* op, const char* file,
 }
 
 int main(int argc, char* argv[]) {
-  std::string serialPort = "/dev/ttyTHS0";
+  std::string serialPort = "/dev/serial/by-id/usb-STMicroelectronics_STM32_Virtual_ComPort_207732823630-if00";
   bool useNVML = true;
 
   for (int i = 1; i < argc; ++i) {
     if ((!strcmp(argv[i], "--quiet")) || (!strcmp(argv[i], "-q"))) {
       quiet = true;
+    } else if (!strcmp(argv[i], "--serialDebug")) {
+      serialDebug = true;
     } else if (!strcmp(argv[i], "--port")) {
       serialPort = argv[++i];
     } else if (!strcmp(argv[i], "--minDutyCycle")) {
@@ -233,6 +239,8 @@ int main(int argc, char* argv[]) {
   } // useNVML
 
   while (true) {
+    bool controlSegmentDirty = false;
+
     drainSerialInput();
 
     float cpuCoreTemp = readThermalZoneSensor();
@@ -252,24 +260,25 @@ int main(int argc, char* argv[]) {
       printf("CPU temp %f => duty cycle %u; GPU temp %u => duty cycle %u%%\n", cpuCoreTemp, static_cast<unsigned int>(cpuDutyCycle * 100.0f), gpuCoreTemp, static_cast<unsigned int>(gpuDutyCycle * 100.0f));
     }
 
+#if 0
     pwmSetDutyCycle(kFanCPU, cpuDutyCycle);
 
     if (useNVML)
       pwmSetDutyCycle(kFanGPU, gpuDutyCycle);
 
-    bool controlSegmentDirty = false;
     if (pduInfoShm->segment()->clearRequested) {
       write(serialFd, "clear\n", 6);
       pduInfoShm->segment()->clearRequested = 0;
       controlSegmentDirty = true;
     }
+#endif
 
     if (controlSegmentDirty) {
       pduInfoShm->flush(PDUInfo::controlSegmentStart(), PDUInfo::controlSegmentSize());
     }
 
     // request info which will be read next cycle
-    write(serialFd, "info\n", 5);
+    write(serialFd, "pwr\n", 4);
 
     sleep(2);
   }

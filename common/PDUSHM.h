@@ -4,14 +4,9 @@
 struct PDUInfo {
   PDUInfo(size_t segmentLength) { memset(this, 0, sizeof(PDUInfo)); }
 
-  // data segment
-  float busVoltage;  // V
-  float busAmperage; // A
-  float busPower;    // W
-  float usedPowerJ;  // J
-  float usedPowerWH; // Watt-Hours
-
   uint64_t lastUpdateTimeMs; // based on CLOCK_MONOTONIC, milliseconds
+  char statusLines[1024];
+
 
   char dataSegmentEndMarker[64];
 

@@ -7,7 +7,7 @@ After=nvpmodel.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/pductl -q
+ExecStart=/bin/sh -c '/usr/local/bin/pductl --quiet --port /dev/serial/by-id/usb-STMicroelectronics_STM32_Virtual_ComPort_*'
 
 [Install]
 WantedBy=multi-user.target
