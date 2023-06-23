@@ -30,6 +30,7 @@
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
 #include "common/FxThreading.h"
+#include "common/PDUSHM.h"
 #include "common/ScrollingBuffer.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
@@ -72,6 +73,7 @@ CameraSystem* cameraSystem;
 
 
 RDMAContext* rdmaContext;
+SHMSegment<PDUInfo>* pduInfoShm;
 
 #define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
 static const char* hmdcamSettingsFilename = "hmdcamSettings.yml";
@@ -185,6 +187,15 @@ static void signal_handler(int) {
 }
 
 
+bool tryOpenPDUSHM() {
+  if (pduInfoShm)
+    return true;
+
+  pduInfoShm = SHMSegment<PDUInfo>::openSegment("pdu-info");
+  return (pduInfoShm != nullptr);
+}
+
+
 const size_t DRAW_FLAGS_USE_MASK = 0x01;
 
 void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortionMap, RHISurface::ptr overlayTexture /*can be null*/, glm::mat4 modelViewProjection, float minU = 0.0f, float maxU = 1.0f) {
@@ -239,6 +250,7 @@ int main(int argc, char* argv[]) {
   DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
   ERenderBackend renderBackendType = kRenderBackendVKDirect;
   bool enableRDMA = true;
+  bool enablePDU = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
   bool debugNoRepeatingCapture = false;
@@ -259,6 +271,8 @@ int main(int argc, char* argv[]) {
       renderBackendType = renderBackendStringToEnum(argv[++i]);
     } else if (!strcmp(argv[i], "--disable-rdma")) {
       enableRDMA = false;
+    } else if (!strcmp(argv[i], "--disable-pdu")) {
+      enablePDU = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
       debugInitOnly = true;
     } else if (!strcmp(argv[i], "--debug-no-repeating-capture")) {
@@ -312,6 +326,11 @@ int main(int argc, char* argv[]) {
   }
 
   startInputListenerThread();
+
+  if (enablePDU && !tryOpenPDUSHM()) {
+    printf("PDU-SHM open failed -- will retry later\n");
+  }
+
   if (!RenderInit(renderBackendType)) {
     printf("RenderInit() failed\n");
     return 1;
@@ -947,6 +966,14 @@ int main(int argc, char* argv[]) {
         ImGui::TextUnformatted(timebuf);
         ImGui::SameLine(); ImGui::Separator(); ImGui::SameLine();
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
+        if (enablePDU) {
+          if (pduInfoShm == nullptr) {
+            if ((frameCounter & 0x2ff) == 1) // rate-limit
+              tryOpenPDUSHM();
+          } else {
+            ImGui::Text("%s", pduInfoShm->segment()->statusLines);
+          }
+        }
 
         ImGui::End();
       }
