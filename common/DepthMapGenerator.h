@@ -141,7 +141,9 @@ protected:
   int m_trimRight = 8, m_trimBottom = 8;
   bool m_splitDepthDiscontinuity = false;
   float m_maxDepthDiscontinuity = 1.0f;
+  float m_minDepthCutoff = 0.050f;
   bool m_usePointRendering = true;
+  float m_pointScale = 1.0f;
 
   bool m_useComputeShaderMip = true;
 

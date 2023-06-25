@@ -22,10 +22,15 @@ void main() {
   if (v2g[0].trimmed != 0)
     return;
 
+  if (abs(v2g[0].P.z) < minDepthCutoff)
+    return;
+
   // Depth discontinuity doesn't apply in point-rendering mode
   //float discontinuity = max(abs(v2g[2].P.z - v2g[0].P.z), abs(v2g[1].P.z - v2g[0].P.z));
   //if (discontinuity > maxDepthDiscontinuity)
   //  return;
+
+  vec2 scaledTexCoordStep = texCoordStep * pointScale;
 
   for (int viewport = 0; viewport < 2; ++viewport) {
     gl_Position = modelViewProjection[viewport] * v2g[0].P;
@@ -35,17 +40,17 @@ void main() {
 
     gl_Position = modelViewProjection[viewport] * (v2g[0].P + v2g[0].dPdV);
     gl_ViewportIndex = viewport;
-    g2f.texCoord = v2g[0].texCoord + vec2(0.0f, texCoordStep.y);
+    g2f.texCoord = v2g[0].texCoord + vec2(0.0f, scaledTexCoordStep.y);
     EmitVertex();
 
     gl_Position = modelViewProjection[viewport] * (v2g[0].P + v2g[0].dPdU);
     gl_ViewportIndex = viewport;
-    g2f.texCoord = v2g[0].texCoord + vec2(texCoordStep.x, 0.0f);
+    g2f.texCoord = v2g[0].texCoord + vec2(scaledTexCoordStep.x, 0.0f);
     EmitVertex();
 
     gl_Position = modelViewProjection[viewport] * (v2g[0].P + v2g[0].dPdU + v2g[0].dPdV);
     gl_ViewportIndex = viewport;
-    g2f.texCoord = v2g[0].texCoord + texCoordStep;
+    g2f.texCoord = v2g[0].texCoord + scaledTexCoordStep;
     EmitVertex();
 
     EndPrimitive();

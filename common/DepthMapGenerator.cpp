@@ -92,7 +92,8 @@ struct MeshDisparityDepthMapUniformBlock {
   float maxDepthDiscontinuity;
 
   glm::vec2 texCoordStep;
-  float pad3, pad4;
+  float minDepthCutoff;
+  float pointScale;
 };
 
 RHIRenderPipeline::ptr disparityMipPipeline;
@@ -191,6 +192,9 @@ bool DepthMapGenerator::loadSettings() {
     if (rsn.isMap()) {
       readNode(rsn, splitDepthDiscontinuity);
       readNode(rsn, maxDepthDiscontinuity);
+      readNode(rsn, minDepthCutoff);
+      readNode(rsn, usePointRendering);
+      readNode(rsn, pointScale);
       readNode(rsn, trimLeft);
       readNode(rsn, trimTop);
       readNode(rsn, trimRight);
@@ -219,6 +223,9 @@ void DepthMapGenerator::saveSettings() {
   fs.startWriteStruct(cv::String("renderSettings"), cv::FileNode::MAP, cv::String());
     writeNode(fs, splitDepthDiscontinuity);
     writeNode(fs, maxDepthDiscontinuity);
+    writeNode(fs, minDepthCutoff);
+    writeNode(fs, usePointRendering);
+    writeNode(fs, pointScale);
     writeNode(fs, trimLeft);
     writeNode(fs, trimTop);
     writeNode(fs, trimRight);
@@ -300,8 +307,8 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
     1.0f / static_cast<float>(internalWidth()),
     1.0f / static_cast<float>(internalHeight()));
 
-  ub.pad3 = 0.0f;
-  ub.pad4 = 0.0f;
+  ub.minDepthCutoff = m_minDepthCutoff;
+  ub.pointScale = m_pointScale;
 
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd->m_disparityTexture);
@@ -343,7 +350,12 @@ void DepthMapGenerator::renderIMGUI() {
   ImGui::SliderInt("Trim Right",  &m_trimRight,  0, 64);
   ImGui::SliderInt("Trim Bottom", &m_trimBottom, 0, 64);
 
+  ImGui::SliderFloat("Min Depth Cutoff", &m_minDepthCutoff, 0.01f, 0.30f);
+
   ImGui::Checkbox("Point rendering", &m_usePointRendering);
+  if (m_usePointRendering)
+    ImGui::SliderFloat("Point Scale", &m_pointScale, 0.5f, 3.0f);
+
   // TODO debug only
   ImGui::Checkbox("Use compute shader mip", &m_useComputeShaderMip);
   ImGui::PopID();
