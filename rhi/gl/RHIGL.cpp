@@ -44,6 +44,35 @@ RHIGL::RHIGL() : m_clearColor(glm::vec4(0.0f)), m_clearDepth(1.0f), m_clearStenc
     m_uniformBufferOffsetAlignment = t;
 
     if (s_isFirstRHIGLInit) {
+
+      // glGetShaderPrecisionFormat doesn't work for compute shaders -- the results are only specified for
+      // GL_VERTEX_SHADER and GL_FRAGMENT_SHADER -- but the type precision is likely to be the same.
+      const GLenum shaderTypes[] = {GL_VERTEX_SHADER, GL_FRAGMENT_SHADER};
+      const char* shaderTypesStr[] = {"Vertex", "Fragment"};
+
+      const GLenum floatPrecisionTypes[] = {GL_LOW_FLOAT, GL_MEDIUM_FLOAT, GL_HIGH_FLOAT};
+      const GLenum intPrecisionTypes[] = {GL_LOW_INT, GL_MEDIUM_INT, GL_HIGH_INT};
+      const char* precisionTypesStr[] = {"lowp", "mediump", "highp"};
+
+      for (size_t shaderTypeIdx = 0; shaderTypeIdx < (sizeof(shaderTypes) / sizeof(shaderTypes[0])); ++shaderTypeIdx) {
+        printf("RHIGL: Type precision for %s Shader:\n", shaderTypesStr[shaderTypeIdx]);
+        for (size_t precisionTypeIdx = 0; precisionTypeIdx < (sizeof(floatPrecisionTypes) / sizeof(floatPrecisionTypes[0])); ++precisionTypeIdx) {
+          GLint range[2];
+          memset(range, 0, sizeof(range));
+          GLint precision = 0;
+          glGetShaderPrecisionFormat(shaderTypes[shaderTypeIdx], floatPrecisionTypes[precisionTypeIdx], range, &precision);
+          printf("  -- %s float: range -2^^%d to 2^^%d, %d bit significand\n", precisionTypesStr[precisionTypeIdx], range[0], range[1], precision);
+        }
+
+        for (size_t precisionTypeIdx = 0; precisionTypeIdx < (sizeof(intPrecisionTypes) / sizeof(intPrecisionTypes[0])); ++precisionTypeIdx) {
+          GLint range[2];
+          memset(range, 0, sizeof(range));
+          GLint precision = 0; // precision is always 0 for int types
+          glGetShaderPrecisionFormat(shaderTypes[shaderTypeIdx], intPrecisionTypes[precisionTypeIdx], range, &precision);
+          printf("  -- %s int: range -2^^%d to 2^^%d\n", precisionTypesStr[precisionTypeIdx], range[0], range[1]);
+        }
+      }
+
       printf("RHIGL: maxMultisampleSamples = %d\n", m_maxMultisampleSamples);
       printf("RHIGL: uniformBufferOffsetAlignment = %d\n", m_uniformBufferOffsetAlignment);
     }

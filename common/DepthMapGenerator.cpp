@@ -62,7 +62,7 @@ DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend backend) {
   return NULL;
 }
 
-RHIRenderPipeline::ptr disparityDepthMapPipeline;
+RHIRenderPipeline::ptr disparityDepthMapPipeline, disparityDepthMapPointsPipeline;
 FxAtomicString ksMeshDisparityDepthMapUniformBlock("MeshDisparityDepthMapUniformBlock");
 static FxAtomicString ksDisparityTex("disparityTex");
 static FxAtomicString ksImageTex("imageTex");
@@ -90,6 +90,9 @@ struct MeshDisparityDepthMapUniformBlock {
   float maxValidDisparityPixels;
   uint32_t maxValidDisparityRaw;
   float maxDepthDiscontinuity;
+
+  glm::vec2 texCoordStep;
+  float pad3, pad4;
 };
 
 RHIRenderPipeline::ptr disparityMipPipeline;
@@ -250,9 +253,26 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
     disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
   }
 
+  if (!disparityDepthMapPointsPipeline) {
+    RHIRenderPipelineDescriptor rpd;
+    rpd.primitiveTopology = kPrimitiveTopologyPoints;
+
+    RHIShaderDescriptor desc("shaders/meshDisparityDepthMapPoints.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
+        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
+      }));
+    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMapPoints.geom.glsl");
+
+    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
+      desc.setFlag("SAMPLER_TYPE", "sampler2D");
+    else
+      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
+
+    disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
+  }
+
   ViewData* vd = m_viewData[viewIdx];
 
-  rhi()->bindRenderPipeline(disparityDepthMapPipeline);
+  rhi()->bindRenderPipeline(m_usePointRendering ? disparityDepthMapPointsPipeline : disparityDepthMapPipeline);
   rhi()->bindStreamBuffer(0, m_geoDepthMapTexcoordBuffer);
 
   MeshDisparityDepthMapUniformBlock ub;
@@ -276,6 +296,13 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
   ub.maxDepthDiscontinuity = m_splitDepthDiscontinuity ? m_maxDepthDiscontinuity : FLT_MAX;
 
+  ub.texCoordStep = glm::vec2(
+    1.0f / static_cast<float>(internalWidth()),
+    1.0f / static_cast<float>(internalHeight()));
+
+  ub.pad3 = 0.0f;
+  ub.pad4 = 0.0f;
+
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd->m_disparityTexture);
 
@@ -285,12 +312,20 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
 
 void DepthMapGenerator::renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView, const glm::mat4& modelMatrix) {
   internalRenderSetup(viewIdx, /*stereo=*/ true, leftRenderView, rightRenderView, modelMatrix);
-  rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
+
+  if (m_usePointRendering)
+    rhi()->drawPrimitives(0, internalWidth() * internalHeight());
+  else
+    rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
 }
 
 void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix) {
   internalRenderSetup(viewIdx, /*stereo=*/ false, renderView, renderView, modelMatrix);
-  rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
+
+  if (m_usePointRendering)
+    rhi()->drawPrimitives(0, internalWidth() * internalHeight());
+  else
+    rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
 }
 
 void DepthMapGenerator::renderIMGUI() {
@@ -308,6 +343,7 @@ void DepthMapGenerator::renderIMGUI() {
   ImGui::SliderInt("Trim Right",  &m_trimRight,  0, 64);
   ImGui::SliderInt("Trim Bottom", &m_trimBottom, 0, 64);
 
+  ImGui::Checkbox("Point rendering", &m_usePointRendering);
   // TODO debug only
   ImGui::Checkbox("Use compute shader mip", &m_useComputeShaderMip);
   ImGui::PopID();

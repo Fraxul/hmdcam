@@ -14,6 +14,9 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   float maxValidDisparityPixels;
   uint maxValidDisparityRaw;
   float maxDepthDiscontinuity;
+
+  vec2 texCoordStep;
+  float pad3, pad4;
 };
 
 

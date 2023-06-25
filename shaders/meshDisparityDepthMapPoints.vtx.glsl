@@ -10,6 +10,9 @@ uniform highp usampler2D disparityTex;
 
 out V2G {
   vec4 P;
+  vec4 dPdU;
+  vec4 dPdV;
+
   vec2 texCoord;
   flat int trimmed;
 } v2g;
@@ -40,6 +43,8 @@ void main()
 
   float disparity = (float(disparityRaw) * disparityPrescale);
   v2g.P = TransformToLocalSpace(textureCoordinates.z, textureCoordinates.w, disparity);
+  v2g.dPdU = TransformToLocalSpace(textureCoordinates.z + 1.0f, textureCoordinates.w, disparity) - v2g.P;
+  v2g.dPdV = TransformToLocalSpace(textureCoordinates.z, textureCoordinates.w + 1.0f, disparity) - v2g.P;
   v2g.texCoord = textureCoordinates.xy;
   v2g.trimmed = int(any(notEqual(clamp(textureCoordinates.zw, trim_minXY, trim_maxXY), textureCoordinates.zw)));
 }
