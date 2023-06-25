@@ -11,10 +11,10 @@ public:
 
   int32_t uniformBlockLocation(const FxAtomicString&);
   int32_t varyingAttributeLocation(const FxAtomicString&);
-  // actually returns the texture unit number, since unit bindings are done at compile time.
-  int32_t samplerAttributeLocation(const FxAtomicString&);
-  int32_t imageAttributeLocation(const FxAtomicString&);
   int32_t bufferBlockLocation(const FxAtomicString&);
+
+  bool samplerAttributeBinding(const FxAtomicString&, uint32_t& outLocation, uint32_t& outTextureUnitNumber);
+  bool imageAttributeBinding(const FxAtomicString&, uint32_t& outLocation, uint32_t& outImageUnitNumber);
 
   const RHIVertexLayout& vertexLayout() const { return m_vertexLayout; }
 

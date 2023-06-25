@@ -9,10 +9,10 @@ layout(std140) uniform DisparityMipUniformBlock {
   float pad3, pad4;
 };
 
-layout(location = 0, r16ui) uniform highp readonly uimage2D srcImage;
-layout(location = 1, r16ui) uniform highp writeonly uimage2D dstMip1;
-layout(location = 2, r16ui) uniform highp writeonly uimage2D dstMip2;
-layout(location = 3, r16ui) uniform highp writeonly uimage2D dstMip3;
+layout(binding = 0, r16ui) uniform highp readonly uimage2D srcImage;
+layout(binding = 1, r16ui) uniform highp writeonly uimage2D dstMip1;
+layout(binding = 2, r16ui) uniform highp writeonly uimage2D dstMip2;
+layout(binding = 3, r16ui) uniform highp writeonly uimage2D dstMip3;
 
 shared uint wgDepthSamples[4][4];
 

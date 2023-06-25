@@ -1,5 +1,6 @@
 #include "rhi/gl/RHIShaderGL.h"
 #include <boost/scoped_array.hpp>
+#include <set>
 
 static /*CVar*/ bool shader_debug = false;
 
@@ -350,14 +351,25 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
     m_samplerAttributes[idx].textureUnit = idx;
   }
 
-  // Assign image unit bindings (identity)
-  for (size_t idx = 0; idx < m_imageAttributes.size(); ++idx) {
-    GLint loc = m_imageAttributes[idx].location;
-    if (shader_debug) {
-      printf("image [loc %d -> unit %zu]: \"%s\"; type %x\n", loc, idx, m_imageAttributes[idx].name.c_str(), m_imageAttributes[idx].type);
+  // Assign image unit bindings
+  {
+    std::set<GLint> seenBindings;
+    for (size_t idx = 0; idx < m_imageAttributes.size(); ++idx) {
+      GLint loc = m_imageAttributes[idx].location;
+
+      GLint binding = -1;
+      GL(glGetUniformiv(m_program, loc, &binding));
+      if (seenBindings.find(binding) != seenBindings.end()) {
+        printf("RHIShaderGL: ERROR: Image unit bindings are incomplete -- duplicate binding index %d for variable %s\n", binding, m_imageAttributes[idx].name.c_str());
+        printf("All Image unit bindings must be specified with a layout(binding=...) construct.\n");
+        assert(false && "Shader linking failed: image unit bindings are incomplete.");
+      }
+
+      if (shader_debug) {
+        printf("image [loc %d -> unit %d]: \"%s\"; type %x\n", loc, binding, m_imageAttributes[idx].name.c_str(), m_imageAttributes[idx].type);
+      }
+      m_imageAttributes[idx].textureUnit = binding;
     }
-    GL(glProgramUniform1i(m_program, loc, idx));
-    m_imageAttributes[idx].textureUnit = idx;
   }
 
   // Assign uniform block bindings (identity)
@@ -400,22 +412,26 @@ int32_t RHIShaderGL::varyingAttributeLocation(const FxAtomicString& name) {
   return -1;
 }
 
-// actually returns the texture unit number, since texture unit bindings are done at compile time.
-int32_t RHIShaderGL::samplerAttributeLocation(const FxAtomicString& name) {
+bool RHIShaderGL::samplerAttributeBinding(const FxAtomicString& name, uint32_t& outLocation, uint32_t& outTextureUnitNumber) {
   for (size_t i = 0; i < m_samplerAttributes.size(); ++i) {
-    if (m_samplerAttributes[i].name == name)
-      return m_samplerAttributes[i].textureUnit;
+    if (m_samplerAttributes[i].name == name) {
+      outLocation = m_samplerAttributes[i].location;
+      outTextureUnitNumber =  m_samplerAttributes[i].textureUnit;
+      return true;
+    }
   }
-  return -1;
+  return false;
 }
 
-// actually returns the image unit number, since unit bindings are done at compile time.
-int32_t RHIShaderGL::imageAttributeLocation(const FxAtomicString& name) {
+bool RHIShaderGL::imageAttributeBinding(const FxAtomicString& name, uint32_t& outLocation, uint32_t& outImageUnitNumber) {
   for (size_t i = 0; i < m_imageAttributes.size(); ++i) {
-    if (m_imageAttributes[i].name == name)
-      return m_imageAttributes[i].textureUnit;
+    if (m_imageAttributes[i].name == name) {
+      outLocation = m_imageAttributes[i].location;
+      outImageUnitNumber =  m_imageAttributes[i].textureUnit;
+      return true;
+    }
   }
-  return -1;
+  return false;
 }
 
 int32_t RHIShaderGL::bufferBlockLocation(const FxAtomicString& name) {

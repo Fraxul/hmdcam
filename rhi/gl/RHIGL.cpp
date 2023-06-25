@@ -828,11 +828,13 @@ void RHIGL::clearScissorRect() {
 }
 
 void RHIGL::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::ptr sampler) {
-  int32_t location = m_inComputePass ?
-    m_activeComputePipeline->shaderGL()->samplerAttributeLocation(name) :
-    m_activeRenderPipeline->shaderGL()->samplerAttributeLocation(name);
+  uint32_t location = 0;
+  uint32_t textureUnitNumber = 0;
+  bool found = m_inComputePass ?
+    m_activeComputePipeline->shaderGL()->samplerAttributeBinding(name, location, textureUnitNumber) :
+    m_activeRenderPipeline->shaderGL()->samplerAttributeBinding(name, location, textureUnitNumber);
 
-  if (location < 0) {
+  if (!found) {
     //printf("RHIGL::loadTexture: no texture slot in current pipeline mapped to name \"%s\"\n", name.c_str());
     return;
   }
@@ -840,17 +842,20 @@ void RHIGL::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::pt
   RHISurfaceGL* glTex = static_cast<RHISurfaceGL*>(tex.get());
   RHISamplerGL* glSampler = static_cast<RHISamplerGL*>(sampler.get());
 
-  GL(glActiveTexture(GL_TEXTURE0 + location));
+  GL(glActiveTexture(GL_TEXTURE0 + textureUnitNumber));
   GL(glBindTexture(glTex->glTarget(), glTex->glId()));
-  GL(glBindSampler(location, glSampler ? glSampler->glId() : 0));
+  GL(glBindSampler(textureUnitNumber, glSampler ? glSampler->glId() : 0));
 }
 
 void RHIGL::loadImage(FxAtomicString name, RHISurface::ptr tex, RHIImageAccessType accessType, uint32_t mipLevel, int32_t layerIndex) {
-  int32_t location = m_inComputePass ?
-    m_activeComputePipeline->shaderGL()->imageAttributeLocation(name) :
-    m_activeRenderPipeline->shaderGL()->imageAttributeLocation(name);
+  uint32_t location = 0;
+  uint32_t unitNumber = 0;
 
-  if (location < 0) {
+  bool found = m_inComputePass ?
+    m_activeComputePipeline->shaderGL()->imageAttributeBinding(name, location, unitNumber) :
+    m_activeRenderPipeline->shaderGL()->imageAttributeBinding(name, location, unitNumber);
+
+  if (!found) {
     printf("RHIGL::loadImage: no image unit in current pipeline mapped to name \"%s\"\n", name.c_str());
     return;
   }
@@ -866,7 +871,7 @@ void RHIGL::loadImage(FxAtomicString name, RHISurface::ptr tex, RHIImageAccessTy
   };
 
   bool layered = (layerIndex < 0);
-  GL(glBindImageTexture(location, glTex->glId(), mipLevel, layered, layered ? 0 : layerIndex, glAccessType, glTex->glInternalFormat()));
+  GL(glBindImageTexture(unitNumber, glTex->glId(), mipLevel, layered, layered ? 0 : layerIndex, glAccessType, glTex->glInternalFormat()));
 }
 
 void RHIGL::loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr buffer) {
