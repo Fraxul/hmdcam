@@ -166,6 +166,22 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
 #ifdef GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ARRAY_OES
         case GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ARRAY_OES:
 #endif
+#ifdef GL_SAMPLER_EXTERNAL_OES
+        case GL_SAMPLER_EXTERNAL_OES:
+#endif
+#ifdef GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT
+        case GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT:
+#endif
+
+          if (shader_debug) {
+            printf("sampler [%d]: \"%s\"; type %x\n", attr.location, buffer.get(), attr.type);
+          }
+
+          m_samplerAttributes.push_back(attr);
+          break;
+
+        // Separate out image units from texture samplers, since they're a different
+        // resource type and binding namespace
         case GL_IMAGE_2D:
         case GL_IMAGE_3D:
         case GL_IMAGE_CUBE:
@@ -182,19 +198,13 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
         case GL_UNSIGNED_INT_IMAGE_2D_ARRAY:
         case GL_UNSIGNED_INT_IMAGE_CUBE_MAP_ARRAY:
 
-#ifdef GL_SAMPLER_EXTERNAL_OES
-        case GL_SAMPLER_EXTERNAL_OES:
-#endif
-#ifdef GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT
-        case GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT:
-#endif
-
           if (shader_debug) {
-            printf("sampler [%d]: \"%s\"; type %x\n", attr.location, buffer.get(), attr.type);
+            printf("image [%d]: \"%s\"; type %x\n", attr.location, buffer.get(), attr.type);
           }
 
-          m_samplerAttributes.push_back(attr);
+          m_imageAttributes.push_back(attr);
           break;
+
 
         default:
           if (shader_debug) {
@@ -340,6 +350,16 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
     m_samplerAttributes[idx].textureUnit = idx;
   }
 
+  // Assign image unit bindings (identity)
+  for (size_t idx = 0; idx < m_imageAttributes.size(); ++idx) {
+    GLint loc = m_imageAttributes[idx].location;
+    if (shader_debug) {
+      printf("image [loc %d -> unit %zu]: \"%s\"; type %x\n", loc, idx, m_imageAttributes[idx].name.c_str(), m_imageAttributes[idx].type);
+    }
+    GL(glProgramUniform1i(m_program, loc, idx));
+    m_imageAttributes[idx].textureUnit = idx;
+  }
+
   // Assign uniform block bindings (identity)
   for (size_t idx = 0; idx < m_uniformBlocks.size(); ++idx) {
     GL(glUniformBlockBinding(m_program, m_uniformBlocks[idx].location, m_uniformBlocks[idx].location));
@@ -385,6 +405,15 @@ int32_t RHIShaderGL::samplerAttributeLocation(const FxAtomicString& name) {
   for (size_t i = 0; i < m_samplerAttributes.size(); ++i) {
     if (m_samplerAttributes[i].name == name)
       return m_samplerAttributes[i].textureUnit;
+  }
+  return -1;
+}
+
+// actually returns the image unit number, since unit bindings are done at compile time.
+int32_t RHIShaderGL::imageAttributeLocation(const FxAtomicString& name) {
+  for (size_t i = 0; i < m_imageAttributes.size(); ++i) {
+    if (m_imageAttributes[i].name == name)
+      return m_imageAttributes[i].textureUnit;
   }
   return -1;
 }

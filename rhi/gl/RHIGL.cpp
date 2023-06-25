@@ -816,6 +816,30 @@ void RHIGL::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::pt
   GL(glBindSampler(location, glSampler ? glSampler->glId() : 0));
 }
 
+void RHIGL::loadImage(FxAtomicString name, RHISurface::ptr tex, RHIImageAccessType accessType, uint32_t mipLevel, int32_t layerIndex) {
+  int32_t location = m_inComputePass ?
+    m_activeComputePipeline->shaderGL()->imageAttributeLocation(name) :
+    m_activeRenderPipeline->shaderGL()->imageAttributeLocation(name);
+
+  if (location < 0) {
+    printf("RHIGL::loadImage: no image unit in current pipeline mapped to name \"%s\"\n", name.c_str());
+    return;
+  }
+
+  RHISurfaceGL* glTex = static_cast<RHISurfaceGL*>(tex.get());
+
+  GLenum glAccessType = 0;
+  switch (accessType) {
+    case kImageAccessReadOnly: glAccessType = GL_READ_ONLY; break;
+    case kImageAccessReadWrite: glAccessType = GL_READ_WRITE; break;
+    case kImageAccessWriteOnly: glAccessType = GL_WRITE_ONLY; break;
+    default: assert(false && "unhandled RHIImageAccessType enum");
+  };
+
+  bool layered = (layerIndex < 0);
+  GL(glBindImageTexture(location, glTex->glId(), mipLevel, layered, layered ? 0 : layerIndex, glAccessType, glTex->glInternalFormat()));
+}
+
 void RHIGL::loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr buffer) {
   int32_t location = m_inComputePass ?
     m_activeComputePipeline->shaderGL()->bufferBlockLocation(name) :

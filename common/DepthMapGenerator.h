@@ -141,6 +141,8 @@ protected:
   int m_trimRight = 8, m_trimBottom = 8;
   float m_maxDepthDiscontinuity = 0.2f;
 
+  bool m_useComputeShaderMip = true;
+
   bool m_populateDebugTextures = false;
 
   void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix);

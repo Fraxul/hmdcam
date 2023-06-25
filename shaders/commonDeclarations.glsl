@@ -14,6 +14,8 @@
   #extension GL_OES_viewport_array : require
   #extension GL_OES_EGL_image_external : require
   #extension GL_OES_EGL_image_external_essl3 : require
+#elif RHI_COMPUTE_SHADER
+  #extension GL_NV_image_formats : require
 
 #endif
 

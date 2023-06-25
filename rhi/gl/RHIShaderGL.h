@@ -13,6 +13,7 @@ public:
   int32_t varyingAttributeLocation(const FxAtomicString&);
   // actually returns the texture unit number, since unit bindings are done at compile time.
   int32_t samplerAttributeLocation(const FxAtomicString&);
+  int32_t imageAttributeLocation(const FxAtomicString&);
   int32_t bufferBlockLocation(const FxAtomicString&);
 
   const RHIVertexLayout& vertexLayout() const { return m_vertexLayout; }
@@ -37,6 +38,7 @@ protected:
   RHIVertexLayout m_vertexLayout;
   std::vector<Attribute> m_varyingAttributes;
   std::vector<Attribute> m_samplerAttributes;
+  std::vector<Attribute> m_imageAttributes;
   std::vector<Attribute> m_uniformBlocks;
   std::vector<Attribute> m_bufferBlocks;
 };

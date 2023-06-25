@@ -41,6 +41,12 @@ enum RHIIndexBufferType {
   kIndexBufferTypeUInt32
 };
 
+enum RHIImageAccessType {
+  kImageAccessReadOnly,
+  kImageAccessReadWrite,
+  kImageAccessWriteOnly
+};
+
 size_t RHIIndexBufferTypeSize(RHIIndexBufferType);
 
 class RHI {
@@ -106,6 +112,8 @@ public:
   virtual void loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr) = 0;
 
   virtual void loadTexture(FxAtomicString name, RHISurface::ptr, RHISampler::ptr sampler = RHISampler::ptr()) = 0;
+  // layerIndex < 0 binds the iamge as layered instead of selecting a particular layer
+  virtual void loadImage(FxAtomicString name, RHISurface::ptr, RHIImageAccessType, uint32_t mipLevel = 0, int32_t layerIndex = -1) = 0;
 
   // draw execution functions for render pass
   virtual void drawPrimitives(uint32_t vertexStart, uint32_t vertexCount, uint32_t instanceCount = 1, uint32_t baseInstance = 0) = 0;

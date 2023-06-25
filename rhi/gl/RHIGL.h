@@ -62,6 +62,7 @@ public:
   virtual void loadUniformBlockImmediate(FxAtomicString, const void*, size_t);
   virtual void loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr);
   virtual void loadTexture(FxAtomicString, RHISurface::ptr, RHISampler::ptr);
+  virtual void loadImage(FxAtomicString name, RHISurface::ptr, RHIImageAccessType, uint32_t mipLevel, int32_t layerIndex);
 
   virtual void drawPrimitives(uint32_t vertexStart, uint32_t vertexCount, uint32_t instanceCount, uint32_t baseInstance);
   virtual void drawPrimitivesIndirect(RHIBuffer::ptr indirectBuffer, uint32_t indirectCommandCount, uint32_t indirectCommandArrayOffset);

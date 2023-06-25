@@ -66,6 +66,12 @@ RHIRenderPipeline::ptr disparityDepthMapPipeline;
 FxAtomicString ksMeshDisparityDepthMapUniformBlock("MeshDisparityDepthMapUniformBlock");
 static FxAtomicString ksDisparityTex("disparityTex");
 static FxAtomicString ksImageTex("imageTex");
+
+static FxAtomicString ksSrcImage("srcImage");
+static FxAtomicString ksDstMip1("dstMip1");
+static FxAtomicString ksDstMip2("dstMip2");
+static FxAtomicString ksDstMip3("dstMip3");
+
 extern FxAtomicString ksDistortionMap;
 struct MeshDisparityDepthMapUniformBlock {
   glm::mat4 modelViewProjection[2];
@@ -87,6 +93,7 @@ struct MeshDisparityDepthMapUniformBlock {
 };
 
 RHIRenderPipeline::ptr disparityMipPipeline;
+RHIComputePipeline::ptr disparityMipComputePipeline;
 FxAtomicString ksDisparityMipUniformBlock("DisparityMipUniformBlock");
 struct DisparityMipUniformBlock {
   uint32_t sourceLevel;
@@ -295,6 +302,9 @@ void DepthMapGenerator::renderIMGUI() {
   ImGui::SliderInt("Trim Top",    &m_trimTop,    0, 64);
   ImGui::SliderInt("Trim Right",  &m_trimRight,  0, 64);
   ImGui::SliderInt("Trim Bottom", &m_trimBottom, 0, 64);
+
+  // TODO debug only
+  ImGui::Checkbox("Use compute shader mip", &m_useComputeShaderMip);
   ImGui::PopID();
 }
 
@@ -358,33 +368,70 @@ void DepthMapGenerator::internalGenerateDisparityMips() {
   if (!disparityMipPipeline) {
     disparityMipPipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/disparityMip.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
   }
-
-  // Filter invalid disparities: generate mip-chains
-  uint32_t maxLevels = 0;
-  for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
-    auto vd = viewDataAtIndex(viewIdx);
-    if (vd->m_isStereoView)
-      maxLevels = std::max<uint32_t>(maxLevels, vd->m_disparityTexture->mipLevels());
+  if (!disparityMipComputePipeline) {
+    disparityMipComputePipeline = rhi()->compileComputePipeline(rhi()->compileShader(RHIShaderDescriptor::computeShader("shaders/disparityMip.comp.glsl")));
   }
 
-  // Organized by mip level to give the driver a chance at overlapping the render passes
-  for (uint32_t targetLevel = 1; targetLevel < maxLevels; ++targetLevel) {
+  // Filter invalid disparities: generate mip-chains
+
+  if (m_useComputeShaderMip) {
     for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
       auto vd = viewDataAtIndex(viewIdx);
-      if (!vd->m_isStereoView || vd->m_disparityTexture->mipLevels() < targetLevel)
+      if (!vd->m_isStereoView)
         continue;
 
-      rhi()->beginRenderPass(vd->m_disparityTextureMipTargets[targetLevel], kLoadInvalidate);
-      rhi()->bindRenderPipeline(disparityMipPipeline);
-      rhi()->loadTexture(ksImageTex, vd->m_disparityTexture);
+      // Each compute shader pass generates 3 mip-levels
+      uint32_t passes = (vd->m_disparityTexture->mipLevels() - 1) / 3;
+      for (uint32_t pass = 0; pass < passes; ++pass) {
+        rhi()->beginComputePass();
+        rhi()->bindComputePipeline(disparityMipComputePipeline);
 
-      DisparityMipUniformBlock ub;
-      ub.sourceLevel = targetLevel - 1;
-      ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
+        rhi()->loadImage(ksSrcImage, vd->m_disparityTexture, kImageAccessReadOnly, pass * 3);
+        rhi()->loadImage(ksDstMip1, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 1);
+        rhi()->loadImage(ksDstMip2, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 2);
+        rhi()->loadImage(ksDstMip3, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 3);
 
-      rhi()->loadUniformBlockImmediate(ksDisparityMipUniformBlock, &ub, sizeof(ub));
-      rhi()->drawNDCQuad();
-      rhi()->endRenderPass(vd->m_disparityTextureMipTargets[targetLevel]);
+        DisparityMipUniformBlock ub;
+        ub.sourceLevel = 0; // unused in compute shader
+        ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
+
+        rhi()->loadUniformBlockImmediate(ksDisparityMipUniformBlock, &ub, sizeof(ub));
+        rhi()->dispatchCompute(
+          vd->m_disparityTexture->width()  / ((1 << ((pass * 3) + 1)) * 4),
+          vd->m_disparityTexture->height() / ((1 << ((pass * 3) + 1)) * 4),
+          1);
+
+        rhi()->endComputePass();
+      }
+    }
+  } else {
+
+    uint32_t maxLevels = 0;
+    for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
+      auto vd = viewDataAtIndex(viewIdx);
+      if (vd->m_isStereoView)
+        maxLevels = std::max<uint32_t>(maxLevels, vd->m_disparityTexture->mipLevels());
+    }
+
+    // Organized by mip level to give the driver a chance at overlapping the render passes
+    for (uint32_t targetLevel = 1; targetLevel < maxLevels; ++targetLevel) {
+      for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
+        auto vd = viewDataAtIndex(viewIdx);
+        if (!vd->m_isStereoView || vd->m_disparityTexture->mipLevels() < targetLevel)
+          continue;
+
+        rhi()->beginRenderPass(vd->m_disparityTextureMipTargets[targetLevel], kLoadInvalidate);
+        rhi()->bindRenderPipeline(disparityMipPipeline);
+        rhi()->loadTexture(ksImageTex, vd->m_disparityTexture);
+
+        DisparityMipUniformBlock ub;
+        ub.sourceLevel = targetLevel - 1;
+        ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
+
+        rhi()->loadUniformBlockImmediate(ksDisparityMipUniformBlock, &ub, sizeof(ub));
+        rhi()->drawNDCQuad();
+        rhi()->endRenderPass(vd->m_disparityTextureMipTargets[targetLevel]);
+      }
     }
   }
 }
