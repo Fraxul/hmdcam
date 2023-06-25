@@ -4,9 +4,14 @@
 #include <fstream>
 #include <sstream>
 
+#define STB_INCLUDE_IMPLEMENTATION
+#define STB_INCLUDE_LINE_NONE
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#include "stb/stb_include.h"
+#pragma clang diagnostic pop
+
 #include <boost/functional/hash.hpp>
-#include <boost/interprocess/file_mapping.hpp>
-#include <boost/interprocess/mapped_region.hpp>
 #include <boost/lexical_cast.hpp>
 
 static /*Cvar*/ bool rhi_dumpPreprocessedShaderSource = false;
@@ -16,16 +21,14 @@ const std::string& lookupShaderSourceCache(const std::string& path, bool forceRe
 
   std::string& source = s_shaderSourceCache[path];
   if (source.empty() || forceReload) {
-    try {
-      std::string fullPath = path; //FxVFS::expandPath(path); // Removed VFS dependency
-      boost::interprocess::file_mapping fm(fullPath.c_str(), boost::interprocess::read_only);
-      boost::interprocess::mapped_region mr(fm, boost::interprocess::read_only);
-
-      source = std::string(static_cast<const char*>(mr.get_address()), mr.get_size());
-    } catch (const std::exception& ex) {
-      printf("Unable to open shader source file \"%s\": %s\n", path.c_str(), ex.what());
+    char error[256];
+    char* sourceBuf = stb_include_file(const_cast<char*>(path.c_str()), /*inject=*/ const_cast<char*>(""), /*path_to_includes=*/ const_cast<char*>("shaders/"), error);
+    if (!sourceBuf) {
+      printf("Unable to process shader source file \"%s\": %s\n", path.c_str(), error);
       exit(-1);
     }
+    source = std::string(sourceBuf);
+    free(sourceBuf);
   }
   return source;
 }
@@ -47,6 +50,12 @@ RHIShaderDescriptor::RHIShaderDescriptor(const char* vertexShaderFilename, const
   addSourceFile(RHIShaderDescriptor::kVertexShader, vertexShaderFilename);
   addSourceFile(RHIShaderDescriptor::kFragmentShader, fragmentShaderFilename);
   setVertexLayout(vertexLayout);
+}
+
+/*static*/ RHIShaderDescriptor RHIShaderDescriptor::computeShader(const char* computeShaderFilename) {
+  RHIShaderDescriptor desc;
+  desc.addSourceFile(RHIShaderDescriptor::kComputeShader, computeShaderFilename);
+  return desc;
 }
 
 const char* RHIShaderDescriptor::nameForShadingUnit(ShadingUnit unit) {

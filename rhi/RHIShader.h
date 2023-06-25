@@ -128,6 +128,8 @@ public:
   // Common-case constructor
   RHIShaderDescriptor(const char* vertexShaderFilename, const char* fragmentShaderFilename, const RHIVertexLayout& vertexLayout);
 
+  static RHIShaderDescriptor computeShader(const char* computeShaderFilename);
+
   enum ShadingUnit {
     kVertexShader,
     kGeometryShader,
