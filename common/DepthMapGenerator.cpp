@@ -186,6 +186,7 @@ bool DepthMapGenerator::loadSettings() {
     // Load common render settings
     cv::FileNode rsn = fs["renderSettings"];
     if (rsn.isMap()) {
+      readNode(rsn, splitDepthDiscontinuity);
       readNode(rsn, maxDepthDiscontinuity);
       readNode(rsn, trimLeft);
       readNode(rsn, trimTop);
@@ -213,6 +214,7 @@ void DepthMapGenerator::saveSettings() {
 
   // Write common render settings
   fs.startWriteStruct(cv::String("renderSettings"), cv::FileNode::MAP, cv::String());
+    writeNode(fs, splitDepthDiscontinuity);
     writeNode(fs, maxDepthDiscontinuity);
     writeNode(fs, trimLeft);
     writeNode(fs, trimTop);
@@ -272,7 +274,7 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.renderStereo = (stereo ? 1 : 0);
   ub.maxValidDisparityPixels = m_maxDisparity - 1;
   ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
-  ub.maxDepthDiscontinuity = m_maxDepthDiscontinuity;
+  ub.maxDepthDiscontinuity = m_splitDepthDiscontinuity ? m_maxDepthDiscontinuity : FLT_MAX;
 
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd->m_disparityTexture);
@@ -297,7 +299,10 @@ void DepthMapGenerator::renderIMGUI() {
   this->internalRenderIMGUI();
 
   // Common render settings -- these don't affect the algorithm.
-  ImGui::SliderFloat("Depth Discontinuity", &m_maxDepthDiscontinuity, 0.01f, 1.0f);
+  ImGui::Checkbox("Split depth discontinuity", &m_splitDepthDiscontinuity);
+  if (m_splitDepthDiscontinuity)
+    ImGui::SliderFloat("Depth Discontinuity", &m_maxDepthDiscontinuity, 0.01f, 2.0f);
+
   ImGui::SliderInt("Trim Left",   &m_trimLeft,   0, 64);
   ImGui::SliderInt("Trim Top",    &m_trimTop,    0, 64);
   ImGui::SliderInt("Trim Right",  &m_trimRight,  0, 64);

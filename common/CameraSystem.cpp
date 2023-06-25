@@ -1027,6 +1027,8 @@ void CameraSystem::StereoCalibrationContext::processFrameCaptureMode() {
 
     internalUpdateCaptureState();
 
+    // TODO serialize/save calibration data
+
     if (shouldSaveCalibrationImages()) {
       size_t sampleIdx = m_calibState->m_objectPoints.size();
       saveCalibrationImage("left", sampleIdx, m_calibState->m_fullGreyMat[0]);
@@ -1537,6 +1539,8 @@ void CameraSystem::StereoViewOffsetCalibrationContext::processFrameCaptureMode()
 
 
   m_rmsError = computePointSetLinearTransform(m_refPoints, m_tgtPoints, m_tgt2ref);
+
+  // TODO serialize/save calibration data
 
   if (shouldSaveCalibrationImages()) {
     // not the real sample index, but it's good enough to differentiate the saved images.

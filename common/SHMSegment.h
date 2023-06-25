@@ -16,8 +16,8 @@ public:
     close(m_fd);
   }
 
-  static SHMSegment<T>* createSegment(const char* name, size_t size) {
-    int shm_fd = shm_open(name, O_RDWR | O_CREAT, 0600);
+  static SHMSegment<T>* createSegment(const char* name, size_t size, unsigned int perms = 0666) {
+    int shm_fd = shm_open(name, O_RDWR | O_CREAT, perms);
     if (shm_fd < 0) {
       perror("shm_open");
       return NULL;
@@ -31,7 +31,7 @@ public:
   }
 
   static SHMSegment<T>* openSegment(const char* name) {
-    int shm_fd = shm_open(name, O_RDWR, 0600);
+    int shm_fd = shm_open(name, O_RDWR, 0666);
     if (shm_fd < 0) {
       perror("shm_open");
       return NULL;
