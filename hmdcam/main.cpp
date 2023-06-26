@@ -30,13 +30,13 @@
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
 #include "common/FxThreading.h"
-#include "common/PDUSHM.h"
 #include "common/ScrollingBuffer.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
 #include "FocusAssistDebugOverlay.h"
 #include "IDebugOverlay.h"
 #include "InputListener.h"
+#include "PDUComms.h"
 #include "Render.h"
 #include "RenderBackend.h"
 
@@ -73,7 +73,6 @@ CameraSystem* cameraSystem;
 
 
 RDMAContext* rdmaContext;
-SHMSegment<PDUInfo>* pduInfoShm;
 
 #define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
 static const char* hmdcamSettingsFilename = "hmdcamSettings.yml";
@@ -184,15 +183,6 @@ static void signal_handler(int) {
   signal(SIGINT,  SIG_DFL);
   signal(SIGTERM, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
-}
-
-
-bool tryOpenPDUSHM() {
-  if (pduInfoShm)
-    return true;
-
-  pduInfoShm = SHMSegment<PDUInfo>::openSegment("pdu-info");
-  return (pduInfoShm != nullptr);
 }
 
 
@@ -327,8 +317,8 @@ int main(int argc, char* argv[]) {
 
   startInputListenerThread();
 
-  if (enablePDU && !tryOpenPDUSHM()) {
-    printf("PDU-SHM open failed -- will retry later\n");
+  if (enablePDU) {
+   startPDUCommsThread();
   }
 
   if (!RenderInit(renderBackendType)) {
@@ -848,6 +838,10 @@ int main(int argc, char* argv[]) {
               depthMapGenerator->saveSettings();
             }
           }
+
+          if (enablePDU && ImGui::CollapsingHeader("PDU Control")) {
+            drawPDUCommandMenu();
+          }
         }
 
         {
@@ -967,12 +961,7 @@ int main(int argc, char* argv[]) {
         ImGui::SameLine(); ImGui::Separator(); ImGui::SameLine();
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
         if (enablePDU) {
-          if (pduInfoShm == nullptr) {
-            if ((frameCounter & 0x2ff) == 1) // rate-limit
-              tryOpenPDUSHM();
-          } else {
-            ImGui::Text("%s", pduInfoShm->segment()->statusLines);
-          }
+          drawPDUStatusLine();
         }
 
         ImGui::End();

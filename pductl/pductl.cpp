@@ -11,10 +11,8 @@
 #include <glm/glm.hpp>
 #include <boost/regex.hpp>
 #include <boost/lexical_cast.hpp>
-#include "SHMSegment.h"
-#include "PDUSHM.h"
+#include "PDUControl.h"
 
-#include <termios.h>
 #include <unistd.h>
 
 #include <vector>
@@ -22,10 +20,9 @@
 
 #define NVML_CHECK(x) checkNvmlReturn(x, #x, __FILE__, __LINE__)
 
-int serialFd;
+PDUControl pduControl;
+
 bool quiet = false;
-bool serialDebug = false;
-SHMSegment<PDUInfo>* pduInfoShm;
 float minDutyCycle = 0.0f;
 float maxDutyCycle = 1.0f;
 float minTemp = 30.0f;
@@ -36,13 +33,6 @@ enum FanID {
   kFanGPU
 };
 
-static inline uint64_t currentTimeMs() {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (ts.tv_sec * 1000ULL) + (ts.tv_nsec / 1000000ULL);
-}
-
-
 // ^^^\n
 // Status Line 1
 // Status Line 2
@@ -52,6 +42,7 @@ static inline uint64_t currentTimeMs() {
 static boost::regex infoExpr("\\^\\^\\^[[:space:]]*(.*?)[[:space:]]*\\$\\$\\$");
 
 // 0-1 range
+#if 0
 bool pwmSetDutyCycle(FanID fanID, float dutyCycle) {
   dutyCycle = glm::clamp(dutyCycle, 0.0f, 1.0f);
 
@@ -64,6 +55,7 @@ bool pwmSetDutyCycle(FanID fanID, float dutyCycle) {
 
   return true;
 }
+#endif
 
 float readThermalZoneSensor() {
   const char* sensorFile = "/sys/devices/virtual/thermal/thermal_zone0/temp";
@@ -86,52 +78,6 @@ float readThermalZoneSensor() {
   return static_cast<float>(val) / 1000.0f; // sensor value is reported in millidegrees C
 }
 
-void drainSerialInput() {
-  struct pollfd pfd;
-  pfd.fd = serialFd;
-  pfd.events = POLLIN;
-  pfd.revents = 0;
-
-  while (true) {
-    int pollRes = poll(&pfd, 1, 0);
-    if (!pollRes)
-      break;
-
-    char buf[1024];
-    ssize_t n = read(serialFd, buf, 1023);
-    buf[n] = '\0';
-
-    const char *start = buf, *end = buf + n;
-    boost::match_results<const char*> what;
-    boost::match_flag_type flags = boost::match_default;
-    while(boost::regex_search(start, end, what, infoExpr, flags)) {
-      try {
-        // what[0] contains the whole string, capture groups start at what[1]
-        std::string statusLines = std::string(what[1].first, what[1].second);
-
-        strncpy(pduInfoShm->segment()->statusLines, statusLines.c_str(), sizeof(pduInfoShm->segment()->statusLines));
-
-        pduInfoShm->segment()->lastUpdateTimeMs = currentTimeMs();
-        pduInfoShm->flush(PDUInfo::dataSegmentStart(), PDUInfo::dataSegmentSize());
-
-        if (serialDebug)
-          printf("Match: \"\"\"%s\"\"\"\n", pduInfoShm->segment()->statusLines);
-
-        // update search position:
-        start = what[0].second;
-        // update flags:
-        flags |= boost::match_prev_avail;
-        flags |= boost::match_not_bob;
-      } catch (const std::exception& ex) {
-        fprintf(stderr, "Parse error: %s\nInput was: \"\"\"%s\"\"\"\n\n", ex.what(), start);
-      }
-    }
-
-    if (serialDebug)
-      printf("%s", buf); // Dump raw serial transactions for debugging
-  }
-}
-
 nvmlReturn_t checkNvmlReturn(nvmlReturn_t res, const char* op, const char* file, int line) {
   if (res != NVML_SUCCESS) {
     const char* errorDesc = nvmlErrorString(res);
@@ -141,17 +87,21 @@ nvmlReturn_t checkNvmlReturn(nvmlReturn_t res, const char* op, const char* file,
   return res;
 }
 
+void debugPDUCommand(const char* cmd) {
+  auto responseLines = pduControl.execCommand(cmd);
+
+  printf("Exec command \"%s\" -- Response lines (%zu):\n", cmd, responseLines.size());
+  for (const auto& line : responseLines) {
+    printf("  \"%s\"\n", line.c_str());
+  }
+}
+
 int main(int argc, char* argv[]) {
-  std::string serialPort = "/dev/serial/by-id/usb-STMicroelectronics_STM32_Virtual_ComPort_207732823630-if00";
   bool useNVML = true;
 
   for (int i = 1; i < argc; ++i) {
     if ((!strcmp(argv[i], "--quiet")) || (!strcmp(argv[i], "-q"))) {
       quiet = true;
-    } else if (!strcmp(argv[i], "--serialDebug")) {
-      serialDebug = true;
-    } else if (!strcmp(argv[i], "--port")) {
-      serialPort = argv[++i];
     } else if (!strcmp(argv[i], "--minDutyCycle")) {
       minDutyCycle = glm::clamp<float>(atof(argv[++i]), 0.0f, 1.0f);
     } else if (!strcmp(argv[i], "--maxDutyCycle")) {
@@ -168,32 +118,9 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  pduInfoShm = SHMSegment<PDUInfo>::createSegment("pdu-info", sizeof(PDUInfo));
-  if (!pduInfoShm) {
-    fprintf(stderr, "can't create/open pdu-info shm segment\n");
+  if (!pduControl.tryOpenSerial()) {
+    fprintf(stderr, "error opening port\n");
     return -1;
-  }
-
-  serialFd = open(serialPort.c_str(), O_RDWR);
-  if (serialFd < 0) {
-    fprintf(stderr, "error opening %s: %s\n", serialPort.c_str(), strerror(errno));
-    return -1;
-  }
-
-  // Set baudrate to 115,200
-  {
-    struct termios options;
-    if (tcgetattr(serialFd, &options) != 0) {
-      perror("tcgetattr");
-      return -1;
-    }
-    cfmakeraw(&options);
-    cfsetispeed(&options, B115200);
-    cfsetospeed(&options, B115200);
-    if (tcsetattr(serialFd, TCSANOW, &options) != 0) {
-      perror("tcsetattr");
-      return -1;
-    }
   }
 
   nvmlDevice_t hDevice = 0;
@@ -238,10 +165,16 @@ int main(int argc, char* argv[]) {
     */
   } // useNVML
 
-  while (true) {
-    bool controlSegmentDirty = false;
+  debugPDUCommand("dmesg");
 
-    drainSerialInput();
+  while (true) {
+    std::vector<std::string> lines;
+
+    // Test command that should return multiple lines
+    debugPDUCommand("pwr");
+
+    // Test command with no return
+    debugPDUCommand("echo 0 > /dev/led");
 
     float cpuCoreTemp = readThermalZoneSensor();
 
@@ -261,6 +194,8 @@ int main(int argc, char* argv[]) {
     }
 
 #if 0
+    bool controlSegmentDirty = false;
+
     pwmSetDutyCycle(kFanCPU, cpuDutyCycle);
 
     if (useNVML)
@@ -271,14 +206,11 @@ int main(int argc, char* argv[]) {
       pduInfoShm->segment()->clearRequested = 0;
       controlSegmentDirty = true;
     }
-#endif
 
     if (controlSegmentDirty) {
       pduInfoShm->flush(PDUInfo::controlSegmentStart(), PDUInfo::controlSegmentSize());
     }
-
-    // request info which will be read next cycle
-    write(serialFd, "pwr\n", 4);
+#endif
 
     sleep(2);
   }
