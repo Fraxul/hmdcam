@@ -13,7 +13,11 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
-#include <opencv2/aruco/charuco.hpp>
+#include <opencv2/aruco.hpp>
+#include <opencv2/aruco/aruco_calib.hpp>
+#include <opencv2/objdetect/aruco_board.hpp>
+#include <opencv2/objdetect/charuco_detector.hpp>
+#include <opencv2/objdetect/aruco_dictionary.hpp>
 
 #include <glm/gtx/euler_angles.hpp>
 #include <glm/gtx/transform.hpp>
@@ -24,16 +28,48 @@
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 14, CV_64F);
 
 // ChAruCo target pattern config
-const cv::aruco::PREDEFINED_DICTIONARY_NAME s_charucoDictionaryName = cv::aruco::DICT_5X5_100;
+const cv::aruco::PredefinedDictionaryType s_charucoDictionaryName = cv::aruco::DICT_5X5_100;
 const unsigned int s_charucoBoardSquareCountX = 12;
 const unsigned int s_charucoBoardSquareCountY = 9;
 const float s_charucoBoardSquareSideLengthMeters = 0.060f;
 // markers are 7x7 pixels, squares are 9x9 pixels (add 1px border), so the marker size is 7/9 of the square size
 const float s_charucoBoardMarkerSideLengthMeters = s_charucoBoardSquareSideLengthMeters * (7.0f / 9.0f);
 
-cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary;
-cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
-cv::Ptr<cv::aruco::DetectorParameters> s_arucoDetectorParams;
+cv::aruco::Dictionary charucoDictionary() { return cv::aruco::getPredefinedDictionary(s_charucoDictionaryName); }
+cv::aruco::CharucoBoard* s_charucoBoard;
+cv::aruco::DetectorParameters s_detectorParams;
+
+cv::aruco::CharucoDetector createCharucoDetector(cv::Mat cameraMatrix = cv::Mat(), cv::Mat distCoeffs = cv::Mat()) {
+  cv::aruco::CharucoParameters chParams;
+  chParams.cameraMatrix = cameraMatrix;
+  chParams.distCoeffs = distCoeffs;
+  chParams.tryRefineMarkers = true;
+  return cv::aruco::CharucoDetector(*s_charucoBoard, chParams, s_detectorParams);
+}
+
+// Copied from cv::aruco::drawDetectedCornersCharuco and modified to allow
+// drawing to 4-component images
+static void internal_drawDetectedCornersCharuco(cv::InputOutputArray _image, cv::InputArray _charucoCorners,
+                                cv::InputArray _charucoIds = cv::noArray(), cv::Scalar cornerColor = cv::Scalar(255, 0, 0, 255)) {
+    CV_Assert(!_image.getMat().empty() &&
+              (_image.getMat().channels() != 2 && _image.getMat().channels() <= 4));
+    CV_Assert((_charucoCorners.getMat().total() == _charucoIds.getMat().total()) ||
+              _charucoIds.getMat().total() == 0);
+
+    size_t nCorners = _charucoCorners.getMat().total();
+    for(size_t i = 0; i < nCorners; i++) {
+        cv::Point2f corner = _charucoCorners.getMat().at<cv::Point2f>((int)i);
+        // draw first corner mark
+        rectangle(_image, corner - cv::Point2f(3, 3), corner + cv::Point2f(3, 3), cornerColor, 1, cv::LINE_AA);
+        // draw ID
+        if(!_charucoIds.empty()) {
+            int id = _charucoIds.getMat().at<int>((int)i);
+            char buf[32];
+            snprintf(buf, 32, "id=%d", id);
+            putText(_image, buf, corner + cv::Point2f(5, -5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cornerColor, 2);
+        }
+    }
+}
 
 
 // TODO move this
@@ -44,17 +80,11 @@ FxAtomicString ksImageTex("imageTex");
 CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibration.yml"), m_cameraProvider(cam), m_calibrationDataRevision(0) {
 
   // Initialize ChAruCo data on first use
-  if (!s_charucoDictionary)
-    s_charucoDictionary = cv::aruco::getPredefinedDictionary(s_charucoDictionaryName);
-
   if (!s_charucoBoard)
-    s_charucoBoard = cv::aruco::CharucoBoard::create(s_charucoBoardSquareCountX, s_charucoBoardSquareCountY, s_charucoBoardSquareSideLengthMeters, s_charucoBoardMarkerSideLengthMeters, s_charucoDictionary);
+    s_charucoBoard = new cv::aruco::CharucoBoard(cv::Size(s_charucoBoardSquareCountX, s_charucoBoardSquareCountY), s_charucoBoardSquareSideLengthMeters, s_charucoBoardMarkerSideLengthMeters, charucoDictionary());
 
-  if (!s_arucoDetectorParams) {
-    s_arucoDetectorParams = cv::aruco::DetectorParameters::create();
-    // Set some default detection parameters
-    s_arucoDetectorParams->cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX; // Enable subpixel refinement for higher precision
-  }
+  // Set some default detection parameters
+  s_detectorParams.cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX; // Enable subpixel refinement for higher precision
 
   m_cameras.resize(cameraProvider()->streamCount());
 
@@ -568,6 +598,40 @@ static void saveReferenceBoardData(cv::FileStorage& fs) {
     fs << "squareSideLengthMeters" << s_charucoBoardSquareSideLengthMeters;
     fs << "markerSideLengthMeters" << s_charucoBoardMarkerSideLengthMeters;
     fs << "dictionaryID" << ((int) s_charucoDictionaryName);
+#if 0
+    fs << "markers" << "["; {
+      const auto& objPoints = s_charucoBoard->getObjPoints();
+      for (size_t markerIdx = 0; markerIdx < objPoints.size(); ++markerIdx) {
+        fs << "[:";
+        for (size_t i = 0; i < objPoints[markerIdx].size(); ++i) {
+          // Strip Z-axis, it's always zero.
+          const auto& pt = objPoints[markerIdx][i];
+          fs << cv::Point2f(pt.x, pt.y);
+        }
+        fs << "]";
+      }
+    } fs << "]"; // markers
+
+    fs << "corners" << "["; {
+      for (size_t cornerIdx = 0; cornerIdx < chessboardCorners.size(); ++cornerIdx) {
+        fs << "{:"; { // corner struct
+          fs << "P" << chessboardCorners[cornerIdx];
+          fs << "nearestMarkers" << "[:"; { // nearestMarkers list
+
+            for (size_t markerIdx = 0; markerIdx < nearestMarkerIdx[cornerIdx].size(); ++markerIdx) {
+              fs << "{:" // nearestMarker struct
+                << "id" << nearestMarkerIdx[cornerIdx][markerIdx]
+                << "cornerId" << nearestMarkerCorners[cornerIdx][markerIdx]
+              << "}";
+            }
+
+          } fs << "]"; // nearestMarkers list
+        } fs << "}"; // corner struct
+      }
+    } fs << "]"; // corners
+
+    //fs << "rightBottomBorder" << s_charucoBoard->getRightBottomBorder();
+#endif
   } fs << "}"; // referenceBoard
 }
 
@@ -752,27 +816,17 @@ bool CameraSystem::IntrinsicCalibrationContext::cookCalibrationDataForPreview() 
 void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
   cv::Mat viewFullRes = cameraSystem()->captureGreyscale(m_cameraIdx, m_fullGreyTex, m_fullGreyRT);
 
-  std::vector<std::vector<cv::Point2f> > corners, rejected;
-  std::vector<int> ids;
   cv::Mat currentCharucoCorners, currentCharucoIds;
 
   // Run ArUco marker detection
-  cv::aruco::detectMarkers(viewFullRes, s_charucoDictionary, corners, ids, s_arucoDetectorParams, rejected);
-  cv::aruco::refineDetectedMarkers(viewFullRes, s_charucoBoard, corners, ids, rejected);
-
-  // Find corners using detected markers
-  if (!ids.empty()) {
-    cv::aruco::interpolateCornersCharuco(corners, ids, viewFullRes, s_charucoBoard, currentCharucoCorners, currentCharucoIds);
-  }
+  auto detector = createCharucoDetector();
+  detector.detectBoard(viewFullRes, currentCharucoCorners, currentCharucoIds);
 
   // Draw feedback points
   memset(m_feedbackView.ptr(0), 0, m_feedbackView.total() * 4);
 
-  if (!ids.empty()) {
-    cv::aruco::drawDetectedMarkers(m_feedbackView, corners);
-  }
   if (currentCharucoCorners.total() > 3) {
-    cv::aruco::drawDetectedCornersCharuco(m_feedbackView, currentCharucoCorners, currentCharucoIds);
+    internal_drawDetectedCornersCharuco(m_feedbackView, currentCharucoCorners, currentCharucoIds);
   }
 
   rhi()->loadTextureData(m_feedbackTex, kVertexElementTypeUByte4N, m_feedbackView.ptr(0));
@@ -781,7 +835,8 @@ void CameraSystem::IntrinsicCalibrationContext::processFrameCaptureMode() {
     return; // don't allow capture while we're still updating
 
   // Require at least a third of the markers to be in frame to take an intrinsic calibration sample
-  bool found = (currentCharucoCorners.total() >= (s_charucoBoard->chessboardCorners.size() / 3));
+  size_t totalCorners = s_charucoBoard->getChessboardSize().width * s_charucoBoard->getChessboardSize().height;
+  bool found = (currentCharucoCorners.total() >= (totalCorners / 3));
   if (found && captureRequested()) {
     acknowledgeCaptureRequest();
 
@@ -855,21 +910,13 @@ void CameraSystem::IntrinsicCalibrationContext::processFramePreviewMode() {
 
   cv::Mat viewFullRes = cameraSystem()->captureGreyscale(m_cameraIdx, m_fullGreyTex, m_fullGreyRT, c.intrinsicDistortionMap);
 
-  std::vector<std::vector<cv::Point2f> > corners, rejected;
-  std::vector<int> ids;
-
   std::vector<cv::Point2f> currentCharucoCorners;
   std::vector<int> currentCharucoIds;
 
   // Run ArUco marker detection
   // Note that we don't feed the camera distortion parameters to the aruco functions here, since the images we're operating on have already been undistorted.
-  cv::aruco::detectMarkers(viewFullRes, s_charucoDictionary, corners, ids, s_arucoDetectorParams, rejected);
-  cv::aruco::refineDetectedMarkers(viewFullRes, s_charucoBoard, corners, ids, rejected, c.optimizedMatrix, zeroDistortion);
-
-  // Find corners using detected markers
-  if (!ids.empty()) {
-    cv::aruco::interpolateCornersCharuco(corners, ids, viewFullRes, s_charucoBoard, currentCharucoCorners, currentCharucoIds, c.optimizedMatrix, zeroDistortion);
-  }
+  auto detector = createCharucoDetector(c.optimizedMatrix, zeroDistortion);
+  detector.detectBoard(viewFullRes, currentCharucoCorners, currentCharucoIds);
 
   // Draw feedback view
   memset(m_feedbackView.ptr(0), 0, m_feedbackView.total() * 4);
@@ -879,7 +926,7 @@ void CameraSystem::IntrinsicCalibrationContext::processFramePreviewMode() {
     // Enough markers are present to estimate the board pose
 
     std::vector<cv::Point2f> projPoints;
-    cv::projectPoints(s_charucoBoard->chessboardCorners, rvec, tvec, c.optimizedMatrix, cv::noArray(), projPoints);
+    cv::projectPoints(s_charucoBoard->getChessboardCorners(), rvec, tvec, c.optimizedMatrix, cv::noArray(), projPoints);
 
     for (size_t pointIdx = 0; pointIdx < currentCharucoIds.size(); ++pointIdx) {
       cv::Point2f corner = currentCharucoCorners[pointIdx];
@@ -1328,11 +1375,12 @@ std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, 
 }
 
 std::vector<glm::vec3> transformBoardPointsForView(const glm::mat4& transform) {
+  const auto& chessboardCorners = s_charucoBoard->getChessboardCorners();
   std::vector<glm::vec3> res;
-  res.resize(s_charucoBoard->chessboardCorners.size());
+  res.resize(chessboardCorners.size());
 
   for (size_t pointIdx = 0; pointIdx < res.size(); ++pointIdx) {
-    res[pointIdx] = glm::vec3(transform * glm::vec4(glmVec3FromCV(s_charucoBoard->chessboardCorners[pointIdx]), 1.0f));
+    res[pointIdx] = glm::vec3(transform * glm::vec4(glmVec3FromCV(chessboardCorners[pointIdx]), 1.0f));
   }
   return res;
 }
@@ -1424,8 +1472,9 @@ std::vector<glm::vec3> recoverViewSpaceBoardPoints(CameraSystem* cameraSystem, s
   std::vector<int> ids = flattenVector(calibState->m_objectIds);
 
   std::vector<glm::vec3> objectP;
+  const auto& chessboardCorners = s_charucoBoard->getChessboardCorners();
   for (int id : ids) {
-    objectP.push_back(glmVec3FromCV(s_charucoBoard->chessboardCorners[id]));
+    objectP.push_back(glmVec3FromCV(chessboardCorners[id]));
   }
 
   glm::mat4 linearRemapXf;
@@ -1435,7 +1484,7 @@ std::vector<glm::vec3> recoverViewSpaceBoardPoints(CameraSystem* cameraSystem, s
   }
 
   // use computed transform to map all board points into view space
-  for (const cv::Point3f& p : s_charucoBoard->chessboardCorners) {
+  for (const cv::Point3f& p : chessboardCorners) {
     res.push_back(glm::vec3(linearRemapXf * glm::vec4(glmVec3FromCV(p), 1.0f)));
   }
 

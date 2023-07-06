@@ -3,14 +3,63 @@
 #include "common/FxThreading.h"
 #include "common/glmCvInterop.h"
 #include <opencv2/imgproc.hpp>
-#include <opencv2/aruco/charuco.hpp>
+#include <opencv2/objdetect/aruco_board.hpp>
+#include <opencv2/objdetect/charuco_detector.hpp>
+#include <opencv2/objdetect/aruco_dictionary.hpp>
 #include <opencv2/calib3d.hpp>
 #include <set>
 
-extern cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary; // in CameraSystem
-extern cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard; // in CameraSystem
-extern cv::Ptr<cv::aruco::DetectorParameters> s_arucoDetectorParams; // in CameraSystem
+extern cv::aruco::CharucoBoard* s_charucoBoard; // in CameraSystem
+extern cv::aruco::CharucoDetector createCharucoDetector(cv::Mat cameraMatrix = cv::Mat(), cv::Mat distCoeffs = cv::Mat()); // in CameraSystem
+
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_32FC1);
+
+// Copied from cv::aruco::drawDetectedMarkers and modified to allow
+// drawing to 4-component images
+void internal_drawDetectedMarkers(cv::InputOutputArray _image, cv::InputArrayOfArrays _corners,
+                         cv::InputArray _ids = cv::noArray(), cv::Scalar borderColor = cv::Scalar(255, 0, 0, 255)) {
+    CV_Assert(_image.getMat().total() != 0 &&
+              (_image.getMat().channels() != 2 || _image.getMat().channels() <= 4));
+    CV_Assert((_corners.total() == _ids.total()) || _ids.total() == 0);
+
+    // calculate colors
+    cv::Scalar textColor, cornerColor;
+    textColor = cornerColor = borderColor;
+    std::swap(textColor.val[0], textColor.val[1]);     // text color just sawp G and R
+    std::swap(cornerColor.val[1], cornerColor.val[2]); // corner color just sawp G and B
+
+    int nMarkers = (int)_corners.total();
+    for(int i = 0; i < nMarkers; i++) {
+        cv::Mat currentMarker = _corners.getMat(i);
+        CV_Assert(currentMarker.total() == 4 && currentMarker.channels() == 2);
+        if (currentMarker.type() != CV_32SC2)
+            currentMarker.convertTo(currentMarker, CV_32SC2);
+
+        // draw marker sides
+        for(int j = 0; j < 4; j++) {
+            cv::Point p0, p1;
+            p0 = currentMarker.ptr<cv::Point>(0)[j];
+            p1 = currentMarker.ptr<cv::Point>(0)[(j + 1) % 4];
+            line(_image, p0, p1, borderColor, 1);
+        }
+        // draw first corner mark
+        rectangle(_image, currentMarker.ptr<cv::Point>(0)[0] - cv::Point(3, 3),
+                  currentMarker.ptr<cv::Point>(0)[0] + cv::Point(3, 3), cornerColor, 1, cv::LINE_AA);
+
+        // draw ID
+        if(_ids.total() != 0) {
+            cv::Point cent(0, 0);
+            for(int p = 0; p < 4; p++)
+                cent += currentMarker.ptr<cv::Point>(0)[p];
+            cent = cent / 4.;
+            int id = _ids.getMat().ptr<int>(0)[i];
+            char buf[32];
+            snprintf(buf, 32, "id=%d", id);
+            putText(_image, buf, cent, cv::FONT_HERSHEY_SIMPLEX, 0.5, textColor, 2);
+        }
+    }
+}
+
 
 CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, const std::vector<size_t>& cameraIds_, const std::vector<size_t>& cameraStereoViewIds_) : m_undistortCapturedViews(true), m_enableFeedbackView(true), m_cameraSystem(cs_), m_cameraIds(cameraIds_) {
 
@@ -66,10 +115,6 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
     m_fullGreyMat[cameraIdx] = cameraSystem()->captureGreyscale(m_cameraIds[cameraIdx], m_fullGreyTex[cameraIdx], m_fullGreyRT[cameraIdx], distortionMap);
   }
 
-  std::vector<std::vector<std::vector<cv::Point2f> > > corners(cameraCount());
-  std::vector<std::vector<std::vector<cv::Point2f> > > rejected(cameraCount());
-  std::vector<std::vector<int> > ids(cameraCount());
-
   std::vector<std::vector<cv::Point2f> > currentCharucoCornerPoints(cameraCount());
   std::vector<std::vector<int> > currentCharucoCornerIds(cameraCount());
 
@@ -79,13 +124,8 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
     cv::Mat cm = calibSpaceProjection(cameraIdx);
     cv::Mat dist = calibSpaceDistCoeffs(cameraIdx);
 
-    cv::aruco::detectMarkers(m_fullGreyMat[cameraIdx], s_charucoDictionary, corners[cameraIdx], ids[cameraIdx], s_arucoDetectorParams, rejected[cameraIdx]);
-    cv::aruco::refineDetectedMarkers(m_fullGreyMat[cameraIdx], s_charucoBoard, corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx], cm, dist);
-
-    // Find chessboard corners using detected markers
-    if (!ids[cameraIdx].empty()) {
-      cv::aruco::interpolateCornersCharuco(corners[cameraIdx], ids[cameraIdx], m_fullGreyMat[cameraIdx], s_charucoBoard, currentCharucoCornerPoints[cameraIdx], currentCharucoCornerIds[cameraIdx], cm, dist);
-    }
+    auto arucoDetector = createCharucoDetector(cm, dist);
+    arucoDetector.detectBoard(m_fullGreyMat[cameraIdx], currentCharucoCornerPoints[cameraIdx], currentCharucoCornerIds[cameraIdx]);
   });
 
   // Find set of chessboard corners present in all views
@@ -122,6 +162,8 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   std::vector<int> thisFrameBoardRefIds;
   std::vector<std::vector<cv::Point2f> > thisFrameImageCorners(cameraCount());
 
+  std::vector<cv::Point3f> chessboardCorners = s_charucoBoard->getChessboardCorners();
+
   for (std::set<int>::const_iterator corner_it = commonCornerIds.begin(); corner_it != commonCornerIds.end(); ++corner_it) {
     int cornerId = *corner_it;
 
@@ -135,7 +177,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
     }
 
     // save the corner point in board space from the board definition
-    thisFrameBoardRefCorners.push_back(s_charucoBoard->chessboardCorners[cornerId]);
+    thisFrameBoardRefCorners.push_back(chessboardCorners[cornerId]);
     thisFrameBoardRefIds.push_back(cornerId);
   }
 
@@ -149,8 +191,8 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
     FxThreading::runArrayTask(0, cameraCount(), [&](size_t cameraIdx) {
       memset(m_feedbackView[cameraIdx].ptr(0), 0, m_feedbackView[cameraIdx].total() * 4);
 
-      if (!corners[cameraIdx].empty()) {
-        cv::aruco::drawDetectedMarkers(m_feedbackView[cameraIdx], corners[cameraIdx]);
+      if (!currentCharucoCornerIds[cameraIdx].empty()) {
+        internal_drawDetectedMarkers(m_feedbackView[cameraIdx], currentCharucoCornerIds[cameraIdx]);
       }
 
       // Borrowed from cv::aruco::drawDetectedCornersCharuco -- modified to switch the color per-marker to indicate stereo visibility

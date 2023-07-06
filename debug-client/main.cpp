@@ -725,7 +725,7 @@ int main(int argc, char** argv) {
 
             std::vector<glm::vec3> boardObjectSpacePoints;
             // build object-space point vector of charuco corners
-            for (const cv::Point3f& p : s_charucoBoard->chessboardCorners) {
+            for (const cv::Point3f& p : s_charucoBoard->getChessboardCorners()) {
               boardObjectSpacePoints.push_back(glmVec3FromCV(p));
             }
 

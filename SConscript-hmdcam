@@ -38,7 +38,7 @@ tegraEnv.Append(
     'hidapi-libusb', 'usb-1.0', 'udev',
     'cuda', 'cudart',
     'nppc', 'nppidei', 'nppitc', 'nppif',
-    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco',
+    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
     'nvToolsExt',
     'socketcan',
   ]
