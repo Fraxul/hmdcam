@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ ! -d build/depthai-core ]; then
+if [ ! -f build/depthai-core/build.ninja ]; then
   mkdir -p build/depthai-core
   # Sample for building with local XLink: -DDEPTHAI_XLINK_LOCAL=/home/hmdcam/XLink
   XLINK_REPO=`pwd`/XLink
