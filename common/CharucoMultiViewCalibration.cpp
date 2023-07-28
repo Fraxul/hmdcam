@@ -9,7 +9,7 @@
 
 extern cv::Ptr<cv::aruco::Dictionary> s_charucoDictionary; // in CameraSystem
 extern cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard; // in CameraSystem
-extern cv::Ptr<cv::aruco::ArucoDetector> s_arucoDetector; // in CameraSystem
+extern cv::Ptr<cv::aruco::DetectorParameters> s_arucoDetectorParams; // in CameraSystem
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_32FC1);
 
 CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, const std::vector<size_t>& cameraIds_, const std::vector<size_t>& cameraStereoViewIds_) : m_undistortCapturedViews(true), m_enableFeedbackView(true), m_cameraSystem(cs_), m_cameraIds(cameraIds_) {
@@ -79,8 +79,8 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
     cv::Mat cm = calibSpaceProjection(cameraIdx);
     cv::Mat dist = calibSpaceDistCoeffs(cameraIdx);
 
-    s_arucoDetector->detectMarkers(m_fullGreyMat[cameraIdx], corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx]); //, cm, dist);
-    s_arucoDetector->refineDetectedMarkers(m_fullGreyMat[cameraIdx], s_charucoBoard, corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx], cm, dist);
+    cv::aruco::detectMarkers(m_fullGreyMat[cameraIdx], s_charucoDictionary, corners[cameraIdx], ids[cameraIdx], s_arucoDetectorParams, rejected[cameraIdx]);
+    cv::aruco::refineDetectedMarkers(m_fullGreyMat[cameraIdx], s_charucoBoard, corners[cameraIdx], ids[cameraIdx], rejected[cameraIdx], cm, dist);
 
     // Find chessboard corners using detected markers
     if (!ids[cameraIdx].empty()) {
