@@ -670,6 +670,53 @@ void ArgusCamera::setAcRegion(const glm::vec2& center, const glm::vec2& size) {
   m_shouldResubmitCaptureRequest = true;
 }
 
+#define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
+void ArgusCamera::loadSettings(cv::FileStorage& fs) {
+  cv::read(fs["exposureCompensation"], m_exposureCompensation, m_exposureCompensation);
+  cv::read(fs["acRegionCenterX"], m_acRegionCenter.x, m_acRegionCenter.x);
+  cv::read(fs["acRegionCenterY"], m_acRegionCenter.y, m_acRegionCenter.y);
+  cv::read(fs["acRegionSizeX"], m_acRegionSize.x, m_acRegionSize.x);
+  cv::read(fs["acRegionSizeY"], m_acRegionSize.y, m_acRegionSize.y);
+
+  // cv doesn't support int64_t, so we cast to double
+  double d;
+  cv::read(fs["captureDurationOffset"], d, static_cast<double>(captureDurationOffset()));
+  setCaptureDurationOffset(d);
+
+}
+#undef readNode
+
+#define writeNode(fileStorage, settingName) fileStorage.write(#settingName, settingName)
+void ArgusCamera::saveSettings(cv::FileStorage& fs) {
+    fs.write("exposureCompensation", m_exposureCompensation);
+
+    fs.write("acRegionCenterX", m_acRegionCenter.x);
+    fs.write("acRegionCenterY", m_acRegionCenter.y);
+    fs.write("acRegionSizeX", m_acRegionSize.x);
+    fs.write("acRegionSizeY", m_acRegionSize.y);
+
+    // cv doesn't support int64_t, so we cast to double
+    fs.write("captureDurationOffset",  static_cast<double>(captureDurationOffset()));
+}
+#undef writeNode
+
+bool ArgusCamera::renderSettingsIMGUI() {
+  bool settingsDirty = false;
+
+  { // AC Region
+    glm::vec2 acCenter = m_acRegionCenter;
+    glm::vec2 acSize = m_acRegionSize;
+    bool dirty = ImGui::SliderFloat2("AC Region Center", &acCenter[0], 0.0f, 1.0f);
+    dirty |=     ImGui::SliderFloat2("AC Region Size",   &acSize[0],   0.0f, 1.0f);
+    if (dirty) {
+      setAcRegion(acCenter, acSize);
+      settingsDirty = true;
+    }
+  }
+
+  return settingsDirty;
+}
+
 bool ArgusCamera::renderPerformanceTuningIMGUI() {
   bool settingsDirty = false;
 

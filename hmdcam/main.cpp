@@ -93,22 +93,8 @@ bool loadSettings() {
     readNode(fs, uiScale);
     readNode(fs, uiDepth);
 
-    float ev = argusCamera->exposureCompensation();
-    cv::read(fs["exposureCompensation"], ev, ev);
-    argusCamera->setExposureCompensation(ev);
+    argusCamera->loadSettings(fs);
 
-    glm::vec2 acRegionCenter = argusCamera->acRegionCenter();
-    glm::vec2 acRegionSize = argusCamera->acRegionSize();
-    cv::read(fs["acRegionCenterX"], acRegionCenter.x, acRegionCenter.x);
-    cv::read(fs["acRegionCenterY"], acRegionCenter.y, acRegionCenter.y);
-    cv::read(fs["acRegionSizeX"], acRegionSize.x, acRegionSize.x);
-    cv::read(fs["acRegionSizeY"], acRegionSize.y, acRegionSize.y);
-    argusCamera->setAcRegion(acRegionCenter, acRegionSize);
-
-    // cv doesn't support int64_t, so we cast to double
-    double captureDurationOffset = static_cast<double>(argusCamera->captureDurationOffset());
-    readNode(fs, captureDurationOffset);
-    argusCamera->setCaptureDurationOffset(captureDurationOffset);
   } catch (const std::exception& ex) {
     printf("Unable to load hmdcam settings: %s\n", ex.what());
     return false;
@@ -131,18 +117,8 @@ void saveSettings() {
     writeNode(fs, uiScale);
     writeNode(fs, uiDepth);
 
-    fs.write("exposureCompensation", argusCamera->exposureCompensation());
+    argusCamera->saveSettings(fs);
 
-    glm::vec2 acRegionCenter = argusCamera->acRegionCenter();
-    glm::vec2 acRegionSize = argusCamera->acRegionSize();
-    fs.write("acRegionCenterX", acRegionCenter.x);
-    fs.write("acRegionCenterY", acRegionCenter.y);
-    fs.write("acRegionSizeX", acRegionSize.x);
-    fs.write("acRegionSizeY", acRegionSize.y);
-
-    // cv doesn't support int64_t, so we cast to double
-    double captureDurationOffset = static_cast<double>(argusCamera->captureDurationOffset());
-    writeNode(fs, captureDurationOffset);
   } catch (const std::exception& ex) {
     printf("Unable to save hmdcam settings: %s\n", ex.what());
   }
@@ -579,9 +555,6 @@ int main(int argc, char* argv[]) {
 #endif
 
   {
-    // Load initial autocontrol region of interest
-    argusCamera->setAcRegion(/*center=*/ glm::vec2(0.5f, 0.5f), /*size=*/ glm::vec2(0.5f, 0.5f));
-
     // Load settings
     loadSettings();
 
@@ -742,22 +715,14 @@ int main(int argc, char* argv[]) {
           }
 
           if (ImGui::CollapsingHeader("Render/UI Settings")) {
+            settingsDirty |= argusCamera->renderSettingsIMGUI();
+
             // settingsDirty |= ImGui::Checkbox("Mask", &useMask); // Disabled for now
             settingsDirty |= ImGui::SliderFloat("Pano Tx Scale", &panoTxScale, 0.0f, 10.0f);
             settingsDirty |= ImGui::SliderFloat("Pano Clip Offset", &panoClipOffset, -0.5f, 0.5f);
             settingsDirty |= ImGui::SliderFloat("Pano Clip Scale", &panoClipScale, 0.0f, 1.0f);
             settingsDirty |= ImGui::SliderFloat("Zoom", &zoomFactor, 0.5f, 2.0f);
             settingsDirty |= ImGui::SliderFloat("Stereo Offset", &stereoOffset, -0.5f, 0.5f);
-            {
-              glm::vec2 acCenter = argusCamera->acRegionCenter();
-              glm::vec2 acSize = argusCamera->acRegionSize();
-              bool dirty = ImGui::SliderFloat2("AC Region Center", &acCenter[0], 0.0f, 1.0f);
-              dirty |=     ImGui::SliderFloat2("AC Region Size",   &acSize[0],   0.0f, 1.0f);
-              if (dirty) {
-                argusCamera->setAcRegion(acCenter, acSize);
-                settingsDirty = true;
-              }
-            }
             settingsDirty |= ImGui::SliderFloat("UI Scale", &uiScale, 0.05f, 1.5f);
             settingsDirty |= ImGui::SliderFloat("UI Depth", &uiDepth, 0.2f, 2.5f);
             if (ImGui::Button("Save Settings")) {
