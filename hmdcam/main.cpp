@@ -142,15 +142,6 @@ struct FrameTimingData {
 
 ScrollingBuffer<FrameTimingData> s_timingDataBuffer(512);
 
-// Inter-sensor timing data
-struct SensorTimingData {
-  SensorTimingData() { memset(timestampDelta, 0, sizeof(float) * 16); }
-
-  float timestampDelta[16];
-};
-ScrollingBuffer<SensorTimingData> s_sensorTimingData(512);
-
-
 bool want_quit = false;
 static void signal_handler(int) {
   want_quit = true;
@@ -815,16 +806,6 @@ int main(int argc, char* argv[]) {
             (unsigned int) (1000000.0f / static_cast<float>(meta.frameDurationNs/1000)), (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs/1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
         }
 
-        // Update inter-sensor timing data
-        {
-          int64_t sensor0Timestamp = static_cast<int64_t>(argusCamera->frameSensorTimestamp(0));
-          SensorTimingData td;
-          for (size_t sensorIdx = 1; sensorIdx < argusCamera->streamCount(); ++sensorIdx) {
-            td.timestampDelta[sensorIdx - 1] = static_cast<double>(static_cast<int64_t>(argusCamera->frameSensorTimestamp(sensorIdx)) - sensor0Timestamp) / 1000000.0;
-          }
-          s_sensorTimingData.push_back(td);
-        }
-
         // Skip perf data to save UI space if we're calibrating
         if (!calibrationContext && ImGui::CollapsingHeader("Performance")) {
           int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
@@ -849,30 +830,6 @@ int main(int argc, char* argv[]) {
               ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureIntervalAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::EndPlot();
-          }
-
-          if ((argusCamera->sessionCount() > 1) && ImPlot::BeginPlot("###InterSessionTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
-              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
-              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit);
-              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
-              ImPlot::SetupFinish();
-
-              for (size_t sessionIdx = 0; sessionIdx < argusCamera->sessionCount(); ++sessionIdx) {
-                size_t streamIdx = 0;
-                for (; streamIdx < argusCamera->streamCount(); ++streamIdx) {
-                  if (argusCamera->sessionIndexForStream(streamIdx) == sessionIdx)
-                    break;
-                }
-                if (streamIdx >= argusCamera->streamCount())
-                  continue; // ??? couldn't find a sensor for this stream
-                if (streamIdx == 0)
-                  continue; // the session that contains stream 0 is the timing reference, don't graph that
-
-                char idbuf[64];
-                sprintf(idbuf, "Session %zu (stream %zu vs. stream 0)", sessionIdx, streamIdx);
-                ImPlot::PlotLine(idbuf, &s_sensorTimingData.data()[0].timestampDelta[streamIdx-1], s_sensorTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_sensorTimingData.offset(), sizeof(SensorTimingData));
-              }
               ImPlot::EndPlot();
           }
 

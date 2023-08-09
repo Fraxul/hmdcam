@@ -5,6 +5,7 @@
 #include "rhi/egl/RHIEGLImageSurfaceGL.h"
 #include "rhi/RHIRenderTarget.h"
 #include "common/ICameraProvider.h"
+#include "common/ScrollingBuffer.h"
 #include <cuda.h>
 #include <cudaEGL.h>
 #include <opencv2/core.hpp>
@@ -203,6 +204,17 @@ private:
   uint32_t m_streamsPerSession = 2;
   virtual size_t sessionCount() const { return m_captureSessions.size(); }
   virtual size_t sessionIndexForStream(size_t streamIdx) const { return streamIdx / m_streamsPerSession; }
+
+  // Inter-session timing data
+  struct SessionTimingData {
+    SessionTimingData() { memset(timestampDelta, 0, sizeof(float) * 4); }
+
+    float timestampDelta[4]; // in milliseconds; relative to session 0. no data for session 0 (would always be 0): timestampDelta[0] is for session 1, etc.
+  };
+  ScrollingBuffer<SessionTimingData> m_sessionTimingData = ScrollingBuffer<SessionTimingData>(512);
+
+
+
 
   mutable RHISurface::ptr m_tmpBlitSurface;
   mutable RHIRenderTarget::ptr m_tmpBlitRT;

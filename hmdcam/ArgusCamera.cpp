@@ -3,6 +3,7 @@
 #include "common/EnvVar.h"
 #include "common/Timing.h"
 #include "imgui.h"
+#include "implot/implot.h"
 #include "rhi/gl/GLCommon.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -54,6 +55,11 @@ static const char* argusStatusStr(Argus::Status status) {
   }
 }
 
+
+int64_t u64_diff(uint64_t lhs, uint64_t rhs) {
+  uint64_t abs_diff = (lhs > rhs) ? (lhs - rhs) : (rhs - lhs);
+  return (lhs > rhs) ? (int64_t)abs_diff : -(int64_t)abs_diff;
+}
 
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framerate) :
   m_display(display_), m_context(context_),
@@ -510,6 +516,21 @@ bool ArgusCamera::readFrame() {
     m_frameMetadata[cameraIdx].sensorAnalogGain = iMetadata->getSensorAnalogGain();
   }
 
+  // Compute session timestamp deltas using the first stream from each session.
+  // (sensor timestamps inside of a session should be identical)
+  if (sessionCount() > 1) {
+    SessionTimingData td;
+
+    uint64_t session0TS = m_frameMetadata[ /*session 0, stream 0*/ 0].sensorTimestamp;
+    for (size_t sessionIdx = 1; sessionIdx < sessionCount(); ++sessionIdx) {
+      uint64_t ts = m_frameMetadata[sessionIdx * m_streamsPerSession].sensorTimestamp;
+      int64_t ts_diff = u64_diff(ts, session0TS);
+
+      td.timestampDelta[sessionIdx - 1] = static_cast<double>(ts_diff) / 1000000.0;
+    }
+    m_sessionTimingData.push_back(td);
+  }
+
   m_didAdjustCaptureIntervalThisFrame = false;
   if (captureOK && m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > m_adjustCaptureCooldownFrames) && m_previousSensorTimestampNs)) {
 
@@ -719,6 +740,24 @@ bool ArgusCamera::renderSettingsIMGUI() {
 
 bool ArgusCamera::renderPerformanceTuningIMGUI() {
   bool settingsDirty = false;
+
+  // Inter-session timing skew graph
+  const int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
+
+  if ((sessionCount() > 1) && ImPlot::BeginPlot("###InterSessionTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+    ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+    ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit);
+    ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_sessionTimingData.size(), ImPlotCond_Always);
+    ImPlot::SetupFinish();
+
+    for (size_t sessionIdx = 1; sessionIdx < sessionCount(); ++sessionIdx) {
+      char idbuf[64];
+      sprintf(idbuf, "Session %zu (vs. session 0)", sessionIdx);
+      ImPlot::PlotLine(idbuf, &m_sessionTimingData.data()[0].timestampDelta[sessionIdx-1], m_sessionTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_sessionTimingData.offset(), sizeof(SessionTimingData));
+    }
+    ImPlot::EndPlot();
+  }
+
 
   settingsDirty |= ImGui::Checkbox("Auto-adjust capture interval", &m_adjustCaptureInterval);
 
