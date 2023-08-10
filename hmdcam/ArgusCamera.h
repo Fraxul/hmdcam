@@ -197,12 +197,16 @@ private:
   std::vector<Argus::Buffer*> m_releaseBuffers;
 
   // Sessions and per-session objects
-  std::vector<Argus::CaptureSession*> m_captureSessions;
-  std::vector<Argus::Request*> m_sessionCaptureRequests;
-  std::vector<Argus::EventQueue*> m_sessionCompletionEventQueues; // for EVENT_TYPE_CAPTURE_COMPLETE
+  struct SessionData {
+    Argus::CaptureSession* m_captureSession = nullptr;
+    Argus::Request* m_captureRequest = nullptr;
+    Argus::EventQueue* m_completionEventQueue = nullptr; // for EVENT_TYPE_CAPTURE_COMPLETE
+  };
+  std::vector<SessionData> m_perSessionData;
+
 
   uint32_t m_streamsPerSession = 2;
-  virtual size_t sessionCount() const { return m_captureSessions.size(); }
+  virtual size_t sessionCount() const { return m_perSessionData.size(); }
   virtual size_t sessionIndexForStream(size_t streamIdx) const { return streamIdx / m_streamsPerSession; }
 
   // Inter-session timing data
