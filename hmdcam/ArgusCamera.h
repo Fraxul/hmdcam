@@ -201,6 +201,7 @@ private:
     Argus::CaptureSession* m_captureSession = nullptr;
     Argus::Request* m_captureRequest = nullptr;
     Argus::EventQueue* m_completionEventQueue = nullptr; // for EVENT_TYPE_CAPTURE_COMPLETE
+    int64_t m_durationSkew_ns = 0;
   };
   std::vector<SessionData> m_perSessionData;
 
@@ -218,7 +219,7 @@ private:
   ScrollingBuffer<SessionTimingData> m_sessionTimingData = ScrollingBuffer<SessionTimingData>(512);
 
 
-
+  bool m_adjustSessionSkew = true;
 
   mutable RHISurface::ptr m_tmpBlitSurface;
   mutable RHIRenderTarget::ptr m_tmpBlitRT;

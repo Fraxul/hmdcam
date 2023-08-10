@@ -534,6 +534,9 @@ bool ArgusCamera::readFrame() {
   }
 
   m_didAdjustCaptureIntervalThisFrame = false;
+  int64_t newCaptureDuration = m_currentCaptureDurationNs;
+  bool shouldUpdateCaptureDuration = false;
+
   if (captureOK && m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > m_adjustCaptureCooldownFrames) && m_previousSensorTimestampNs)) {
 
     if (boost::accumulators::rolling_count(m_captureIntervalStats) >= m_adjustCaptureEvalWindowFrames) {
@@ -551,13 +554,49 @@ bool ArgusCamera::readFrame() {
       // Perform an adjustment if we're off by at least 50 microseconds
       if (std::abs(targetOffset) > 50000) {
         // Clamp new duration to sensor mode limits
-        int64_t newDuration = std::min<int64_t>(std::max<int64_t>(m_currentCaptureDurationNs + (targetOffset / 64), m_captureDurationMinNs), m_captureDurationMaxNs);
+        newCaptureDuration = std::min<int64_t>(std::max<int64_t>(m_currentCaptureDurationNs + (targetOffset / 64), m_captureDurationMinNs), m_captureDurationMaxNs);
         // printf("Capture duration adjust %ld (%ld -> %ld)\n", targetOffset/64, m_currentCaptureDurationNs, newDuration);
-        setCaptureDurationNs(newDuration);
+        shouldUpdateCaptureDuration = true;
       }
     }
   }
 
+  // Automatic skew adjustment:
+  // Positive skew correction when TS offset is negative
+  if (captureOK && m_adjustSessionSkew) {
+    uint64_t session0TS = m_frameMetadata[ /*session 0, stream 0*/ 0].sensorTimestamp;
+    const int64_t ts_diff_limit_ns = 1000000;
+    const int64_t ts_large_diff_limit_ns = 5 * ts_diff_limit_ns;
+
+    const int64_t skew_correction_factor_ns = 10000;
+    const int64_t large_skew_correction_factor_ns = 3 * skew_correction_factor_ns;
+
+    for (size_t sessionIdx = 1; sessionIdx < sessionCount(); ++sessionIdx) {
+      uint64_t ts = m_frameMetadata[sessionIdx * m_streamsPerSession].sensorTimestamp;
+      int64_t ts_diff_ns = u64_diff(ts, session0TS);
+
+
+      int64_t updatedSkew = 0;
+
+      if (ts_diff_ns < (-ts_large_diff_limit_ns)) {
+        updatedSkew = large_skew_correction_factor_ns;
+      } else if (ts_diff_ns > ts_large_diff_limit_ns) {
+        updatedSkew = -large_skew_correction_factor_ns;
+      } else if (ts_diff_ns < (-ts_diff_limit_ns)) {
+        updatedSkew = skew_correction_factor_ns;
+      } else if (ts_diff_ns > ts_diff_limit_ns) {
+        updatedSkew = -skew_correction_factor_ns;
+      }
+
+      if (m_perSessionData[sessionIdx].m_durationSkew_ns != updatedSkew) {
+        m_perSessionData[sessionIdx].m_durationSkew_ns = updatedSkew;
+        shouldUpdateCaptureDuration = true;
+      }
+    }
+  }
+
+  if (shouldUpdateCaptureDuration)
+    setCaptureDurationNs(newCaptureDuration);
 
   if (!captureOK) {
     ++m_failedCaptures;
@@ -617,8 +656,10 @@ bool ArgusCamera::readFrame() {
 
 void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {
   for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
-    Argus::interface_cast<Argus::ISourceSettings>(m_perSessionData[sessionIdx].m_captureRequest)->setFrameDurationRange(captureDurationNs);
+    int64_t adjDuration = static_cast<int64_t>(captureDurationNs) + m_perSessionData[sessionIdx].m_durationSkew_ns;
+    Argus::interface_cast<Argus::ISourceSettings>(m_perSessionData[sessionIdx].m_captureRequest)->setFrameDurationRange(adjDuration);
   }
+
   m_currentCaptureDurationNs = captureDurationNs;
   m_samplesAtCurrentDuration = 0;
   m_didAdjustCaptureIntervalThisFrame = true;
@@ -760,6 +801,20 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
     ImPlot::EndPlot();
   }
 
+  if (sessionCount() > 1) {
+    ImGui::Checkbox("Auto-adjust skew", &m_adjustSessionSkew);
+    for (size_t sessionIdx = 1; sessionIdx < sessionCount(); ++sessionIdx) {
+      int offsetScaled = m_perSessionData[sessionIdx].m_durationSkew_ns / 10000;
+      char namebuf[64];
+      snprintf(namebuf, 64, "Ses. %zu skew *10us", sessionIdx);
+      if (ImGui::SliderInt(namebuf, &offsetScaled, -10, 10)) {
+        m_perSessionData[sessionIdx].m_durationSkew_ns = offsetScaled * 10000;
+
+        setCaptureDurationNs(m_currentCaptureDurationNs); // resubmit requests with updated capture duration skew
+      }
+    }
+  }
+
 
   settingsDirty |= ImGui::Checkbox("Auto-adjust capture interval", &m_adjustCaptureInterval);
 
@@ -770,9 +825,9 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
     }
   }
 
-  float offsetUs = static_cast<float>(captureDurationOffset()) / 1000.0f;
-  if (ImGui::SliderFloat("Offset (us)", &offsetUs, -1000.0f, 1000.0f, "%.1f", ImGuiSliderFlags_None)) {
-    setCaptureDurationOffset(static_cast<int64_t>(offsetUs * 1000.0f));
+  int offsetUs = captureDurationOffset() / 1000;
+  if (ImGui::SliderInt("Offset (us)", &offsetUs, -30, 30)) {
+    setCaptureDurationOffset(offsetUs * 1000);
     settingsDirty = true;
   }
 
