@@ -94,6 +94,9 @@ struct MeshDisparityDepthMapUniformBlock {
   glm::vec2 texCoordStep;
   float minDepthCutoff;
   float pointScale;
+
+  int32_t debugFixedDisparity;
+  float pad2, pad3, pad4;
 };
 
 RHIRenderPipeline::ptr disparityMipPipeline;
@@ -310,6 +313,11 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.minDepthCutoff = m_minDepthCutoff;
   ub.pointScale = m_pointScale;
 
+  if (m_debugUseFixedDisparity)
+    ub.debugFixedDisparity = m_debugFixedDisparityValue;
+  else
+    ub.debugFixedDisparity = -1;
+
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd->m_disparityTexture);
 
@@ -358,6 +366,11 @@ void DepthMapGenerator::renderIMGUI() {
 
   // TODO debug only
   ImGui::Checkbox("Use compute shader mip", &m_useComputeShaderMip);
+
+  ImGui::Checkbox("Debug: Fixed disparity", &m_debugUseFixedDisparity);
+  if (m_debugUseFixedDisparity)
+    ImGui::SliderInt("Fixed Disparity", &m_debugFixedDisparityValue, 0, 256);
+
   ImGui::PopID();
 }
 

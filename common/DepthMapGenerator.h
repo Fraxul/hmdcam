@@ -65,6 +65,9 @@ public:
   float debugDisparityScale() const { return m_debugDisparityScale; }
   void setDebugDisparityScale(float v) { m_debugDisparityScale = v; }
 
+  bool debugUseFixedDisparity() const { return m_debugUseFixedDisparity; }
+  void setDebugUseFixedDisparity(bool v) { m_debugUseFixedDisparity = v; }
+
 protected:
 
   DepthMapGeneratorBackend m_backend;
@@ -148,6 +151,9 @@ protected:
   bool m_useComputeShaderMip = true;
 
   bool m_populateDebugTextures = false;
+
+  bool m_debugUseFixedDisparity = false;
+  int m_debugFixedDisparityValue = 1;
 
   void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix);
 

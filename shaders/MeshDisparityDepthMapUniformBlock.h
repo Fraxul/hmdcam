@@ -18,6 +18,9 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   vec2 texCoordStep;
   float minDepthCutoff;
   float pointScale;
+
+  int debugFixedDisparity;
+  float pad2, pad3, pad4;
 };
 
 

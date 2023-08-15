@@ -27,16 +27,22 @@ vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
 void main()
 {
   uint disparityRaw = 0u;
-  ivec2 mipCoords = ivec2(textureCoordinates.zw);
-  // Walk the mip chain to find a valid disparity value at this location
-  for (int level = 0; level < disparityTexLevels; ++level) {
-    disparityRaw = texelFetch(disparityTex, mipCoords, level).r;
-    if (disparityRaw < maxValidDisparityRaw)
-      break;
-    mipCoords = mipCoords >> 1;
+  if (debugFixedDisparity >= 0) {
+    disparityRaw = uint(max(debugFixedDisparity, 1)); // prevent divide-by-zero
+
+  } else {
+    ivec2 mipCoords = ivec2(textureCoordinates.zw);
+    // Walk the mip chain to find a valid disparity value at this location
+    for (int level = 0; level < disparityTexLevels; ++level) {
+      disparityRaw = texelFetch(disparityTex, mipCoords, level).r;
+      if (disparityRaw < maxValidDisparityRaw)
+        break;
+      mipCoords = mipCoords >> 1;
+    }
+
+    disparityRaw = max(disparityRaw, 1u); // prevent divide-by-zero
   }
   
-  disparityRaw = max(disparityRaw, 1u); // prevent divide-by-zero
 
   float disparity = (float(disparityRaw) * disparityPrescale);
   v2g.P = TransformToLocalSpace(textureCoordinates.z, textureCoordinates.w, disparity);

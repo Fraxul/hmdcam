@@ -636,6 +636,10 @@ int main(int argc, char* argv[]) {
 
       if (!drawUI) {
         // calling testButton eats the inputs, so only do that if we're not drawing the UI.
+        if (testButton(kButtonUp)) {
+          if (depthMapGenerator)
+            depthMapGenerator->setDebugUseFixedDisparity(!depthMapGenerator->debugUseFixedDisparity());
+        }
         if (testButton(kButtonDown)) {
           debugEnableDepthMapGenerator = !debugEnableDepthMapGenerator;
         }
