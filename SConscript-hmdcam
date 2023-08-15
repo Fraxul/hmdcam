@@ -69,7 +69,7 @@ tegraEnv.Append(LIBS=[
   'wayland-client', 'wayland-egl',
   'hidapi-libusb', 'usb-1.0', 'udev',
   'nvargus',
-  'nvbuf_utils', 'nvbufsurface', 'nvbufsurftransform',
+  'nvbufsurface', 'nvbufsurftransform',
   'v4l2',
   'cuda', 'cudart',
   'nppc', 'nppidei', 'nppitc',
@@ -81,6 +81,8 @@ if (env['HAVE_VPI2']):
   tegraEnv.Append(LIBS=['nvvpi'])
 if (env['HAVE_OPENCV_CUDA']):
   tegraEnv.Append(LIBS=['opencv_cudafilters', 'opencv_cudaimgproc', 'opencv_cudawarping'])
+if (env['TEGRA_RELEASE'] < 35):
+  tegraEnv.Append(LIBS=['nvbuf_utils'], CPPDEFINES=['USE_NVBUF_UTILS'])
 
 tegraEnv.Program(
   target = '../bin/hmdcam', # relative to build/hmdcam

@@ -47,6 +47,7 @@ if is_tegra:
     CUDA_SDK_PATH='/usr/local/cuda',
     IS_TEGRA=True,
     TEGRA_MMAPI=tegra_mmapi,
+    TEGRA_RELEASE=tegra_release,
     CPPDEFINES=[('L4T_RELEASE_MAJOR', tegra_release)]
   )
 

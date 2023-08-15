@@ -16,7 +16,6 @@
 #include <string.h>
 #include <sys/prctl.h>
 
-#include "nvbuf_utils.h"
 #include "nvbufsurface.h"
 #include "nvbufsurftransform.h"
 #include "NvLogging.h"

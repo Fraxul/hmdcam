@@ -11,13 +11,18 @@
 #include "rhi/cuda/RHICVInterop.h"
 #include <Argus/Argus.h>
 #include <EGLStream/EGLStream.h>
-#include <nvbuf_utils.h>
 #include <cudaEGL.h>
 #include <opencv2/cvconfig.h>
 #ifdef HAVE_VPI2
 #include "common/VPIUtil.h"
 #include <vpi/Image.h>
 #endif // HAVE_VPI2
+
+#ifdef USE_NVBUF_UTILS
+#include <nvbuf_utils.h>
+#else
+#include <nvbufsurface.h>
+#endif
 
 #include <boost/accumulators/statistics/min.hpp>
 #include <boost/accumulators/statistics/max.hpp>
@@ -238,6 +243,8 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     for (size_t i = 0; i < kBufferCount; i++) {
       BufferPool::Entry b;
 
+#ifdef USE_NVBUF_UTILS
+      // Deprecated: nvbuf_utils API
       NvBufferCreateParams inputParams = {0};
 
       inputParams.width = m_streamWidth;
@@ -252,6 +259,26 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
       }
 
       b.eglImage = NvEGLImageFromFd(m_display, b.nativeBuffer);
+#else
+      NvBufSurfaceAllocateParams inputParams = {{0}};
+
+      inputParams.params.width = m_streamWidth;
+      inputParams.params.height = m_streamHeight;
+      inputParams.params.layout = NVBUF_LAYOUT_PITCH;
+      inputParams.params.colorFormat = NVBUF_COLOR_FORMAT_NV12_ER;
+      inputParams.params.memType = NVBUF_MEM_SURFACE_ARRAY;
+      inputParams.memtag = NvBufSurfaceTag_CAMERA;
+
+      NvBufSurface *nvbuf_surf = 0;
+      if (NvBufSurfaceAllocate(&nvbuf_surf, 1, &inputParams) != 0) {
+        die("NvBufSurfaceAllocate failed");
+      }
+      nvbuf_surf->numFilled = 1;
+      b.nativeBuffer = nvbuf_surf->surfaceList[0].bufferDesc;
+      NvBufSurfaceMapEglImage(nvbuf_surf, 0);
+      b.eglImage = nvbuf_surf->surfaceList->mappedAddr.eglImage;
+#endif
+
       b.rhiSurface = RHIEGLImageSurfaceGL::newTextureExternalOES(b.eglImage, m_streamWidth, m_streamHeight);
 
       iBufferSettings->setEGLImage(b.eglImage);
@@ -389,7 +416,14 @@ ArgusCamera::~ArgusCamera() {
       cuTexObjectDestroy(b.cudaLumaTexObject);
       cuGraphicsUnregisterResource(b.cudaResource);
       eglDestroyImageKHR(m_display, b.eglImage);
+#ifdef USE_NVBUF_UTILS
       NvBufferDestroy(b.nativeBuffer);
+#else
+      NvBufSurface *nvbuf_surf = nullptr;
+      NvBufSurfaceFromFd(b.nativeBuffer, (void**)(&nvbuf_surf));
+      if (nvbuf_surf != nullptr)
+        NvBufSurfaceDestroy(nvbuf_surf);
+#endif
 
 #ifdef HAVE_VPI2
       vpiImageDestroy(b.vpiImage);
