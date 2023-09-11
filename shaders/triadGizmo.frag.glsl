@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 in vec4 fragColor;
 layout(location = 0) out vec4 outColor;
 

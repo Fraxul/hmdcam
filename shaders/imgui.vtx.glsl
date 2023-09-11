@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 in vec2 Position;
 in vec2 UV;
 in vec4 Color;

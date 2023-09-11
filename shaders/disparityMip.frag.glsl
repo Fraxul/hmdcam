@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 precision highp float;
 in vec2 fragTexCoord;
 layout(location = 0) out ivec4 outInt;

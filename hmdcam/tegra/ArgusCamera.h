@@ -1,7 +1,9 @@
 #pragma once
+#include "IArgusCamera.h"
 #include <vector>
 #include <epoxy/egl.h>
 #include <Argus/Argus.h>
+
 #include "rhi/egl/RHIEGLImageSurfaceGL.h"
 #include "rhi/RHIRenderTarget.h"
 #include "common/ICameraProvider.h"
@@ -14,78 +16,6 @@
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/rolling_mean.hpp>
 #include <boost/accumulators/statistics/rolling_count.hpp>
-
-
-class IArgusCamera : public ICameraProvider {
-public:
-  IArgusCamera();
-  virtual ~IArgusCamera();
-
-  // === ICameraProvider (partial impl) ===
-  virtual unsigned int streamWidth() const { return m_streamWidth; }
-  virtual unsigned int streamHeight() const { return m_streamHeight; }
-
-  // === IArgusCamera ===
-  virtual size_t sessionCount() const = 0;
-  virtual size_t sessionIndexForStream(size_t streamIdx) const = 0;
-  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const = 0;
-  virtual bool readFrame() = 0;
-  virtual void stop() = 0;
-  virtual void setRepeatCapture(bool) = 0;
-  virtual void setExposureCompensation(float stops) = 0;
-
-  virtual bool renderSettingsIMGUI() = 0;
-  virtual bool renderPerformanceTuningIMGUI() = 0;
-  virtual void loadSettings(cv::FileStorage&) = 0;
-  virtual void saveSettings(cv::FileStorage&) = 0;
-
-  // ====================
-
-
-  // Misc simple accessors hoisted into base interface
-
-  uint64_t targetCaptureIntervalNs() const { return m_targetCaptureIntervalNs; }
-  void setTargetCaptureIntervalNs(uint64_t value) { m_targetCaptureIntervalNs = value; }
-
-  bool didAdjustCaptureIntervalThisFrame() const { return m_didAdjustCaptureIntervalThisFrame; }
-  bool willAdjustCaptureInterval() const { return m_adjustCaptureInterval; }
-  void setAdjustCaptureInterval(bool value) { m_adjustCaptureInterval = value; }
-
-
-  const glm::vec2& acRegionCenter() const { return m_acRegionCenter; }
-  const glm::vec2& acRegionSize() const { return m_acRegionSize; }
-
-  float exposureCompensation() const { return m_exposureCompensation; }
-
-  struct FrameMetadata_t {
-    uint64_t sensorTimestamp;
-    uint64_t frameDurationNs;
-    uint64_t sensorExposureTimeNs;
-    uint32_t sensorSensitivityISO;
-    float ispDigitalGain;
-    float sensorAnalogGain;
-  };
-
-  // Metadata accessors for the current frame
-  // Start timestamp for the sensor capture, in nanoseconds. Referenced to CLOCK_MONOTONIC.
-  uint64_t frameSensorTimestamp(size_t sensorIndex) const { return m_frameMetadata[sensorIndex].sensorTimestamp; }
-  const FrameMetadata_t& frameMetadata(size_t sensorIndex) const { return m_frameMetadata[sensorIndex]; }
-
-protected:
-  uint64_t m_targetCaptureIntervalNs;
-  unsigned int m_streamWidth = 0, m_streamHeight = 0;
-  float m_exposureCompensation = 0.0f;
-  glm::vec2 m_acRegionCenter = glm::vec2(0.5f, 0.5f);
-  glm::vec2 m_acRegionSize = glm::vec2(1.0f, 1.0f);
-
-  // Per-stream per-frame metadata, populated for each frame in readFrame()
-  std::vector<FrameMetadata_t> m_frameMetadata;
-
-  bool m_adjustCaptureInterval = false;
-  bool m_didAdjustCaptureIntervalThisFrame = false;
-  int m_adjustCaptureCooldownFrames = 96;
-  int m_adjustCaptureEvalWindowFrames = 64;
-};
 
 class ArgusCamera : public IArgusCamera {
 public:
@@ -227,39 +157,5 @@ private:
   // noncopyable
   ArgusCamera(const ArgusCamera&);
   ArgusCamera& operator=(const ArgusCamera&);
-};
-
-
-class ArgusCameraMock : public IArgusCamera {
-public:
-  ArgusCameraMock(size_t sensorCount, unsigned int w, unsigned int h, double framerate);
-  virtual ~ArgusCameraMock();
-
-  // === ICameraProvider ===
-  virtual size_t streamCount() const { return m_textures.size(); }
-  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
-  virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { assert(false && "unimplemented"); return 0; }
-  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
-  virtual VPIImage vpiImage(size_t sensorIndex) const;
-
-  // === IArgusCamera ===
-  virtual size_t sessionCount() const { return 1; }
-  virtual size_t sessionIndexForStream(size_t streamIdx) const { return 0; }
-
-  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const { return nullptr; }
-  virtual bool readFrame();
-
-  virtual void stop() {}
-  virtual void setRepeatCapture(bool) {}
-  virtual void setExposureCompensation(float stops) {}
-  virtual bool renderPerformanceTuningIMGUI() { return false; }
-  virtual bool renderSettingsIMGUI() { return false; }
-  virtual void loadSettings(cv::FileStorage&) {}
-  virtual void saveSettings(cv::FileStorage&) {}
-
-protected:
-  uint64_t m_previousFrameReadTime = 0;
-  std::vector<RHISurface::ptr> m_textures;
-  std::vector<VPIImage> m_vpiImages;
 };
 

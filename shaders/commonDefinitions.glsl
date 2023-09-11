@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 // Definitions for commonDeclarations.glsl functions
 
 vec2 flipTexcoordY(vec2 texCoord) {

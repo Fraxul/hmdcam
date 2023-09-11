@@ -14,11 +14,14 @@
 #include "util/u_distortion_mesh.h"
 #include "util/u_device.h"
 
-#include "NvEncSession.h"
+#if USE_NVENC
+#include "tegra/NvEncSession.h"
 #include "liveMedia.hh"
 #include "BasicUsageEnvironment.hh"
 #include "BufferRingSource.h"
 #include "H264VideoNvEncSessionServerMediaSubsession.h"
+#endif
+
 #include <cuda.h>
 #ifdef HAVE_VPI2
   #include <vpi/Context.h>
@@ -88,13 +91,14 @@ CUcontext cudaContext;
 #endif
 
 // Streaming server / NvEnc state
-
+#if USE_NVENC
 NvEncSession* nvencSession;
 
 TaskScheduler* rtspScheduler;
 BasicUsageEnvironment* rtspEnv;
 RTSPServer* rtspServer;
 ServerMediaSession* rtspMediaSession;
+#endif
 std::string rtspURL;
 uint64_t rtspRenderIntervalNs = 33333333; // 30fps
 //uint64_t rtspRenderIntervalNs = 66666667; // 15fps
@@ -104,6 +108,7 @@ uint64_t rtspRenderIntervalNs = 33333333; // 30fps
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
 
+#if USE_NVENC
 void* rtspServerThreadEntryPoint(void* arg) {
   pthread_setname_np(pthread_self(), "RTSP-Server");
 
@@ -161,6 +166,7 @@ void* rtspServerThreadEntryPoint(void* arg) {
   eglDestroyContext(renderBackend->eglDisplay(), eglCtx);
   return NULL;
 }
+#endif // USE_NVENC
 
 bool RenderInit(ERenderBackend backendType) {
   // Monado setup -- this needs to occur before EGL initialization because we might need to send a command to turn on the HMD display.
@@ -377,6 +383,7 @@ bool RenderInit(ERenderBackend backendType) {
 }
 
 void RenderInitDebugSurface(uint32_t width, uint32_t height) {
+#if USE_NVENC
   nvencSession = new NvEncSession(width, height);
   //nvencSession->setBitrate(bitrate);
   //nvencSession->setFramerate(fps_n, fps_d);
@@ -385,6 +392,7 @@ void RenderInitDebugSurface(uint32_t width, uint32_t height) {
   // Set up the RTSP server asynchronously.
   pthread_t server_tid;
   pthread_create(&server_tid, NULL, &rtspServerThreadEntryPoint, NULL);
+#endif
 }
 
 void RenderShutdown() {
@@ -501,6 +509,7 @@ void renderHMDFrame() {
 
 
 RHISurface::ptr renderAcquireDebugSurface() {
+#if USE_NVENC
   assert(nvencSession != nullptr);
 
   // RTSP server rendering
@@ -514,12 +523,15 @@ RHISurface::ptr renderAcquireDebugSurface() {
       return nvencSession->acquireSurface(); // might be NULL anyway if the encoder isn't ready
     }
   }
+#endif
 
   return RHISurface::ptr();
 }
 
 void renderSubmitDebugSurface(RHISurface::ptr debugSurface) {
+#if USE_NVENC
   nvencSession->submitSurface(debugSurface);
+#endif
 }
 
 const std::string& renderDebugURL() {

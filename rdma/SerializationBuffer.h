@@ -2,6 +2,7 @@
 #include <fstream>
 #include <string>
 #include <stdexcept>
+#include <cassert>
 #include <boost/endian/conversion.hpp>
 #ifdef FILE_SUPPORT
 #include <boost/interprocess/file_mapping.hpp>

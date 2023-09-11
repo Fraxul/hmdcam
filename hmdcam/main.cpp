@@ -26,7 +26,11 @@
 #include <cudaEGL.h>
 #include <cuda_egl_interop.h>
 
-#include "ArgusCamera.h"
+#include "IArgusCamera.h"
+#include "ArgusCameraMock.h"
+#ifdef USE_LIBARGUS
+#include "tegra/ArgusCamera.h"
+#endif
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
 #include "common/FxThreading.h"
@@ -71,8 +75,14 @@ uint64_t settingsAutosaveIntervalFrames = 1000; // will be recomputed when we kn
 IArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
 
-
+#if USE_RDMA
 RDMAContext* rdmaContext;
+static inline bool rdmaContextHasActivePeerConnections() {
+  return rdmaContext && rdmaContext->hasPeerConnections();
+}
+#else
+static inline bool rdmaContextHasActivePeerConnections() { return false; }
+#endif
 
 #define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
 static const char* hmdcamSettingsFilename = "hmdcamSettings.yml";
@@ -204,6 +214,9 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
 
 int main(int argc, char* argv[]) {
 
+// Ignore warning diagnostics for flags that may go unused due to compile-time options
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-but-set-variable"
   DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
   ERenderBackend renderBackendType = kRenderBackendVKDirect;
   bool enableRDMA = true;
@@ -212,6 +225,7 @@ int main(int argc, char* argv[]) {
   bool debugMockCameras = false;
   bool debugNoRepeatingCapture = false;
   int rdmaInterval = 2;
+#pragma clang diagnostic pop
 
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--depth-backend")) {
@@ -273,6 +287,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
+#if USE_RDMA
   int rdmaFrame = 0;
   if (enableRDMA) {
     rdmaContext = RDMAContext::createServerContext();
@@ -281,6 +296,7 @@ int main(int argc, char* argv[]) {
       printf("RDMA server context initialization failed; RDMA service will be unavailable.\n");
     }
   }
+#endif
 
   startInputListenerThread();
 
@@ -312,11 +328,14 @@ int main(int argc, char* argv[]) {
 
   // Open the cameras
 
-  if (debugMockCameras) {
-    argusCamera = new ArgusCameraMock(4, 1920, 1080, 90.0);
-  } else {
+#if USE_LIBARGUS
+  if (!debugMockCameras)
     argusCamera = new ArgusCamera(renderBackend->eglDisplay(), renderBackend->eglContext(), renderBackend->refreshRateHz());
-  }
+
+#endif
+
+  if (!argusCamera)
+    argusCamera = new ArgusCameraMock(4, 1920, 1080, 90.0);
 
   std::vector<RHIRect> debugSurfaceCameraRects;
   {
@@ -362,6 +381,7 @@ int main(int argc, char* argv[]) {
 
 
   // Create the RDMA configuration buffer and camera data buffers
+#if USE_RDMA
   RDMABuffer::ptr configBuf;
   std::vector<RDMABuffer::ptr> rdmaCameraLumaBuffers;
   std::vector<RDMABuffer::ptr> rdmaCameraChromaBuffers;
@@ -472,6 +492,7 @@ int main(int argc, char* argv[]) {
       rdmaContext = nullptr;
     }
   }
+#endif // USE_RDMA
 
 
   signal(SIGINT,  signal_handler);
@@ -675,7 +696,7 @@ int main(int argc, char* argv[]) {
       previousCaptureTimestamp = argusCamera->frameSensorTimestamp(0);
 
       // TODO move this inside CameraSystem
-      if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
+      if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext && !rdmaContextHasActivePeerConnections()) {
         depthMapGenerator->processFrame();
       }
 
@@ -947,7 +968,7 @@ int main(int argc, char* argv[]) {
       for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
         CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
 
-        if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !(rdmaContext && rdmaContext->hasPeerConnections())) {
+        if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !rdmaContextHasActivePeerConnections()) {
           // Single-pass stereo
           rhi()->setViewports(eyeViewports, 2);
           depthMapGenerator->renderDisparityDepthMapStereo(viewIdx, renderViews[0], renderViews[1], cameraSystem->viewWorldTransform(viewIdx));
@@ -1158,7 +1179,8 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      if (rdmaContext && rdmaContext->hasPeerConnections() && rdmaFrame == 0) {
+#if USE_RDMA
+      if (rdmaContextHasActivePeerConnections() && rdmaFrame == 0) {
         // Issue RDMA surface copies and write-buffer flushes
         for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
           CUeglFrame eglFrame;
@@ -1211,6 +1233,7 @@ int main(int argc, char* argv[]) {
       if (rdmaFrame >= rdmaInterval) {
         rdmaFrame = 0;
       }
+#endif // USE_RDMA
 
       timingData.submitTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
       renderHMDFrame();

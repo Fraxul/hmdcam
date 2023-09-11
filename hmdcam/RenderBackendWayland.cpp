@@ -102,19 +102,22 @@ void RenderBackendWayland::init() {
   int n;
   EGL_CHECK_BOOL(eglChooseConfig(m_eglDisplay, cfg_attr, &m_eglConfig, 1, &n));
 
-  EGLint surface_attr[] = {
-    EGL_SWAP_BEHAVIOR, EGL_BUFFER_DESTROYED,
-    EGL_RENDER_BUFFER, EGL_BACK_BUFFER,
-    EGL_NONE
-  };
-  CHECK_PTR(m_eglSurface = eglCreatePlatformWindowSurfaceEXT(m_eglDisplay, m_eglConfig, m_wlEglWindow, surface_attr));
+  CHECK_PTR(m_eglSurface = eglCreatePlatformWindowSurfaceEXT(m_eglDisplay, m_eglConfig, m_wlEglWindow, /*attrList=*/ nullptr));
+
   EGLint surfaceWidth = 0, surfaceHeight = 0;
   eglQuerySurface(m_eglDisplay, m_eglSurface, EGL_WIDTH, &surfaceWidth);
   eglQuerySurface(m_eglDisplay, m_eglSurface, EGL_HEIGHT, &surfaceHeight);
   printf("eglCreatePlatformWindowSurfaceEXT: %d x %d\n", surfaceWidth, surfaceHeight);
 
-  EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
-  eglBindAPI(EGL_OPENGL_ES_API);
+  // Set optional surface attributes
+  eglSurfaceAttrib(m_eglDisplay, m_eglSurface, EGL_SWAP_BEHAVIOR, EGL_BUFFER_DESTROYED);
+
+  EGLint ctx_attr[] = {
+    EGL_CONTEXT_CLIENT_VERSION, 3,
+    EGL_NONE
+  };
+
+  eglBindAPI(EGL_OPENGL_API);
   CHECK_PTR(m_eglContext = eglCreateContext(m_eglDisplay, m_eglConfig, EGL_NO_CONTEXT, ctx_attr));
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext));
 

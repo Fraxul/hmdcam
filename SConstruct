@@ -42,7 +42,7 @@ if is_tegra:
 
   # Environment setup
   env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
-    CPPPATH=['/usr/include/drm', tegra_mmapi + '/include', tegra_mmapi + '/argus/include', '/usr/local/cuda/include', '/usr/local/include/opencv4', '#tegra_mmapi', '#live555/include'],
+    CPPPATH=[tegra_mmapi + '/include', tegra_mmapi + '/argus/include', '/usr/local/cuda/include', '/usr/local/include/opencv4', '#tegra_mmapi', '#live555/include'],
     LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
     CUDA_SDK_PATH='/usr/local/cuda',
     IS_TEGRA=True,
@@ -60,6 +60,8 @@ else:
     CUDA_TOOLKIT_PATH='/usr/local/cuda',
     IS_TEGRA=False
   )
+  if (platform.platform().find('WSL2') >= 0):
+    env.Append(LIBPATH=['/usr/lib/wsl/lib'])
 
 vars.Update(env)
 
@@ -107,13 +109,12 @@ if (is_tegra and (not os.path.isdir('/usr/local/nvidia-dgpu-support'))):
   build_dgpu = False
   print('DGPU support libraries for Tegra are not installed at /usr/local/nvidia-dgpu-support. DGPU backend will not build.')
 
-if is_tegra:
-  # Only build hmdcam application on Tegra
-  SConscript('SConscript-hmdcam', variant_dir = 'build/hmdcam', duplicate = 0)
-  if (build_dgpu):
-    SConscript('SConscript-pductl', variant_dir = 'build/pductl', duplicate = 0)
-    SConscript('SConscript-dgpu-fans', variant_dir = 'build/dgpu-fans', duplicate = 0)
-else:
+SConscript('SConscript-hmdcam', variant_dir = 'build/hmdcam', duplicate = 0)
+if (is_tegra and build_dgpu):
+  SConscript('SConscript-pductl', variant_dir = 'build/pductl', duplicate = 0)
+  SConscript('SConscript-dgpu-fans', variant_dir = 'build/dgpu-fans', duplicate = 0)
+
+if not is_tegra:
   # Only build test apps on desktop
   SConscript('SConscript-stereo-geometry', variant_dir = 'build/stereo-geometry', duplicate = 0)
 

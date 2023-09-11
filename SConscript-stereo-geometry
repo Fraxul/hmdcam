@@ -26,7 +26,6 @@ sgEnv.Program(
     'epoxy',
     'cuda', 'cudart',
     'nppc', 'nppidei',
-    'nvvpi',
     'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudawarping',
     'ibverbs', 'rdmacm',
     'SDL2',

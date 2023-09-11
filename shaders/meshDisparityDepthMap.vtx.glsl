@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 
 #include "MeshDisparityDepthMapUniformBlock.h"
 

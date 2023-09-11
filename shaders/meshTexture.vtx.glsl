@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 
 layout(std140) uniform MeshTransformUniformBlock {
   mat4 modelViewProjection;

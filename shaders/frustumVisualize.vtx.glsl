@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 in vec3 position;
 out vec4 fragColor;
 

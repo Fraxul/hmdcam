@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 precision highp float;
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 1) in;

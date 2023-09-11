@@ -10,6 +10,9 @@
 #include "rhi/gl/RHISurfaceGL.h"
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
 #include <glm/gtc/type_ptr.hpp>
+#include <string.h>
+#include <set>
+#include <string>
 
 static /*CVar*/ bool rhi_gl_forceBlitEmulation = false;
 
@@ -28,6 +31,23 @@ RHIGL::RHIGL() : m_clearColor(glm::vec4(0.0f)), m_clearDepth(1.0f), m_clearStenc
   if (s_isFirstRHIGLInit) {
     s_ndcZNearIsNegativeOne = true;
     s_allowsLayerSelectionFromVertexShader = false; // (GLEW_AMD_vertex_shader_layer);
+    printf("RHIGL: GL_RENDERER: %s\n", glGetString(GL_RENDERER));
+    printf("RHIGL: GL_VERSION: %s\n", glGetString(GL_VERSION));
+
+    std::set<std::string> extensions;
+    char* extStr = strdup((const char*) glGetString(GL_EXTENSIONS));
+    char* ctx = nullptr;
+    const char* delim = " ";
+    for (char* p = strtok_r(extStr, delim, &ctx); p; p = strtok_r(nullptr, delim, &ctx)) {
+      extensions.insert(std::string(p));
+    }
+    free(extStr);
+
+    printf("RHIGL: Extensions (%zu):\n", extensions.size());
+    for (const std::string& ext : extensions) {
+      printf("  - %s\n", ext.c_str());
+    }
+
     // printf("RHIGL: allowsLayerSelectionFromVertexShader = %d\n", s_allowsLayerSelectionFromVertexShader);
 
   }

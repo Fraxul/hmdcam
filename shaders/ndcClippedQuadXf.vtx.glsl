@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 // in vec4 position; // Unused, recreated from textureCoordinates
 in vec2 textureCoordinates;
 out vec2 fragTexCoord;
