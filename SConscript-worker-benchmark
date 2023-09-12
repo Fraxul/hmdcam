@@ -1,5 +1,6 @@
 Import('env')
 
+env.CompilationDatabase()
 env.Program(
   target = '../bin/worker-benchmark',
   source = Glob('worker-benchmark/*.cpp'),

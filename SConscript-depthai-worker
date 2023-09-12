@@ -26,6 +26,7 @@ depthaiStaticLibs = [
 ]
 depthaiLibDeps = ['usb-1.0']
 
+depthaiEnv.CompilationDatabase()
 depthaiWorker = depthaiEnv.Program(
   target = '../bin/depthai-worker', # relative to build/depthai-worker
   source = Glob('depthai-worker/*.cpp') + ['common/FxThreading.cpp'] + depthaiStaticLibs,

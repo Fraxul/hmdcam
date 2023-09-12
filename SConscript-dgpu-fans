@@ -7,6 +7,7 @@ dgpuEnv.Append(
   LINKFLAGS=['-Wl,-rpath=/usr/local/nvidia-dgpu-support']
 )
 
+dgpuEnv.CompilationDatabase()
 dgpuEnv.Program(
   target = '../bin/dgpu-fans', # relative to build/dgpu-worker
   source = Glob('dgpu-fans/*.cpp') + ['/usr/local/nvidia-dgpu-support/libnvidia-ml.so.1'],

@@ -2,9 +2,18 @@ import os
 import platform
 import sys
 import re
+import SCons
 
 vars = Variables(None, ARGUMENTS)
 vars.Add(BoolVariable('debug', 'Set to build in debug mode (no optimization)', 0))
+
+
+env_tools = ['clang', 'clangxx', 'link', 'cuda']
+
+scons_version_major = int(SCons.__version__.split('.')[0])
+if (scons_version_major >= 4):
+  # compilation_db support was added in SCons 4.0
+  env_tools += ['compilation_db']
 
 try:
   # os.cpu_count() is python3 only
@@ -13,6 +22,38 @@ except:
   # Python2 backup strat
   import multiprocessing
   SetOption('num_jobs', multiprocessing.cpu_count())
+
+
+# Base environment setup
+env = Environment(tools = env_tools, toolpath=['scons-tools'],
+  CPPPATH=[
+    '#.',
+    '#glm',
+    '#imgui',
+    '/usr/local/cuda/include',
+    '/usr/local/include/opencv4',
+  ],
+  NVCCPATH=[
+    '/usr/local/include/opencv4',
+    '#glm'
+  ],
+  CPPFLAGS=['-g', '-Wall'],
+  CXXFLAGS=['-std=c++14'],
+  LINKFLAGS=['-g'],
+  LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
+  CUDA_SDK_PATH='/usr/local/cuda',
+  COMPILATIONDB_USE_ABSPATH=True
+)
+
+if (scons_version_major < 4):
+  def NullCompilationDatabase():
+    pass
+
+  env.CompilationDatabase = NullCompilationDatabase
+
+# Fix for clang colored diagnostics
+env['ENV']['TERM'] = os.environ['TERM']
+env.Decider('MD5-timestamp')
 
 is_tegra = (platform.machine() == 'aarch64')
 tegra_release = 0
@@ -41,40 +82,22 @@ if is_tegra:
     sys.exit('Cannot find the Tegra Multimedia API')
 
   # Environment setup
-  env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
-    CPPPATH=[tegra_mmapi + '/include', tegra_mmapi + '/argus/include', '/usr/local/cuda/include', '/usr/local/include/opencv4', '#tegra_mmapi', '#live555/include'],
-    LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
-    CUDA_SDK_PATH='/usr/local/cuda',
-    IS_TEGRA=True,
-    TEGRA_MMAPI=tegra_mmapi,
-    TEGRA_RELEASE=tegra_release,
+  env['TEGRA_MMAPI'] = tegra_mmapi
+  env['IS_TEGRA'] = True
+  env['TEGRA_RELEASE'] = tegra_release
+  env.Append(
     CPPDEFINES=[('L4T_RELEASE_MAJOR', tegra_release)]
   )
 
 else:
   # Reduced environment for non-tegra
-  env = Environment(tools = ['clang', 'clangxx', 'link', 'cuda'], toolpath=['scons-tools'],
-    CPPPATH=['/usr/local/include/opencv4', '/usr/local/cuda/include'],
-    LIBPATH=['/usr/local/lib', '/usr/local/cuda/lib64'],
-    CUDA_SDK_PATH='/usr/local/cuda',
-    CUDA_TOOLKIT_PATH='/usr/local/cuda',
-    IS_TEGRA=False
-  )
+  env['IS_TEGRA'] = False
   if (platform.platform().find('WSL2') >= 0):
     env.Append(LIBPATH=['/usr/lib/wsl/lib'])
 
 vars.Update(env)
 
 # Common env
-env.Append(
-  CPPPATH=['#.', '#glm', '#imgui'],
-  CPPFLAGS=['-g', '-Wall'],
-  CPPDEFINES=['NO_OPENSSL'],
-  CXXFLAGS=['-std=c++14'],
-  LINKFLAGS=['-g'],
-  NVCCPATH=['/usr/local/include/opencv4', 'glm'],
-)
-
 if (env['debug']):
   env.Append(NVCCFLAGS=['--debug', '--device-debug'])
 else:
@@ -99,9 +122,6 @@ if (have_vpi2):
   env.Append(CPPDEFINES=['HAVE_VPI2'])
 env['HAVE_VPI2'] = have_vpi2
 
-# Fix for clang colored diagnostics
-env['ENV']['TERM'] = os.environ['TERM']
-env.Decider('MD5-timestamp')
 Export('env')
 
 build_dgpu = True

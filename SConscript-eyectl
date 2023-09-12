@@ -6,6 +6,7 @@ eyectlEnv.Append(
   CPPPATH=['#eyectl/fadecandy-lib']
 )
 
+eyectlEnv.CompilationDatabase()
 eyectlEnv.Program(
   target = '../bin/eyectl', # relative to build/eyectl
   source = Glob('eyectl/*.cpp'), 

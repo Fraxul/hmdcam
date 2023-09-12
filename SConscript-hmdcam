@@ -57,12 +57,24 @@ if tegraEnv['IS_TEGRA']:
   # Building natively on Tegra enables Argus camera library and nvenc support
   # Pull in nvargus, nvbuf, v4l2, and live555
   tegraEnv.Append(
+    CPPPATH=[
+      '#hmdcam/tegra',
+      '#live555/include',
+      tegraEnv['TEGRA_MMAPI'],
+      tegraEnv['TEGRA_MMAPI'] + '/include',
+      tegraEnv['TEGRA_MMAPI'] + '/argus/include',
+    ],
     LIBS=[
       'nvargus',
       'nvbufsurface', 'nvbufsurftransform',
       'v4l2'
     ],
-    CPPDEFINES=['USE_LIBARGUS', 'USE_NVENC', 'USE_RDMA']
+    CPPDEFINES=[
+      'USE_LIBARGUS',
+      'USE_NVENC',
+      'USE_RDMA',
+      'NO_OPENSSL', # live555 config directive
+    ]
   )
 
   if (tegraEnv['TEGRA_RELEASE'] < 35):
@@ -107,6 +119,7 @@ if (env['HAVE_VPI2']):
 if (env['HAVE_OPENCV_CUDA']):
   tegraEnv.Append(LIBS=['opencv_cudafilters', 'opencv_cudaimgproc', 'opencv_cudawarping'])
 
+tegraEnv.CompilationDatabase()
 tegraEnv.Program(
   target = '../bin/hmdcam', # relative to build/hmdcam
   source = Glob('hmdcam/*.cpp')

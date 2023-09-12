@@ -6,6 +6,7 @@ sgEnv.Append(
   CPPPATH=['stereo-geometry', '/usr/include/SDL2']
 )
 
+sgEnv.CompilationDatabase()
 sgEnv.Program(
   target = '../bin/stereo-geometry',
   source = Glob('stereo-geometry/*.cpp') +

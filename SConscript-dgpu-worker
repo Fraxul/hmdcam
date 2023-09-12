@@ -12,6 +12,7 @@ if dgpuEnv['IS_TEGRA']:
     LINKFLAGS=['-Wl,-rpath=/usr/local/nvidia-dgpu-support']
   )
 
+dgpuEnv.CompilationDatabase()
 dgpuEnv.Program(
   target = '../bin/dgpu-worker', # relative to build/dgpu-worker
   source = Glob('dgpu-worker/*.cpp') + Glob('dgpu-worker/*.cu'),

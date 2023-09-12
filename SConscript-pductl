@@ -11,6 +11,7 @@ pductlEnv.Append(
   CPPPATH=['#common']
 )
 
+pductlEnv.CompilationDatabase()
 pductlEnv.Program(
   target = '../bin/pductl', # relative to build/pductl
   source = Glob('pductl/*.cpp') + ['common/PDUControl.cpp', '/usr/local/nvidia-dgpu-support/libnvidia-ml.so.1'],
