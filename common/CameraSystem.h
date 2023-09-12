@@ -82,7 +82,7 @@ public:
       stereoDisparityToDepth.empty() ||
       stereoValidROI[0].empty() || stereoValidROI[1].empty()));
     }
-    bool isVerticalStereo() const { return fabs(stereoTranslation.at<double>(0, 1)) > fabs(stereoTranslation.at<double>(0, 0)); }
+    bool isVerticalStereo() const { return (!stereoTranslation.empty()) && (fabs(stereoTranslation.at<double>(0, 1)) > fabs(stereoTranslation.at<double>(0, 0))); }
 
   };
 
