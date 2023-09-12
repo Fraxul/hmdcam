@@ -648,22 +648,24 @@ int main(int argc, char* argv[]) {
       FrameTimingData timingData;
       uint64_t frameStartTimeNs = currentTimeNs();
 
-      if (testButton(kButtonPower)) {
+      if (ImGui::IsKeyPressed(ImGuiKey_Menu, /*repeat=*/ false) ||
+          ImGui::IsKeyPressed(ImGuiKey_F1, /*repeat=*/ false)) {
+
         drawUI = !drawUI;
       }
 
       // Force UI on if we're calibrating.
       drawUI |= (!!calibrationContext);
 
-      if (!drawUI) {
-        // calling testButton eats the inputs, so only do that if we're not drawing the UI.
-        if (testButton(kButtonUp)) {
-          if (depthMapGenerator)
-            depthMapGenerator->setDebugUseFixedDisparity(!depthMapGenerator->debugUseFixedDisparity());
-        }
-        if (testButton(kButtonDown)) {
-          debugEnableDepthMapGenerator = !debugEnableDepthMapGenerator;
-        }
+      // Allow up/down arrows to toggle debug states while we're not curently drawing the UI
+      if ((drawUI == false && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) ||
+        ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+        if (depthMapGenerator)
+          depthMapGenerator->setDebugUseFixedDisparity(!depthMapGenerator->debugUseFixedDisparity());
+      }
+      if ((drawUI == false && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) ||
+        ImGui::IsKeyPressed(ImGuiKey_F3, false)) {
+        debugEnableDepthMapGenerator = !debugEnableDepthMapGenerator;
       }
 
       ImGui_ImplFxRHI_NewFrame();

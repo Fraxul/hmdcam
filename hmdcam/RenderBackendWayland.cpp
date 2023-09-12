@@ -2,6 +2,7 @@
 #include <epoxy/egl.h>
 #include <wayland-client.h>
 #include <wayland-egl.h>
+#include <xkbcommon/xkbcommon.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,8 @@
 #include <math.h>
 #include <unistd.h>
 #include <assert.h>
+#include <sys/mman.h>
+#include "imgui.h"
 
 #define CHECK_PTR(x) if ((x) == nullptr) { fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); abort(); }
 
@@ -21,6 +24,20 @@ RenderBackend* createWaylandBackend() { return new RenderBackendWayland(); }
 struct wl_registry_listener RenderBackendWayland::registry_listener = {
     registry_handle_global,
     registry_handle_global_remove
+};
+
+struct wl_keyboard_listener RenderBackendWayland::keyboard_listener = {
+    keyboard_keymap,
+    keyboard_enter,
+    keyboard_leave,
+    keyboard_key,
+    keyboard_modifiers,
+    keyboard_repeat_info
+};
+
+struct wl_seat_listener RenderBackendWayland::seat_listener = {
+    seat_capabilities,
+    seat_name
 };
 
 static void shell_surface_handle_ping(void *data, struct wl_shell_surface *wlShellSurface, uint32_t serial) {
@@ -45,6 +62,7 @@ struct wl_shell_surface_listener RenderBackendWayland::shell_surface_listener = 
 RenderBackendWayland::RenderBackendWayland() { }
 
 void RenderBackendWayland::init() {
+  CHECK_PTR(m_xkbContext = xkb_context_new(XKB_CONTEXT_NO_FLAGS));
   CHECK_PTR(m_wlDisplay = wl_display_connect(NULL));
   CHECK_PTR(m_wlRegistry = wl_display_get_registry(m_wlDisplay));
 
@@ -142,6 +160,9 @@ void RenderBackendWayland::registryHandleGlobal(struct wl_registry *registry, ui
     auto outputData = new OutputData(this, name, output);
     m_wlOutputs[name] = outputData;
     didAddOutput(outputData);
+  } else if (!strcmp(interface, "wl_seat")) {
+    m_wlSeat = (wl_seat*) wl_registry_bind(registry, name, &wl_seat_interface, std::min<uint32_t>(version, 5));
+    wl_seat_add_listener(m_wlSeat, &seat_listener, this);
 #if 0
   } else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0) {
     d->wlDmabuf = wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, 3);
@@ -161,6 +182,12 @@ void RenderBackendWayland::registryHandleGlobalRemove( struct wl_registry *regis
     didRemoveOutput(it->second);
     delete it->second;
     m_wlOutputs.erase(it);
+  }
+  if (m_wlSeat && wl_proxy_get_id((struct wl_proxy*) m_wlSeat) == name) {
+    xkb_state_unref(m_xkbState); m_xkbState = nullptr;
+    xkb_keymap_unref(m_xkbKeymap); m_xkbKeymap = nullptr;
+    wl_keyboard_release(m_wlKeyboard); m_wlKeyboard = nullptr;
+    wl_seat_release(m_wlSeat); m_wlSeat = nullptr;
   }
 }
 
@@ -240,5 +267,119 @@ WaylandEGLWindowRenderTarget::~WaylandEGLWindowRenderTarget() {
 void WaylandEGLWindowRenderTarget::platformSwapBuffers() {
   eglSwapBuffers(m_backend->m_eglDisplay, m_backend->m_eglSurface);
   wl_display_dispatch_pending(m_backend->m_wlDisplay);
+}
+
+void RenderBackendWayland::seatCapabilities(struct wl_seat *wl_seat, uint32_t caps) {
+  if (m_wlKeyboard == nullptr && (caps & WL_SEAT_CAPABILITY_KEYBOARD)) {
+    // Add keyboard
+    m_wlKeyboard = wl_seat_get_keyboard(m_wlSeat);
+    wl_keyboard_add_listener(m_wlKeyboard, &keyboard_listener, this);
+  } else if (m_wlKeyboard && !(caps & WL_SEAT_CAPABILITY_KEYBOARD)) {
+    // Remove keyboard
+    wl_keyboard_release(m_wlKeyboard); m_wlKeyboard = nullptr;
+    xkb_state_unref(m_xkbState); m_xkbState = nullptr;
+    xkb_keymap_unref(m_xkbKeymap); m_xkbKeymap = nullptr;
+  }
+}
+
+void RenderBackendWayland::seatName(struct wl_seat *wl_seat, const char *name) {
+
+}
+
+void RenderBackendWayland::keyboardKeymap(struct wl_keyboard *wl_kbd, uint32_t format, int fd, uint32_t size) {
+
+  void* buf = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+  if (buf == MAP_FAILED) {
+    fprintf(stderr, "Failed to mmap keymap: %d\n", errno);
+    close(fd);
+    return;
+  }
+
+  m_xkbKeymap = xkb_keymap_new_from_buffer(m_xkbContext, (const char*) buf, size - 1,
+                                            XKB_KEYMAP_FORMAT_TEXT_V1,
+                                            XKB_KEYMAP_COMPILE_NO_FLAGS);
+  munmap(buf, size);
+  close(fd);
+  if (!m_xkbKeymap) {
+    fprintf(stderr, "Failed to compile keymap!\n");
+    return;
+  }
+
+  m_xkbState = xkb_state_new(m_xkbKeymap);
+  if (!m_xkbState) {
+    fprintf(stderr, "Failed to create XKB state!\n");
+    return;
+  }
+}
+
+void RenderBackendWayland::keyboardEnter(struct wl_keyboard *wl_kbd, uint32_t serial, struct wl_surface *surf, struct wl_array *keys) {
+
+}
+
+void RenderBackendWayland::keyboardLeave(struct wl_keyboard *wl_kbd, uint32_t serial, struct wl_surface *surf) {
+
+}
+
+ImGuiKey xkbSymToImGuiKey(xkb_keysym_t sym) {
+  switch (sym) {
+    default: return ImGuiKey_None;
+    case XKB_KEY_Return: return ImGuiKey_Enter;
+    case XKB_KEY_Escape: return ImGuiKey_Escape;
+    case XKB_KEY_BackSpace: return ImGuiKey_Backspace;
+    case XKB_KEY_Tab: return ImGuiKey_Tab;
+    case XKB_KEY_Left: return ImGuiKey_LeftArrow;
+    case XKB_KEY_Up: return ImGuiKey_UpArrow;
+    case XKB_KEY_Right: return ImGuiKey_RightArrow;
+    case XKB_KEY_Down: return ImGuiKey_DownArrow;
+    case XKB_KEY_Page_Up: return ImGuiKey_PageUp;
+    case XKB_KEY_Page_Down: return ImGuiKey_PageDown;
+    case XKB_KEY_End: return ImGuiKey_End;
+    case XKB_KEY_Begin: return ImGuiKey_Home;
+    case XKB_KEY_Menu: return ImGuiKey_Menu;
+    case XKB_KEY_F1: return ImGuiKey_F1;
+    case XKB_KEY_F2: return ImGuiKey_F2;
+    case XKB_KEY_F3: return ImGuiKey_F3;
+    case XKB_KEY_F4: return ImGuiKey_F4;
+    case XKB_KEY_F5: return ImGuiKey_F5;
+    case XKB_KEY_F6: return ImGuiKey_F6;
+    case XKB_KEY_F7: return ImGuiKey_F7;
+    case XKB_KEY_F8: return ImGuiKey_F8;
+    case XKB_KEY_F9: return ImGuiKey_F9;
+    case XKB_KEY_F10: return ImGuiKey_F10;
+    case XKB_KEY_F11: return ImGuiKey_F11;
+    case XKB_KEY_F12: return ImGuiKey_F12;
+  }
+}
+
+void RenderBackendWayland::keyboardKey(struct wl_keyboard *wl_kbd, uint32_t serial, uint32_t time, uint32_t evdev_scancode, uint32_t state) {
+
+  // "Important: the scancode from this event is the Linux evdev scancode.
+  // To translate this to an XKB scancode, you must add 8 to the evdev scancode."
+  // ref: https://wayland-book.com/seat/keyboard.html
+  uint32_t keycode = evdev_scancode + 8;
+
+  xkb_keysym_t sym = xkb_state_key_get_one_sym(m_xkbState, keycode);
+  ImGuiKey imguiKey = xkbSymToImGuiKey(sym);
+  if (imguiKey != ImGuiKey_None) {
+    ImGui::GetIO().AddKeyEvent(imguiKey, /*down=*/ state == WL_KEYBOARD_KEY_STATE_PRESSED);
+  }
+
+  char inputBuf[128];
+#if 0
+  xkb_keysym_get_name(sym, inputBuf, sizeof(inputBuf));
+  const char *action = state == WL_KEYBOARD_KEY_STATE_PRESSED ? "press" : "release";
+  fprintf(stderr, "key %s: sym: %-12s (%d)\n", action, inputBuf, sym);
+#endif
+
+  xkb_state_key_get_utf8(m_xkbState, keycode, inputBuf, sizeof(inputBuf));
+  ImGui::GetIO().AddInputCharactersUTF8(inputBuf);
+}
+
+void RenderBackendWayland::keyboardModifiers(struct wl_keyboard *wl_kbd, uint32_t serial, uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked, uint32_t group) {
+    xkb_state_update_mask(m_xkbState, mods_depressed, mods_latched, mods_locked, 0, 0, group);
+}
+
+void RenderBackendWayland::keyboardRepeatInfo(struct wl_keyboard *wl_kbd, int32_t rate, int32_t delay) {
+
 }
 

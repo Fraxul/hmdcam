@@ -30,7 +30,7 @@ tegraEnv.Append(
     'boost_chrono', 'boost_system', 'boost_thread',
     'epoxy',
     'drm',
-    'wayland-client', 'wayland-egl',
+    'wayland-client', 'wayland-egl', 'xkbcommon',
     'hidapi-libusb', 'usb-1.0', 'udev',
     'cuda', 'cudart',
     'nppc', 'nppidei', 'nppitc',
