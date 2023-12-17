@@ -16,6 +16,8 @@ void ImGui_ImplInputListener_Init() {
 void ImGui_ImplInputListener_NewFrame() {
   ImGuiIO& io = ImGui::GetIO();
 
+  io.AddKeyEvent(ImGuiKey_Menu, testButton(kButtonPower));
+
   io.AddKeyEvent(ImGuiKey_UpArrow, testButton(kButtonUp));
   io.AddKeyEvent(ImGuiKey_DownArrow, testButton(kButtonDown));
   io.AddKeyEvent(ImGuiKey_LeftArrow, testButton(kButtonLeft));
