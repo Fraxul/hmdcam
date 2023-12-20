@@ -63,6 +63,7 @@ if tegraEnv['IS_TEGRA']:
       tegraEnv['TEGRA_MMAPI'],
       tegraEnv['TEGRA_MMAPI'] + '/include',
       tegraEnv['TEGRA_MMAPI'] + '/argus/include',
+      '#tegra_mmapi',
     ],
     LIBS=[
       'nvargus',
