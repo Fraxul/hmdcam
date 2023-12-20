@@ -1,6 +1,7 @@
 // This file is injected into each shader -- after the version and preprocessor defines, before the shader body.
 #ifdef GL_ES
 #extension GL_OES_shader_io_blocks : enable
+#extension GL_OES_geometry_shader : enable
 #endif
 #if RHI_VERTEX_SHADER
   #if defined(GL_ARB_shader_viewport_layer_array) && GL_ARB_shader_viewport_layer_array

@@ -1,4 +1,4 @@
-#version 320 es
+#version 310 es
 in G2F {
   vec2 texCoord;
 } g2f;
