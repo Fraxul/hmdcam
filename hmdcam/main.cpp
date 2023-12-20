@@ -212,10 +212,14 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
   rhi()->drawNDCQuad();
 }
 
+RHIRenderPipeline::ptr camCopyPipeline;
+
+
 int main(int argc, char* argv[]) {
 
 // Ignore warning diagnostics for flags that may go unused due to compile-time options
 #pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
 #pragma clang diagnostic ignored "-Wunused-but-set-variable"
   DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
   ERenderBackend renderBackendType = kRenderBackendVKDirect;
@@ -308,6 +312,21 @@ int main(int argc, char* argv[]) {
     printf("RenderInit() failed\n");
     return 1;
   }
+
+
+  {
+    RHIShaderDescriptor desc(
+      "shaders/ndcQuad.vtx.glsl",
+      "shaders/camCopy.frag.glsl",
+      ndcQuadVertexLayout);
+    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
+      desc.setFlag("SAMPLER_TYPE", "sampler2D");
+    else
+      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
+
+    camCopyPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+  }
+
 
   settingsAutosaveIntervalFrames = kSettingsAutosaveIntervalSeconds * static_cast<unsigned int>(renderBackend->refreshRateHz());
 
@@ -889,6 +908,32 @@ int main(int argc, char* argv[]) {
 
           if (debugOverlay)
             debugOverlay->renderIMGUI();
+
+          if (ImGui::Button("Capture frame")) {
+
+            RHISurface::ptr snapTex = rhi()->newTexture2D(argusCamera->streamWidth(), argusCamera->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+            RHIRenderTarget::ptr snapRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({snapTex}));
+
+            for (size_t streamIdx = 0; streamIdx < argusCamera->streamCount(); ++streamIdx) {
+              rhi()->beginRenderPass(snapRT, kLoadInvalidate);
+              rhi()->bindRenderPipeline(camCopyPipeline);
+              rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(streamIdx), linearClampSampler);
+              rhi()->drawNDCQuad();
+              rhi()->endRenderPass(snapRT);
+
+              uint8_t* imageData = new uint8_t[argusCamera->streamWidth() * argusCamera->streamHeight() * 4];
+              rhi()->readbackTexture(snapTex, 0, kVertexElementTypeUByte4N, imageData);
+              char* filenameBuf = new char[32];
+              snprintf(filenameBuf, 32, "camera%zu.png", streamIdx);
+
+              // Async PNG compression since it's expensive
+              FxThreading::runFunction([filenameBuf, imageData]() {
+                stbi_write_png(filenameBuf, argusCamera->streamWidth(), argusCamera->streamHeight(), /*components=*/ 4, imageData, /*rowBytes=*/ argusCamera->streamWidth() * 4);
+                delete[] filenameBuf;
+                delete[] imageData;
+              });
+            }
+          }
         }
 
         ImGui::End();
