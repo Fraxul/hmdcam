@@ -53,8 +53,6 @@
 
 #include "rdma/RDMAContext.h"
 
-//#define LATENCY_DEBUG
-
 // Camera render parameters
 float zoomFactor = 1.0f;
 float stereoOffset = 0.0f;
@@ -232,6 +230,7 @@ int main(int argc, char* argv[]) {
   bool debugInitOnly = false;
   bool debugMockCameras = false;
   bool debugNoRepeatingCapture = false;
+  bool debugPrintLatency = false;
   int rdmaInterval = 2;
 #pragma clang diagnostic pop
 
@@ -258,6 +257,8 @@ int main(int argc, char* argv[]) {
       debugNoRepeatingCapture = true;
     } else if (!strcmp(argv[i], "--debug-mock-cameras")) {
       debugMockCameras = true;
+    } else if (!strcmp(argv[i], "--debug-print-latency")) {
+      debugPrintLatency = true;
     } else if (!strcmp(argv[i], "--rdma-interval")) {
       if (i == (argc - 1)) {
         printf("--rdma-interval: requires argument\n");
@@ -991,27 +992,27 @@ int main(int argc, char* argv[]) {
       rhi()->endRenderPass(guiRT);
 
       if ((frameCounter & 0x7fUL) == 0) {
-#ifdef LATENCY_DEBUG
-        printf("Capture latency: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
-          boost::accumulators::min(captureLatency),
-          boost::accumulators::max(captureLatency),
-          boost::accumulators::mean(captureLatency),
-          boost::accumulators::median(captureLatency));
+        if (debugPrintLatency) {
+          printf("Capture latency: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
+            boost::accumulators::min(captureLatency),
+            boost::accumulators::max(captureLatency),
+            boost::accumulators::mean(captureLatency),
+            boost::accumulators::median(captureLatency));
 
-        printf("Capture interval: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
-          boost::accumulators::min(captureInterval),
-          boost::accumulators::max(captureInterval),
-          boost::accumulators::mean(captureInterval),
-          boost::accumulators::median(captureInterval));
+          printf("Capture interval: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
+            boost::accumulators::min(captureInterval),
+            boost::accumulators::max(captureInterval),
+            boost::accumulators::mean(captureInterval),
+            boost::accumulators::median(captureInterval));
 
-        printf("Frame interval: % .6f ms (% .6f fps) min=%.3g max=%.3g median=%.3g\n",
-          static_cast<double>(boost::accumulators::mean(frameInterval)) / 1000000.0,
-          1000000000.0 / static_cast<double>(boost::accumulators::mean(frameInterval)),
+          printf("Frame interval: % .6f ms (% .6f fps) min=%.3g max=%.3g median=%.3g\n",
+            static_cast<double>(boost::accumulators::mean(frameInterval)) / 1000000.0,
+            1000000000.0 / static_cast<double>(boost::accumulators::mean(frameInterval)),
 
-          static_cast<double>(boost::accumulators::min(frameInterval)) / 1000000.0,
-          static_cast<double>(boost::accumulators::max(frameInterval)) / 1000000.0,
-          static_cast<double>(boost::accumulators::median(frameInterval)) / 1000000.0);
-#endif
+            static_cast<double>(boost::accumulators::min(frameInterval)) / 1000000.0,
+            static_cast<double>(boost::accumulators::max(frameInterval)) / 1000000.0,
+            static_cast<double>(boost::accumulators::median(frameInterval)) / 1000000.0);
+        }
 
         captureLatency = {};
         captureInterval = {};
