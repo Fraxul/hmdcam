@@ -22,7 +22,8 @@ public:
 // this should contain everything that we don’t expect to be updated per-frame
 // resourceDescriptor and the stream buffers for the vertexDescriptor are draw-time bind
 struct RHIRenderPipelineDescriptor {
-  RHIRenderPipelineDescriptor() : primitiveTopology(kPrimitiveTopologyTriangleList), patchControlPoints(0), rasterizationEnabled(true), alphaToCoverageEnabled(false), perSampleShadingEnabled(false), primitiveRestartEnabled(false) {}
+  RHIRenderPipelineDescriptor(RHIPrimitiveTopology primitiveTopology_ = kPrimitiveTopologyTriangleList) :
+    primitiveTopology(primitiveTopology_), patchControlPoints(0), rasterizationEnabled(true), alphaToCoverageEnabled(false), perSampleShadingEnabled(false), primitiveRestartEnabled(false) {}
 
   // XXX TODO RHIRenderTargetLayout::ptr renderTargetLayout;
 

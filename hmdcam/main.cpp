@@ -212,6 +212,10 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
   rhi()->drawNDCQuad();
 }
 
+RHIRenderPipeline::ptr camTexturedQuadPipeline;
+RHIRenderPipeline::ptr camOverlayPipeline;
+RHIRenderPipeline::ptr camUndistortMaskPipeline;
+RHIRenderPipeline::ptr camUndistortOverlayPipeline;
 RHIRenderPipeline::ptr camCopyPipeline;
 
 
@@ -314,19 +318,6 @@ int main(int argc, char* argv[]) {
   }
 
 
-  {
-    RHIShaderDescriptor desc(
-      "shaders/ndcQuad.vtx.glsl",
-      "shaders/camCopy.frag.glsl",
-      ndcQuadVertexLayout);
-    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
-      desc.setFlag("SAMPLER_TYPE", "sampler2D");
-    else
-      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
-
-    camCopyPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
-  }
-
 
   settingsAutosaveIntervalFrames = kSettingsAutosaveIntervalSeconds * static_cast<unsigned int>(renderBackend->refreshRateHz());
 
@@ -355,6 +346,38 @@ int main(int argc, char* argv[]) {
 
   if (!argusCamera)
     argusCamera = new ArgusCameraMock(4, 1920, 1080, 90.0);
+
+  // Setup render pipelines, now that we know the sampler type required for the camera textures
+  {
+    const char* sampler_type = argusCamera->rgbTextureGLSamplerType();
+
+    {
+      RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout);
+      desc.setFlag("SAMPLER_TYPE", sampler_type);
+      camTexturedQuadPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
+    }
+    {
+      RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camOverlay.frag.glsl", ndcQuadVertexLayout);
+      desc.setFlag("SAMPLER_TYPE", sampler_type);
+      camOverlayPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
+    }
+    {
+      RHIShaderDescriptor desc("shaders/ndcClippedQuadXf_vFlip.vtx.glsl", "shaders/camUndistortMask.frag.glsl", ndcQuadVertexLayout);
+      desc.setFlag("SAMPLER_TYPE", sampler_type);
+      camUndistortMaskPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
+    }
+    {
+      RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camUndistortOverlay.frag.glsl", ndcQuadVertexLayout);
+      desc.setFlag("SAMPLER_TYPE", sampler_type);
+      camUndistortOverlayPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
+    }
+    {
+      RHIShaderDescriptor desc("shaders/ndcQuad.vtx.glsl", "shaders/camCopy.frag.glsl", ndcQuadVertexLayout);
+      desc.setFlag("SAMPLER_TYPE", sampler_type);
+      camCopyPipeline = rhi()->compileRenderPipeline(desc, tristripPipelineDescriptor);
+    }
+  }
+
 
   std::vector<RHIRect> debugSurfaceCameraRects;
   {

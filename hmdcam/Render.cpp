@@ -39,10 +39,6 @@ FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
 FxAtomicString ksNDCClippedQuadUniformBlock("NDCClippedQuadUniformBlock");
 FxAtomicString ksSolidQuadUniformBlock("SolidQuadUniformBlock");
 
-RHIRenderPipeline::ptr camTexturedQuadPipeline;
-RHIRenderPipeline::ptr camOverlayPipeline;
-RHIRenderPipeline::ptr camUndistortMaskPipeline;
-RHIRenderPipeline::ptr camUndistortOverlayPipeline;
 RHIRenderPipeline::ptr solidQuadPipeline;
 
 RHISurface::ptr disabledMaskTex;
@@ -275,10 +271,6 @@ bool RenderInit(ERenderBackend backendType) {
 
   // Set up shared resources
 
-  camTexturedQuadPipeline = rhi()->compileRenderPipeline("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
-  camOverlayPipeline = rhi()->compileRenderPipeline("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camOverlay.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
-  camUndistortMaskPipeline = rhi()->compileRenderPipeline("shaders/ndcClippedQuadXf_vFlip.vtx.glsl", "shaders/camUndistortMask.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
-  camUndistortOverlayPipeline = rhi()->compileRenderPipeline("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camUndistortOverlay.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
   solidQuadPipeline = rhi()->compileRenderPipeline("shaders/solidQuad.vtx.glsl", "shaders/solidQuad.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
 
   {

@@ -91,6 +91,10 @@ RHIRenderPipeline::ptr RHI::compileRenderPipeline(RHIShader::ptr shader, const R
   return cacheSlot;
 }
 
+RHIRenderPipeline::ptr RHI::compileRenderPipeline(const RHIShaderDescriptor& shaderDescriptor, const RHIRenderPipelineDescriptor& renderPipelineDescriptor) {
+  return compileRenderPipeline(compileShader(shaderDescriptor), renderPipelineDescriptor);
+}
+
 RHIComputePipeline::ptr RHI::compileComputePipeline(RHIShader::ptr shader) {
   RHIComputePipeline::ptr& cacheSlot = shader->m_computePipelineCache;
   if (!cacheSlot) {

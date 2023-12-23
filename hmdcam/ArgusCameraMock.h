@@ -9,6 +9,7 @@ public:
   // === ICameraProvider ===
   virtual size_t streamCount() const { return m_textures.size(); }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
+  virtual const char* rgbTextureGLSamplerType() const { return "sampler2D"; }
   virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { assert(false && "unimplemented"); return 0; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
   virtual VPIImage vpiImage(size_t sensorIndex) const;

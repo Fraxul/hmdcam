@@ -55,6 +55,7 @@ public:
 
   RHIShader::ptr compileShader(const RHIShaderDescriptor&);
   RHIRenderPipeline::ptr compileRenderPipeline(RHIShader::ptr, const RHIRenderPipelineDescriptor&);
+  RHIRenderPipeline::ptr compileRenderPipeline(const RHIShaderDescriptor&, const RHIRenderPipelineDescriptor&);
   RHIRenderPipeline::ptr compileRenderPipeline(const char* vertexShaderFilename, const char* fragmentShaderFilename, const RHIVertexLayout& vertexLayout, RHIPrimitiveTopology);
   RHIComputePipeline::ptr compileComputePipeline(RHIShader::ptr);
   virtual RHIDepthStencilState::ptr compileDepthStencilState(const RHIDepthStencilStateDescriptor&) = 0;
