@@ -7,11 +7,11 @@ public:
   virtual ~ArgusCameraMock();
 
   // === ICameraProvider ===
-  virtual size_t streamCount() const { return m_textures.size(); }
-  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_textures[sensorIndex]; }
+  virtual size_t streamCount() const { return m_streamData.size(); }
+  virtual RHISurface::ptr rgbTexture(size_t sensorIdx) const { return m_streamData[sensorIdx].rgbTexture; }
   virtual const char* rgbTextureGLSamplerType() const { return "sampler2D"; }
-  virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { assert(false && "unimplemented"); return 0; }
-  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
+  virtual CUtexObject cudaLumaTexObject(size_t sensorIdx) const { return m_streamData[sensorIdx].cudaLumaTexObject; }
+  virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx) { return m_streamData[sensorIdx].lumaGpuMat; }
   virtual VPIImage vpiImage(size_t sensorIndex) const;
 
   // === IArgusCamera ===
@@ -31,8 +31,13 @@ public:
 
 protected:
   uint64_t m_previousFrameReadTime = 0;
-  std::vector<RHISurface::ptr> m_textures;
-  std::vector<VPIImage> m_vpiImages;
+  struct Stream {
+    RHISurface::ptr rgbTexture;
+    VPIImage vpiImage;
+    cv::cuda::GpuMat lumaGpuMat;
+    CUtexObject cudaLumaTexObject;
+  };
+  std::vector<Stream> m_streamData;
 };
 
 
