@@ -21,6 +21,8 @@
 #include <vpi/algo/ConvertImageFormat.h>
 #endif // HAVE_VPI2
 
+bool skipFramePacing = false;
+
 ArgusCameraMock::ArgusCameraMock(size_t sensorCount, unsigned int w, unsigned int h, double framerate) {
   m_streamWidth = w;
   m_streamHeight = h;
@@ -38,6 +40,8 @@ ArgusCameraMock::ArgusCameraMock(size_t sensorCount, unsigned int w, unsigned in
   }
 
   m_streamData.resize(sensorCount);
+
+  readEnvironmentVariable("MOCK_SKIP_FRAME_PACING", skipFramePacing);
 }
 
 ArgusCameraMock::~ArgusCameraMock() {
@@ -48,9 +52,11 @@ bool ArgusCameraMock::readFrame() {
   uint64_t now = currentTimeNs();
 
   // Frame pacing
-  uint64_t delta = now - m_previousFrameReadTime;
-  if (delta < m_targetCaptureIntervalNs) {
-    delayNs(m_targetCaptureIntervalNs - delta);
+  if (!skipFramePacing) {
+    uint64_t delta = now - m_previousFrameReadTime;
+    if (delta < m_targetCaptureIntervalNs) {
+      delayNs(m_targetCaptureIntervalNs - delta);
+    }
   }
 
   for (size_t i = 0; i < m_frameMetadata.size(); ++i) {
