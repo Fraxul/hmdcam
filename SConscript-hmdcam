@@ -36,6 +36,7 @@ tegraEnv.Append(
     'nppc', 'nppidei', 'nppitc',
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco',
     'ibverbs', 'rdmacm',
+    'nvToolsExt',
   ]
 )
 monadoStatics = \

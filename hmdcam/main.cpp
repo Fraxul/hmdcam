@@ -43,6 +43,7 @@
 #include "PDUComms.h"
 #include "Render.h"
 #include "RenderBackend.h"
+#include "nvToolsExt.h"
 
 #include "imgui_backend.h"
 #include "implot/implot.h"
@@ -688,6 +689,7 @@ int main(int argc, char* argv[]) {
 
     // Main display loop
     while (!want_quit) {
+      nvtxMarkA("Display loop");
       FrameTimingData timingData;
       uint64_t frameStartTimeNs = currentTimeNs();
 
@@ -985,6 +987,7 @@ int main(int argc, char* argv[]) {
         ImGui::End();
       }
 
+      nvtxMarkA("ImGUI::Render()");
       rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
       rhi()->beginRenderPass(guiRT, kLoadClear);
       ImGui::Render();
@@ -1022,6 +1025,7 @@ int main(int argc, char* argv[]) {
       rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
 
       // Note that our camera uses reversed depth projection -- we clear to 0 and use a "greater" depth-test.
+      nvtxMarkA("Camera rendering");
       rhi()->setClearDepth(0.0f);
       rhi()->beginRenderPass(eyeRT, kLoadClear);
       rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
@@ -1040,6 +1044,12 @@ int main(int argc, char* argv[]) {
         CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
 
         if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !rdmaContextHasActivePeerConnections()) {
+          {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "SPS view %zu", viewIdx);
+            nvtxMarkA(buf);
+          }
+
           // Single-pass stereo
           rhi()->setViewports(eyeViewports, 2);
           depthMapGenerator->renderDisparityDepthMapStereo(viewIdx, renderViews[0], renderViews[1], cameraSystem->viewWorldTransform(viewIdx));
@@ -1048,6 +1058,12 @@ int main(int argc, char* argv[]) {
           // TODO logic needs work for single-pass stereo
           for (int eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
             for (int viewEyeIdx = 0; viewEyeIdx < (v.isStereo ? 2 : 1); ++viewEyeIdx) {
+              {
+                char buf[64];
+                snprintf(buf, sizeof(buf), "View %zu eye %u view-eye %u", viewIdx, eyeIdx, viewEyeIdx);
+                nvtxMarkA(buf);
+              }
+
               // coordsys right now: -X = left, -Z = into screen
               // (camera is at the origin)
               float stereoOffsetSign = v.isStereo ? ((viewEyeIdx == 0 ? -1.0f : 1.0f)) : 0.0f;
@@ -1157,6 +1173,7 @@ int main(int argc, char* argv[]) {
 
       // UI overlay
       {
+        nvtxMarkA("UI overlay");
         rhi()->bindBlendState(standardAlphaOverBlendState);
         rhi()->bindDepthStencilState(disabledDepthStencilState);
         rhi()->bindRenderPipeline(uiLayerStereoPipeline);
@@ -1178,6 +1195,7 @@ int main(int argc, char* argv[]) {
       {
         RHISurface::ptr debugSurface = renderAcquireDebugSurface();
         if (debugSurface) {
+          nvtxMarkA("Debug feedback");
           if (debugOverlay)
             debugOverlay->update();
 
@@ -1307,6 +1325,7 @@ int main(int argc, char* argv[]) {
 #endif // USE_RDMA
 
       timingData.submitTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
+      nvtxMarkA("HMD frame");
       renderHMDFrame();
       {
         uint64_t thisFrameTimestamp = currentTimeNs();
