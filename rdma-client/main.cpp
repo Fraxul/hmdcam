@@ -47,8 +47,6 @@ RDMABuffer::ptr configBuffer;
 DepthMapGenerator* depthMapGenerator;
 SHMSegment<DepthMapSHM>* shm;
 
-extern RHIRenderPipeline::ptr camGreyscalePipeline;
-extern RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 extern FxAtomicString ksDistortionMap;
 extern cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_64FC1);
@@ -551,7 +549,7 @@ int main(int argc, char** argv) {
         } else {
           // guts of captureGreyscale
           rhi()->beginRenderPass(testRT, kLoadInvalidate);
-          rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
+          rhi()->bindRenderPipeline(cameraSystem->camGreyscaleUndistortPipeline());
           rhi()->loadTexture(ksDistortionMap, v.stereoDistortionMap[0], linearClampSampler);
           rhi()->loadTexture(ksImageTex, cameraProvider->rgbTexture(v.cameraIndices[0]), linearClampSampler);
           rhi()->drawNDCQuad();

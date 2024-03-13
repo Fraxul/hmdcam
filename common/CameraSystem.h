@@ -99,6 +99,9 @@ public:
 
   glm::mat4 viewWorldTransform(size_t viewIdx) const;
 
+  RHIRenderPipeline::ptr camGreyscalePipeline() const { return m_camGreyscalePipeline; }
+  RHIRenderPipeline::ptr camGreyscaleUndistortPipeline() const { return m_camGreyscaleUndistortPipeline; }
+
   class CalibrationContext;
 
 
@@ -390,6 +393,9 @@ protected:
   std::vector<View> m_views;
 
   RHISurface::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize);
+
+  RHIRenderPipeline::ptr m_camGreyscalePipeline;
+  RHIRenderPipeline::ptr m_camGreyscaleUndistortPipeline;
 
 private:
   // noncopyable

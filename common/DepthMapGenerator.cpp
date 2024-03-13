@@ -62,7 +62,6 @@ DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend backend) {
   return NULL;
 }
 
-RHIRenderPipeline::ptr disparityDepthMapPipeline, disparityDepthMapPointsPipeline;
 FxAtomicString ksMeshDisparityDepthMapUniformBlock("MeshDisparityDepthMapUniformBlock");
 static FxAtomicString ksDisparityTex("disparityTex");
 static FxAtomicString ksImageTex("imageTex");
@@ -178,6 +177,36 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
       m_geoDepthMapLineIndexCount = depth_ia_lines.size();
     }
   }
+
+  {
+    RHIRenderPipelineDescriptor rpd;
+    rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
+    rpd.primitiveRestartEnabled = true;
+
+    RHIShaderDescriptor desc("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
+        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
+      }));
+    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMap.geom.glsl");
+
+    desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
+
+    m_disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
+  }
+
+  {
+    RHIRenderPipelineDescriptor rpd;
+    rpd.primitiveTopology = kPrimitiveTopologyPoints;
+
+    RHIShaderDescriptor desc("shaders/meshDisparityDepthMapPoints.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
+        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
+      }));
+    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMapPoints.geom.glsl");
+
+    desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
+
+    m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
+  }
+
 }
 
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
@@ -245,44 +274,9 @@ DepthMapGenerator::~DepthMapGenerator() {
 }
 
 void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix) {
-  if (!disparityDepthMapPipeline) {
-    RHIRenderPipelineDescriptor rpd;
-    rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
-    rpd.primitiveRestartEnabled = true;
-
-    RHIShaderDescriptor desc("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
-        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
-      }));
-    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMap.geom.glsl");
-
-    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
-      desc.setFlag("SAMPLER_TYPE", "sampler2D");
-    else
-      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
-
-    disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
-  }
-
-  if (!disparityDepthMapPointsPipeline) {
-    RHIRenderPipelineDescriptor rpd;
-    rpd.primitiveTopology = kPrimitiveTopologyPoints;
-
-    RHIShaderDescriptor desc("shaders/meshDisparityDepthMapPoints.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
-        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
-      }));
-    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMapPoints.geom.glsl");
-
-    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
-      desc.setFlag("SAMPLER_TYPE", "sampler2D");
-    else
-      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
-
-    disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
-  }
-
   ViewData* vd = m_viewData[viewIdx];
 
-  rhi()->bindRenderPipeline(m_usePointRendering ? disparityDepthMapPointsPipeline : disparityDepthMapPipeline);
+  rhi()->bindRenderPipeline(m_usePointRendering ? m_disparityDepthMapPointsPipeline : m_disparityDepthMapPipeline);
   rhi()->bindStreamBuffer(0, m_geoDepthMapTexcoordBuffer);
 
   MeshDisparityDepthMapUniformBlock ub;

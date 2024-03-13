@@ -37,8 +37,6 @@ cv::Ptr<cv::aruco::DetectorParameters> s_arucoDetectorParams;
 
 
 // TODO move this
-RHIRenderPipeline::ptr camGreyscalePipeline;
-RHIRenderPipeline::ptr camGreyscaleUndistortPipeline;
 FxAtomicString ksDistortionMap("distortionMap");
 FxAtomicString ksImageTex("imageTex");
 
@@ -60,34 +58,25 @@ CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibrat
 
   m_cameras.resize(cameraProvider()->streamCount());
 
-
   // Compile utility pipelines on first use
-  if (!camGreyscalePipeline) {
+  {
     RHIShaderDescriptor desc(
       "shaders/ndcQuad.vtx.glsl",
       "shaders/camGreyscale.frag.glsl",
       ndcQuadVertexLayout);
-    if (epoxy_is_desktop_gl()) // TODO query this at use-time from the RHISurface type
-      desc.setFlag("SAMPLER_TYPE", "sampler2D");
-    else
-      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
+    desc.setFlag("SAMPLER_TYPE", cam->rgbTextureGLSamplerType());
 
-    camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+    m_camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
-  if (!camGreyscaleUndistortPipeline) {
+  {
     RHIShaderDescriptor desc(
       "shaders/ndcQuad.vtx.glsl",
       "shaders/camGreyscaleUndistort.frag.glsl",
       ndcQuadVertexLayout);
-    if (epoxy_is_desktop_gl())
-      desc.setFlag("SAMPLER_TYPE", "sampler2D");
-    else
-      desc.setFlag("SAMPLER_TYPE", "samplerExternalOES");
-    camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+    desc.setFlag("SAMPLER_TYPE", cam->rgbTextureGLSamplerType());
+    m_camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
-
-
 }
 
 bool CameraSystem::loadCalibrationData() {
@@ -403,13 +392,12 @@ size_t CameraSystem::createStereoView(size_t leftCameraIndex, size_t rightCamera
 }
 
 cv::Mat CameraSystem::captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RHIRenderTarget::ptr rt, RHISurface::ptr distortionMap) {
-
   rhi()->beginRenderPass(rt, kLoadInvalidate);
   if (distortionMap) {
-    rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline);
+    rhi()->bindRenderPipeline(camGreyscaleUndistortPipeline());
     rhi()->loadTexture(ksDistortionMap, distortionMap, linearClampSampler);
   } else {
-    rhi()->bindRenderPipeline(camGreyscalePipeline);
+    rhi()->bindRenderPipeline(camGreyscalePipeline());
   }
   rhi()->loadTexture(ksImageTex, cameraProvider()->rgbTexture(cameraIdx), linearClampSampler);
   rhi()->drawNDCQuad();

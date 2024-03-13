@@ -156,6 +156,8 @@ protected:
   int m_debugFixedDisparityValue = 1;
 
   void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix);
+  RHIRenderPipeline::ptr m_disparityDepthMapPipeline;
+  RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
 
 private:
   ViewData* viewDataAtIndex(size_t index) const { return m_viewData[index]; }

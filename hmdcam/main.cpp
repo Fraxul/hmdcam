@@ -578,7 +578,7 @@ int main(int argc, char* argv[]) {
         RHIRenderTarget::ptr snapRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({cameraMask[cameraIdx]}));
         rhi()->beginRenderPass(snapRT, kLoadInvalidate);
         // This pipeline flips the Y axis for OpenCV's coordinate system, which is the same as the PNG coordinate system
-        rhi()->bindRenderPipeline(camGreyscalePipeline);
+        rhi()->bindRenderPipeline(cameraSystem->camGreyscalePipeline());
         rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(cameraIdx), linearClampSampler);
         rhi()->drawNDCQuad();
         rhi()->endRenderPass(snapRT);
