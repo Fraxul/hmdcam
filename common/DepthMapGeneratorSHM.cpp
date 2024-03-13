@@ -552,6 +552,10 @@ void DepthMapGeneratorSHM::internalRenderIMGUIPerformanceGraphs() {
 
       ImPlot::EndPlot();
   }
+  if (!m_profilingDataBuffer.empty()) {
+    const auto& timing = m_profilingDataBuffer.back();
+    ImGui::Text("Setup %.1fms Copy %.1fms Algo %.1fms", timing.m_setupTimeMs, timing.m_copyTimeMs, timing.m_algoTimeMs);
+  }
 }
 
 #endif // HAVE_OPENCV_CUDA

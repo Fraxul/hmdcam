@@ -14,6 +14,14 @@ public:
   size_t size() const { return m_data.size(); }
   static size_t stride() { return sizeof(T); }
 
+  bool empty() const { return m_data.empty(); }
+
+  const T& back() const {
+    if ((m_data.size() < m_maxSize) || m_offset == 0)
+      return m_data.back();
+    return m_data[m_offset - 1];
+  }
+
   void push_back(const T& value) {
     if (m_data.size() < m_maxSize) {
       m_data.push_back(value);
