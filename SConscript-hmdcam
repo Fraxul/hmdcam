@@ -73,7 +73,6 @@ if tegraEnv['IS_TEGRA']:
     ],
     CPPDEFINES=[
       'USE_LIBARGUS',
-      'USE_NVENC',
       'USE_RDMA',
       'NO_OPENSSL', # live555 config directive
     ]
@@ -82,6 +81,21 @@ if tegraEnv['IS_TEGRA']:
   if (tegraEnv['TEGRA_RELEASE'] < 35):
     tegraEnv.Append(LIBS=['nvbuf_utils'], CPPDEFINES=['USE_NVBUF_UTILS'])
 
+  tegra_src = Glob('hmdcam/tegra/*.cpp')
+
+else:
+  tegra_src = []
+  # WSL2 CUDA doesn't expose cuGraphicsResourceGetMappedEglFrame, which is required by the RDMA server code.
+  # Only enable the RDMA server if we're not building inside a WSL2 environment.
+  if (platform.platform().find('WSL2') < 0):
+    tegraEnv.Append(CPPDEFINES=['USE_RDMA'])
+
+
+if (tegraEnv['IS_TEGRA'] and not tegraEnv['nsight']):
+  tegraEnv.Append(
+    CPPDEFINES=['USE_NVENC'],
+    CPPPATH=['#hmdcam/tegra/nvenc']
+  )
   liveMediaStatics = [
     '#live555/libliveMedia.a',
     '#live555/libgroupsock.a',
@@ -102,19 +116,12 @@ if tegraEnv['IS_TEGRA']:
     'tegra_mmapi/NvVideoDecoder.cpp',
     'tegra_mmapi/NvVideoEncoder.cpp'
   ]
-  tegra_src = Glob('hmdcam/tegra/*.cpp')
+  tegra_src += Glob('hmdcam/tegra/nvenc/*.cpp')
 
 else:
-  # building on desktop for testing; some pieces will be stubbed out.
+  # building on desktop for testing or in NSight compatibility mode; NVEnc bits will be stubbed out
   liveMediaStatics = []
   tegra_mmapi_src = []
-  tegra_src = []
-
-  # WSL2 CUDA doesn't expose cuGraphicsResourceGetMappedEglFrame, which is required by the RDMA server code.
-  # Only enable the RDMA server if we're not building inside a WSL2 environment.
-  if (platform.platform().find('WSL2') < 0):
-    tegraEnv.Append(CPPDEFINES=['USE_RDMA'])
-
 
 if (env['HAVE_VPI2']):
   tegraEnv.Append(LIBS=['nvvpi'])

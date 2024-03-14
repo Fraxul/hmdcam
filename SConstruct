@@ -6,6 +6,7 @@ import SCons
 
 vars = Variables(None, ARGUMENTS)
 vars.Add(BoolVariable('debug', 'Set to build in debug mode (no optimization)', 0))
+vars.Add(BoolVariable('nsight', 'Set to build for NSight compatibility (disables NVEnc, VPI2)', 0))
 
 
 env_tools = ['clang', 'clangxx', 'link', 'cuda']
@@ -114,12 +115,14 @@ if (have_opencv_cuda):
 env['HAVE_OPENCV_CUDA'] = have_opencv_cuda
 
 
-have_vpi2 = True
-if not os.path.isdir('/opt/nvidia/vpi2'):
-  have_vpi2 = False
-  print('VPI2 library is not installed at /opt/nvidia/vpi2. VPI2 backend will not build.')
-if (have_vpi2):
-  env.Append(CPPDEFINES=['HAVE_VPI2'])
+have_vpi2 = False
+if (not env['nsight']):
+  if os.path.isdir('/opt/nvidia/vpi2'):
+    have_vpi2 = True
+    env.Append(CPPDEFINES=['HAVE_VPI2'])
+  else:
+    print('VPI2 library is not installed at /opt/nvidia/vpi2. VPI2 backend will not build.')
+
 env['HAVE_VPI2'] = have_vpi2
 
 Export('env')

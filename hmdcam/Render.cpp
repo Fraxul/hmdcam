@@ -15,7 +15,7 @@
 #include "util/u_device.h"
 
 #if USE_NVENC
-#include "tegra/NvEncSession.h"
+#include "NvEncSession.h"
 #include "liveMedia.hh"
 #include "BasicUsageEnvironment.hh"
 #include "BufferRingSource.h"
