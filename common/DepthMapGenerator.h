@@ -137,7 +137,10 @@ protected:
   RHIBuffer::ptr m_geoDepthMapTexcoordBuffer;
   RHIBuffer::ptr m_geoDepthMapTristripIndexBuffer;
   RHIBuffer::ptr m_geoDepthMapLineIndexBuffer;
-  size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount;
+
+  RHIBuffer::ptr m_geoDepthMapPointTexcoordBuffer;
+  RHIBuffer::ptr m_geoDepthMapPointTristripIndexBuffer;
+  size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount, m_geoDepthMapPointTristripIndexCount;
 
   // Render settings
   int m_trimLeft = 8, m_trimTop = 8;

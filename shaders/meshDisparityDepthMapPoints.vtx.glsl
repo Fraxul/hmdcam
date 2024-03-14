@@ -2,20 +2,17 @@
 
 #include "MeshDisparityDepthMapUniformBlock.h"
 
-// xy is image texture coordinates (0...1)
-// zw is disparity map coordinates (integer texels)
-layout(location = 0) in vec4 textureCoordinates;
+
+layout(location = 0) in vec2 textureCoordinates;// image texture coordinates (0...1)
+layout(location = 1) in vec2 gridCoordinates; // integer texels, varies over the quad
+layout(location = 2) in vec2 disparitySampleCoordinates; // integer texels, fixed to the left-top value
 
 uniform highp usampler2D disparityTex;
 
-out V2G {
-  vec4 P;
-  vec4 dPdU;
-  vec4 dPdV;
-
+out V2F {
   vec2 texCoord;
   flat int trimmed;
-} v2g;
+} v2f;
 
 vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
 
@@ -34,7 +31,7 @@ void main()
     disparityRaw = uint(max(debugFixedDisparity, 1)); // prevent divide-by-zero
 
   } else {
-    ivec2 mipCoords = ivec2(textureCoordinates.zw);
+    ivec2 mipCoords = ivec2(disparitySampleCoordinates);
     // Walk the mip chain to find a valid disparity value at this location
     for (int level = 0; level < disparityTexLevels; ++level) {
       disparityRaw = texelFetch(disparityTex, mipCoords, level).r;
@@ -46,11 +43,12 @@ void main()
     disparityRaw = max(disparityRaw, 1u); // prevent divide-by-zero
   }
 
+  int viewport = gl_InstanceID;
   float disparity = (float(disparityRaw) * disparityPrescale);
-  v2g.P = TransformToLocalSpace(textureCoordinates.z, textureCoordinates.w, disparity);
-  v2g.dPdU = (TransformToLocalSpace(textureCoordinates.z + pointScale, textureCoordinates.w, disparity) - v2g.P);
-  v2g.dPdV = (TransformToLocalSpace(textureCoordinates.z, textureCoordinates.w + pointScale, disparity) - v2g.P);
-  v2g.texCoord = textureCoordinates.xy;
-  v2g.trimmed = int(any(notEqual(clamp(textureCoordinates.zw, trim_minXY, trim_maxXY), textureCoordinates.zw)));
+  gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(gridCoordinates.x, gridCoordinates.y, disparity);
+  gl_ViewportIndex = viewport;
+
+  v2f.texCoord = textureCoordinates;
+  v2f.trimmed = int(any(notEqual(clamp(disparitySampleCoordinates.xy, trim_minXY, trim_maxXY), disparitySampleCoordinates.xy)));
 }
 

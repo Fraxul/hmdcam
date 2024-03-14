@@ -176,6 +176,50 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
       m_geoDepthMapLineIndexBuffer = rhi()->newBufferWithContents(depth_ia_lines.data(), depth_ia_lines.size() * sizeof(uint32_t), kBufferUsageCPUWriteOnly);
       m_geoDepthMapLineIndexCount = depth_ia_lines.size();
     }
+
+
+    { // Point-rendering vertex + index buffer
+      std::vector<glm::vec2> depth_tc;
+      std::vector<uint32_t> depth_ia;
+      depth_tc.reserve(internalWidth() * internalHeight() * 3 * 4);
+      depth_ia.reserve(internalWidth() * internalHeight() * 5);
+      size_t counter = 0;
+
+      for (uint32_t y = 0; y < internalHeight(); y++) {
+        for (uint32_t x = 0; x < internalWidth(); x++) {
+          // [0] is image texture coordinates (0...1)
+          // [1] is grid coordinates (integer texels)
+          // [1] is disparity sample coordinates (integer texels)
+          depth_tc.push_back(glm::vec2(static_cast<float>(x    ) / static_cast<float>(internalWidth()), static_cast<float>(y    ) / static_cast<float>(internalHeight())));
+          depth_tc.push_back(glm::vec2(x, y));
+          depth_tc.push_back(glm::vec2(x, y));
+          depth_ia.push_back(counter++);
+
+          depth_tc.push_back(glm::vec2(static_cast<float>(x    ) / static_cast<float>(internalWidth()), static_cast<float>(y + 1) / static_cast<float>(internalHeight())));
+          depth_tc.push_back(glm::vec2(x, y + 1));
+          depth_tc.push_back(glm::vec2(x, y));
+          depth_ia.push_back(counter++);
+
+          depth_tc.push_back(glm::vec2(static_cast<float>(x + 1) / static_cast<float>(internalWidth()), static_cast<float>(y    ) / static_cast<float>(internalHeight())));
+          depth_tc.push_back(glm::vec2(x + 1, y));
+          depth_tc.push_back(glm::vec2(x, y));
+          depth_ia.push_back(counter++);
+
+          depth_tc.push_back(glm::vec2(static_cast<float>(x + 1) / static_cast<float>(internalWidth()), static_cast<float>(y + 1) / static_cast<float>(internalHeight())));
+          depth_tc.push_back(glm::vec2(x + 1, y + 1));
+          depth_tc.push_back(glm::vec2(x, y));
+          depth_ia.push_back(counter++);
+          depth_ia.push_back(0xffffffff); // strip-restart
+
+        }
+      }
+      m_geoDepthMapPointTexcoordBuffer = rhi()->newBufferWithContents(depth_tc.data(), depth_tc.size() * sizeof(depth_tc[0]), kBufferUsageCPUWriteOnly);
+
+      depth_ia.pop_back(); // remove the unneccesary last strip-restart index
+
+      m_geoDepthMapPointTristripIndexBuffer = rhi()->newBufferWithContents(depth_ia.data(), depth_ia.size() * sizeof(uint32_t), kBufferUsageCPUWriteOnly);
+      m_geoDepthMapPointTristripIndexCount = depth_ia.size();
+    }
   }
 
   {
@@ -195,12 +239,15 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
 
   {
     RHIRenderPipelineDescriptor rpd;
-    rpd.primitiveTopology = kPrimitiveTopologyPoints;
+    rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
+    rpd.primitiveRestartEnabled = true;
 
-    RHIShaderDescriptor desc("shaders/meshDisparityDepthMapPoints.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
-        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
+    RHIShaderDescriptor desc("shaders/meshDisparityDepthMapPoints.vtx.glsl", "shaders/meshDisparityDepthMapPoints.frag.glsl", RHIVertexLayout({
+        RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates",          0, 24),
+        RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "gridCoordinates",             8, 24),
+        RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "disparitySampleCoordinates", 16, 24),
+
       }));
-    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMapPoints.geom.glsl");
 
     desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
 
@@ -276,8 +323,13 @@ DepthMapGenerator::~DepthMapGenerator() {
 void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix) {
   ViewData* vd = m_viewData[viewIdx];
 
-  rhi()->bindRenderPipeline(m_usePointRendering ? m_disparityDepthMapPointsPipeline : m_disparityDepthMapPipeline);
-  rhi()->bindStreamBuffer(0, m_geoDepthMapTexcoordBuffer);
+  if (m_usePointRendering) {
+    rhi()->bindRenderPipeline(m_disparityDepthMapPointsPipeline);
+    rhi()->bindStreamBuffer(0, m_geoDepthMapPointTexcoordBuffer);
+  } else {
+    rhi()->bindRenderPipeline(m_disparityDepthMapPipeline);
+    rhi()->bindStreamBuffer(0, m_geoDepthMapTexcoordBuffer);
+  }
 
   MeshDisparityDepthMapUniformBlock ub;
   ub.modelViewProjection[0] = renderView0.viewProjectionMatrix * modelMatrix;
@@ -323,7 +375,7 @@ void DepthMapGenerator::renderDisparityDepthMapStereo(size_t viewIdx, const FxRe
   internalRenderSetup(viewIdx, /*stereo=*/ true, leftRenderView, rightRenderView, modelMatrix);
 
   if (m_usePointRendering)
-    rhi()->drawPrimitives(0, internalWidth() * internalHeight());
+    rhi()->drawIndexedPrimitives(m_geoDepthMapPointTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapPointTristripIndexCount, /*indexOffsetElements=*/ 0, /*instanceCount=*/ 2);
   else
     rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
 }
@@ -332,7 +384,7 @@ void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderVi
   internalRenderSetup(viewIdx, /*stereo=*/ false, renderView, renderView, modelMatrix);
 
   if (m_usePointRendering)
-    rhi()->drawPrimitives(0, internalWidth() * internalHeight());
+    rhi()->drawIndexedPrimitives(m_geoDepthMapPointTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapPointTristripIndexCount, /*indexOffsetElements=*/ 0, /*instanceCount=*/ 1);
   else
     rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
 }
