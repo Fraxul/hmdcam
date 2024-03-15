@@ -438,6 +438,36 @@ void RHIGL::beginRenderPass(RHIRenderTarget::ptr renderTarget, RHIRenderTargetLo
   GL(glStencilMask(0xffffffff));
   GL(glDisable(GL_SCISSOR_TEST));
 
+  // execute discards
+  {
+    GLenum discardedAttachments[20]; // max 16 color attachments + depth and stencil
+    GLsizei discardedAttachmentCount = 0;
+    bool isDefaultFramebuffer = (m_activeRenderTarget->glFramebufferId() == 0);
+
+    if (colorLoadAction == kLoadInvalidate && m_activeRenderTarget->hasColorTarget()) {
+      if (isDefaultFramebuffer) {
+        // Special case for default framebuffer: must use GL_COLOR_EXT instead of GL_COLOR_ATTACHMENTn
+        discardedAttachments[discardedAttachmentCount++] = GL_COLOR_EXT;
+      } else {
+        for (size_t i = 0; i < m_activeRenderTarget->colorTargetCount(); ++i) {
+          discardedAttachments[discardedAttachmentCount++] = GL_COLOR_ATTACHMENT0 + i;
+        }
+      }
+    }
+
+    if (m_activeRenderTarget->hasDepthStencilTarget()) {
+      if (depthLoadAction == kLoadInvalidate)
+        discardedAttachments[discardedAttachmentCount++] = isDefaultFramebuffer ? GL_DEPTH_EXT : GL_DEPTH_ATTACHMENT;
+      if (stencilLoadAction == kLoadInvalidate)
+        discardedAttachments[discardedAttachmentCount++] = isDefaultFramebuffer ? GL_STENCIL_EXT : GL_STENCIL_ATTACHMENT;
+    }
+
+    if (discardedAttachmentCount) {
+      GL(glDiscardFramebufferEXT(GL_FRAMEBUFFER, discardedAttachmentCount, discardedAttachments));
+    }
+  }
+
+
   // execute clears
   uint32_t clearBits = 0;
   if (m_activeRenderTarget->hasColorTarget() && (colorLoadAction == kLoadClear)) {
