@@ -431,34 +431,6 @@ void RHIGL::beginRenderPass(RHIRenderTarget::ptr renderTarget, RHIRenderTargetLo
   GL(glBindFramebuffer(GL_FRAMEBUFFER, m_activeRenderTarget->glFramebufferId()));
   GL(glViewport(0, 0, m_activeRenderTarget->width(), m_activeRenderTarget->height()));
 
-  static GLenum buffers[] = {
-    GL_COLOR_ATTACHMENT0,
-    GL_COLOR_ATTACHMENT1,
-    GL_COLOR_ATTACHMENT2,
-    GL_COLOR_ATTACHMENT3,
-    GL_COLOR_ATTACHMENT4,
-    GL_COLOR_ATTACHMENT5,
-    GL_COLOR_ATTACHMENT6,
-    GL_COLOR_ATTACHMENT7,
-    GL_COLOR_ATTACHMENT8,
-    GL_COLOR_ATTACHMENT9,
-    GL_COLOR_ATTACHMENT10,
-    GL_COLOR_ATTACHMENT11,
-    GL_COLOR_ATTACHMENT12,
-    GL_COLOR_ATTACHMENT13,
-    GL_COLOR_ATTACHMENT14,
-    GL_COLOR_ATTACHMENT15 };
-
-  if (m_activeRenderTarget->glFramebufferId() == 0) {
-    // special case for window RT
-    GLenum backBuffer = GL_BACK;
-    GL(glDrawBuffers(1, &backBuffer));
-    GL(glReadBuffer(GL_BACK));
-  } else if (m_activeRenderTarget->colorTargetCount()) {
-    // this just picks the first (m_colorBuffersCount) buffers from the array which contains all of the COLOR_ATTACHMENT enums in order
-    GL(glDrawBuffers(m_activeRenderTarget->colorTargetCount(), buffers));
-  }
-
   // disable all color/depth/stencil masking before clears.
   // masking is part of the render pipeline state so will be reset when that is next bound
   GL(glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE));
