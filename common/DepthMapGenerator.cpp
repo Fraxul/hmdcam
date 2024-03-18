@@ -254,6 +254,13 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
   }
 
+  if (!disparityMipPipeline) {
+    disparityMipPipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/disparityMip.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
+  }
+  if (!disparityMipComputePipeline) {
+    disparityMipComputePipeline = rhi()->compileComputePipeline(rhi()->compileShader(RHIShaderDescriptor::computeShader("shaders/disparityMip.comp.glsl")));
+  }
+
 }
 
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
@@ -477,13 +484,6 @@ void DepthMapGenerator::processFrame() {
 }
 
 void DepthMapGenerator::internalGenerateDisparityMips() {
-  if (!disparityMipPipeline) {
-    disparityMipPipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/disparityMip.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
-  }
-  if (!disparityMipComputePipeline) {
-    disparityMipComputePipeline = rhi()->compileComputePipeline(rhi()->compileShader(RHIShaderDescriptor::computeShader("shaders/disparityMip.comp.glsl")));
-  }
-
   // Filter invalid disparities: generate mip-chains
 
   if (m_useComputeShaderMip) {
