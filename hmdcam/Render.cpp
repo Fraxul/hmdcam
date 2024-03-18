@@ -218,9 +218,9 @@ bool RenderInit(ERenderBackend backendType) {
     hmd_width = hmd->screens[0].w_pixels;
     hmd_height = hmd->screens[0].h_pixels;
 
-    // Eye target dimensions are twice the per-eye viewport resolution, rounded up to the next 16 pixel block
-    eye_width = ((hmd->views[0].viewport.w_pixels * 2) + 0xf) & ~0xfUL;
-    eye_height = ((hmd->views[0].viewport.h_pixels * 2) + 0xf) & ~0xfUL;
+    // Eye target dimensions are 1.5x the per-eye viewport resolution, rounded up to the next 16 pixel block
+    eye_width = (((hmd->views[0].viewport.w_pixels * 3) / 2) + 0xf) & ~0xfUL;
+    eye_height = (((hmd->views[0].viewport.h_pixels * 3) / 2) + 0xf) & ~0xfUL;
     printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
 
   }
