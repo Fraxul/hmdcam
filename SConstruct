@@ -133,6 +133,7 @@ if (is_tegra and (not os.path.isdir('/usr/local/nvidia-dgpu-support'))):
   print('DGPU support libraries for Tegra are not installed at /usr/local/nvidia-dgpu-support. DGPU backend will not build.')
 
 SConscript('SConscript-hmdcam', variant_dir = 'build/hmdcam', duplicate = 0)
+SConscript('SConscript-pdu-test', variant_dir = 'build/pdu-test', duplicate = 0)
 if (is_tegra and build_dgpu):
   SConscript('SConscript-pductl', variant_dir = 'build/pductl', duplicate = 0)
   SConscript('SConscript-dgpu-fans', variant_dir = 'build/dgpu-fans', duplicate = 0)

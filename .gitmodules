@@ -27,3 +27,6 @@
   url = https://gitlab.freedesktop.org/fraxul/monado.git
   ignore = untracked
   branch = standalone
+[submodule "canard/libcanard"]
+	path = canbus/libcanard
+	url = https://github.com/OpenCyphal/libcanard

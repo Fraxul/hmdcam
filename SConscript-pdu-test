@@ -1,0 +1,27 @@
+Import('env')
+
+pduEnv = env.Clone()
+
+pduEnv.Append(
+  CPPPATH=[
+    '#canbus',
+    '#canbus/common',
+    '#canbus/socketcan',
+    '#canbus/libcanard/libcanard'
+  ]
+)
+
+pduEnv.CompilationDatabase()
+pduEnv.Program(
+  target = '../bin/pdu-test', # relative to build/pdu-test
+  source = 
+    Glob('canbus/*.cpp') +
+    Glob('canbus/common/*.cpp') +
+    Glob('canbus/socketcan/*.c') +
+    Glob('canbus/libcanard/libcanard/*.c'),
+
+  
+  LIBS = ['socketcan', 'pthread', 'rt']
+)
+
+
