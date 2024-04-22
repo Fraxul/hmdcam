@@ -589,6 +589,7 @@ CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSys
   m_feedbackRmsError = -1.0;
   m_incrementalUpdateInProgress = false;
   m_calibrationModel = 1; // default to thin_prism
+  m_fixPrincipalPoint = false;
 }
 
 CameraSystem::IntrinsicCalibrationContext::~IntrinsicCalibrationContext() {
@@ -620,8 +621,8 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
     ImGui::Text("RMS error: %f", m_feedbackRmsError);
     ImGui::Text("FOV: %.2f x %.2f", m_feedbackFovX, m_feedbackFovY);
     ImGui::Text("Principal Point offset: %.2f, %.2f",
-      static_cast<float>(cameraProvider()->streamWidth()  / 2) - m_feedbackPrincipalPoint.x,
-      static_cast<float>(cameraProvider()->streamHeight() / 2) - m_feedbackPrincipalPoint.y);
+      static_cast<float>((cameraProvider()->streamWidth() - 1)  / 2) - m_feedbackPrincipalPoint.x,
+      static_cast<float>((cameraProvider()->streamHeight() - 1) / 2) - m_feedbackPrincipalPoint.y);
 
     if (ImGui::BeginChild("Per-View Errors", ImVec2(0, 192))) {
       for (int i = 0; i < m_perViewErrors.rows; ++i) {
@@ -664,6 +665,7 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
       modelDirty |= ImGui::RadioButton("+ ThinPrism", &m_calibrationModel, 1);
       ImGui::SameLine();
       modelDirty |= ImGui::RadioButton("+ Tilted", &m_calibrationModel, 2);
+      modelDirty |= ImGui::Checkbox("Fix Principal Point", &m_fixPrincipalPoint);
 
       if (modelDirty) {
         // update if the distortion model type changed
@@ -794,7 +796,6 @@ void CameraSystem::IntrinsicCalibrationContext::asyncUpdateIncrementalCalibratio
     std::vector<float> reprojErrs;
     cv::Size imageSize(cameraProvider()->streamWidth(), cameraProvider()->streamHeight());
     int flags =
-      cv::CALIB_FIX_PRINCIPAL_POINT |
       cv::CALIB_FIX_ASPECT_RATIO |
       cv::CALIB_RATIONAL_MODEL;
     int distCoeffSize = 8; // rational
@@ -807,6 +808,10 @@ void CameraSystem::IntrinsicCalibrationContext::asyncUpdateIncrementalCalibratio
     if (m_calibrationModel >= 2) {
       distCoeffSize = 14; // rational + thin_prism + tilted
       flags |= cv::CALIB_TILTED_MODEL;
+    }
+
+    if (m_fixPrincipalPoint) {
+      flags |= cv::CALIB_FIX_PRINCIPAL_POINT;
     }
 
     c.intrinsicMatrix = cv::Mat::eye(3, 3, CV_64F);

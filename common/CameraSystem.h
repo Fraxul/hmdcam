@@ -239,6 +239,7 @@ public:
     bool m_incrementalUpdateInProgress;
 
     int m_calibrationModel; // 0 = rational, 1 = rational+thin_prism, 2=rational+thin_prism+tilted
+    bool m_fixPrincipalPoint;
   };
 
   class StereoCalibrationContext : public CalibrationContextStateMachineBase {
