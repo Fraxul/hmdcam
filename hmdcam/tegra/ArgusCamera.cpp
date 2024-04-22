@@ -34,7 +34,7 @@
 
 static const size_t kBufferCount = 8;
 static const uint64_t kCaptureTimeoutNs = 5000000000ULL; // 5 seconds
-static const uint32_t kFailedCaptureThreshold = 3;
+static const uint32_t kFailedCaptureThreshold = 1;
 
 extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
 extern FxAtomicString ksNDCQuadUniformBlock;
@@ -104,7 +104,6 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 
   // Pick a sensor mode from the first camera, which will be applied to all cameras
   Argus::ICameraProperties *iCameraProperties = Argus::interface_cast<Argus::ICameraProperties>(m_cameraDevices[0]);
-  Argus::SensorMode* sensorMode = NULL;
   {
     // Select sensor mode. Pick the fastest mode (smallest FrameDurationRange.min) with the largest pixel area.
     uint64_t bestFrameDurationRangeMin = UINT64_MAX;
@@ -122,7 +121,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
         ((iSensorModeCandidate->getFrameDurationRange().min() == bestFrameDurationRangeMin) && (pixelArea > bestPixelArea))) /*same speed, more pixels*/ {
         bestFrameDurationRangeMin = iSensorModeCandidate->getFrameDurationRange().min();
         bestPixelArea = pixelArea;
-        sensorMode = sensorModeCandidate;
+        m_sensorMode = sensorModeCandidate;
       }
     }
 
@@ -132,23 +131,25 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
         int modeIdx = atoi(e);
         if (modeIdx >= 0 && modeIdx < sensorModes.size()) {
           printf("Overriding mode selection to index %d by ARGUS_MODE environment variable\n", modeIdx);
-          sensorMode = sensorModes[modeIdx];
+          m_sensorMode = sensorModes[modeIdx];
         }
       }
     }
 
   }
 
-  if (!sensorMode)
+  if (!m_sensorMode)
     die("Unable to select a sensor mode");
 
-  Argus::ISensorMode *iSensorMode = Argus::interface_cast<Argus::ISensorMode>(sensorMode);
+  Argus::ISensorMode *iSensorMode = Argus::interface_cast<Argus::ISensorMode>(m_sensorMode);
   assert(iSensorMode);
 
   printf("Selected sensor mode:\n");
-  ArgusHelpers::printSensorModeInfo(sensorMode, "-- ");
+  ArgusHelpers::printSensorModeInfo(m_sensorMode, "-- ");
   m_streamWidth = iSensorMode->getResolution().width();
   m_streamHeight = iSensorMode->getResolution().height();
+  m_captureDurationMinNs = iSensorMode->getFrameDurationRange().min();
+  m_captureDurationMaxNs = iSensorMode->getFrameDurationRange().max();
 
   // Save minimum autocontrol region size
 #if L4T_RELEASE_MAJOR < 34
@@ -159,6 +160,18 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
   m_minAcRegionHeight = minAcRegionSize.height();
 #endif
 
+  // Set up all of the per-stream metadata containers
+  m_frameMetadata.resize(m_cameraDevices.size());
+
+
+  buildCaptureSessions();
+}
+
+void ArgusCamera::buildCaptureSessions() {
+  Argus::ICameraProvider* iCameraProvider = Argus::interface_cast<Argus::ICameraProvider>(m_cameraProvider.get());
+  if (!iCameraProvider) {
+    die("Failed to get ICameraProvider interface");
+  }
 
   // Determine how many capture sessions we need
   size_t requiredCaptureSessions = (m_cameraDevices.size() + (m_streamsPerSession - 1)) / m_streamsPerSession;
@@ -201,7 +214,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     Argus::ISourceSettings *iSourceSettings = Argus::interface_cast<Argus::ISourceSettings>(sessionData.m_captureRequest);
     if (!iSourceSettings)
         die("Failed to get source settings request interface");
-    iSourceSettings->setSensorMode(sensorMode);
+    iSourceSettings->setSensorMode(m_sensorMode);
   }
 
 
@@ -358,15 +371,9 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     iRequest->enableOutputStream(outputStream);
   }
 
-  // Set up all of the per-stream metadata containers
-  m_frameMetadata.resize(m_cameraDevices.size());
-
   // Update autocontrol settings
   setExposureCompensation(m_exposureCompensation);
   setAcRegion(m_acRegionCenter, m_acRegionSize);
-
-  m_captureDurationMinNs = iSensorMode->getFrameDurationRange().min();
-  m_captureDurationMaxNs = iSensorMode->getFrameDurationRange().max();
 
   // Set the initial capture duration to the requested frame interval. This will be wrong since there's some overhead;
   // we'll recompute it later once we start getting back capture timestamps.
@@ -401,7 +408,7 @@ void ArgusCamera::setRepeatCapture(bool value) {
 
 }
 
-ArgusCamera::~ArgusCamera() {
+void ArgusCamera::teardownCaptureSessions() {
   for (Argus::OutputStream* outputStream : m_outputStreams)
     outputStream->destroy();
   m_outputStreams.clear();
@@ -427,6 +434,21 @@ ArgusCamera::~ArgusCamera() {
     }
   }
   m_bufferPools.clear();
+  m_releaseBuffers.clear();
+
+  for (SessionData& sd : m_perSessionData) {
+    sd.m_captureSession->destroy();
+    sd.m_captureRequest->destroy();
+    sd.m_completionEventQueue->destroy();
+  }
+  m_perSessionData.clear();
+
+
+
+}
+
+ArgusCamera::~ArgusCamera() {
+  teardownCaptureSessions();
 }
 
 bool ArgusCamera::readFrame() {
@@ -660,6 +682,10 @@ bool ArgusCamera::readFrame() {
       if (!waitForIdleOK) {
         die("ArgusCamera::readFrame(): Couldn't recover from capture session failure -- terminating the process");
       }
+
+      teardownCaptureSessions();
+
+      buildCaptureSessions();
 
       m_captureIsRepeating = false;
       m_failedCaptures = 0;

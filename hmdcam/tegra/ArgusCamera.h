@@ -57,6 +57,9 @@ public:
   void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&);
 
 private:
+  void teardownCaptureSessions();
+  void buildCaptureSessions();
+
   EGLDisplay m_display;
   EGLContext m_context;
 
@@ -86,6 +89,8 @@ private:
   // Per-sensor objects
   std::vector<Argus::CameraDevice*> m_cameraDevices;
   std::vector<Argus::OutputStream*> m_outputStreams;
+
+  Argus::SensorMode* m_sensorMode = nullptr;
 
 
   struct BufferPool {
