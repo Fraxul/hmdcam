@@ -33,8 +33,10 @@
 //#define FRAME_WAIT_TIME_STATS 1
 
 static const size_t kBufferCount = 8;
-static const uint64_t kCaptureTimeoutNs = 5000000000ULL; // 5 seconds
+static const uint64_t kCaptureTimeoutNs = 3 /*seconds*/ * 1'000'000'000ULL;
+static const uint64_t kWaitForIdleTimeoutNs = 3 /*seconds*/ * 1'000'000'000ULL;
 static const uint32_t kFailedCaptureThreshold = 1;
+static const uint32_t kFailedWaitForIdleThreshold = 2;
 
 extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
 extern FxAtomicString ksNDCQuadUniformBlock;
@@ -402,7 +404,7 @@ void ArgusCamera::setRepeatCapture(bool value) {
     // Give the sessions time to return to idle
     for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
       Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
-      iCaptureSession->waitForIdle(kCaptureTimeoutNs);
+      iCaptureSession->waitForIdle(kWaitForIdleTimeoutNs);
     }
   }
 
@@ -665,11 +667,11 @@ bool ArgusCamera::readFrame() {
       // Give the sessions time to return to idle
       bool waitForIdleOK;
 
-      for (size_t waitForIdleAttempt = 0; waitForIdleAttempt < kFailedCaptureThreshold; ++waitForIdleAttempt) {
+      for (size_t waitForIdleAttempt = 0; waitForIdleAttempt < kFailedWaitForIdleThreshold; ++waitForIdleAttempt) {
         waitForIdleOK = true;
         for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
           Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
-          Argus::Status status = iCaptureSession->waitForIdle(kCaptureTimeoutNs);
+          Argus::Status status = iCaptureSession->waitForIdle(kWaitForIdleTimeoutNs);
           printf("ArgusCamera::readFrame(): waitForIdle(session %zu): %s\n", sessionIdx, argusStatusStr(status));
           if (status != Argus::STATUS_OK)
             waitForIdleOK = false;
