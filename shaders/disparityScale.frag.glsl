@@ -5,14 +5,18 @@ layout(location = 0) out vec4 outColor;
 uniform highp isampler2D imageTex;
 
 layout(std140) uniform DisparityScaleUniformBlock {
+  ivec2 viewportOffset;
   float disparityScale;
   int sourceLevel;
+
   int maxValidDisparityRaw;
+  float pad2;
+  float pad3;
   float pad4;
 };
 
 void main() {
-  ivec2 coord = ivec2(int(gl_FragCoord.x) >> sourceLevel, int(gl_FragCoord.y) >> sourceLevel);
+  ivec2 coord = ivec2((int(gl_FragCoord.x) - viewportOffset.x) >> sourceLevel, (int(gl_FragCoord.y) - viewportOffset.y) >> sourceLevel);
 
   int disparity_raw = texelFetch(imageTex, coord, sourceLevel).r;
   if (disparity_raw <= 0 || disparity_raw > maxValidDisparityRaw) {

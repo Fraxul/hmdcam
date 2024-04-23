@@ -66,9 +66,14 @@ struct MeshTransformUniformBlock {
 
 static FxAtomicString ksDisparityScaleUniformBlock("DisparityScaleUniformBlock");
 struct DisparityScaleUniformBlock {
+  uint32_t viewportOffsetX;
+  uint32_t viewportOffsetY;
   float disparityScale;
   uint32_t sourceLevel;
+
   uint32_t maxValidDisparityRaw;
+  float pad2;
+  float pad3;
   float pad4;
 };
 
@@ -609,6 +614,8 @@ int main(int argc, char** argv) {
           rhi()->bindRenderPipeline(disparityScalePipeline);
           rhi()->loadTexture(ksImageTex, disparitySurface);
           DisparityScaleUniformBlock ub;
+          ub.viewportOffsetX = 0;
+          ub.viewportOffsetY = 0;
           ub.disparityScale = depthMapGenerator->disparityPrescale() * depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparity()));
           ub.sourceLevel = disparityScaleSourceLevel;
           ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(depthMapGenerator->maxDisparity() - 1) / depthMapGenerator->disparityPrescale());

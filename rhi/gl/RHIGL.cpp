@@ -862,6 +862,11 @@ void RHIGL::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::pt
   }
 
   RHISurfaceGL* glTex = static_cast<RHISurfaceGL*>(tex.get());
+  if (!glTex) {
+    printf("RHIGL::loadTexture(\"%s\"): texture is NULL!\n", name.c_str());
+    return;
+  }
+
   RHISamplerGL* glSampler = static_cast<RHISamplerGL*>(sampler.get());
 
   GL(glActiveTexture(GL_TEXTURE0 + textureUnitNumber));

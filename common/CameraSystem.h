@@ -29,6 +29,8 @@ public:
   // use to invalidate derived data caches in clients
   unsigned int calibrationDataRevision() const { return m_calibrationDataRevision; }
 
+  void debugIncrementCalibrationDataRevision() { m_calibrationDataRevision += 1; }
+
 
   struct Camera {
     Camera() : fovX(0), fovY(0) {}

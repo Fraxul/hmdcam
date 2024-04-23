@@ -62,6 +62,7 @@ float panoClipOffset = 0.0f;
 float panoClipScale = 1.0f;
 float panoTxScale = 1.0f;
 bool debugUseDistortion = true;
+bool debugShowDepthMap = true;
 float uiScale = 0.2f;
 float uiDepth = 0.4f;
 
@@ -216,7 +217,20 @@ RHIRenderPipeline::ptr camOverlayPipeline;
 RHIRenderPipeline::ptr camUndistortMaskPipeline;
 RHIRenderPipeline::ptr camUndistortOverlayPipeline;
 RHIRenderPipeline::ptr camCopyPipeline;
+RHIRenderPipeline::ptr disparityScalePipeline;
 
+static FxAtomicString ksDisparityScaleUniformBlock("DisparityScaleUniformBlock");
+struct DisparityScaleUniformBlock {
+  uint32_t viewportOffsetX;
+  uint32_t viewportOffsetY;
+  float disparityScale;
+  uint32_t sourceLevel;
+
+  uint32_t maxValidDisparityRaw;
+  float pad2;
+  float pad3;
+  float pad4;
+};
 
 int main(int argc, char* argv[]) {
 
@@ -378,6 +392,8 @@ int main(int argc, char* argv[]) {
       desc.setFlag("SAMPLER_TYPE", sampler_type);
       camCopyPipeline = rhi()->compileRenderPipeline(desc, tristripPipelineDescriptor);
     }
+
+    disparityScalePipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
   }
 
 
@@ -858,6 +874,9 @@ int main(int argc, char* argv[]) {
             if (ImGui::Button("Reload Calibration from Disk")) {
               cameraSystem->loadCalibrationData();
             }
+            if (ImGui::Button("DEBUG Increment Calibration Rev")) {
+              cameraSystem->debugIncrementCalibrationDataRevision();
+            }
           } // Calibration header
 
           if (debugEnableDepthMapGenerator && depthMapGenerator && ImGui::CollapsingHeader("Depth Backend")) {
@@ -922,6 +941,7 @@ int main(int argc, char* argv[]) {
         if (ImGui::CollapsingHeader("Remote Debug")) {
           ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
           ImGui::Checkbox("Distortion correction", &debugUseDistortion);
+          ImGui::Checkbox("Show depth map", &debugShowDepthMap);
           if (ImGui::RadioButton("No overlay", !debugOverlay)) {
             debugOverlay.reset();
           }
@@ -1194,6 +1214,10 @@ int main(int argc, char* argv[]) {
       // Debug feedback rendering
       {
         RHISurface::ptr debugSurface = renderAcquireDebugSurface();
+        if (depthMapGenerator) {
+          depthMapGenerator->setPopulateDebugTextures((bool) debugSurface);
+        }
+
         if (debugSurface) {
           nvtxMarkA("Debug feedback");
           if (debugOverlay)
@@ -1221,6 +1245,60 @@ int main(int argc, char* argv[]) {
             }
 
             renderDrawCamera(cameraIdx, /*drawFlags=*/0, distortionTex, overlayTex, /*mvp=*/glm::mat4(1.0f) /*identity*/);
+          }
+
+          // Depth-map overlays for stereo views, if present
+          if (depthMapGenerator && debugShowDepthMap) {
+            for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+              const CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+              if (!v.isStereo)
+                continue;
+
+              RHISurface::ptr disparitySurface = depthMapGenerator->disparitySurface(viewIdx);
+              if (!disparitySurface)
+                continue;
+
+              // Overlay on the right image for each stereo view
+              RHIRect overlayRegion = debugSurfaceCameraRects[v.cameraIndices[1]];
+              overlayRegion.width = disparitySurface->width();
+              overlayRegion.height = disparitySurface->height();
+              rhi()->setViewport(overlayRegion);
+
+              rhi()->bindRenderPipeline(disparityScalePipeline);
+              rhi()->loadTexture(ksImageTex, disparitySurface);
+              {
+                DisparityScaleUniformBlock ub;
+                ub.viewportOffsetX = overlayRegion.x;
+                ub.viewportOffsetY = overlayRegion.y;
+                ub.disparityScale = depthMapGenerator->disparityPrescale() * depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparity()));
+                ub.sourceLevel = 0; // disparityScaleSourceLevel;
+                ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(depthMapGenerator->maxDisparity() - 1) / depthMapGenerator->disparityPrescale());
+                rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
+              }
+              rhi()->drawFullscreenPass();
+
+              // Draw l/r greyscale views, if they exist
+              rhi()->bindRenderPipeline(uiLayerPipeline);
+              {
+                UILayerUniformBlock ub;
+                ub.modelViewProjection = glm::mat4(1.0f);
+                rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &ub, sizeof(ub));
+              }
+
+              overlayRegion.x += overlayRegion.width;
+              if (depthMapGenerator->leftGrayscale(viewIdx)) {
+                rhi()->setViewport(overlayRegion);
+                rhi()->loadTexture(ksImageTex, depthMapGenerator->leftGrayscale(viewIdx));
+                rhi()->drawFullscreenPass();
+              }
+
+              overlayRegion.x += overlayRegion.width;
+              if (depthMapGenerator->rightGrayscale(viewIdx)) {
+                rhi()->setViewport(overlayRegion);
+                rhi()->loadTexture(ksImageTex, depthMapGenerator->rightGrayscale(viewIdx));
+                rhi()->drawFullscreenPass();
+              }
+            }
           }
 
           // UI overlay
