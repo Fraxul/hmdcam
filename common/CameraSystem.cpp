@@ -953,6 +953,15 @@ CameraSystem::StereoCalibrationContext::~StereoCalibrationContext() {
 void CameraSystem::StereoCalibrationContext::renderStatusUI() {
   ImGui::Text("View %zu Stereo", m_viewIdx);
   ImGui::Text("%zu samples", m_calibState->m_objectPoints.size());
+
+  // X-translation should be negative if the left and right views are in the correct order ([0] = left, [1] = right).
+  bool lrSwapped = (m_feedbackTx[0] > 0.010f);
+  if (lrSwapped) {
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 0, 0, 255));
+    ImGui::Text("L-R SWAP DETECTED");
+    ImGui::PopStyleColor();
+  }
+
   ImGui::Text("Est. Tx  (mm): %.3g %.3g %.3g", m_feedbackTx[0] * 1000.0f, m_feedbackTx[1] * 1000.0f, m_feedbackTx[2] * 1000.0f);
   ImGui::Text("Est. Rx (deg): %.3g %.3g %.3g", glm::degrees(m_feedbackRx[0]), glm::degrees(m_feedbackRx[1]), glm::degrees(m_feedbackRx[2]));
   ImGui::Text("RMS Error: %f", m_feedbackRmsError);
