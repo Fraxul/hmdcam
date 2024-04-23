@@ -1223,7 +1223,8 @@ int main(int argc, char* argv[]) {
             renderDrawCamera(cameraIdx, /*drawFlags=*/0, distortionTex, overlayTex, /*mvp=*/glm::mat4(1.0f) /*identity*/);
           }
 
-          if (drawUI || calibrationContext) {
+          // UI overlay
+          {
             // Default to drawing the UI on the center-bottom of the debug surface
             RHIRect uiDestRect = RHIRect::xywh((debugSurface->width() / 2) - (guiTex->width() / 2), debugSurface->height() - guiTex->height(), guiTex->width(), guiTex->height());
 
