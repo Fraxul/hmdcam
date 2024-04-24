@@ -855,15 +855,24 @@ int main(int argc, char* argv[]) {
                 if (ImGui::Button(caption)) {
                   calibrationContext.reset(cameraSystem->calibrationContextForStereoViewOffset(0, viewIdx));
                 }
-              } else {
+              }
+              {
+                static int speed = 1;
+                ImGui::RadioButton("x0.01", &speed, 1); ImGui::SameLine();
+                ImGui::RadioButton("x0.1", &speed, 10); ImGui::SameLine();
+                ImGui::RadioButton("x1", &speed, 100); ImGui::SameLine();
+                ImGui::RadioButton("x10", &speed, 1000);
+
+                float fSpeed = static_cast<float>(speed) * 0.01f;
+
                 // Direct view transform editing
                 ImGui::Text("View %zu Transform", viewIdx);
                 // convert to and from millimeters for editing
                 glm::vec3 txMM = v.viewTranslation * 1000.0f;
-                if (ImGui::DragFloat3("Tx", &txMM[0], /*speed=*/ 0.1f, /*min=*/ -500.0f, /*max=*/ 500.0f, "%.1fmm")) {
+                if (ImGui::DragFloat3("Tx", &txMM[0], /*speed=*/ fSpeed, /*min=*/ -500.0f, /*max=*/ 500.0f, speed == 1 ? "%.2fmm" : "%.1fmm")) {
                   v.viewTranslation = txMM / 1000.0f;
                 }
-                ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/0.1f, /*min=*/ -75.0f, /*max=*/ 75.0f, "%.1fdeg");
+                ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/fSpeed, /*min=*/ -180.0f, /*max=*/ 180.0f, speed == 1 ? "%.2fdeg" : "%.1fdeg");
               }
 
               ImGui::PopID(); // viewIdx
