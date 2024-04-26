@@ -3,9 +3,9 @@
 #include "MeshDisparityDepthMapUniformBlock.h"
 
 
-layout(location = 0) in vec2 textureCoordinates;// image texture coordinates (0...1)
-layout(location = 1) in vec2 gridCoordinates; // integer texels, varies over the quad
-layout(location = 2) in vec2 disparitySampleCoordinates; // integer texels, fixed to the left-top value
+layout(location = 0) in vec2 textureCoordinates;// image texture coordinates (0...1), fixed to the left-top value
+layout(location = 1) in vec2 disparitySampleCoordinates; // integer texels, fixed to the left-top value
+layout(location = 2) in vec2 quadCoordOffset; // 0...1, varies over the quad
 
 uniform highp usampler2D disparityTex;
 
@@ -45,10 +45,11 @@ void main()
 
   int viewport = gl_InstanceID;
   float disparity = (float(disparityRaw) * disparityPrescale);
+  vec2 gridCoordinates = disparitySampleCoordinates + (quadCoordOffset * pointScale);
   gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(gridCoordinates.x, gridCoordinates.y, disparity);
   gl_ViewportIndex = viewport;
 
-  v2f.texCoord = textureCoordinates;
+  v2f.texCoord = textureCoordinates + (quadCoordOffset * texCoordStep * pointScale);
   v2f.trimmed = int(any(notEqual(clamp(disparitySampleCoordinates.xy, trim_minXY, trim_maxXY), disparitySampleCoordinates.xy)));
 }
 
