@@ -48,17 +48,19 @@ public:
   };
 
   struct View {
-    View() : depthMapGenerator(NULL), isStereo(false), isPanorama(false), viewTranslation(0.0f), viewRotation(0.0f), fovX(0), fovY(0) {}
+    View() {}
 
-    DepthMapGenerator* depthMapGenerator;
+    DepthMapGenerator* depthMapGenerator = nullptr;
 
-    bool isStereo;
-    bool isPanorama;
+    bool isStereo = false;
+    bool isPanorama = false;
+    bool debugEnableView = true;
+
     size_t cameraCount() const { return isStereo ? 2 : 1; }
     unsigned short cameraIndices[2]; // if (isStereo) [0] is left, [1] is right. Otherwise, only use [0].
 
-    glm::vec3 viewTranslation;
-    glm::vec3 viewRotation; // euler, degrees
+    glm::vec3 viewTranslation = glm::vec3(0.0f);
+    glm::vec3 viewRotation = glm::vec3(0.0f); // euler, degrees
 
     // local transform only. for absolute view-to-world, see CameraSystem::viewWorldTransform
     glm::mat4 viewLocalTransform() const {
@@ -75,7 +77,7 @@ public:
     cv::Mat stereoDisparityToDepth;
     cv::Rect stereoValidROI[2];
     RHISurface::ptr stereoDistortionMap[2]; // Combined intrinsic and stereo distortion
-    double fovX, fovY; // Values for the stereo projection, in degrees
+    double fovX = 0, fovY = 0; // Values for the stereo projection, in degrees
 
     bool haveStereoCalibration() const { return (!(stereoRotation.empty() || stereoTranslation.empty())); }
     bool haveStereoRectificationParameters() const { return (!(

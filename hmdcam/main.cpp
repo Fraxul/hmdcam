@@ -807,6 +807,12 @@ int main(int argc, char* argv[]) {
             if (ImGui::Button("Save Settings")) {
               saveSettings();
             }
+
+            for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+              char buf[64];
+              sprintf(buf, "Enable View %zu", viewIdx);
+              ImGui::Checkbox(buf, &cameraSystem->viewAtIndex(viewIdx).debugEnableView);
+            }
           }
 
           if (ImGui::CollapsingHeader("Calibration")) {
@@ -1071,6 +1077,8 @@ int main(int argc, char* argv[]) {
 
       for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
         CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+        if (!v.debugEnableView)
+          continue;
 
         if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !rdmaContextHasActivePeerConnections()) {
           {
