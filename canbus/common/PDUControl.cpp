@@ -7,6 +7,7 @@
 
 #include "common/PDUControl.h"
 #include "socketcan.h"
+#include "Buffer.h"
 
 const char* interfaceName = "can0";
 
@@ -48,6 +49,45 @@ PDUControl::~PDUControl() {
   }
 }
 
+bool PDUControl::State::deserialize(const CanardRxTransfer& transfer) {
+  try {
+    Buffer b(reinterpret_cast<const char*>(transfer.payload), transfer.payload_size);
+
+    systemVoltage_mV = b.get_u16_le();
+    stateOfCharge_pct = b.get_u8();
+    batteryVoltage_mV = b.get_u16_le();
+    batteryChargeCurrent_mA = b.get_s16_le();
+    batteryPower_mW = b.get_s16_le();
+    chargerPowerInput_mV = b.get_u16_le();
+    chargerPowerInput_mA = b.get_u16_le();
+
+    messageTimestamp = transfer.timestamp_usec;
+  } catch (const std::exception& ex) {
+    printf("PDUControl::State::deserialize: %s\n", ex.what());
+    return false;
+  }
+
+  return true;
+}
+
+static inline uint64_t currentCANTimestampUs() {
+  // CAN frames are timestamped with CLOCK_REALTIME in microseconds
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return ((ts.tv_sec * 1000000UL) + (ts.tv_nsec / 1000UL));
+}
+
+size_t PDUControl::State::toString(char* buf, size_t bufLen) const {
+  size_t p = snprintf(buf, bufLen, "%umV (%u%%) %dmA %dmW", batteryVoltage_mV, stateOfCharge_pct, batteryChargeCurrent_mA, batteryPower_mW);
+  if (chargerPowerInput_mV) {
+    p += snprintf(buf + p, bufLen - p, " (In: %umV %umA)", chargerPowerInput_mV, chargerPowerInput_mA);
+  }
+  unsigned int dataAge_ms  = (currentCANTimestampUs() - messageTimestamp) / 1000000UL;
+  if (dataAge_ms > 5000) {
+    p += snprintf(buf + p, bufLen - p, " (%ums ago)", dataAge_ms);
+  }
+  return p;
+}
 
 void PDUControl::canReadThread() {
   while (true) {
@@ -75,13 +115,27 @@ void PDUControl::canReadThread() {
       continue; // the frame received is not a valid transfer
     }
 
-    fprintf(stderr, "prio=%d kind=%d port=%d remoteNode=%d txID=%d ts=%lu payload=%zu bytes\n  ",
-      transfer.metadata.priority, transfer.metadata.transfer_kind, transfer.metadata.port_id, transfer.metadata.remote_node_id, transfer.metadata.transfer_id, transfer.timestamp_usec, transfer.payload_size);
+    if (outSubscription == &m_heartbeatSubscription) {
+    } else if (outSubscription == &m_powerInfoSubscription) {
+      // Quick-and-dirty DSDL-less deserialization
+      State msg_state;
+      if (msg_state.deserialize(transfer)) {
+        m_state = msg_state;
+      }
+/*
+      char buf[256];
+      m_state.toString(buf, sizeof(buf));
+      printf("%s\n", buf);
+*/
+    } else {
+      fprintf(stderr, "prio=%d kind=%d port=%d remoteNode=%d txID=%d ts=%lu payload=%zu bytes\n  ",
+        transfer.metadata.priority, transfer.metadata.transfer_kind, transfer.metadata.port_id, transfer.metadata.remote_node_id, transfer.metadata.transfer_id, transfer.timestamp_usec, transfer.payload_size);
 
-    for (size_t i = 0; i < transfer.payload_size; ++i) {
-      fprintf(stderr, "%02x ", reinterpret_cast<uint8_t*>(transfer.payload)[i]);
+      for (size_t i = 0; i < transfer.payload_size; ++i) {
+        fprintf(stderr, "%02x ", reinterpret_cast<uint8_t*>(transfer.payload)[i]);
+      }
+      fprintf(stderr, "\n");
     }
-    fprintf(stderr, "\n");
   }
 
 }

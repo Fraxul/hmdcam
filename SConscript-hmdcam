@@ -22,6 +22,10 @@ tegraEnv.Append(
     MONADO_BASE + '/src/xrt/include',
     MONADO_BASE + '/src/xrt/auxiliary',
     '/usr/include/drm',
+    '#canbus',
+    '#canbus/common',
+    '#canbus/socketcan',
+    '#canbus/libcanard/libcanard',
   ],
   LIBS=[
     'z',
@@ -37,6 +41,7 @@ tegraEnv.Append(
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco',
     'ibverbs', 'rdmacm',
     'nvToolsExt',
+    'socketcan',
   ]
 )
 monadoStatics = \
@@ -144,6 +149,9 @@ tegraEnv.Program(
     + Glob('imgui/*.cpp')
     + Glob('implot/*.cpp')
     + Glob('wayland/*.c')
+    + Glob('canbus/common/*.cpp')
+    + Glob('canbus/socketcan/*.c')
+    + Glob('canbus/libcanard/libcanard/*.c')
     + tegra_src
     + tegra_mmapi_src
     + liveMediaStatics
