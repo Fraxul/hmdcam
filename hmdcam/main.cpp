@@ -247,6 +247,7 @@ int main(int argc, char* argv[]) {
   bool debugNoRepeatingCapture = false;
   bool debugPrintLatency = false;
   int rdmaInterval = 2;
+  std::string calibrationFilename;
 #pragma clang diagnostic pop
 
   for (int i = 1; i < argc; ++i) {
@@ -284,6 +285,12 @@ int main(int argc, char* argv[]) {
         printf("--rdma-interval: invalid argument\n");
         return 1;
       }
+    } else if (!strcmp(argv[i], "--calibration-file")) {
+      if (i == (argc - 1)) {
+        printf("--calibration-file: requires argument\n");
+        return 1;
+      }
+      calibrationFilename = argv[++i];
     } else {
       printf("Unrecognized argument %s\n", argv[i]);
       return 1;
@@ -421,6 +428,10 @@ int main(int argc, char* argv[]) {
 
   cameraSystem = new CameraSystem(argusCamera);
   // Load whatever calibration we have (may be nothing)
+  if (!calibrationFilename.empty()) {
+    printf("Using calibration file \"%s\"\n", calibrationFilename.c_str());
+    cameraSystem->calibrationFilename = calibrationFilename;
+  }
   cameraSystem->loadCalibrationData();
 
   if (cameraSystem->views() == 0) {
