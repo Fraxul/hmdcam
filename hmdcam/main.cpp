@@ -952,7 +952,7 @@ int main(int argc, char* argv[]) {
 
           settingsDirty |= argusCamera->renderPerformanceTuningIMGUI();
 
-          if (ImGui::Button("Restart Capture")) {
+          if (ImGui::Button("Restart Capture (BREAKS DEPTH!)")) {
             argusCamera->stop(); // will automatically restart on next frame when we call setRepeatCapture again
             restartSkipFrameCounter = 3; // skip a few frames before restarting to smooth out the timing glitch we just caused
           }
@@ -1006,6 +1006,36 @@ int main(int argc, char* argv[]) {
               });
             }
           }
+        }
+
+        static bool process_management_unlocked = false;
+        if (ImGui::CollapsingHeader("Process Management")) {
+          ImGui::Checkbox("Unlock Controls", &process_management_unlocked);
+          ImGui::BeginDisabled(!process_management_unlocked);
+
+          if (ImGui::Button("Terminate Process (exit())")) {
+            exit(0);
+          }
+
+          if (ImGui::Button("Terminate Process (SIGTERM)")) {
+            kill(getpid(), SIGTERM);
+            _exit(0); // just in case?
+          }
+
+          if (ImGui::Button("Shutdown machine")) {
+            system("sudo shutdown -h now");
+            exit(0);
+          }
+
+          if (ImGui::Button("Reboot machine")) {
+            system("sudo reboot");
+            exit(0);
+          }
+
+          ImGui::EndDisabled();
+        } else {
+          // Auto-relock when header is collapsed
+          process_management_unlocked = false;
         }
 
         ImGui::End();
