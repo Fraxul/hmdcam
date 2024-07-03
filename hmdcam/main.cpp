@@ -248,6 +248,8 @@ int main(int argc, char* argv[]) {
   bool debugPrintLatency = false;
   int rdmaInterval = 2;
   std::string calibrationFilename;
+  std::string tempSensorFilename = "/sys/devices/virtual/thermal/thermal_zone8/temp";
+
 #pragma clang diagnostic pop
 
   for (int i = 1; i < argc; ++i) {
@@ -340,7 +342,11 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-
+  int tempSensorFd = open(tempSensorFilename.c_str(), 0, O_RDONLY);
+  if (tempSensorFd < 0) {
+    printf("Warning: Couldn't open temperature sensor %s\n", tempSensorFilename.c_str());
+  }
+  float tempSensorReading = 0.0f;
 
   settingsAutosaveIntervalFrames = kSettingsAutosaveIntervalSeconds * static_cast<unsigned int>(renderBackend->refreshRateHz());
 
@@ -1056,6 +1062,17 @@ int main(int argc, char* argv[]) {
         ImGui::TextUnformatted(timebuf);
         ImGui::SameLine(); ImGui::Separator(); ImGui::SameLine();
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
+        if (tempSensorFd >= 0) {
+          if ((frameCounter & 0x7fUL) == 0) {
+            char buf[32];
+            ssize_t l = pread(tempSensorFd, buf, sizeof(buf), 0);
+            if (l > 0)  {
+              buf[l] = 0;
+              tempSensorReading = static_cast<float>(strtol(buf, NULL, 10)) / 1000.0f;
+            }
+          }
+          ImGui::SameLine(); ImGui::Text(" %.1fC", tempSensorReading);
+        }
         if (enablePDU) {
           drawPDUStatusLine();
         }
