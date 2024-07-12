@@ -738,12 +738,21 @@ int main(int argc, char* argv[]) {
       // Allow up/down arrows to toggle debug states while we're not curently drawing the UI
       if ((drawUI == false && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) ||
         ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
-        if (depthMapGenerator)
+        if (depthMapGenerator) {
           depthMapGenerator->setDebugUseFixedDisparity(!depthMapGenerator->debugUseFixedDisparity());
+
+          // disable other debug modes
+          debugEnableDepthMapGenerator = true;
+        }
       }
       if ((drawUI == false && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) ||
         ImGui::IsKeyPressed(ImGuiKey_F3, false)) {
-        debugEnableDepthMapGenerator = !debugEnableDepthMapGenerator;
+        if (depthMapGenerator) {
+          debugEnableDepthMapGenerator = !debugEnableDepthMapGenerator;
+
+          // disable other debug modes
+          depthMapGenerator->setDebugUseFixedDisparity(false);
+        }
       }
 
       ImGui_ImplFxRHI_NewFrame();
