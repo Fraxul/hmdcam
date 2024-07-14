@@ -98,7 +98,6 @@ struct MeshDisparityDepthMapUniformBlock {
   float pad2, pad3, pad4;
 };
 
-RHIRenderPipeline::ptr disparityMipPipeline;
 RHIComputePipeline::ptr disparityMipComputePipeline;
 FxAtomicString ksDisparityMipUniformBlock("DisparityMipUniformBlock");
 struct DisparityMipUniformBlock {
@@ -254,9 +253,6 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
   }
 
-  if (!disparityMipPipeline) {
-    disparityMipPipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/disparityMip.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
-  }
   if (!disparityMipComputePipeline) {
     disparityMipComputePipeline = rhi()->compileComputePipeline(rhi()->compileShader(RHIShaderDescriptor::computeShader("shaders/disparityMip.comp.glsl")));
   }
@@ -417,9 +413,6 @@ void DepthMapGenerator::renderIMGUI() {
   if (m_usePointRendering)
     ImGui::SliderFloat("Point Scale", &m_pointScale, 0.5f, 3.0f);
 
-  // TODO debug only
-  ImGui::Checkbox("Use compute shader mip", &m_useComputeShaderMip);
-
   ImGui::Checkbox("Debug: Fixed disparity", &m_debugUseFixedDisparity);
   if (m_debugUseFixedDisparity)
     ImGui::SliderInt("Fixed Disparity", &m_debugFixedDisparityValue, 0, 256);
@@ -486,64 +479,33 @@ void DepthMapGenerator::processFrame() {
 void DepthMapGenerator::internalGenerateDisparityMips() {
   // Filter invalid disparities: generate mip-chains
 
-  if (m_useComputeShaderMip) {
-    for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
-      auto vd = viewDataAtIndex(viewIdx);
-      if (!vd->m_isStereoView)
-        continue;
+  for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
+    auto vd = viewDataAtIndex(viewIdx);
+    if (!vd->m_isStereoView)
+      continue;
 
-      // Each compute shader pass generates 3 mip-levels
-      uint32_t passes = (vd->m_disparityTexture->mipLevels() - 1) / 3;
-      for (uint32_t pass = 0; pass < passes; ++pass) {
-        rhi()->beginComputePass();
-        rhi()->bindComputePipeline(disparityMipComputePipeline);
+    // Each compute shader pass generates 3 mip-levels
+    uint32_t passes = (vd->m_disparityTexture->mipLevels() - 1) / 3;
+    for (uint32_t pass = 0; pass < passes; ++pass) {
+      rhi()->beginComputePass();
+      rhi()->bindComputePipeline(disparityMipComputePipeline);
 
-        rhi()->loadImage(ksSrcImage, vd->m_disparityTexture, kImageAccessReadOnly, pass * 3);
-        rhi()->loadImage(ksDstMip1, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 1);
-        rhi()->loadImage(ksDstMip2, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 2);
-        rhi()->loadImage(ksDstMip3, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 3);
+      rhi()->loadImage(ksSrcImage, vd->m_disparityTexture, kImageAccessReadOnly, pass * 3);
+      rhi()->loadImage(ksDstMip1, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 1);
+      rhi()->loadImage(ksDstMip2, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 2);
+      rhi()->loadImage(ksDstMip3, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 3);
 
-        DisparityMipUniformBlock ub;
-        ub.sourceLevel = 0; // unused in compute shader
-        ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
+      DisparityMipUniformBlock ub;
+      ub.sourceLevel = 0; // unused in compute shader
+      ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
 
-        rhi()->loadUniformBlockImmediate(ksDisparityMipUniformBlock, &ub, sizeof(ub));
-        rhi()->dispatchCompute(
-          vd->m_disparityTexture->width()  / ((1 << ((pass * 3) + 1)) * 4),
-          vd->m_disparityTexture->height() / ((1 << ((pass * 3) + 1)) * 4),
-          1);
+      rhi()->loadUniformBlockImmediate(ksDisparityMipUniformBlock, &ub, sizeof(ub));
+      rhi()->dispatchCompute(
+        vd->m_disparityTexture->width()  / ((1 << ((pass * 3) + 1)) * 4),
+        vd->m_disparityTexture->height() / ((1 << ((pass * 3) + 1)) * 4),
+        1);
 
-        rhi()->endComputePass();
-      }
-    }
-  } else {
-
-    uint32_t maxLevels = 0;
-    for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
-      auto vd = viewDataAtIndex(viewIdx);
-      if (vd->m_isStereoView)
-        maxLevels = std::max<uint32_t>(maxLevels, vd->m_disparityTexture->mipLevels());
-    }
-
-    // Organized by mip level to give the driver a chance at overlapping the render passes
-    for (uint32_t targetLevel = 1; targetLevel < maxLevels; ++targetLevel) {
-      for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
-        auto vd = viewDataAtIndex(viewIdx);
-        if (!vd->m_isStereoView || vd->m_disparityTexture->mipLevels() < targetLevel)
-          continue;
-
-        rhi()->beginRenderPass(vd->m_disparityTextureMipTargets[targetLevel], kLoadInvalidate);
-        rhi()->bindRenderPipeline(disparityMipPipeline);
-        rhi()->loadTexture(ksImageTex, vd->m_disparityTexture);
-
-        DisparityMipUniformBlock ub;
-        ub.sourceLevel = targetLevel - 1;
-        ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
-
-        rhi()->loadUniformBlockImmediate(ksDisparityMipUniformBlock, &ub, sizeof(ub));
-        rhi()->drawNDCQuad();
-        rhi()->endRenderPass(vd->m_disparityTextureMipTargets[targetLevel]);
-      }
+      rhi()->endComputePass();
     }
   }
 }

@@ -151,8 +151,6 @@ protected:
   bool m_usePointRendering = true;
   float m_pointScale = 1.0f;
 
-  bool m_useComputeShaderMip = true;
-
   bool m_populateDebugTextures = false;
 
   bool m_debugUseFixedDisparity = false;
