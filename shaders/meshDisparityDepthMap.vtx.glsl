@@ -6,7 +6,17 @@
 // zw is disparity map coordinates (integer texels)
 layout(location = 0) in vec4 textureCoordinates;
 
+#if DISPARITY_USE_FP16
+uniform sampler2D disparityTex;
+float sampleDisparity(ivec2 mipCoords, int level) {
+  return texelFetch(disparityTex, mipCoords, level).r;
+}
+#else
 uniform highp usampler2D disparityTex;
+float sampleDisparity(ivec2 mipCoords, int level) {
+  return float(texelFetch(disparityTex, mipCoords, level).r);
+}
+#endif
 
 out V2G {
   vec4 P;
@@ -26,25 +36,23 @@ vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
 
 void main()
 {
-  uint disparityRaw = 0u;
+  float disparityRaw = 0.0f;
   if (debugFixedDisparity >= 0) {
-    disparityRaw = uint(max(debugFixedDisparity, 1)); // prevent divide-by-zero
+    disparityRaw = float(debugFixedDisparity);
 
   } else {
     ivec2 mipCoords = ivec2(textureCoordinates.zw);
     // Walk the mip chain to find a valid disparity value at this location
     for (int level = 0; level < disparityTexLevels; ++level) {
-      disparityRaw = texelFetch(disparityTex, mipCoords, level).r;
-      if (disparityRaw < maxValidDisparityRaw)
+      disparityRaw = sampleDisparity(mipCoords, level);
+      if (disparityRaw <= float(maxValidDisparityRaw))
         break;
       mipCoords = mipCoords >> 1;
     }
-
-    disparityRaw = max(disparityRaw, 1u); // prevent divide-by-zero
   }
   
 
-  float disparity = (float(disparityRaw) * disparityPrescale);
+  float disparity = max(disparityRaw * disparityPrescale, (1.0f / 32.0f)); // prescale and prevent divide-by-zero
   v2g.P = TransformToLocalSpace(textureCoordinates.z, textureCoordinates.w, disparity);
   v2g.texCoord = textureCoordinates.xy;
   v2g.trimmed = int(any(notEqual(clamp(textureCoordinates.zw, trim_minXY, trim_maxXY), textureCoordinates.zw)));

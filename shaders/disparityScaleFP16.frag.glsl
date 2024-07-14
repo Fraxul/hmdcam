@@ -1,0 +1,32 @@
+#version 310 es
+precision highp float;
+in vec2 fragTexCoord;
+layout(location = 0) out vec4 outColor;
+uniform sampler2D imageTex;
+
+layout(std140) uniform DisparityScaleUniformBlock {
+  ivec2 viewportOffset;
+  float disparityScale;
+  int sourceLevel;
+
+  int maxValidDisparityRaw;
+  float pad2;
+  float pad3;
+  float pad4;
+};
+
+void main() {
+  ivec2 coord = ivec2((int(gl_FragCoord.x) - viewportOffset.x) >> sourceLevel, (int(gl_FragCoord.y) - viewportOffset.y) >> sourceLevel);
+
+  float disparity_raw = texelFetch(imageTex, coord, sourceLevel).r;
+  if (disparity_raw < 0.0f || disparity_raw > float(maxValidDisparityRaw)) {
+    // Highlight invalid disparity in red
+    outColor = vec4(1.0f, 0.0f, 0.0f, 1.0f);
+  } else {
+    outColor = vec4(vec3(disparity_raw * disparityScale), 1.0f);
+  }
+
+  // convert to luma
+}
+
+

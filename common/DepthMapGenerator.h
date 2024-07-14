@@ -52,6 +52,7 @@ public:
 
   uint32_t maxDisparity() const { return m_maxDisparity; } // maximum disparity value supported by the backend, pixel units
   float disparityPrescale() const { return m_disparityPrescale; } // multiplier to convert the raw values in disparitySurface to pixel units
+  bool isFP16Disparity() const { return m_useFP16Disparity; }
 
   void setDebugDisparityCPUAccessEnabled(bool v) { m_debugDisparityCPUAccessEnabled = v; }
   bool debugDisparityCPUAccessEnabled() const { return m_debugDisparityCPUAccessEnabled; }
@@ -83,6 +84,7 @@ protected:
   uint32_t m_algoDownsampleY = 1;
   uint32_t m_maxDisparity = 128;
   float m_disparityPrescale = 1.0f;
+  bool m_useFP16Disparity = false;
 
   float m_debugDisparityScale = 1.0f;
   bool m_debugDisparityCPUAccessEnabled = false;
@@ -159,6 +161,7 @@ protected:
   void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix);
   RHIRenderPipeline::ptr m_disparityDepthMapPipeline;
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
+  RHIComputePipeline::ptr m_disparityMipComputePipeline;
 
 private:
   ViewData* viewDataAtIndex(size_t index) const { return m_viewData[index]; }

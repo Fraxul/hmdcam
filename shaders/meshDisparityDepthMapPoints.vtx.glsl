@@ -7,7 +7,17 @@ layout(location = 0) in vec2 textureCoordinates;// image texture coordinates (0.
 layout(location = 1) in vec2 disparitySampleCoordinates; // integer texels, fixed to the left-top value
 layout(location = 2) in vec2 quadCoordOffset; // 0...1, varies over the quad
 
+#if DISPARITY_USE_FP16
+uniform sampler2D disparityTex;
+float sampleDisparity(ivec2 mipCoords, int level) {
+  return texelFetch(disparityTex, mipCoords, level).r;
+}
+#else
 uniform highp usampler2D disparityTex;
+float sampleDisparity(ivec2 mipCoords, int level) {
+  return float(texelFetch(disparityTex, mipCoords, level).r);
+}
+#endif
 
 out V2F {
   vec2 texCoord;
@@ -26,25 +36,23 @@ vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
 
 void main()
 {
-  uint disparityRaw = 0u;
+  float disparityRaw = 0.0f;
   if (debugFixedDisparity >= 0) {
-    disparityRaw = uint(max(debugFixedDisparity, 1)); // prevent divide-by-zero
+    disparityRaw = float(debugFixedDisparity);
 
   } else {
     ivec2 mipCoords = ivec2(disparitySampleCoordinates);
     // Walk the mip chain to find a valid disparity value at this location
     for (int level = 0; level < disparityTexLevels; ++level) {
-      disparityRaw = texelFetch(disparityTex, mipCoords, level).r;
-      if (disparityRaw < maxValidDisparityRaw)
+      disparityRaw = sampleDisparity(mipCoords, level);
+      if (disparityRaw <= float(maxValidDisparityRaw))
         break;
       mipCoords = mipCoords >> 1;
     }
-
-    disparityRaw = max(disparityRaw, 1u); // prevent divide-by-zero
   }
 
   int viewport = gl_InstanceID;
-  float disparity = (float(disparityRaw) * disparityPrescale);
+  float disparity = max(disparityRaw * disparityPrescale, (1.0f / 32.0f)); // prescale and prevent divide-by-zero
   vec2 gridCoordinates = disparitySampleCoordinates + (quadCoordOffset * pointScale);
   gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(gridCoordinates.x, gridCoordinates.y, disparity);
   gl_ViewportIndex = viewport;

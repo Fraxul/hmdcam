@@ -18,6 +18,7 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <epoxy/gl.h> // epoxy_is_desktop_gl
+#include <glm/gtc/packing.hpp>
 
 const char* settingsFilename = "depthMapSettings.yml";
 
@@ -98,7 +99,6 @@ struct MeshDisparityDepthMapUniformBlock {
   float pad2, pad3, pad4;
 };
 
-RHIComputePipeline::ptr disparityMipComputePipeline;
 FxAtomicString ksDisparityMipUniformBlock("DisparityMipUniformBlock");
 struct DisparityMipUniformBlock {
   uint32_t sourceLevel;
@@ -232,6 +232,7 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMap.geom.glsl");
 
     desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
+    desc.setFlag("DISPARITY_USE_FP16", m_useFP16Disparity);
 
     m_disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
   }
@@ -249,13 +250,12 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
       }));
 
     desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
+    desc.setFlag("DISPARITY_USE_FP16", m_useFP16Disparity);
 
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
   }
 
-  if (!disparityMipComputePipeline) {
-    disparityMipComputePipeline = rhi()->compileComputePipeline(rhi()->compileShader(RHIShaderDescriptor::computeShader("shaders/disparityMip.comp.glsl")));
-  }
+  m_disparityMipComputePipeline = rhi()->compileComputePipeline(rhi()->compileShader(RHIShaderDescriptor::computeShader(m_useFP16Disparity ? "shaders/disparityMipFP16.comp.glsl" : "shaders/disparityMip.comp.glsl")));
 
 }
 
@@ -488,7 +488,7 @@ void DepthMapGenerator::internalGenerateDisparityMips() {
     uint32_t passes = (vd->m_disparityTexture->mipLevels() - 1) / 3;
     for (uint32_t pass = 0; pass < passes; ++pass) {
       rhi()->beginComputePass();
-      rhi()->bindComputePipeline(disparityMipComputePipeline);
+      rhi()->bindComputePipeline(m_disparityMipComputePipeline);
 
       rhi()->loadImage(ksSrcImage, vd->m_disparityTexture, kImageAccessReadOnly, pass * 3);
       rhi()->loadImage(ksDstMip1, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 1);
@@ -541,16 +541,23 @@ float DepthMapGenerator::debugPeekDisparityTexel(size_t viewIdx, glm::ivec2 texe
     return -1.0f;
   }
   size_t pIdx = (texelCoord.y * vd->m_disparityTexture->width()) + texelCoord.x;
-  uint32_t v = 0;
+  float disparityRaw = 0;
 
-  switch (vd->m_debugCPUDisparityBytesPerPixel) {
-    case 1: v = reinterpret_cast<uint8_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
-    case 2: v = reinterpret_cast<uint16_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
-    case 4: v = reinterpret_cast<uint32_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
-    default:
-      assert(false && "DepthMapGenerator::debugPeekDisparity: unhandled m_debugCPUDisparityBytesPerPixel");
+  if (m_useFP16Disparity) {
+    uint16_t v = reinterpret_cast<uint16_t*>(vd->m_debugCPUDisparity)[pIdx];
+    disparityRaw = glm::unpackHalf1x16(v);
+  } else {
+    uint32_t v = 0;
+    switch (vd->m_debugCPUDisparityBytesPerPixel) {
+      case 1: v = reinterpret_cast<uint8_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
+      case 2: v = reinterpret_cast<uint16_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
+      case 4: v = reinterpret_cast<uint32_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
+      default:
+        assert(false && "DepthMapGenerator::debugPeekDisparity: unhandled m_debugCPUDisparityBytesPerPixel");
+    }
+    disparityRaw = static_cast<float>(v);
   }
-  return static_cast<float>(v) * m_disparityPrescale;
+  return disparityRaw * m_disparityPrescale;
 }
 
 float DepthMapGenerator::debugPeekDisparityUV(size_t viewIdx, glm::vec2 uv) const {
