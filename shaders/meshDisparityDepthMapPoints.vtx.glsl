@@ -19,7 +19,6 @@ float sampleDisparity(ivec2 mipCoords, int level) {
 
 out V2F {
   vec2 texCoord;
-  flat int trimmed;
 } v2f;
 
 vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
@@ -34,6 +33,15 @@ vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
 
 void main()
 {
+  int viewport = gl_InstanceID;
+  gl_ViewportIndex = viewport;
+
+  if (any(notEqual(clamp(vec2(disparitySampleCoordinates.xy), trim_minXY, trim_maxXY), vec2(disparitySampleCoordinates.xy)))) {
+    // Trimmed -- collapse primitive in clip space
+    gl_Position = vec4(0.0f);
+    return;
+  }
+
   float disparityRaw = 0.0f;
   if (debugFixedDisparity >= 0) {
     disparityRaw = float(debugFixedDisparity);
@@ -49,14 +57,11 @@ void main()
     }
   }
 
-  int viewport = gl_InstanceID;
   float disparity = max(disparityRaw * disparityPrescale, (1.0f / 32.0f)); // prescale and prevent divide-by-zero
   vec2 gridCoordinates = vec2(disparitySampleCoordinates) + (vec2(quadCoordOffset) * pointScale);
   gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(gridCoordinates.x, gridCoordinates.y, disparity);
-  gl_ViewportIndex = viewport;
 
   vec2 textureCoordinates = vec2(disparitySampleCoordinates) * texCoordStep;
   v2f.texCoord = textureCoordinates + (vec2(quadCoordOffset) * texCoordStep * pointScale);
-  v2f.trimmed = int(any(notEqual(clamp(vec2(disparitySampleCoordinates.xy), trim_minXY, trim_maxXY), vec2(disparitySampleCoordinates.xy))));
 }
 
