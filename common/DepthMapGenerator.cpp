@@ -178,35 +178,30 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
 
 
     { // Point-rendering vertex + index buffer
-      std::vector<glm::vec2> depth_tc;
+      std::vector<uint16_t> depth_tc;
       std::vector<uint32_t> depth_ia;
-      depth_tc.reserve(internalWidth() * internalHeight() * 3 * 4);
+      depth_tc.reserve(internalWidth() * internalHeight() * 4 * 4);
       depth_ia.reserve(internalWidth() * internalHeight() * 5);
       size_t counter = 0;
 
       for (uint32_t y = 0; y < internalHeight(); y++) {
         for (uint32_t x = 0; x < internalWidth(); x++) {
-          // [0] is image texture coordinates (0...1)
-          // [1] is disparity sample coordinates (integer texels)
-          // [2] is offset in current prim (0...1 across the quad)
-          depth_tc.push_back(glm::vec2(static_cast<float>(x    ) / static_cast<float>(internalWidth()), static_cast<float>(y    ) / static_cast<float>(internalHeight())));
-          depth_tc.push_back(glm::vec2(x, y));
-          depth_tc.push_back(glm::vec2(0, 0));
+          // [0] is disparity sample coordinates (integer texels)
+          // [1] is offset in current prim (0...1 across the quad)
+          depth_tc.push_back(x); depth_tc.push_back(y);
+          depth_tc.push_back(0); depth_tc.push_back(0);
           depth_ia.push_back(counter++);
 
-          depth_tc.push_back(glm::vec2(static_cast<float>(x    ) / static_cast<float>(internalWidth()), static_cast<float>(y    ) / static_cast<float>(internalHeight())));
-          depth_tc.push_back(glm::vec2(x, y));
-          depth_tc.push_back(glm::vec2(0, 1));
+          depth_tc.push_back(x); depth_tc.push_back(y);
+          depth_tc.push_back(0); depth_tc.push_back(1);
           depth_ia.push_back(counter++);
 
-          depth_tc.push_back(glm::vec2(static_cast<float>(x    ) / static_cast<float>(internalWidth()), static_cast<float>(y    ) / static_cast<float>(internalHeight())));
-          depth_tc.push_back(glm::vec2(x, y));
-          depth_tc.push_back(glm::vec2(1, 0));
+          depth_tc.push_back(x); depth_tc.push_back(y);
+          depth_tc.push_back(1); depth_tc.push_back(0);
           depth_ia.push_back(counter++);
 
-          depth_tc.push_back(glm::vec2(static_cast<float>(x    ) / static_cast<float>(internalWidth()), static_cast<float>(y    ) / static_cast<float>(internalHeight())));
-          depth_tc.push_back(glm::vec2(x, y));
-          depth_tc.push_back(glm::vec2(1, 1));
+          depth_tc.push_back(x); depth_tc.push_back(y);
+          depth_tc.push_back(1); depth_tc.push_back(1);
           depth_ia.push_back(counter++);
           depth_ia.push_back(0xffffffff); // strip-restart
 
@@ -243,10 +238,8 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     rpd.primitiveRestartEnabled = true;
 
     RHIShaderDescriptor desc("shaders/meshDisparityDepthMapPoints.vtx.glsl", "shaders/meshDisparityDepthMapPoints.frag.glsl", RHIVertexLayout({
-        RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates",          0, 24),
-        RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "disparitySampleCoordinates",  8, 24),
-        RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "quadCoordOffset",            16, 24),
-
+        RHIVertexLayoutElement(0, kVertexElementTypeUShort2, "disparitySampleCoordinates", 0, 8),
+        RHIVertexLayoutElement(0, kVertexElementTypeUShort2, "quadCoordOffset",            4, 8)
       }));
 
     desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());

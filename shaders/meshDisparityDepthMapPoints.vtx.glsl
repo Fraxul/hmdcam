@@ -2,10 +2,8 @@
 
 #include "MeshDisparityDepthMapUniformBlock.h"
 
-
-layout(location = 0) in vec2 textureCoordinates;// image texture coordinates (0...1), fixed to the left-top value
-layout(location = 1) in vec2 disparitySampleCoordinates; // integer texels, fixed to the left-top value
-layout(location = 2) in vec2 quadCoordOffset; // 0...1, varies over the quad
+layout(location = 0) in uvec2 disparitySampleCoordinates; // integer texels, fixed to the left-top value
+layout(location = 1) in uvec2 quadCoordOffset; // 0...1, varies over the quad
 
 #if DISPARITY_USE_FP16
 uniform sampler2D disparityTex;
@@ -53,11 +51,12 @@ void main()
 
   int viewport = gl_InstanceID;
   float disparity = max(disparityRaw * disparityPrescale, (1.0f / 32.0f)); // prescale and prevent divide-by-zero
-  vec2 gridCoordinates = disparitySampleCoordinates + (quadCoordOffset * pointScale);
+  vec2 gridCoordinates = vec2(disparitySampleCoordinates) + (vec2(quadCoordOffset) * pointScale);
   gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(gridCoordinates.x, gridCoordinates.y, disparity);
   gl_ViewportIndex = viewport;
 
-  v2f.texCoord = textureCoordinates + (quadCoordOffset * texCoordStep * pointScale);
-  v2f.trimmed = int(any(notEqual(clamp(disparitySampleCoordinates.xy, trim_minXY, trim_maxXY), disparitySampleCoordinates.xy)));
+  vec2 textureCoordinates = vec2(disparitySampleCoordinates) * texCoordStep;
+  v2f.texCoord = textureCoordinates + (vec2(quadCoordOffset) * texCoordStep * pointScale);
+  v2f.trimmed = int(any(notEqual(clamp(vec2(disparitySampleCoordinates.xy), trim_minXY, trim_maxXY), vec2(disparitySampleCoordinates.xy))));
 }
 
