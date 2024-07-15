@@ -366,7 +366,7 @@ bool RenderInit(ERenderBackend backendType) {
 
   // Create FBOs and viewports for eye rendering (pre distortion)
   eyeTex = rhi()->newTexture2D(eye_width * 2, eye_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-  eyeDepthRenderbuffer = rhi()->newRenderbuffer2D(eye_width * 2, eye_height, RHISurfaceDescriptor(kSurfaceFormat_Depth16));
+  eyeDepthRenderbuffer = rhi()->newRenderbuffer2D(eye_width * 2, eye_height, RHISurfaceDescriptor(kSurfaceFormat_Depth32f));
   eyeRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ eyeTex }, eyeDepthRenderbuffer));
   eyeViewports[0] = RHIRect::xywh(0, 0, eye_width, eye_height);
   eyeViewports[1] = RHIRect::xywh(eye_width, 0, eye_width, eye_height);
