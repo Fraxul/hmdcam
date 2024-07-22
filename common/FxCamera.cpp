@@ -16,7 +16,7 @@
 
 static float r_zNear = 0.f;
 static float r_stereoSeparation = 0.5f;
-static float hmd_worldUnitsPerMeter = 100.0f;
+// static float hmd_worldUnitsPerMeter = 100.0f;
 static bool hmd_pitchLock = true;
 
 FxCamera::FxCamera() :

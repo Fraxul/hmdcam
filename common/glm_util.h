@@ -23,18 +23,18 @@ template <typename T> inline bool vector_eq(const T& v1, const T& v2) {
   return glm::all(glm::epsilonEqual(v1, v2, 0.0001f));
 }
 
-static glm::vec3 linearToSRGB(glm::vec3 in) {
+static inline glm::vec3 linearToSRGB(glm::vec3 in) {
   glm::vec3 res;
   for (size_t i = 0; i < 3; ++i) {
     res[i] = in[i] <= 0.04045f ? (in[i] / 12.92f) : powf(((in[i] + 0.055f) / 1.055f), 2.4f);
   }
   return res;
 }
-static glm::vec4 linearToSRGB(glm::vec4 in) {
+static inline glm::vec4 linearToSRGB(glm::vec4 in) {
   return glm::vec4(linearToSRGB(glm::vec3(in)), in[3]);
 }
 
-static glm::vec3 srgbToLinear(glm::vec3 in) {
+static inline glm::vec3 srgbToLinear(glm::vec3 in) {
   glm::vec3 res;
   // equation straight out of 4.1.8 in the GL 4.1 spec
   for (size_t i = 0; i < 3; ++i) {
@@ -51,7 +51,7 @@ static glm::vec3 srgbToLinear(glm::vec3 in) {
   return res;
 }
 
-static glm::vec4 srgbToLinear(glm::vec4 in) {
+static inline glm::vec4 srgbToLinear(glm::vec4 in) {
   return glm::vec4(srgbToLinear(glm::vec3(in)), in[3]);
 }
 
