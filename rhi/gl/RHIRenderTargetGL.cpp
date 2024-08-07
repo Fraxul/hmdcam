@@ -1,5 +1,6 @@
 #include "rhi/gl/RHIRenderTargetGL.h"
 #include "rhi/gl/RHISurfaceGL.h"
+#include <stdio.h>
 
 RHIRenderTargetGL::RHIRenderTargetGL() : m_glFramebufferId(0), m_width(0), m_height(0), m_layers(1), m_samples(1), m_colorTargetCount(0), m_isArray(false), m_hasDepthStencilTarget(false) {
 

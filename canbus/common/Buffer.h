@@ -1,6 +1,7 @@
 #pragma once
 #define NO_ASIO_DEPENDENCIES
 #define NO_INTERPROCESS_DEPENDENCIES
+#include <cassert>
 #include <fstream>
 #include <string>
 #include <stdexcept>

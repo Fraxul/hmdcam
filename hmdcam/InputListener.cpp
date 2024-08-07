@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <assert.h>
+#include <pthread.h>
 
 #include <linux/input.h>
 #include <sys/epoll.h>
