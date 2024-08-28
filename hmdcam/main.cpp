@@ -139,15 +139,18 @@ void saveSettings() {
 
 // Profiling data
 struct FrameTimingData {
-  FrameTimingData() : captureTimeMs(0), submitTimeMs(0), captureLatencyMs(0), captureIntervalMs(0), captureIntervalAdjustmentMarker(0) {}
+  FrameTimingData() {}
 
-  float captureTimeMs;
-  float submitTimeMs;
+  float captureTimeMs = 0;
+  float submitTimeMs = 0;
 
-  float captureLatencyMs;
-  float captureIntervalMs;
+  float captureLatencyMs = 0;
+  float captureIntervalMs = 0;
 
-  float captureIntervalAdjustmentMarker;
+  float captureIntervalAdjustmentMarker = 0;
+
+  float viewRenderTimeMs = 0;
+  float distortionRenderTimeMs = 0;
 };
 
 ScrollingBuffer<FrameTimingData> s_timingDataBuffer(512);
@@ -247,6 +250,7 @@ int main(int argc, char* argv[]) {
   bool debugMockCameras = false;
   bool debugNoRepeatingCapture = false;
   bool debugPrintLatency = false;
+  bool debugRenderTiming = false;
   int rdmaInterval = 2;
   std::string calibrationFilename;
   std::string tempSensorFilename = "/sys/devices/virtual/thermal/thermal_zone8/temp";
@@ -278,6 +282,8 @@ int main(int argc, char* argv[]) {
       debugMockCameras = true;
     } else if (!strcmp(argv[i], "--debug-print-latency")) {
       debugPrintLatency = true;
+    } else if (!strcmp(argv[i], "--debug-render-timing")) {
+      debugRenderTiming = true;
     } else if (!strcmp(argv[i], "--rdma-interval")) {
       if (i == (argc - 1)) {
         printf("--rdma-interval: requires argument\n");
@@ -722,10 +728,22 @@ int main(int argc, char* argv[]) {
     if (!debugNoRepeatingCapture)
       argusCamera->setRepeatCapture(true);
 
+
+    // Perf queries
+    RHITimerQuery::ptr viewRenderQuery = rhi()->newTimerQuery();
+    RHITimerQuery::ptr distortionRenderQuery = rhi()->newTimerQuery();
+
     // Main display loop
     while (!want_quit) {
       nvtxMarkA("Display loop");
       FrameTimingData timingData;
+
+      if (debugRenderTiming) {
+        // Read previous loop's timer query results
+        timingData.viewRenderTimeMs = static_cast<float>(rhi()->getQueryResult(viewRenderQuery)) / 1000000.0f;
+        timingData.distortionRenderTimeMs = static_cast<float>(rhi()->getQueryResult(distortionRenderQuery)) / 1000000.0f;
+      }
+
       uint64_t frameStartTimeNs = currentTimeNs();
 
       if (ImGui::IsKeyPressed(ImGuiKey_Menu, /*repeat=*/ false) ||
@@ -955,6 +973,17 @@ int main(int argc, char* argv[]) {
               ImPlot::PlotLine("Submit",  &s_timingDataBuffer.data()[0].submitTimeMs,  s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::EndPlot();
           }
+          if (debugRenderTiming && ImPlot::BeginPlot("##RenderTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+              ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
+              ImPlot::SetupFinish();
+
+              ImPlot::PlotLine("View Render", &s_timingDataBuffer.data()[0].viewRenderTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::PlotLine("HMD Distortion",  &s_timingDataBuffer.data()[0].distortionRenderTimeMs,  s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::EndPlot();
+          }
           if (ImPlot::BeginPlot("###CaptureLatencyInterval", ImVec2(-1,150), /*flags=*/ plotFlags)) {
               ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
               ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
@@ -1130,6 +1159,9 @@ int main(int argc, char* argv[]) {
 
       // Note that our camera uses reversed depth projection -- we clear to 0 and use a "greater" depth-test.
       nvtxMarkA("Camera rendering");
+      if (debugRenderTiming)
+        rhi()->beginTimerQuery(viewRenderQuery);
+
       rhi()->setClearDepth(0.0f);
       rhi()->beginRenderPass(eyeRT, kLoadClear);
       rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
@@ -1264,6 +1296,9 @@ int main(int argc, char* argv[]) {
         }
 
       } // view loop
+
+      if (debugRenderTiming)
+        rhi()->endTimerQuery(viewRenderQuery);
 
 /*
       if (renderSBS && sbsSeparatorWidth) {
@@ -1491,7 +1526,14 @@ int main(int argc, char* argv[]) {
 
       timingData.submitTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
       nvtxMarkA("HMD frame");
+      if (debugRenderTiming)
+        rhi()->beginTimerQuery(distortionRenderQuery);
+
       renderHMDFrame();
+
+      if (debugRenderTiming)
+        rhi()->endTimerQuery(distortionRenderQuery);
+
       {
         uint64_t thisFrameTimestamp = currentTimeNs();
         if (previousFrameTimestamp) {

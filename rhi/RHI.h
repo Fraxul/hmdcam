@@ -135,6 +135,7 @@ public:
   virtual uint64_t getQueryResult(RHIOcclusionQuery::ptr) = 0;
   virtual uint64_t getQueryResult(RHITimerQuery::ptr) = 0;
   virtual uint64_t getTimestampImmediate() = 0;
+  virtual bool getTimerQueryDisjointState() = 0;
 
   // compute dispatch functions for compute pass
   virtual void dispatchCompute(uint32_t threadgroupCountX, uint32_t threadgroupCountY = 1, uint32_t threadgroupCountZ = 1) = 0;

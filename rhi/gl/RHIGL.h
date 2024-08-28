@@ -79,6 +79,7 @@ public:
   virtual uint64_t getQueryResult(RHIOcclusionQuery::ptr);
   virtual uint64_t getQueryResult(RHITimerQuery::ptr);
   virtual uint64_t getTimestampImmediate();
+  virtual bool getTimerQueryDisjointState();
 
   virtual void dispatchCompute(uint32_t threadgroupCountX, uint32_t threadgroupCountY, uint32_t threadgroupCountZ);
   virtual void dispatchComputeIndirect(RHIBuffer::ptr);

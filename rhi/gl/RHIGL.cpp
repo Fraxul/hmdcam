@@ -1035,7 +1035,7 @@ void RHIGL::drawIndexedPrimitives(RHIBuffer::ptr indexBuffer, RHIIndexBufferType
 }
 
 RHITimerQuery::ptr RHIGL::newTimerQuery() {
-  return RHITimerQuery::ptr();
+  return RHITimerQuery::ptr(new RHITimerQueryGL());
 }
 
 RHIOcclusionQuery::ptr RHIGL::newOcclusionQuery(RHIOcclusionQueryMode queryMode) {
@@ -1043,15 +1043,18 @@ RHIOcclusionQuery::ptr RHIGL::newOcclusionQuery(RHIOcclusionQueryMode queryMode)
 }
 
 void RHIGL::beginTimerQuery(RHITimerQuery::ptr query) {
-  // Not supported in ES3
+  RHITimerQueryGL* glQuery = static_cast<RHITimerQueryGL*>(query.get());
+  GL(glBeginQuery(GL_TIME_ELAPSED, glQuery->glId()));
 }
 
 void RHIGL::endTimerQuery(RHITimerQuery::ptr query) {
-  // Not supported in ES3
+  //RHITimerQueryGL* glQuery = static_cast<RHITimerQueryGL*>(query.get());
+  GL(glEndQuery(GL_TIME_ELAPSED));
 }
 
 void RHIGL::recordTimestamp(RHITimerQuery::ptr query) {
-  // Not supported in ES3
+  RHITimerQueryGL* glQuery = static_cast<RHITimerQueryGL*>(query.get());
+  GL(glQueryCounter(glQuery->glId(), GL_TIMESTAMP));
 }
 
 static GLenum rhiOcclusionQueryModeToGL(RHIOcclusionQueryMode mode) {
@@ -1082,13 +1085,26 @@ uint64_t RHIGL::getQueryResult(RHIOcclusionQuery::ptr query) {
 }
 
 uint64_t RHIGL::getQueryResult(RHITimerQuery::ptr query) {
-  // Not supported in ES3
-  return 0;
+  RHITimerQueryGL* glQuery = static_cast<RHITimerQueryGL*>(query.get());
+  uint64_t res = 0;
+  GL(glGetQueryObjectui64v(glQuery->glId(), GL_QUERY_RESULT, &res));
+  return res;
 }
 
 uint64_t RHIGL::getTimestampImmediate() {
-  // Not supported in ES3
-  return 0;
+  int64_t res = 0;
+  glGetInteger64v(GL_TIMESTAMP, &res);
+  return res;
+}
+
+bool RHIGL::getTimerQueryDisjointState() {
+  if (epoxy_is_desktop_gl()) {
+    return false;
+  }
+
+  GLint disjoint = 0;
+  GL(glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint));
+  return (disjoint != 0);
 }
 
 void RHIGL::pushDebugGroup(const char* groupName) {
