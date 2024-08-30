@@ -1,5 +1,6 @@
 #include "imgui.h"
 #include "common/DepthMapGenerator.h"
+#include "common/DepthMapGeneratorMock.h"
 #ifdef HAVE_OPENCV_CUDA
   #include "common/DepthMapGeneratorSHM.h"
 #endif
@@ -25,6 +26,8 @@ const char* settingsFilename = "depthMapSettings.yml";
 DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr) {
   if (!strcasecmp(backendStr, "none")) {
     return kDepthBackendNone;
+  } else if (!strcasecmp(backendStr, "mock")) {
+    return kDepthBackendMock;
   } else if ((!strcasecmp(backendStr, "dgpu")) || (!strcasecmp(backendStr, "cuda"))) {
     return kDepthBackendDGPU;
   } else if ((!strcasecmp(backendStr, "depthai")) || (!strcasecmp(backendStr, "depth-ai"))) {
@@ -41,6 +44,9 @@ DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend backend) {
   switch (backend) {
   case kDepthBackendNone:
     return NULL;
+
+  case kDepthBackendMock:
+    return new DepthMapGeneratorMock();
 
   case kDepthBackendDGPU:
   case kDepthBackendDepthAI:
