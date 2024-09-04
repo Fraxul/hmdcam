@@ -1,6 +1,6 @@
 [submodule "glm"]
   path = glm
-  url = https://github.com/g-truc/glm
+  url = https://github.com/fraxul/glm
   ignore = untracked
 [submodule "imgui"]
   path = imgui

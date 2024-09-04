@@ -7,6 +7,7 @@ import SCons
 vars = Variables(None, ARGUMENTS)
 vars.Add(BoolVariable('debug', 'Set to build in debug mode (no optimization)', 0))
 vars.Add(BoolVariable('nsight', 'Set to build for NSight compatibility (disables NVEnc, VPI2)', 0))
+vars.Add(BoolVariable('cuda_debug', 'Set to build CUDA kernels in debug mode', 0))
 
 
 env_tools = ['clang', 'clangxx', 'link', 'cuda']
@@ -35,9 +36,12 @@ env = Environment(tools = env_tools, toolpath=['scons-tools'],
     '/usr/local/include/opencv4',
   ],
   NVCCPATH=[
+    '.',
     '/usr/local/include/opencv4',
-    '#glm'
+    'glm'
   ],
+  NVCCFLAGS=['--expt-relaxed-constexpr', '-g'],
+  CPPDEFINES=['GLM_ENABLE_EXPERIMENTAL'],
   CPPFLAGS=['-g', '-Wall'],
   CXXFLAGS=['-std=c++14'],
   LINKFLAGS=['-g'],
@@ -45,6 +49,15 @@ env = Environment(tools = env_tools, toolpath=['scons-tools'],
   CUDA_SDK_PATH='/usr/local/cuda',
   COMPILATIONDB_USE_ABSPATH=True
 )
+
+vars.Update(env)
+
+if (env['cuda_debug']):
+  # Compile device code in debug mode -- no optimizations
+  env.Append(NVCCFLAGS=['-G'])
+else:
+  # Generate debug line number info for device code
+  env.Append(NVCCFLAGS=['-lineinfo'])
 
 if (scons_version_major < 4):
   def NullCompilationDatabase():
@@ -69,6 +82,10 @@ if is_tegra:
 
   if tegra_release == 0:
     print('WARNING: Unable to determine L4T release version!')
+
+  # TODO: Correctly detect the CUDA codegen version
+  # Compute capability 8.7 works for Orin parts
+  env.Append(NVCCFLAGS=['--generate-code', 'arch=compute_87,code=sm_87'])
 
   tegra_mmapi_paths = [
     '/usr/src/tegra_multimedia_api',
@@ -95,8 +112,6 @@ else:
   env['IS_TEGRA'] = False
   if (platform.platform().find('WSL2') >= 0):
     env.Append(LIBPATH=['/usr/lib/wsl/lib'])
-
-vars.Update(env)
 
 # Common env
 if (env['debug']):
