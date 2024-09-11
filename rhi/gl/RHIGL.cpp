@@ -50,6 +50,9 @@ RHIGL::RHIGL() : m_clearColor(glm::vec4(0.0f)), m_clearDepth(1.0f), m_clearStenc
 
     // printf("RHIGL: allowsLayerSelectionFromVertexShader = %d\n", s_allowsLayerSelectionFromVertexShader);
 
+    m_supportsDiscardFramebufferEXT = epoxy_has_gl_extension("GL_EXT_discard_framebuffer");
+    printf("RHIGL: supportsDiscardFramebufferEXT = %d\n", m_supportsDiscardFramebufferEXT);
+
   }
 
   GLint t;
@@ -439,7 +442,7 @@ void RHIGL::beginRenderPass(RHIRenderTarget::ptr renderTarget, RHIRenderTargetLo
   GL(glDisable(GL_SCISSOR_TEST));
 
   // execute discards
-  {
+  if (m_supportsDiscardFramebufferEXT) {
     GLenum discardedAttachments[20]; // max 16 color attachments + depth and stencil
     GLsizei discardedAttachmentCount = 0;
     bool isDefaultFramebuffer = (m_activeRenderTarget->glFramebufferId() == 0);
@@ -465,6 +468,24 @@ void RHIGL::beginRenderPass(RHIRenderTarget::ptr renderTarget, RHIRenderTargetLo
     if (discardedAttachmentCount) {
       GL(glDiscardFramebufferEXT(GL_FRAMEBUFFER, discardedAttachmentCount, discardedAttachments));
     }
+  } else {
+    // Fallback path for missing GL_EXT_discard_framebuffer
+    GLenum clearBits = 0;
+    if (colorLoadAction == kLoadInvalidate && m_activeRenderTarget->hasColorTarget()) {
+      // Fallback to clearing to all zeros if load-invalidate isn't available
+      glClearColor(0, 0, 0, 0);
+      clearBits |= GL_COLOR_BUFFER_BIT;
+    }
+    if (m_activeRenderTarget->hasDepthStencilTarget()) {
+      if (depthLoadAction == kLoadInvalidate) {
+        clearBits |= GL_DEPTH_BUFFER_BIT;
+      }
+      if (stencilLoadAction == kLoadInvalidate) {
+        clearBits |= GL_STENCIL_BUFFER_BIT;
+      }
+    }
+    if (clearBits)
+      glClear(clearBits);
   }
 
 

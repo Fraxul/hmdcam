@@ -130,5 +130,8 @@ protected:
   // state cache
   RHICullState m_currentCullState;
   float m_currentDepthBiasSlopeScale, m_currentDepthBiasConstant;
+
+  // Feature flags
+  bool m_supportsDiscardFramebufferEXT = false;
 };
 
