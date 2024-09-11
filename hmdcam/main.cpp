@@ -21,10 +21,6 @@
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
-#include "rhi/cuda/CudaUtil.h"
-#include "rhi/gl/GLCommon.h" // must be included before cudaEGL
-#include <cudaEGL.h>
-#include <cuda_egl_interop.h>
 
 #include "IArgusCamera.h"
 #include "ArgusCameraMock.h"
@@ -37,6 +33,7 @@
 #include "common/ScrollingBuffer.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
+#include "DebugServer.h"
 #include "FocusAssistDebugOverlay.h"
 #include "IDebugOverlay.h"
 #include "InputListener.h"
@@ -51,8 +48,6 @@
 #define STBI_ONLY_PNG
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
-
-#include "rdma/RDMAContext.h"
 
 // Camera render parameters
 float zoomFactor = 1.0f;
@@ -74,15 +69,11 @@ uint64_t settingsAutosaveIntervalFrames = 1000; // will be recomputed when we kn
 // Camera info/state
 IArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
+DebugServer* debugServer = nullptr;
 
-#if USE_RDMA
-RDMAContext* rdmaContext;
-static inline bool rdmaContextHasActivePeerConnections() {
-  return rdmaContext && rdmaContext->hasPeerConnections();
+static inline bool debugServerHasActiveConnection() {
+  return debugServer && debugServer->hasConnection();
 }
-#else
-static inline bool rdmaContextHasActivePeerConnections() { return false; }
-#endif
 
 #define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
 static const char* hmdcamSettingsFilename = "hmdcamSettings.yml";
@@ -244,14 +235,12 @@ int main(int argc, char* argv[]) {
 #pragma clang diagnostic ignored "-Wunused-but-set-variable"
   DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
   ERenderBackend renderBackendType = kRenderBackendVKDirect;
-  bool enableRDMA = true;
   bool enablePDU = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
   bool debugNoRepeatingCapture = false;
   bool debugPrintLatency = false;
   bool debugRenderTiming = false;
-  int rdmaInterval = 2;
   std::string calibrationFilename;
   std::string tempSensorFilename = "/sys/devices/virtual/thermal/thermal_zone8/temp";
 
@@ -270,8 +259,6 @@ int main(int argc, char* argv[]) {
         return 1;
       }
       renderBackendType = renderBackendStringToEnum(argv[++i]);
-    } else if (!strcmp(argv[i], "--disable-rdma")) {
-      enableRDMA = false;
     } else if (!strcmp(argv[i], "--disable-pdu")) {
       enablePDU = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
@@ -284,16 +271,6 @@ int main(int argc, char* argv[]) {
       debugPrintLatency = true;
     } else if (!strcmp(argv[i], "--debug-render-timing")) {
       debugRenderTiming = true;
-    } else if (!strcmp(argv[i], "--rdma-interval")) {
-      if (i == (argc - 1)) {
-        printf("--rdma-interval: requires argument\n");
-        return 1;
-      }
-      rdmaInterval = atoi(argv[++i]);
-      if (rdmaInterval <= 0) {
-        printf("--rdma-interval: invalid argument\n");
-        return 1;
-      }
     } else if (!strcmp(argv[i], "--calibration-file")) {
       if (i == (argc - 1)) {
         printf("--calibration-file: requires argument\n");
@@ -326,17 +303,6 @@ int main(int argc, char* argv[]) {
       perror("pthread_setaffinity");
     }
   }
-
-#if USE_RDMA
-  int rdmaFrame = 0;
-  if (enableRDMA) {
-    rdmaContext = RDMAContext::createServerContext();
-
-    if (!rdmaContext) {
-      printf("RDMA server context initialization failed; RDMA service will be unavailable.\n");
-    }
-  }
-#endif
 
   startInputListenerThread();
 
@@ -465,125 +431,17 @@ int main(int argc, char* argv[]) {
   }
 
 
-  // Create the RDMA configuration buffer and camera data buffers
-#if USE_RDMA
-  RDMABuffer::ptr configBuf;
-  std::vector<RDMABuffer::ptr> rdmaCameraLumaBuffers;
-  std::vector<RDMABuffer::ptr> rdmaCameraChromaBuffers;
-  CUDA_RESOURCE_DESC lumaResourceDescriptor;
-  memset(&lumaResourceDescriptor, 0, sizeof(lumaResourceDescriptor));
-
-  CUDA_RESOURCE_DESC chromaResourceDescriptor;
-  memset(&chromaResourceDescriptor, 0, sizeof(chromaResourceDescriptor));
-
-  if (rdmaContext) {
-    CUeglColorFormat eglColorFormat;
-
-    for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
-      CUgraphicsResource rsrc = argusCamera->cudaGraphicsResource(cameraIdx);
-      if (!rsrc) {
-        printf("ArgusCamera failed to provide CUgraphicsResource for stream %zu\n", cameraIdx);
-        break;
-      }
-
-      // Using the Runtime API here instead since it gives better information about multiplanar formats
-      cudaEglFrame eglFrame;
-      CUDA_CHECK(cudaGraphicsResourceGetMappedEglFrame(&eglFrame, (cudaGraphicsResource_t) rsrc, /*cubemapIndex=*/ 0, /*mipLevel=*/ 0));
-      assert(eglFrame.frameType == cudaEglFrameTypePitch);
-      assert(eglFrame.planeCount == 2);
-
-      if (cameraIdx == 0) {
-        eglColorFormat = (CUeglColorFormat) eglFrame.eglColorFormat; // CUeglColorFormat and cudaEglColorFormat are interchangeable
-
-        // Convert eglFrame to resource descriptors.
-        // We don't fill the device pointers, we're just going to serialize the contents
-        // of these descriptors to populate the config buffer.
-        lumaResourceDescriptor.resType = CU_RESOURCE_TYPE_PITCH2D;
-        lumaResourceDescriptor.res.pitch2D.devPtr       = 0;
-        lumaResourceDescriptor.res.pitch2D.format       = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[0].channelDesc.f; // TODO
-        lumaResourceDescriptor.res.pitch2D.numChannels  = eglFrame.planeDesc[0].numChannels;
-        lumaResourceDescriptor.res.pitch2D.width        = eglFrame.planeDesc[0].width;
-        lumaResourceDescriptor.res.pitch2D.height       = eglFrame.planeDesc[0].height;
-        lumaResourceDescriptor.res.pitch2D.pitchInBytes = eglFrame.planeDesc[0].pitch;
-
-        // TODO hardcoded assumptions about chroma format -- we should be able to get this from the eglColorFormat!
-        chromaResourceDescriptor.res.pitch2D.devPtr       = 0;
-        chromaResourceDescriptor.res.pitch2D.format       = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[1].channelDesc.f // TODO
-        chromaResourceDescriptor.res.pitch2D.numChannels  = 2; // eglFrame.planeDesc[1].numChannels; // TODO
-        chromaResourceDescriptor.res.pitch2D.width        = eglFrame.planeDesc[1].width;
-        chromaResourceDescriptor.res.pitch2D.height       = eglFrame.planeDesc[1].height;
-        // pitchInBytes NOTE: "...in case of multiplanar *eglFrame, pitch of only first plane is to be considered by the application."
-        // (accessing planeDesc[0] is intentional)
-        chromaResourceDescriptor.res.pitch2D.pitchInBytes = eglFrame.planeDesc[0].pitch;
-
-        printf("Stream [%zu]:   Luma: %zu x %zu NumChannels=%u ChannelDesc=0x%x (%d,%d,%d,%d) pitchInBytes=%zu\n", cameraIdx,
-          lumaResourceDescriptor.res.pitch2D.width, lumaResourceDescriptor.res.pitch2D.height,
-          lumaResourceDescriptor.res.pitch2D.numChannels,
-          eglFrame.planeDesc[0].channelDesc.f, eglFrame.planeDesc[0].channelDesc.x, eglFrame.planeDesc[0].channelDesc.y,
-          eglFrame.planeDesc[0].channelDesc.z, eglFrame.planeDesc[0].channelDesc.w,
-          lumaResourceDescriptor.res.pitch2D.pitchInBytes);
-        printf("Stream [%zu]: Chroma: %zu x %zu NumChannels=%u ChannelDesc=0x%x (%d,%d,%d,%d) pitchInBytes=%zu\n", cameraIdx,
-          chromaResourceDescriptor.res.pitch2D.width, chromaResourceDescriptor.res.pitch2D.height,
-          chromaResourceDescriptor.res.pitch2D.numChannels,
-          eglFrame.planeDesc[1].channelDesc.f, eglFrame.planeDesc[1].channelDesc.x, eglFrame.planeDesc[1].channelDesc.y,
-          eglFrame.planeDesc[1].channelDesc.z, eglFrame.planeDesc[1].channelDesc.w,
-          chromaResourceDescriptor.res.pitch2D.pitchInBytes);
-      }
-
-      // TODO handle other type-sizes
-      assert(lumaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_UNSIGNED_INT8 || lumaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_SIGNED_INT8);
-      assert(chromaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_UNSIGNED_INT8 || chromaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_SIGNED_INT8);
-
-      char bufferName[32];
-      sprintf(bufferName, "camera%zu_luma", cameraIdx);
-      rdmaCameraLumaBuffers.push_back(rdmaContext->newManagedBuffer(bufferName,
-        lumaResourceDescriptor.res.pitch2D.height * lumaResourceDescriptor.res.pitch2D.pitchInBytes, kRDMABufferUsageWriteSource));
-
-      sprintf(bufferName, "camera%zu_chroma", cameraIdx);
-      rdmaCameraChromaBuffers.push_back(rdmaContext->newManagedBuffer(bufferName, 
-        chromaResourceDescriptor.res.pitch2D.height * chromaResourceDescriptor.res.pitch2D.pitchInBytes, kRDMABufferUsageWriteSource));
-    }
-
-    if (rdmaCameraLumaBuffers.size() == argusCamera->streamCount() && rdmaCameraChromaBuffers.size() == argusCamera->streamCount()) {
-      configBuf = rdmaContext->newManagedBuffer("config", 8192, kRDMABufferUsageWriteSource); // TODO this should be read-source once we implement read
-
-      SerializationBuffer cfg;
-      cfg.put_u32(argusCamera->streamCount());
-      cfg.put_u32(argusCamera->streamWidth());
-      cfg.put_u32(argusCamera->streamHeight());
-
-      cfg.put_u32(eglColorFormat);
-
-      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.format);
-      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.numChannels);
-      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.width);
-      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.height);
-      cfg.put_u32(lumaResourceDescriptor.res.pitch2D.pitchInBytes);
-
-      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.format);
-      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.numChannels);
-      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.width);
-      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.height);
-      cfg.put_u32(chromaResourceDescriptor.res.pitch2D.pitchInBytes);
-
-      memcpy(configBuf->data(), cfg.data(), cfg.size());
-      rdmaContext->asyncFlushWriteBuffer(configBuf);
-    } else {
-      printf("RDMA camera buffer setup failed -- service will be unavailable.\n");
-      rdmaCameraLumaBuffers.clear();
-      rdmaCameraChromaBuffers.clear();
-
-      // TODO this just leaks/orphans the context -- we need to implement context shutdown at some point
-      rdmaContext = nullptr;
-    }
+  // Initialize the debug server
+  debugServer = new DebugServer();
+  if (!debugServer->initWithCameraSystem(cameraSystem, argusCamera)) {
+    printf("Debug server initialization failed -- service will be unavailable.\n");
+    delete debugServer;
+    debugServer = nullptr;
   }
-#endif // USE_RDMA
-
 
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
-
 
   // Load masks. 
 #if 1
@@ -805,7 +663,7 @@ int main(int argc, char* argv[]) {
       previousCaptureTimestamp = argusCamera->frameSensorTimestamp(0);
 
       // TODO move this inside CameraSystem
-      if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext && !rdmaContextHasActivePeerConnections()) {
+      if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext && !debugServerHasActiveConnection()) {
         depthMapGenerator->processFrame();
       }
 
@@ -1181,7 +1039,7 @@ int main(int argc, char* argv[]) {
         if (!v.debugEnableView)
           continue;
 
-        if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !rdmaContextHasActivePeerConnections()) {
+        if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !debugServerHasActiveConnection()) {
           {
             char buf[32];
             snprintf(buf, sizeof(buf), "SPS view %zu", viewIdx);
@@ -1468,61 +1326,11 @@ int main(int argc, char* argv[]) {
         }
       }
 
-#if USE_RDMA
-      if (rdmaContextHasActivePeerConnections() && rdmaFrame == 0) {
-        // Issue RDMA surface copies and write-buffer flushes
-        for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
-          CUeglFrame eglFrame;
-          CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&eglFrame, argusCamera->cudaGraphicsResource(cameraIdx), 0, 0));
 
-          { // Luma copy
-            CUDA_MEMCPY2D copyDescriptor;
-            memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
-
-            copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-            copyDescriptor.srcDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
-            copyDescriptor.srcPitch = lumaResourceDescriptor.res.pitch2D.pitchInBytes;
-
-            copyDescriptor.WidthInBytes = lumaResourceDescriptor.res.pitch2D.width * 1; //8-bit, 1-channel
-            copyDescriptor.Height = lumaResourceDescriptor.res.pitch2D.height;
-
-            copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
-            copyDescriptor.dstHost = rdmaCameraLumaBuffers[cameraIdx]->data();
-            copyDescriptor.dstPitch = lumaResourceDescriptor.res.pitch2D.pitchInBytes;
-
-            CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
-          }
-
-          { // Chroma copy
-            CUDA_MEMCPY2D copyDescriptor;
-            memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
-
-            copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-            copyDescriptor.srcDevice = (CUdeviceptr) eglFrame.frame.pPitch[1];
-            copyDescriptor.srcPitch = chromaResourceDescriptor.res.pitch2D.pitchInBytes;
-
-            copyDescriptor.WidthInBytes = chromaResourceDescriptor.res.pitch2D.width * 2; //8-bit, 2-channel
-            copyDescriptor.Height = chromaResourceDescriptor.res.pitch2D.height;
-
-            copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
-            copyDescriptor.dstHost = rdmaCameraChromaBuffers[cameraIdx]->data();
-            copyDescriptor.dstPitch = chromaResourceDescriptor.res.pitch2D.pitchInBytes;
-
-            CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
-          }
-
-          rdmaContext->asyncFlushWriteBuffer(rdmaCameraLumaBuffers[cameraIdx]);
-          rdmaContext->asyncFlushWriteBuffer(rdmaCameraChromaBuffers[cameraIdx]);
-        }
-        // Send "buffers dirty" event
-        rdmaContext->asyncSendUserEvent(1, SerializationBuffer());
+      if (debugServer) {
+        // Allow debug server to take copies of frames
+        debugServer->frameProcessingEnded();
       }
-      // track RDMA send interval
-      rdmaFrame += 1;
-      if (rdmaFrame >= rdmaInterval) {
-        rdmaFrame = 0;
-      }
-#endif // USE_RDMA
 
       timingData.submitTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
       nvtxMarkA("HMD frame");

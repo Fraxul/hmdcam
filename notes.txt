@@ -13,7 +13,7 @@ Don't forget to set up the submodules after cloning:
   git submodule update --init --recursive
 
 Install prerequisite packages:
-  sudo apt install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev librdmacm-dev libsocketcan-dev
+  sudo apt install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev libsocketcan-dev
 
 If you're on Ubuntu <= 20.04 (L4T < r34.1), libepoxy is too old -- install the included package (borrowed from the Ubuntu 20.04 arm64 repository):
   sudo dpkg -i libepoxy/libepoxy0_1.5.4-1_arm64.deb  libepoxy/libepoxy-dev_1.5.4-1_arm64.deb
@@ -32,7 +32,7 @@ Build the embedded Monado library required for distortion processing
 Optional: If you want to build the DepthAI backend, run the included script to build required libraries first:
   ./build-depthai-core.sh
 
-Optional, for your development host only: If targeting JetPack 5.0+, install the VPI2 packages for rdma-client:
+Optional, for your development host only: If targeting JetPack 5.0+, install the VPI2 packages for debug-client:
 (These instructions are inlined from https://docs.nvidia.com/jetson/jetpack/install-jetpack/index.html#jetpack-debian-packages as of JetPack 5.0.2 / L4T r35.1)
   sudo apt-key adv --fetch-key http://repo.download.nvidia.com/jetson/jetson-ota-public.asc
   sudo apt-add-repository "deb http://repo.download.nvidia.com/jetson/x86_64/focal r35.1 main"

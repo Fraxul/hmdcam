@@ -15,19 +15,18 @@ Features:
     - OpenCV+CUDA on a separate Nvidia discrete GPU
 - Configuration menu with built-in calibration tools
 - Remote viewing via RTSP (embedded live555 server + nvenc)
-- Remote debugging via RDMA-over-Infiniband (`rdma-client` binary)
+- Remote depth processing debugging (`debug-client` binary)
 
 Important repository structure:
 | Path           | Description  |
 | -------------- | ------------ |
 | hmdcam         |  Main application -- runs on the Jetson |
-| rdma-client    | Remote-debugging application; streams uncompressed framebuffers from `hmdcam` using RDMA over Infiniband. |
-| dgpu-worker    | Stereo disparity computation worker for CUDA discrete GPUs. Runs under `hmdcam` or `rdma-client` |
-| depthai-worker | Stereo disparity computation worker for Luxonis DepthAI VPUs. Runs under `hmdcam` or `rdma-client` |
+| debug-client   | Remote-debugging application; streams uncompressed framebuffers from `hmdcam` over Ethernet. |
+| dgpu-worker    | Stereo disparity computation worker for CUDA discrete GPUs. Runs under `hmdcam` or `debug-client` |
+| depthai-worker | Stereo disparity computation worker for Luxonis DepthAI VPUs. Runs under `hmdcam` or `debug-client` |
 | dgpu-fans      | Simple daemon to control a dGPU fan connected to the Jetson's PWM interface |
 | rhi            | Render Hardware Interface -- wrappers over OpenGL. |
-| common         | Library functions (mostly camera related) |
-| rdma           | RDMA library/framework |
+| common         | Library functions shared between `hmdcam` and `debug-client` (mostly camera related) |
 
 Requirements:
 - A Jetson board with one or more CSI cameras
@@ -50,5 +49,4 @@ The reference test/development platform is:
   - Lens holders: [M12, 7mm high](https://www.aliexpress.us/item/2255801127009273.html)
   - Arranged as two 90°-rotated horizontal stereo pairs.
 - Lenovo Explorer HMD: 2880x1440 at 90fps.
-- Optional: Mellanox ConnectX-3 FDR Infiniband card (CX353A-FCBT) for remote debugging
 

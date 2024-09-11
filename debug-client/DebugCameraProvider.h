@@ -1,7 +1,6 @@
 #pragma once
 #include "common/ICameraProvider.h"
-#include "rdma/RDMABuffer.h"
-#include "rdma/SerializationBuffer.h"
+#include "common/SerializationBuffer.h"
 #include "rhi/RHISurface.h"
 #include <vector>
 #include <opencv2/core/mat.hpp>
@@ -11,12 +10,10 @@
 #include "rhi/gl/GLCommon.h" // must be included before cudaEGL
 #include <cudaEGL.h>
 
-class RDMAContext;
-
-class RDMACameraProvider : public ICameraProvider {
+class DebugCameraProvider : public ICameraProvider {
 public:
-  RDMACameraProvider(RDMAContext*, SerializationBuffer config);
-  virtual ~RDMACameraProvider();
+  DebugCameraProvider();
+  virtual ~DebugCameraProvider();
 
   virtual size_t streamCount() const { return m_streamCount; }
   virtual unsigned int streamWidth() const { return m_streamWidth; }
@@ -29,24 +26,32 @@ public:
   cv::Mat cvMatLuma(size_t streamIdx) const;
   cv::Mat cvMatChroma(size_t streamIdx) const;
 
-  void flagRDMABuffersDirty() { m_rdmaBuffersDirty = true; }
+  bool connect(const char* hostname);
   void updateSurfaces();
 
 protected:
-  RDMAContext* m_rdmaContext;
-  RDMAContext* rdmaContext() const { return m_rdmaContext; }
+  int m_fd = -1;
 
-  size_t m_streamCount;
-  unsigned int m_streamWidth, m_streamHeight;
+  static void* streamThreadEntryPoint(void* x) { reinterpret_cast<DebugCameraProvider*>(x)->streamThreadFn(); return NULL; }
+  void streamThreadFn();
+  pthread_t m_streamThread = 0;
+  pthread_mutex_t m_frameConsumedMutex = PTHREAD_MUTEX_INITIALIZER;
+  pthread_cond_t m_frameConsumedCond = PTHREAD_COND_INITIALIZER;
+
+  // Start with this flag set so that updateSurfaces will create allocations during init
+  bool m_streamFrameReadyToConsume = true;
+
+  size_t m_streamCount = 0;
+  unsigned int m_streamWidth = 0, m_streamHeight = 0;
 
   CUeglColorFormat m_eglColorFormat;
   CUDA_RESOURCE_DESC m_lumaResourceDescriptor;
   CUDA_RESOURCE_DESC m_chromaResourceDescriptor;
-  uint32_t m_lumaCopyWidthBytes, m_chromaCopyWidthBytes;
+  uint32_t m_lumaPlaneSizeBytes = 0, m_chromaPlaneSizeBytes = 0;
 
   struct StreamData {
-    RDMABuffer::ptr rdmaLumaBuffer;
-    RDMABuffer::ptr rdmaChromaBuffer;
+    void* hostLumaBuffer = nullptr;
+    void* hostChromaBuffer = nullptr;
 
     RHISurface::ptr rhiSurfaceRGBA;
     cv::cuda::GpuMat gpuMatLuma, gpuMatChroma, gpuMatRGBA;
@@ -57,7 +62,5 @@ protected:
   std::vector<StreamData> m_streamData;
 
   cv::cuda::GpuMat m_gpuMatRGBTmp; // format conversion intermediary
-
-  bool m_rdmaBuffersDirty = true;
 };
 

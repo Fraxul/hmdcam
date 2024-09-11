@@ -28,7 +28,6 @@ sgEnv.Program(
     'cuda', 'cudart',
     'nppc', 'nppidei',
     'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudawarping',
-    'ibverbs', 'rdmacm',
     'SDL2',
   ]
 )

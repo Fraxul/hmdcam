@@ -1,0 +1,27 @@
+Import('env')
+
+debugClientEnv = env.Clone()
+
+debugClientEnv.Append(
+  CPPPATH=['debug-client', '/usr/include/SDL2'],
+  LIBS=[
+    'z',
+    'dl',
+    'pthread', 'rt',
+    'boost_chrono', 'boost_system', 'boost_thread',
+    'SDL2',
+    'epoxy',
+    'cuda', 'cudart',
+    'nppc', 'nppidei', 'nppicc',
+    'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudastereo', 'opencv_cudawarping',
+  ]
+)
+if (env['HAVE_VPI2']):
+  debugClientEnv.Append(LIBS=['nvvpi'])
+
+debugClientEnv.CompilationDatabase()
+debugClientEnv.Program(
+  target = '../bin/debug-client', # relative to build/debug-client
+  source = Glob('debug-client/*.cpp') + Glob('debug-client/*.cu') + Glob('common/*.cpp') + Glob('common/*.cu') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp'),
+)
+

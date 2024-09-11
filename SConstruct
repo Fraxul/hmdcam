@@ -158,7 +158,7 @@ if not is_tegra:
   SConscript('SConscript-stereo-geometry', variant_dir = 'build/stereo-geometry', duplicate = 0)
 
 if have_opencv_cuda:
-  SConscript('SConscript-rdma-client', variant_dir = 'build/rdma-client', duplicate = 0)
+  SConscript('SConscript-debug-client', variant_dir = 'build/debug-client', duplicate = 0)
 SConscript('SConscript-eyectl', variant_dir = 'build/eyectl', duplicate = 0)
 if (build_dgpu):
   SConscript('SConscript-dgpu-worker', variant_dir = 'build/dgpu-worker', duplicate = 0)

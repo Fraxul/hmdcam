@@ -1,6 +1,7 @@
 #!/bin/sh
 ctags -R \
   common \
+  debug-client \
   depthai-worker \
   dgpu-fans \
   dgpu-worker \
@@ -11,8 +12,6 @@ ctags -R \
   implot \
   live555/include \
   pductl \
-  rdma \
-  rdma-client \
   rhi \
   stb \
   tegra_mmapi \

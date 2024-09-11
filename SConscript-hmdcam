@@ -39,7 +39,6 @@ tegraEnv.Append(
     'cuda', 'cudart',
     'nppc', 'nppidei', 'nppitc',
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco',
-    'ibverbs', 'rdmacm',
     'nvToolsExt',
     'socketcan',
   ]
@@ -78,7 +77,6 @@ if tegraEnv['IS_TEGRA']:
     ],
     CPPDEFINES=[
       'USE_LIBARGUS',
-      'USE_RDMA',
       'NO_OPENSSL', # live555 config directive
     ]
   )
@@ -90,10 +88,10 @@ if tegraEnv['IS_TEGRA']:
 
 else:
   tegra_src = []
-  # WSL2 CUDA doesn't expose cuGraphicsResourceGetMappedEglFrame, which is required by the RDMA server code.
-  # Only enable the RDMA server if we're not building inside a WSL2 environment.
-  if (platform.platform().find('WSL2') < 0):
-    tegraEnv.Append(CPPDEFINES=['USE_RDMA'])
+  # WSL2 CUDA doesn't expose cuGraphicsResourceGetMappedEglFrame, which is required by the debug server code.
+  # Flag if we're building on WSL2.
+  if (platform.platform().find('WSL2') >= 0):
+    tegraEnv.Append(CPPDEFINES=['IS_WSL2'])
 
 
 if (tegraEnv['IS_TEGRA'] and not tegraEnv['nsight']):
@@ -141,7 +139,6 @@ tegraEnv.Program(
     + Glob('hmdcam/*.cu')
     + Glob('common/*.cpp')
     + Glob('common/*.cu')
-    + Glob('rdma/*.cpp')
     + Glob('rhi/*.cpp')
     + Glob('rhi/cuda/*.cpp')
     + Glob('rhi/gl/*.cpp')

@@ -8,9 +8,7 @@
 #include <opencv2/aruco/charuco.hpp>
 #include <glm/gtx/transform.hpp>
 
-#include "rdma/RDMAContext.h"
-#include "rdma/RDMABuffer.h"
-#include "RDMACameraProvider.h"
+#include "DebugCameraProvider.h"
 #include "common/CameraSystem.h"
 #include "common/CharucoMultiViewCalibration.h"
 #include "common/FxCamera.h"
@@ -39,11 +37,9 @@ protected:
 
 CUdevice cudaDevice;
 CUcontext cudaContext;
-RDMAContext* rdmaContext;
-RDMACameraProvider* cameraProvider;
+DebugCameraProvider* cameraProvider;
 CameraSystem* cameraSystem;
 FxCamera* sceneCamera;
-RDMABuffer::ptr configBuffer;
 DepthMapGenerator* depthMapGenerator;
 SHMSegment<DepthMapSHM>* shm;
 
@@ -76,18 +72,6 @@ struct DisparityScaleUniformBlock {
   float pad3;
   float pad4;
 };
-
-void rdmaUserEventCallback(RDMAContext*, uint32_t userEventID, SerializationBuffer payload) {
-  switch (userEventID) {
-    case 1:
-      cameraProvider->flagRDMABuffersDirty();
-      break;
-
-    default:
-      printf("rdmaUserEventCallback: unhandled userEventID %u\n", userEventID);
-      break;
-  };
-}
 
 void ImGui_Image(RHISurface::ptr img, const ImVec2& uv0 = ImVec2(0,0), const ImVec2& uv1 = ImVec2(1,1)) {
   ImGui::Image((ImTextureID) static_cast<uintptr_t>(static_cast<RHISurfaceGL*>(img.get())->glId()), ImVec2(img->width(), img->height()), uv0, uv1);
@@ -181,7 +165,7 @@ bool updateHoverPositionForLastItem(glm::vec2& hoverPositionNormalized) {
 // Main code
 int main(int argc, char** argv) {
 
-  const char* rdmaHost = NULL;
+  const char* debugHost = NULL;
   DepthMapGeneratorBackend depthBackend = kDepthBackendDGPU;
 
   for (int i = 1; i < argc; ++i) {
@@ -192,11 +176,11 @@ int main(int argc, char** argv) {
       }
       depthBackend = depthBackendStringToEnum(argv[++i]);
     } else {
-      rdmaHost = argv[i];
+      debugHost = argv[i];
     }
   }
 
-  if (!rdmaHost) {
+  if (!debugHost) {
     printf("usage: %s [--depth-backend none|dgpu|depthai] hostname\n", argv[0]);
     return -1;
   }
@@ -206,14 +190,6 @@ int main(int argc, char** argv) {
 
   FxThreading::detail::init();
 
-
-  // RDMA context / connection
-  rdmaContext = RDMAContext::createClientContext(rdmaHost);
-  if (!rdmaContext) {
-    printf("RDMA context initialization failed\n");
-    return -1;
-  }
-  rdmaContext->setUserEventCallback(&rdmaUserEventCallback);
 
   // GL/window init
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
@@ -233,7 +209,7 @@ int main(int argc, char** argv) {
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
   SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
-  SDL_Window* window = SDL_CreateWindow("rdma-client", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1920, 1080, window_flags);
+  SDL_Window* window = SDL_CreateWindow("debug-client", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1920, 1080, window_flags);
   SDL_GLContext gl_context = SDL_GL_CreateContext(window);
   SDL_GL_MakeCurrent(window, gl_context);
   SDL_GL_SetSwapInterval(1); // Enable vsync
@@ -281,30 +257,14 @@ int main(int argc, char** argv) {
   cv::cuda::Stream cvCudaStream;
   CUstream cuStream = (CUstream) cvCudaStream.cudaPtr();
 
-  // Read RDMA config from server
-  RDMABuffer::ptr configBuf = rdmaContext->newManagedBuffer("config", 8192, kRDMABufferUsageWriteDestination); // TODO should be read source / use RDMA read instead of relying on push
 
-  printf("Waiting to read config...");
-  fflush(stdout);
-  for (size_t configWait = 0;;  ++configWait) {
-    printf(".");
-    fflush(stdout);
-
-    SerializationBuffer cfg(configBuf->data(), configBuf->size());
-    if (cfg.get_u32()) { // cameraCount
-      cameraProvider = new RDMACameraProvider(rdmaContext, cfg);
-
-      printf(" Done.\nReceived config: %zu cameras @ %ux%u\n", cameraProvider->streamCount(), cameraProvider->streamWidth(), cameraProvider->streamHeight());
-      break;
-    }
-
-    if (configWait > 10) {
-      printf(" Timed out.\n");
-      return -1;
-    }
-
-    sleep(1); // TODO messy
+  // Debug server connection
+  cameraProvider = new DebugCameraProvider();
+  if (!cameraProvider->connect(debugHost)) {
+    printf("Failed to connect to debug server (%s)\n", debugHost);
+    return -1;
   }
+
 
   cameraSystem = new CameraSystem(cameraProvider);
   cameraSystem->loadCalibrationData();
@@ -398,7 +358,7 @@ int main(int argc, char** argv) {
       windowRenderTarget->platformSetUpdatedWindowDimensions(io.DisplaySize.x, io.DisplaySize.y);
 
       {
-        ImGui::Begin("RDMA-Client");
+        ImGui::Begin("Debug-Client");
 
         {
           glm::vec3 p = sceneCamera->position();
@@ -501,7 +461,7 @@ int main(int argc, char** argv) {
 
         ImGui::Separator();
 
-        ImGui::Checkbox("Enable RDMA Surface Updates", &surfaceUpdateEnabled);
+        ImGui::Checkbox("Enable Surface Updates", &surfaceUpdateEnabled);
 
         ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
         ImGui::End();
@@ -664,8 +624,7 @@ int main(int argc, char** argv) {
         ImGui::End();
       }
 
-      // Service RDMA context
-      rdmaContext->fireUserEvents();
+      // Service debug server connection
       if (surfaceUpdateEnabled)
         cameraProvider->updateSurfaces();
 
