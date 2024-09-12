@@ -74,7 +74,10 @@ struct DisparityScaleUniformBlock {
 };
 
 void ImGui_Image(RHISurface::ptr img, const ImVec2& uv0 = ImVec2(0,0), const ImVec2& uv1 = ImVec2(1,1)) {
-  ImGui::Image((ImTextureID) static_cast<uintptr_t>(static_cast<RHISurfaceGL*>(img.get())->glId()), ImVec2(img->width(), img->height()), uv0, uv1);
+  if (img)
+    ImGui::Image((ImTextureID) static_cast<uintptr_t>(static_cast<RHISurfaceGL*>(img.get())->glId()), ImVec2(img->width(), img->height()), uv0, uv1);
+  else
+    ImGui::Text("<null image>");
 }
 
 template <typename T> static std::vector<T> flattenVector(const std::vector<std::vector<T> >& in) {
@@ -239,6 +242,7 @@ int main(int argc, char** argv) {
   RHISurface::ptr disparityScaleSurface;
   RHIRenderTarget::ptr disparityScaleTarget;
   RHIRenderPipeline::ptr disparityScalePipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
+  RHIRenderPipeline::ptr disparityScaleFP16Pipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScaleFP16.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
 
 
   // CUDA init
@@ -571,7 +575,11 @@ int main(int argc, char** argv) {
           }
 
           rhi()->beginRenderPass(disparityScaleTarget, kLoadInvalidate);
-          rhi()->bindRenderPipeline(disparityScalePipeline);
+          if (depthMapGenerator->isFP16Disparity())
+            rhi()->bindRenderPipeline(disparityScaleFP16Pipeline);
+          else
+            rhi()->bindRenderPipeline(disparityScalePipeline);
+
           rhi()->loadTexture(ksImageTex, disparitySurface);
           DisparityScaleUniformBlock ub;
           ub.viewportOffsetX = 0;
