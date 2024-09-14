@@ -91,7 +91,7 @@ void DepthMapGeneratorMock::internalProcessFrame() {
     if (m_debugDisparityCPUAccessEnabled)
       vd->ensureDebugCPUAccessEnabled(/*bytesPerPixel=*/ 2);
 
-    rhi()->loadTextureData(vd->m_disparityTexture, kVertexElementTypeShort1, vd->fakeDisparity.ptr<uint16_t>(0));
+    vd->m_disparityGpuMat.upload(vd->fakeDisparity);
 
     if (m_debugDisparityCPUAccessEnabled)
       memcpy(vd->m_debugCPUDisparity, vd->fakeDisparity.ptr<uint16_t>(0), sizeof(uint16_t) * vd->fakeDisparity.cols * vd->fakeDisparity.rows);
@@ -109,7 +109,7 @@ void DepthMapGeneratorMock::internalProcessFrame() {
 #endif
   }
 
-  internalGenerateDisparityMips();
+  internalFinalizeDisparityTexture();
 }
 
 void DepthMapGeneratorMock::internalRenderIMGUI() {

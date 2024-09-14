@@ -7,13 +7,13 @@ layout(location = 1) in uvec2 quadCoordOffset; // 0...1, varies over the quad
 
 #if DISPARITY_USE_FP16
 uniform sampler2D disparityTex;
-float sampleDisparity(ivec2 mipCoords, int level) {
-  return texelFetch(disparityTex, mipCoords, level).r;
+float sampleDisparity(ivec2 mipCoords) {
+  return texelFetch(disparityTex, mipCoords, 0).r;
 }
 #else
 uniform highp usampler2D disparityTex;
-float sampleDisparity(ivec2 mipCoords, int level) {
-  return float(texelFetch(disparityTex, mipCoords, level).r);
+float sampleDisparity(ivec2 mipCoords) {
+  return float(texelFetch(disparityTex, mipCoords, 0).r);
 }
 #endif
 
@@ -45,21 +45,18 @@ void main()
   float disparityRaw = 0.0f;
   if (debugFixedDisparity >= 0) {
     disparityRaw = float(debugFixedDisparity);
-
   } else {
-    ivec2 mipCoords = ivec2(disparitySampleCoordinates);
-    // Walk the mip chain to find a valid disparity value at this location
-    for (int level = 0; level < disparityTexLevels; ++level) {
-      disparityRaw = sampleDisparity(mipCoords, level);
-      if (disparityRaw <= float(maxValidDisparityRaw))
-        break;
-      mipCoords = mipCoords >> 1;
-    }
+    disparityRaw = sampleDisparity(ivec2(disparitySampleCoordinates));
   }
 
-  float disparity = max(disparityRaw * disparityPrescale, (1.0f / 32.0f)); // prescale and prevent divide-by-zero
-  vec2 gridCoordinates = vec2(disparitySampleCoordinates) + (vec2(quadCoordOffset) * pointScale);
-  gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(gridCoordinates.x, gridCoordinates.y, disparity);
+  if (disparityRaw > float(maxValidDisparityRaw)) {
+    // Invalid disparity, so we discard this point.
+    gl_Position = vec4(0.0f);
+  } else {
+    float disparity = max(disparityRaw * disparityPrescale, (1.0f / 32.0f)); // prescale and prevent divide-by-zero
+    vec2 gridCoordinates = vec2(disparitySampleCoordinates) + (vec2(quadCoordOffset) * pointScale);
+    gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(gridCoordinates.x, gridCoordinates.y, disparity);
+  }
 
   vec2 textureCoordinates = vec2(disparitySampleCoordinates) * texCoordStep;
   v2f.texCoord = textureCoordinates + (vec2(quadCoordOffset) * texCoordStep * pointScale);

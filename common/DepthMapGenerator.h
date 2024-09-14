@@ -97,7 +97,7 @@ protected:
   uint32_t internalWidth() const { return m_internalWidth; }
   uint32_t internalHeight() const { return m_internalHeight; }
 
-  void internalGenerateDisparityMips();
+  void internalFinalizeDisparityTexture();
 
   CameraSystem* m_cameraSystem = NULL;
 
@@ -116,10 +116,10 @@ protected:
 
     void updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat);
 
+    cv::cuda::GpuMat m_disparityGpuMat;
     RHISurface::ptr m_disparityTexture;
     RHISurface::ptr m_leftGray, m_rightGray;
 
-    std::vector<RHIRenderTarget::ptr> m_disparityTextureMipTargets;
     float m_CameraDistanceMeters = 0.0f;
 
     void* m_debugCPUDisparity = nullptr;
@@ -163,7 +163,6 @@ protected:
   void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix);
   RHIRenderPipeline::ptr m_disparityDepthMapPipeline;
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
-  RHIComputePipeline::ptr m_disparityMipComputePipeline;
 
 private:
   ViewData* viewDataAtIndex(size_t index) const { return m_viewData[index]; }

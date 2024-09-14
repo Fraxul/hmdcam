@@ -386,7 +386,7 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
 
     cv::Mat leftMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputOffset[0], viewParams.inputPitchBytes);
     cv::Mat rightMat(viewParams.height, viewParams.width, CV_8UC1, m_depthMapSHM->segment()->data() + viewParams.inputOffset[1], viewParams.inputPitchBytes);
-    cv::Mat dispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
+    // cv::Mat dispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
 
     leftGpu.download(leftMat, m_globalStream);
     rightGpu.download(rightMat, m_globalStream);
@@ -426,13 +426,14 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     if (vd->m_isVerticalStereo) {
       cv::Mat transposedDispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
       cv::Mat dispMat = transposedDispMat.t(); // TODO might be more efficient to transpose in the DGPUWorker while the data is still on the GPU
-      rhi()->loadTextureData(vd->m_disparityTexture, (m_disparityBytesPerPixel == 1) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, dispMat.data);
+      vd->m_disparityGpuMat.upload(dispMat);
 
       if (m_debugDisparityCPUAccessEnabled)
         memcpy(vd->m_debugCPUDisparity, dispMat.data, m_disparityBytesPerPixel * viewParams.width * viewParams.height);
 
     } else {
-      rhi()->loadTextureData(vd->m_disparityTexture, (m_disparityBytesPerPixel == 1) ? kVertexElementTypeByte1 : kVertexElementTypeShort1, m_depthMapSHM->segment()->data() + viewParams.outputOffset);
+      cv::Mat dispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
+      vd->m_disparityGpuMat.upload(dispMat);
 
       if (m_debugDisparityCPUAccessEnabled)
         memcpy(vd->m_debugCPUDisparity, m_depthMapSHM->segment()->data() + viewParams.outputOffset, m_disparityBytesPerPixel * viewParams.width * viewParams.height);
@@ -450,7 +451,7 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     }
   }
 
-  internalGenerateDisparityMips();
+  internalFinalizeDisparityTexture();
 
   if (m_enableProfiling) {
     m_processingFinishedEvent.record(m_globalStream);

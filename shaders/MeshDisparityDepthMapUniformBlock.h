@@ -5,7 +5,7 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   float CameraDistanceMeters;
   vec2 mogrify;
   float disparityPrescale;
-  int disparityTexLevels;
+  int debugFixedDisparity;
 
   vec2 trim_minXY;
   vec2 trim_maxXY;
@@ -18,9 +18,6 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   vec2 texCoordStep; // (1/internalWidth, 1/internalHeight)
   float minDepthCutoff;
   float pointScale;
-
-  int debugFixedDisparity;
-  float pad2, pad3, pad4;
 };
 
 

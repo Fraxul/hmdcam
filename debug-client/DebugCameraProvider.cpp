@@ -459,7 +459,7 @@ void DebugCameraProvider::internalProcessFrame() {
     if (m_debugDisparityCPUAccessEnabled)
       vd->ensureDebugCPUAccessEnabled(/*bytesPerPixel=*/ 2);
 
-    rhi()->loadTextureData(vd->m_disparityTexture, kVertexElementTypeShort1, vd->receivedDisparity.ptr<uint16_t>(0));
+    vd->m_disparityGpuMat.upload(vd->receivedDisparity);
 
     if (m_debugDisparityCPUAccessEnabled)
       memcpy(vd->m_debugCPUDisparity, vd->receivedDisparity.ptr<uint16_t>(0), sizeof(uint16_t) * vd->receivedDisparity.cols * vd->receivedDisparity.rows);
@@ -478,7 +478,7 @@ void DebugCameraProvider::internalProcessFrame() {
 #endif
   }
 
-  internalGenerateDisparityMips();
+  internalFinalizeDisparityTexture();
 }
 
 void DebugCameraProvider::internalRenderIMGUI() {

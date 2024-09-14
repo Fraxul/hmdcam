@@ -13,6 +13,7 @@
 #include "common/glmCvInterop.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
+#include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
@@ -87,7 +88,7 @@ struct MeshDisparityDepthMapUniformBlock {
 
   glm::vec2 mogrify;
   float disparityPrescale;
-  uint32_t disparityTexLevels;
+  int32_t debugFixedDisparity;
 
   glm::vec2 trim_minXY;
   glm::vec2 trim_maxXY;
@@ -100,9 +101,6 @@ struct MeshDisparityDepthMapUniformBlock {
   glm::vec2 texCoordStep;
   float minDepthCutoff;
   float pointScale;
-
-  int32_t debugFixedDisparity;
-  float pad2, pad3, pad4;
 };
 
 FxAtomicString ksDisparityMipUniformBlock("DisparityMipUniformBlock");
@@ -253,9 +251,6 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
 
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
   }
-
-  m_disparityMipComputePipeline = rhi()->compileComputePipeline(rhi()->compileShader(RHIShaderDescriptor::computeShader(m_useFP16Disparity ? "shaders/disparityMipFP16.comp.glsl" : "shaders/disparityMip.comp.glsl")));
-
 }
 
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
@@ -344,7 +339,10 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.CameraDistanceMeters = vd->m_CameraDistanceMeters;
   ub.mogrify = glm::vec2(m_algoDownsampleX, m_algoDownsampleY);
   ub.disparityPrescale = disparityPrescale() * debugDisparityScale();
-  ub.disparityTexLevels = vd->m_disparityTexture->mipLevels() - 1;
+  if (m_debugUseFixedDisparity)
+    ub.debugFixedDisparity = m_debugFixedDisparityValue;
+  else
+    ub.debugFixedDisparity = -1;
 
   ub.trim_minXY = glm::vec2(m_trimLeft, m_trimTop);
   ub.trim_maxXY = glm::vec2((vd->m_disparityTexture->width() - 1) - m_trimRight, (vd->m_disparityTexture->height() - 1) - m_trimBottom);
@@ -360,11 +358,6 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
 
   ub.minDepthCutoff = m_minDepthCutoff;
   ub.pointScale = m_pointScale;
-
-  if (m_debugUseFixedDisparity)
-    ub.debugFixedDisparity = m_debugFixedDisparityValue;
-  else
-    ub.debugFixedDisparity = -1;
 
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd->m_disparityTexture);
@@ -475,46 +468,41 @@ void DepthMapGenerator::processFrame() {
   this->internalProcessFrame();
 }
 
-void DepthMapGenerator::internalGenerateDisparityMips() {
-  // Filter invalid disparities: generate mip-chains
+void DepthMapGenerator::internalFinalizeDisparityTexture() {
 
   for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
     if (!vd->m_isStereoView)
       continue;
 
-    // Each compute shader pass generates 3 mip-levels
-    uint32_t passes = (vd->m_disparityTexture->mipLevels() - 1) / 3;
-    for (uint32_t pass = 0; pass < passes; ++pass) {
-      rhi()->beginComputePass();
-      rhi()->bindComputePipeline(m_disparityMipComputePipeline);
+    // Filter and attempt to reconstruct invalid disparities
 
-      rhi()->loadImage(ksSrcImage, vd->m_disparityTexture, kImageAccessReadOnly, pass * 3);
-      rhi()->loadImage(ksDstMip1, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 1);
-      rhi()->loadImage(ksDstMip2, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 2);
-      rhi()->loadImage(ksDstMip3, vd->m_disparityTexture, kImageAccessWriteOnly, (pass * 3) + 3);
 
-      DisparityMipUniformBlock ub;
-      ub.sourceLevel = 0; // unused in compute shader
-      ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
 
-      rhi()->loadUniformBlockImmediate(ksDisparityMipUniformBlock, &ub, sizeof(ub));
-      rhi()->dispatchCompute(
-        vd->m_disparityTexture->width()  / ((1 << ((pass * 3) + 1)) * 4),
-        vd->m_disparityTexture->height() / ((1 << ((pass * 3) + 1)) * 4),
-        1);
-
-      rhi()->endComputePass();
-    }
+    // Copy filtered disparity to render texture
+    RHICUDA::copyGpuMatToSurface(vd->m_disparityGpuMat, vd->m_disparityTexture);
   }
 }
 
 void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat format) {
-  m_disparityTexture = rhi()->newTexture2D(w, h, RHISurfaceDescriptor::mipDescriptor(format));
-  m_disparityTextureMipTargets.clear();
-  for (uint32_t level = 0; level < m_disparityTexture->mipLevels(); ++level) {
-    m_disparityTextureMipTargets.push_back(rhi()->compileRenderTarget({ RHIRenderTargetDescriptorElement(m_disparityTexture, level) }));
-  }
+  int cvType = 0;
+
+  switch (format) {
+    case kSurfaceFormat_R8i:
+      cvType = CV_8U;
+      break;
+
+    case kSurfaceFormat_R16f:
+      // CV doesn't have a dedicated type enum for fp16, so we just use uint16_t
+    case kSurfaceFormat_R16i:
+      cvType = CV_16U;
+      break;
+    default:
+      assert(false && "updateDisparityTexture: unhandled RHISurfaceFormat");
+  };
+
+  m_disparityGpuMat.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+  m_disparityTexture = rhi()->newTexture2D(w, h, RHISurfaceDescriptor(format));
 
   free(m_debugCPUDisparity);
   m_debugCPUDisparity = nullptr;

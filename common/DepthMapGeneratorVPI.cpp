@@ -255,6 +255,38 @@ void copyVPIImageToCPU(VPIImage img, void* outArray, size_t bytesPerPixel) {
   VPI_CHECK(vpiImageUnlock(img));
 }
 
+void copyVPIImageToGpuMat(VPIImage img, cv::cuda::GpuMat& outGpuMat, CUstream stream) {
+
+  VPIImageData imgData;
+  VPI_CHECK(vpiImageLockData(img, VPI_LOCK_READ, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgData));
+
+  size_t copyWidth = std::min<size_t>(outGpuMat.cols, imgData.buffer.pitch.planes[0].width);
+  size_t copyHeight = std::min<size_t>(outGpuMat.rows, imgData.buffer.pitch.planes[0].height);
+
+  CUDA_MEMCPY2D copyDescriptor;
+  memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
+  copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+  copyDescriptor.srcDevice = (CUdeviceptr) imgData.buffer.pitch.planes[0].data;
+  copyDescriptor.srcPitch = imgData.buffer.pitch.planes[0].pitchBytes;
+
+  copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+  copyDescriptor.dstDevice = (CUdeviceptr) outGpuMat.cudaPtr();
+  copyDescriptor.dstPitch = outGpuMat.step;
+
+  int bpp = vpiPixelTypeGetBitsPerPixel(imgData.buffer.pitch.planes[0].pixelType);
+  assert((bpp/8) == outGpuMat.elemSize()); // sanity check
+
+  copyDescriptor.WidthInBytes = copyWidth * outGpuMat.elemSize();
+  copyDescriptor.Height = copyHeight;
+  if (stream) {
+    CUDA_CHECK(cuMemcpy2DAsync(&copyDescriptor, stream));
+  } else {
+    CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+  }
+
+  VPI_CHECK(vpiImageUnlock(img));
+}
+
 
 void DepthMapGeneratorVPI::internalProcessFrame() {
   // Ensure previous processing is finished
@@ -265,7 +297,7 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
     if (!vd->m_isStereoView)
       continue;
 
-    copyVPIImageToSurface(vd->m_disparity, vd->m_disparityTexture, m_masterCUStream);
+    copyVPIImageToGpuMat(vd->m_disparity, vd->m_disparityGpuMat, m_masterCUStream);
 
     if (m_debugDisparityCPUAccessEnabled) {
       vd->ensureDebugCPUAccessEnabled(/*bytesPerPixel=*/ 2);
@@ -284,7 +316,7 @@ void DepthMapGeneratorVPI::internalProcessFrame() {
     }
   }
 
-  internalGenerateDisparityMips();
+  internalFinalizeDisparityTexture();
 
   if (m_enableProfiling) {
     // Collect profiling data from previous frame
