@@ -351,6 +351,34 @@ void ArgusCamera::buildCaptureSessions() {
         CUDA_CHECK(cuTexObjectCreate(&b.cudaLumaTexObject, &resDesc, &texDesc, /*resourceViewDescriptor=*/ nullptr));
       }
 
+      // Create CUtexObject wrapper over the chroma plane
+      assert(b.eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH && b.eglFrame.frame.pPitch[1] != nullptr);
+      {
+        CUDA_RESOURCE_DESC resDesc;
+        memset(&resDesc, 0, sizeof(resDesc));
+        resDesc.resType = CU_RESOURCE_TYPE_PITCH2D;
+        // TODO hardcoded assumptions about the Chroma format -- we should be able to get this from the eglColorFormat!
+        resDesc.res.pitch2D.devPtr       = (CUdeviceptr) b.eglFrame.frame.pPitch[1];
+        resDesc.res.pitch2D.format       = b.eglFrame.cuFormat; // should be CU_AD_FORMAT_SIGNED_INT8
+        resDesc.res.pitch2D.numChannels  = 2;
+        resDesc.res.pitch2D.width        = b.eglFrame.width / 2;
+        resDesc.res.pitch2D.height       = b.eglFrame.height / 2;
+        // pitchInBytes NOTE: "...in case of multiplanar *eglFrame, pitch of only first plane is to be considered by the application."
+        // (accessing planeDesc[0] is intentional)
+        resDesc.res.pitch2D.pitchInBytes = b.eglFrame.pitch;
+
+        CUDA_TEXTURE_DESC texDesc;
+        memset(&texDesc, 0, sizeof(texDesc));
+        texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
+        texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
+        texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
+        texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
+        // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
+        texDesc.maxAnisotropy = 1;
+
+        CUDA_CHECK(cuTexObjectCreate(&b.cudaChromaTexObject, &resDesc, &texDesc, /*resourceViewDescriptor=*/ nullptr));
+      }
+
 #ifdef HAVE_VPI2
       VPIImageData vid;
       memset(&vid, 0, sizeof(vid));
@@ -419,6 +447,7 @@ void ArgusCamera::teardownCaptureSessions() {
     for (BufferPool::Entry& b : bp.buffers) {
       b.argusBuffer->destroy();
       cuTexObjectDestroy(b.cudaLumaTexObject);
+      cuTexObjectDestroy(b.cudaChromaTexObject);
       cuGraphicsUnregisterResource(b.cudaResource);
       eglDestroyImageKHR(m_display, b.eglImage);
 #ifdef USE_NVBUF_UTILS

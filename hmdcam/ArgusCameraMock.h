@@ -10,7 +10,8 @@ public:
   virtual size_t streamCount() const { return m_streamData.size(); }
   virtual RHISurface::ptr rgbTexture(size_t sensorIdx) const { return m_streamData[sensorIdx].rgbTexture; }
   virtual const char* rgbTextureGLSamplerType() const { return "sampler2D"; }
-  virtual CUtexObject cudaLumaTexObject(size_t sensorIdx) const { return m_streamData[sensorIdx].cudaLumaTexObject; }
+  virtual CUtexObject cudaLumaTexObject(size_t sensorIdx) const;
+  virtual CUtexObject cudaChromaTexObject(size_t sensorIdx) const;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx) { return m_streamData[sensorIdx].lumaGpuMat; }
   virtual VPIImage vpiImage(size_t sensorIndex) const;
 

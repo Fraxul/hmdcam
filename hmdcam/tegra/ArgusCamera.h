@@ -27,6 +27,7 @@ public:
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().rhiSurface; }
   virtual const char* rgbTextureGLSamplerType() const { return "samplerExternalOES"; }
   virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().cudaLumaTexObject; }
+  virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().cudaChromaTexObject; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
   virtual VPIImage vpiImage(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().vpiImage; }
   // =======================
@@ -106,6 +107,7 @@ private:
       CUgraphicsResource cudaResource;
       CUeglFrame eglFrame;
       CUtexObject cudaLumaTexObject = 0;
+      CUtexObject cudaChromaTexObject = 0;
 
       VPIImage vpiImage = nullptr;
     };

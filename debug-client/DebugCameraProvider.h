@@ -21,6 +21,7 @@ public:
   virtual RHISurface::ptr rgbTexture(size_t streamIdx) const;
   virtual const char* rgbTextureGLSamplerType() const { return "sampler2D"; }
   virtual CUtexObject cudaLumaTexObject(size_t streamIdx) const;
+  virtual CUtexObject cudaChromaTexObject(size_t streamIdx) const;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t streamIdx);
   virtual VPIImage vpiImage(size_t streamIdx) const;
   cv::Mat cvMatLuma(size_t streamIdx) const;
@@ -56,6 +57,7 @@ protected:
     RHISurface::ptr rhiSurfaceRGBA;
     cv::cuda::GpuMat gpuMatLuma, gpuMatChroma, gpuMatRGBA;
     CUtexObject cudaLumaTexObject = 0;
+    CUtexObject cudaChromaTexObject = 0;
     VPIImage vpiImage = nullptr;
   };
 

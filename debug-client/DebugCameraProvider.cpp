@@ -158,7 +158,7 @@ bool DebugCameraProvider::connect(const char* debugHost) {
   // Wrap GpuMats to create CUtexObjects
   for (size_t streamIdx = 0; streamIdx < streamCount(); ++streamIdx) {
     StreamData& sd = m_streamData[streamIdx];
-    // Luma array and texobject
+    // Luma texObject
 
     {
       m_lumaResourceDescriptor.res.pitch2D.devPtr = (CUdeviceptr) sd.gpuMatLuma.cudaPtr();
@@ -173,6 +173,22 @@ bool DebugCameraProvider::connect(const char* debugHost) {
       texDesc.maxAnisotropy = 1;
 
       CUDA_CHECK(cuTexObjectCreate(&sd.cudaLumaTexObject, &m_lumaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));
+    }
+
+    // Chroma texObject
+    {
+      m_chromaResourceDescriptor.res.pitch2D.devPtr = (CUdeviceptr) sd.gpuMatChroma.cudaPtr();
+
+      CUDA_TEXTURE_DESC texDesc;
+      memset(&texDesc, 0, sizeof(texDesc));
+      texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
+      texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
+      texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
+      texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
+      // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
+      texDesc.maxAnisotropy = 1;
+
+      CUDA_CHECK(cuTexObjectCreate(&sd.cudaChromaTexObject, &m_chromaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));
     }
   }
 
@@ -232,6 +248,7 @@ DebugCameraProvider::~DebugCameraProvider() {
 
   for (StreamData& sd : m_streamData) {
     cuTexObjectDestroy(sd.cudaLumaTexObject);
+    cuTexObjectDestroy(sd.cudaChromaTexObject);
 #ifdef HAVE_VPI2
     vpiImageDestroy(sd.vpiImage);
 #endif
@@ -322,3 +339,6 @@ CUtexObject DebugCameraProvider::cudaLumaTexObject(size_t streamIdx) const {
   return m_streamData[streamIdx].cudaLumaTexObject;
 }
 
+CUtexObject DebugCameraProvider::cudaChromaTexObject(size_t streamIdx) const {
+  return m_streamData[streamIdx].cudaChromaTexObject;
+}

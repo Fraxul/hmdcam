@@ -178,3 +178,12 @@ VPIImage ArgusCameraMock::vpiImage(size_t sensorIndex) const {
   return m_streamData[sensorIndex].vpiImage;
 }
 
+CUtexObject ArgusCameraMock::cudaLumaTexObject(size_t sensorIdx) const {
+  return m_streamData[sensorIdx].cudaLumaTexObject;
+}
+
+CUtexObject ArgusCameraMock::cudaChromaTexObject(size_t sensorIdx) const {
+  assert(false && "ArgusCameraMock::cudaChromaTexObject: not implemented");
+  return 0;
+  // return m_streamData[sensorIdx].cudaChromaTexObject;
+}
