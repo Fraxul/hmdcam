@@ -15,6 +15,7 @@
 
 class CameraSystem;
 class DepthMapGenerator;
+class DebugServer;
 
 enum DepthMapGeneratorBackend {
   kDepthBackendNone,
@@ -170,4 +171,6 @@ private:
 
   DepthMapGenerator(const DepthMapGenerator&);
   DepthMapGenerator& operator=(const DepthMapGenerator&);
+
+  friend class DebugServer;
 };

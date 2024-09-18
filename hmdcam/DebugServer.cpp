@@ -1,5 +1,6 @@
 #include "DebugServer.h"
 #include "common/CameraSystem.h"
+#include "common/DepthMapGenerator.h"
 #include "IArgusCamera.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -39,7 +40,7 @@ DebugServer::~DebugServer() {
 }
 
 
-bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp) {
+bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, DepthMapGenerator* depth) {
 #ifdef IS_WSL2
   printf("DebugServer::initWithCameraSystem(): Built with IS_WSL2, debug server support is disabled due to missing APIs.\n");
   return false;
@@ -47,6 +48,7 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp) {
 
   m_cameraSystem = cs;
   m_cameraProvider = cp;
+  m_depthMapGenerator = depth;
 
   CUeglColorFormat eglColorFormat;
 
@@ -138,6 +140,36 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp) {
   cfg.put_u32(m_chromaResourceDescriptor.res.pitch2D.height);
   cfg.put_u32(m_chromaResourceDescriptor.res.pitch2D.pitchInBytes);
 
+  // Depth map generator data
+  uint32_t stereoViews = 0;
+  if (m_depthMapGenerator) {
+    // Count stereo views
+    for (size_t viewIdx = 0; viewIdx < cs->views(); ++viewIdx) {
+      const CameraSystem::View& v = cs->viewAtIndex(viewIdx);
+      if (v.isStereo)
+        ++stereoViews;
+    }
+  }
+
+  cfg.put_u32(stereoViews); // Stereo view count, or 0 if we don't have a depth map generator
+  if (stereoViews) {
+    cfg.put_u32(m_depthMapGenerator->internalWidth());
+    cfg.put_u32(m_depthMapGenerator->internalHeight());
+
+    cfg.put_u32(m_depthMapGenerator->m_algoDownsampleX);
+    cfg.put_u32(m_depthMapGenerator->m_algoDownsampleY);
+
+    cfg.put_u32(m_depthMapGenerator->m_maxDisparity);
+    cfg.put_float(m_depthMapGenerator->m_disparityPrescale);
+    cfg.put_u32(m_depthMapGenerator->m_useFP16Disparity);
+
+    m_disparityStreamSizeBytes = m_depthMapGenerator->internalWidth() * m_depthMapGenerator->internalHeight() * sizeof(uint16_t);
+    m_disparityStreams.resize(stereoViews);
+    for (uint32_t i = 0; i < stereoViews; ++i) {
+      m_disparityStreams[i].create(m_depthMapGenerator->internalHeight(), m_depthMapGenerator->internalWidth(), CV_16UC1);
+    }
+  }
+
   m_streamHeader = cfg;
 
   {
@@ -154,6 +186,12 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp) {
 }
 
 void DebugServer::frameProcessingEnded() {
+  // Turn on CPU access to disparity only if we have a client connected
+  // (this can be freely enabled/disabled without reconfiguring the depth backend,
+  // and will take effect next frame)
+  if (m_depthMapGenerator)
+    m_depthMapGenerator->setDebugDisparityCPUAccessEnabled(m_streamConnected);
+
   if (!m_streamConnected)
     return; // Don't bother doing any work if we don't have a client
 
@@ -199,6 +237,21 @@ void DebugServer::frameProcessingEnded() {
       copyDescriptor.dstPitch = m_chromaResourceDescriptor.res.pitch2D.pitchInBytes;
 
       CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+    }
+  }
+
+  // Copy disparity (sourced from the CPU-accessible debug view functionality)
+  if (m_depthMapGenerator) {
+    uint32_t dispStreamIdx = 0;
+    for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
+      auto vd = m_depthMapGenerator->viewDataAtIndex(viewIdx);
+      if (!vd->m_isStereoView)
+        continue;
+
+      if (vd->m_debugCPUDisparity)
+        memcpy(m_disparityStreams[dispStreamIdx].data, vd->m_debugCPUDisparity, m_disparityStreamSizeBytes);
+
+      ++dispStreamIdx;
     }
   }
 
@@ -291,6 +344,9 @@ void DebugServer::streamThreadFn() {
         for (uint32_t streamIdx = 0; streamIdx < m_streamCount; ++streamIdx) {
           if (!safe_write(clientFd, m_streamResources[streamIdx].m_lumaPlane, m_lumaPlaneSizeBytes)) goto cleanup;
           if (!safe_write(clientFd, m_streamResources[streamIdx].m_chromaPlane, m_chromaPlaneSizeBytes)) goto cleanup;
+        }
+        for (size_t dispStreamIdx = 0; dispStreamIdx < m_disparityStreams.size(); ++dispStreamIdx) {
+          if (!safe_write(clientFd, m_disparityStreams[dispStreamIdx].data, m_disparityStreamSizeBytes)) goto cleanup;
         }
       } // frame loop
     }

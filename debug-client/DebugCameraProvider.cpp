@@ -1,20 +1,43 @@
 #include "DebugCameraProvider.h"
+#include "common/CameraSystem.h"
+#include "common/ICameraProvider.h"
+#include "common/Timing.h"
 #include "common/VPIUtil.h"
+#include "common/glmCvInterop.h"
+#include "common/remapArray.h"
 #include "rhi/RHI.h"
+#include "rhi/RHIResources.h"
 #include "rhi/cuda/CudaUtil.h"
 #include "rhi/cuda/RHICVInterop.h"
+#include "rhi/gl/GLCommon.h"
+#include <opencv2/calib3d.hpp>
+#include <opencv2/core/cuda_stream_accessor.hpp>
+#include <opencv2/core.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/cudaimgproc.hpp>
-#include <cuda.h>
+#include <opencv2/cudawarping.hpp>
+#include <opencv2/cvconfig.h>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgproc/types_c.h>
+#include <string>
 #include <assert.h>
+#include <cuda.h>
 #include <npp.h>
+#include <epoxy/gl.h> // epoxy_is_desktop_gl
 
+#include <arpa/inet.h>
+#include <errno.h>
+#include <limits.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <errno.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#define PER_EYE for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
 
 const int kPort = 55443;
 
@@ -33,7 +56,7 @@ bool safe_read(int fd, void* buffer, size_t length) {
   return true;
 }
 
-DebugCameraProvider::DebugCameraProvider() {
+DebugCameraProvider::DebugCameraProvider() : DepthMapGenerator(kDepthBackendMock) {
 
 }
 
@@ -149,6 +172,32 @@ bool DebugCameraProvider::connect(const char* debugHost) {
   m_lumaPlaneSizeBytes = m_lumaResourceDescriptor.res.pitch2D.height * m_lumaResourceDescriptor.res.pitch2D.pitchInBytes;
   m_chromaPlaneSizeBytes = m_chromaResourceDescriptor.res.pitch2D.height * m_chromaResourceDescriptor.res.pitch2D.pitchInBytes;
 
+  // Depth map generator settings
+  m_stereoViewCount = cfg.get_u32();
+  if (m_stereoViewCount) {
+    m_disparityWidth = cfg.get_u32();
+    m_disparityHeight = cfg.get_u32();
+
+    m_algoDownsampleX = cfg.get_u32();
+    m_algoDownsampleY = cfg.get_u32();
+
+    m_maxDisparity = cfg.get_u32();
+    m_disparityPrescale = cfg.get_float();
+    m_useFP16Disparity = cfg.get_u32();
+
+    m_stereoDisparitySizeBytes = m_disparityWidth * m_disparityHeight * sizeof(uint16_t);
+
+    printf("Disp: %ux%u Downsample: %ux%u maxDisp=%u prescale=%f useFP16=%u sizeBytes=%u\n",
+      m_disparityWidth, m_disparityHeight, m_algoDownsampleX, m_algoDownsampleY,
+      m_maxDisparity, m_disparityPrescale, m_useFP16Disparity, m_stereoDisparitySizeBytes);
+
+    m_stereoDisparityRecvMats.resize(m_stereoViewCount);
+    for (uint32_t viewIdx = 0; viewIdx < m_stereoViewCount; ++viewIdx) {
+      m_stereoDisparityRecvMats[viewIdx].create(m_disparityHeight, m_disparityWidth, CV_16UC1);
+    }
+  }
+
+
   assert(m_streamCount && m_streamWidth && m_streamHeight);
 
   // Allocate format conversion temporary
@@ -246,6 +295,9 @@ void DebugCameraProvider::streamThreadFn() {
       if (!safe_read(m_fd, m_streamData[streamIdx].hostLumaBuffer, m_lumaPlaneSizeBytes)) goto cleanup;
       if (!safe_read(m_fd, m_streamData[streamIdx].hostChromaBuffer, m_chromaPlaneSizeBytes)) goto cleanup;
     }
+    for (uint32_t stereoViewIdx = 0; stereoViewIdx < m_stereoViewCount; ++stereoViewIdx) {
+      if (!safe_read(m_fd, m_stereoDisparityRecvMats[stereoViewIdx].data, m_stereoDisparitySizeBytes)) goto cleanup;
+    }
 
     pthread_mutex_lock(&m_frameConsumedMutex);
     m_streamFrameReadyToConsume = true;
@@ -317,6 +369,18 @@ void DebugCameraProvider::updateSurfaces() {
 
     RHICUDA::copyGpuMatToSurface(sd.gpuMatRGBA, sd.rhiSurfaceRGBA);
   }
+
+  uint32_t srcStereoViewIdx = 0;
+  for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
+    auto vd = viewDataAtIndex(viewIdx);
+    if (!vd->m_isStereoView)
+      continue;
+
+    vd->receivedDisparity.create(m_disparityHeight, m_disparityWidth, CV_16UC1);
+    memcpy(vd->receivedDisparity.data, m_stereoDisparityRecvMats[srcStereoViewIdx].data, m_stereoDisparitySizeBytes);
+
+    ++srcStereoViewIdx;
+  }
 }
 
 cv::Mat DebugCameraProvider::cvMatLuma(size_t streamIdx) const {
@@ -355,3 +419,71 @@ CUtexObject DebugCameraProvider::cudaLumaTexObject(size_t streamIdx) const {
 CUtexObject DebugCameraProvider::cudaChromaTexObject(size_t streamIdx) const {
   return m_streamData[streamIdx].cudaChromaTexObject;
 }
+
+
+// === DepthMapGenerator functions ===
+
+
+void DebugCameraProvider::internalLoadSettings(cv::FileStorage& fs) {
+
+}
+
+void DebugCameraProvider::internalSaveSettings(cv::FileStorage& fs) {
+
+}
+
+
+void DebugCameraProvider::internalUpdateViewData() {
+  for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
+    // CameraSystem::View& v = m_cameraSystem->viewAtIndex(viewIdx);
+    auto vd = viewDataAtIndex(viewIdx);
+
+    if (!vd->m_isStereoView)
+      continue;
+
+    vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
+
+    vd->receivedDisparity.create(internalHeight(), internalWidth(), CV_16UC1);
+  }
+}
+
+
+void DebugCameraProvider::internalProcessFrame() {
+
+  // Fill render surfaces with fake data
+  for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
+    auto vd = viewDataAtIndex(viewIdx);
+    if (!vd->m_isStereoView)
+      continue;
+
+    if (m_debugDisparityCPUAccessEnabled)
+      vd->ensureDebugCPUAccessEnabled(/*bytesPerPixel=*/ 2);
+
+    rhi()->loadTextureData(vd->m_disparityTexture, kVertexElementTypeShort1, vd->receivedDisparity.ptr<uint16_t>(0));
+
+    if (m_debugDisparityCPUAccessEnabled)
+      memcpy(vd->m_debugCPUDisparity, vd->receivedDisparity.ptr<uint16_t>(0), sizeof(uint16_t) * vd->receivedDisparity.cols * vd->receivedDisparity.rows);
+
+#if 0
+    if (m_populateDebugTextures) {
+      if (!vd->m_leftGray)
+        vd->m_leftGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+
+      if (!vd->m_rightGray)
+        vd->m_rightGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+
+      RHICUDA::copyGpuMatToSurface(vd->resizedLeft_gpu, vd->m_leftGray, m_globalStream);
+      RHICUDA::copyGpuMatToSurface(vd->resizedRight_gpu, vd->m_rightGray, m_globalStream);
+    }
+#endif
+  }
+
+  internalGenerateDisparityMips();
+}
+
+void DebugCameraProvider::internalRenderIMGUI() {
+}
+
+void DebugCameraProvider::internalRenderIMGUIPerformanceGraphs() {
+}
+

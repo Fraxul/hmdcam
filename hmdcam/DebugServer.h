@@ -5,17 +5,19 @@
 #include <cuda.h>
 #include <boost/noncopyable.hpp>
 #include "common/SerializationBuffer.h"
+#include <opencv2/core.hpp>
 #include <opencv2/core/cvstd.hpp>
 
 class CameraSystem;
 class IArgusCamera;
+class DepthMapGenerator;
 
 class DebugServer {
 public:
 
   DebugServer();
   ~DebugServer();
-  bool initWithCameraSystem(CameraSystem*, IArgusCamera*);
+  bool initWithCameraSystem(CameraSystem*, IArgusCamera*, DepthMapGenerator*);
 
   // Called in main-thead frame processing loop -- copies buffers for Tx if necessary
   void frameProcessingEnded();
@@ -26,6 +28,7 @@ public:
 protected:
   CameraSystem* m_cameraSystem;
   IArgusCamera* m_cameraProvider;
+  DepthMapGenerator* m_depthMapGenerator;
 
 
   static void* streamThreadEntryPoint(void* x) { reinterpret_cast<DebugServer*>(x)->streamThreadFn(); return NULL; }
@@ -59,6 +62,9 @@ protected:
   uint32_t m_streamCount = 0;
   uint32_t m_lumaPlaneSizeBytes = 0;
   uint32_t m_chromaPlaneSizeBytes = 0;
+
+  std::vector<cv::Mat> m_disparityStreams;
+  uint32_t m_disparityStreamSizeBytes = 0;
 
   SerializationBuffer m_streamHeader;
   cv::String m_cameraSystemConfig;

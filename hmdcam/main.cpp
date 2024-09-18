@@ -71,10 +71,6 @@ IArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
 DebugServer* debugServer = nullptr;
 
-static inline bool debugServerHasActiveConnection() {
-  return debugServer && debugServer->hasConnection();
-}
-
 #define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
 static const char* hmdcamSettingsFilename = "hmdcamSettings.yml";
 bool loadSettings() {
@@ -431,14 +427,6 @@ int main(int argc, char* argv[]) {
   }
 
 
-  // Initialize the debug server
-  debugServer = new DebugServer();
-  if (!debugServer->initWithCameraSystem(cameraSystem, argusCamera)) {
-    printf("Debug server initialization failed -- service will be unavailable.\n");
-    delete debugServer;
-    debugServer = nullptr;
-  }
-
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
@@ -582,6 +570,16 @@ int main(int argc, char* argv[]) {
 #endif
     }
 
+    // Initialize the debug server.
+    // This initialization happens after depthMapGenerator warm-up to ensure that all settings have been applied correctly
+    // (in particular, for the SHM backend, the prescale isn't known until the backend has processed a frame)
+    debugServer = new DebugServer();
+    if (!debugServer->initWithCameraSystem(cameraSystem, argusCamera, depthMapGenerator)) {
+      printf("Debug server initialization failed -- service will be unavailable.\n");
+      delete debugServer;
+      debugServer = nullptr;
+    }
+
     // Start repeating capture
     if (!debugNoRepeatingCapture)
       argusCamera->setRepeatCapture(true);
@@ -663,7 +661,7 @@ int main(int argc, char* argv[]) {
       previousCaptureTimestamp = argusCamera->frameSensorTimestamp(0);
 
       // TODO move this inside CameraSystem
-      if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext && !debugServerHasActiveConnection()) {
+      if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext) {
         depthMapGenerator->processFrame();
       }
 
@@ -1039,7 +1037,7 @@ int main(int argc, char* argv[]) {
         if (!v.debugEnableView)
           continue;
 
-        if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext && !debugServerHasActiveConnection()) {
+        if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext) {
           {
             char buf[32];
             snprintf(buf, sizeof(buf), "SPS view %zu", viewIdx);

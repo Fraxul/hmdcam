@@ -1,4 +1,5 @@
 #pragma once
+#include "common/DepthMapGenerator.h"
 #include "common/ICameraProvider.h"
 #include "common/SerializationBuffer.h"
 #include "rhi/RHISurface.h"
@@ -10,11 +11,12 @@
 #include "rhi/gl/GLCommon.h" // must be included before cudaEGL
 #include <cudaEGL.h>
 
-class DebugCameraProvider : public ICameraProvider {
+class DebugCameraProvider : public ICameraProvider, public DepthMapGenerator {
 public:
   DebugCameraProvider();
   virtual ~DebugCameraProvider();
 
+  // -- ICameraProvider
   virtual size_t streamCount() const { return m_streamCount; }
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
@@ -24,9 +26,21 @@ public:
   virtual CUtexObject cudaChromaTexObject(size_t streamIdx) const;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t streamIdx);
   virtual VPIImage vpiImage(size_t streamIdx) const;
+
+  // -- DepthMapGenerator
+
+  bool depthMapGeneratorEnabled() const { return (m_stereoViewCount != 0); }
+  virtual void internalLoadSettings(cv::FileStorage&);
+  virtual void internalSaveSettings(cv::FileStorage&);
+  virtual void internalProcessFrame();
+  virtual void internalRenderIMGUI();
+  virtual void internalRenderIMGUIPerformanceGraphs();
+
+
+  // -- Other DebugCameraProvider-specific functions
+
   cv::Mat cvMatLuma(size_t streamIdx) const;
   cv::Mat cvMatChroma(size_t streamIdx) const;
-
   bool connect(const char* hostname);
   void updateSurfaces();
 
@@ -51,6 +65,10 @@ protected:
   CUDA_RESOURCE_DESC m_lumaResourceDescriptor;
   CUDA_RESOURCE_DESC m_chromaResourceDescriptor;
   uint32_t m_lumaPlaneSizeBytes = 0, m_chromaPlaneSizeBytes = 0;
+  cv::String m_cameraSystemConfig;
+  cv::cuda::GpuMat m_gpuMatRGBTmp; // format conversion intermediary
+
+  // CameraProvider stream data
 
   struct StreamData {
     void* hostLumaBuffer = nullptr;
@@ -65,8 +83,22 @@ protected:
 
   std::vector<StreamData> m_streamData;
 
-  cv::String m_cameraSystemConfig;
+  // -- DepthMapGenerator view data
 
-  cv::cuda::GpuMat m_gpuMatRGBTmp; // format conversion intermediary
+  struct ViewDataDebug : public ViewData {
+    ViewDataDebug() {}
+    virtual ~ViewDataDebug() {}
+
+    cv::Mat receivedDisparity;
+  };
+
+  virtual ViewData* newEmptyViewData() { return new ViewDataDebug(); }
+  virtual void internalUpdateViewData();
+  ViewDataDebug* viewDataAtIndex(size_t index) { return static_cast<ViewDataDebug*>(m_viewData[index]); }
+
+  uint32_t m_stereoViewCount = 0;
+  uint32_t m_stereoDisparitySizeBytes = 0;
+  uint32_t m_disparityWidth = 0, m_disparityHeight = 0;
+  std::vector<cv::Mat> m_stereoDisparityRecvMats;
 };
 

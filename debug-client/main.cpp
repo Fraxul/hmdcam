@@ -169,7 +169,7 @@ bool updateHoverPositionForLastItem(glm::vec2& hoverPositionNormalized) {
 int main(int argc, char** argv) {
 
   const char* debugHost = NULL;
-  DepthMapGeneratorBackend depthBackend = kDepthBackendDGPU;
+  DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
 
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--depth-backend")) {
@@ -189,7 +189,6 @@ int main(int argc, char** argv) {
   }
 
   depthMapGenerator = createDepthMapGenerator(depthBackend);
-  depthMapGenerator->setDebugDisparityCPUAccessEnabled(true);
 
   FxThreading::detail::init();
 
@@ -282,11 +281,13 @@ int main(int argc, char** argv) {
   bool enableCharucoDetection = false; // default-off for interaction performance
 
   // CV processing init
-  if (depthMapGenerator) {
-    depthMapGenerator->initWithCameraSystem(cameraSystem);
-    depthMapGenerator->loadSettings();
-    depthMapGenerator->setPopulateDebugTextures(true);
-  }
+  if (!depthMapGenerator)
+    depthMapGenerator = cameraProvider; // Using disparity streamed from the remote system
+
+  depthMapGenerator->setDebugDisparityCPUAccessEnabled(true);
+  depthMapGenerator->initWithCameraSystem(cameraSystem);
+  depthMapGenerator->loadSettings();
+  depthMapGenerator->setPopulateDebugTextures(true);
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
