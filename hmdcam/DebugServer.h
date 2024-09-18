@@ -5,6 +5,7 @@
 #include <cuda.h>
 #include <boost/noncopyable.hpp>
 #include "common/SerializationBuffer.h"
+#include <opencv2/core/cvstd.hpp>
 
 class CameraSystem;
 class IArgusCamera;
@@ -60,7 +61,7 @@ protected:
   uint32_t m_chromaPlaneSizeBytes = 0;
 
   SerializationBuffer m_streamHeader;
-
+  cv::String m_cameraSystemConfig;
 
 };
 

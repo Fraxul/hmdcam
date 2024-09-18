@@ -87,6 +87,10 @@ bool CameraSystem::loadCalibrationData() {
     return false;
   }
 
+  return loadCalibrationData(fs);
+}
+
+bool CameraSystem::loadCalibrationData(cv::FileStorage& fs) {
   try {
     cv::FileNode camerasFn = fs["cameras"];
     if (camerasFn.isSeq()) {
@@ -165,7 +169,6 @@ bool CameraSystem::loadCalibrationData() {
 }
 
 void CameraSystem::saveCalibrationData() {
-
   {
     // Try to save a backup of the previous calibration
     char backupFn[256];
@@ -179,6 +182,11 @@ void CameraSystem::saveCalibrationData() {
   }
 
   cv::FileStorage fs(calibrationFilename.c_str(), cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+  saveCalibrationData(fs);
+}
+
+void CameraSystem::saveCalibrationData(cv::FileStorage& fs) {
+
 
   fs.startWriteStruct("cameras", cv::FileNode::SEQ, cv::String());
   for (size_t cameraIdx = 0; cameraIdx < m_cameras.size(); ++cameraIdx) {

@@ -30,6 +30,8 @@ public:
   bool connect(const char* hostname);
   void updateSurfaces();
 
+  const cv::String& cameraSystemConfig() const { return m_cameraSystemConfig; }
+
 protected:
   int m_fd = -1;
 
@@ -62,6 +64,8 @@ protected:
   };
 
   std::vector<StreamData> m_streamData;
+
+  cv::String m_cameraSystemConfig;
 
   cv::cuda::GpuMat m_gpuMatRGBTmp; // format conversion intermediary
 };

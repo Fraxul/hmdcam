@@ -83,6 +83,7 @@ bool DebugCameraProvider::connect(const char* debugHost) {
 
   // Connection OK, read data header
   SerializationBuffer cfg;
+  cv::FileStorage csConfigFs;
   {
     uint32_t streamHeaderLen = 0;
     uint32_t tmp = 0;
@@ -96,6 +97,18 @@ bool DebugCameraProvider::connect(const char* debugHost) {
     if (!safe_read(m_fd, const_cast<char*>(streamHeader.data()), streamHeader.size()))
       return false;
     cfg = SerializationBuffer(streamHeader);
+
+    if (!safe_read(m_fd, &tmp, sizeof(tmp)))
+      return false;
+
+    uint32_t csConfigLen = boost::endian::big_to_native<uint32_t>(tmp);
+    printf("CameraSystem configuration length: %u bytes\n", csConfigLen);
+    std::string csConfig;
+    csConfig.resize(csConfigLen);
+    if (!safe_read(m_fd, const_cast<char*>(csConfig.data()), csConfig.size()))
+      return false;
+
+    m_cameraSystemConfig = cv::String(csConfig.data(), csConfig.size());
   }
 
   cfg.rewind();

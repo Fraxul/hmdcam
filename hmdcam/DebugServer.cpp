@@ -140,6 +140,13 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp) {
 
   m_streamHeader = cfg;
 
+  {
+    // Serialize the CameraSystem config
+    cv::FileStorage fs(cv::String(), cv::FileStorage::MEMORY | cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+    cs->saveCalibrationData(fs);
+    m_cameraSystemConfig = fs.releaseAndGetString();
+  }
+
   // Start the listener thread
   pthread_create(&m_streamThread, NULL, &streamThreadEntryPoint, (void*) this);
   return true;
@@ -257,27 +264,36 @@ void DebugServer::streamThreadFn() {
     m_streamConnected = true;
 
 
-    // Write stream data header
-    uint32_t streamHeaderSize = boost::endian::native_to_big<uint32_t>(m_streamHeader.size());
-    if (!safe_write(clientFd, &streamHeaderSize, sizeof(streamHeaderSize)))
-      goto cleanup;
+    {
+      // Write stream data header
+      uint32_t streamHeaderSize = boost::endian::native_to_big<uint32_t>(m_streamHeader.size());
+      if (!safe_write(clientFd, &streamHeaderSize, sizeof(streamHeaderSize)))
+        goto cleanup;
 
-    if (!safe_write(clientFd, m_streamHeader.data(), m_streamHeader.size()))
-      goto cleanup;
+      if (!safe_write(clientFd, m_streamHeader.data(), m_streamHeader.size()))
+        goto cleanup;
 
-    while (true) {
-      // Sync with main thread -- signal that we're waiting on a frame, and wait for it to be copied into the StreamResource buffers
-      pthread_mutex_lock(&m_streamReadyMutex);
-      m_streamReadyForNextFrame = true;
-      pthread_cond_wait(&m_streamReadyCond, &m_streamReadyMutex);
-      m_streamReadyForNextFrame = false;
-      pthread_mutex_unlock(&m_streamReadyMutex);
+      uint32_t csConfigSize = boost::endian::native_to_big<uint32_t>(m_cameraSystemConfig.size());
+      if (!safe_write(clientFd, &csConfigSize, sizeof(csConfigSize)))
+        goto cleanup;
 
-      for (uint32_t streamIdx = 0; streamIdx < m_streamCount; ++streamIdx) {
-        if (!safe_write(clientFd, m_streamResources[streamIdx].m_lumaPlane, m_lumaPlaneSizeBytes)) goto cleanup;
-        if (!safe_write(clientFd, m_streamResources[streamIdx].m_chromaPlane, m_chromaPlaneSizeBytes)) goto cleanup;
-      }
-    } // frame loop
+      if (!safe_write(clientFd, m_cameraSystemConfig.data(), m_cameraSystemConfig.size()))
+        goto cleanup;
+
+      while (true) {
+        // Sync with main thread -- signal that we're waiting on a frame, and wait for it to be copied into the StreamResource buffers
+        pthread_mutex_lock(&m_streamReadyMutex);
+        m_streamReadyForNextFrame = true;
+        pthread_cond_wait(&m_streamReadyCond, &m_streamReadyMutex);
+        m_streamReadyForNextFrame = false;
+        pthread_mutex_unlock(&m_streamReadyMutex);
+
+        for (uint32_t streamIdx = 0; streamIdx < m_streamCount; ++streamIdx) {
+          if (!safe_write(clientFd, m_streamResources[streamIdx].m_lumaPlane, m_lumaPlaneSizeBytes)) goto cleanup;
+          if (!safe_write(clientFd, m_streamResources[streamIdx].m_chromaPlane, m_chromaPlaneSizeBytes)) goto cleanup;
+        }
+      } // frame loop
+    }
 
 cleanup:
     m_streamConnected = false;

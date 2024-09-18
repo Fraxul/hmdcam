@@ -269,9 +269,13 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-
   cameraSystem = new CameraSystem(cameraProvider);
-  cameraSystem->loadCalibrationData();
+
+  {
+    // Load remote config
+    cv::FileStorage fs(cameraProvider->cameraSystemConfig(), cv::FileStorage::MEMORY | cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+    cameraSystem->loadCalibrationData(fs);
+  }
 
   std::vector<CharucoMultiViewCalibration*> charucoProcessors;
   charucoProcessors.resize(cameraSystem->views());

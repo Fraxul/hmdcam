@@ -4,6 +4,7 @@
 #include "rhi/RHI.h"
 #include "common/ICameraProvider.h"
 #include <opencv2/core.hpp>
+#include <opencv2/core/persistence.hpp>
 #include "glm/gtx/euler_angles.hpp"
 #include "glm/gtx/transform.hpp"
 
@@ -23,7 +24,10 @@ public:
   CameraSystem(ICameraProvider*);
 
   bool loadCalibrationData();
+  bool loadCalibrationData(cv::FileStorage&);
+
   void saveCalibrationData();
+  void saveCalibrationData(cv::FileStorage&);
 
   // incremented every time calibration data is changed (in updateViewStereoDistortionParameters / updateCameraIntrinsicDistortionParameters).
   // use to invalidate derived data caches in clients

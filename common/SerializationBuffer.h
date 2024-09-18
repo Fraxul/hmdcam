@@ -247,6 +247,11 @@ public:
     return put_bytes(str.data(), str.size());
   }
 
+  SerializationBuffer& put_u32_prefixed_string(const std::string& str) {
+    put_u32(str.size());
+    return put_bytes(str.data(), str.size());
+  }
+
   SerializationBuffer& append(const SerializationBuffer& b) {
     payload->append(b.payload->data(), b.payload->size());
     return *this;
@@ -338,6 +343,11 @@ public:
 
   std::string get_u16_prefixed_string() {
     uint16_t len = get_u16();
+    return std::string(consume(len), len);
+  }
+
+  std::string get_u32_prefixed_string() {
+    uint32_t len = get_u32();
     return std::string(consume(len), len);
   }
 
