@@ -115,6 +115,7 @@ protected:
 
 
     void updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat);
+    std::vector<cv::cuda::GpuMat> m_disparityMinMaxMips;
 
     cv::cuda::GpuMat m_disparityGpuMat;
     RHISurface::ptr m_disparityTexture;
@@ -145,6 +146,9 @@ protected:
   RHIBuffer::ptr m_geoDepthMapPointTexcoordBuffer;
   RHIBuffer::ptr m_geoDepthMapPointTristripIndexBuffer;
   size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount, m_geoDepthMapPointTristripIndexCount;
+
+  // Processing settings
+  uint32_t m_holeFillingIterations = 8;
 
   // Render settings
   int m_trimLeft = 8, m_trimTop = 8;

@@ -11,6 +11,7 @@
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
+#include "common/disparityFill.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
@@ -389,6 +390,9 @@ void DepthMapGenerator::renderIMGUI() {
 
   this->internalRenderIMGUI();
 
+  // Common processing settings
+  ImGui::SliderInt("Hole-filling Iterations", (int*) &m_holeFillingIterations, 0, 16);
+
   // Common render settings -- these don't affect the algorithm.
   ImGui::Checkbox("Split depth discontinuity", &m_splitDepthDiscontinuity);
   if (m_splitDepthDiscontinuity)
@@ -476,12 +480,21 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       continue;
 
     // Filter and attempt to reconstruct invalid disparities
+    if (m_holeFillingIterations > 0) {
+      float maxValidDisparityRaw = static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale;
+      auto chromaTex = m_cameraSystem->cameraProvider()->cudaChromaTexObject(vd->m_leftCameraIndex);
 
-
+      disparityFill(chromaTex, vd->m_disparityGpuMat, maxValidDisparityRaw, vd->m_disparityMinMaxMips, m_holeFillingIterations, /*stream=*/ 0);
+    }
 
     // Copy filtered disparity to render texture
     RHICUDA::copyGpuMatToSurface(vd->m_disparityGpuMat, vd->m_disparityTexture);
   }
+}
+
+
+uint32_t divUp(uint32_t x, uint32_t y) {
+  return (x + (y - 1)) / y;
 }
 
 void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat format) {
@@ -502,6 +515,18 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
   };
 
   m_disparityGpuMat.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+  // Create minmax mipchain for filtering
+  // TODO parameterize pass-count
+  const int passes = 2;
+  m_disparityMinMaxMips.resize(passes * 3);
+  printf("Disparity base %ux%u\n", w, h);
+
+  for (size_t pass = 0; pass < m_disparityMinMaxMips.size(); ++pass) {
+    uint32_t passDivider = 1 << (pass + 1);
+    m_disparityMinMaxMips[pass].create(/*rows=*/ divUp(h, passDivider), /*cols=*/ divUp(w, passDivider), CV_16UC4);
+    printf("Disparity MinMaxMip pass %zu: %ux%u\n", pass, m_disparityMinMaxMips[pass].cols, m_disparityMinMaxMips[pass].rows);
+  }
+
   m_disparityTexture = rhi()->newTexture2D(w, h, RHISurfaceDescriptor(format));
 
   free(m_debugCPUDisparity);
