@@ -22,6 +22,7 @@
 #include <opencv2/imgproc.hpp>
 #include <epoxy/gl.h> // epoxy_is_desktop_gl
 #include <glm/gtc/packing.hpp>
+#include <npp.h>
 
 const char* settingsFilename = "depthMapSettings.yml";
 
@@ -112,7 +113,9 @@ struct DisparityMipUniformBlock {
 };
 
 DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) : m_backend(backend_) {
-
+  memset(&m_nppStreamContext, 0, sizeof(m_nppStreamContext));
+  NPP_CHECK(nppSetStream((CUstream) m_globalStream.cudaPtr()));
+  NPP_CHECK(nppGetStreamContext(&m_nppStreamContext));
 }
 
 void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {

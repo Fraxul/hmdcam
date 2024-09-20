@@ -314,12 +314,8 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
       sz.width  = vd->resizedLeft_gpu.cols;
       sz.height = vd->resizedLeft_gpu.rows;
 
-      if (nppGetStream() != ((cudaStream_t) m_globalStream.cudaPtr())) {
-        nppSetStream((cudaStream_t) m_globalStream.cudaPtr());
-      }
-
-      nppiTranspose_8u_C1R(vd->resizedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedLeft_gpu.step), vd->resizedTransposedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedTransposedLeft_gpu.step), sz);
-      nppiTranspose_8u_C1R(vd->resizedRight_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedRight_gpu.step), vd->resizedTransposedRight_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedTransposedRight_gpu.step), sz);
+      nppiTranspose_8u_C1R_Ctx(vd->resizedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedLeft_gpu.step), vd->resizedTransposedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedTransposedLeft_gpu.step), sz, m_nppStreamContext);
+      nppiTranspose_8u_C1R_Ctx(vd->resizedRight_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedRight_gpu.step), vd->resizedTransposedRight_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedTransposedRight_gpu.step), sz, m_nppStreamContext);
     }
   }
 

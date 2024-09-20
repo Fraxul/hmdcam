@@ -67,7 +67,6 @@ protected:
 
   cv::cuda::Event m_copyStartEvent;
   cv::cuda::Event m_processingFinishedEvent;
-  cv::cuda::Stream m_globalStream;
 
 private:
   ViewDataSHM* viewDataAtIndex(size_t index) { return static_cast<ViewDataSHM*>(m_viewData[index]); }

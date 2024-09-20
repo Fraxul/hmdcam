@@ -11,6 +11,7 @@
 #include <opencv2/core/affine.hpp>
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/calib3d.hpp>
+#include <npp.h>
 #include <vector>
 
 class CameraSystem;
@@ -74,6 +75,10 @@ public:
 protected:
 
   DepthMapGeneratorBackend m_backend;
+
+  // CUDA and NPP stream context
+  cv::cuda::Stream m_globalStream;
+  NppStreamContext m_nppStreamContext;
 
   virtual void internalLoadSettings(cv::FileStorage&) = 0;
   virtual void internalSaveSettings(cv::FileStorage&) = 0;
