@@ -12,7 +12,7 @@ debugClientEnv.Append(
     'SDL2',
     'epoxy',
     'cuda', 'cudart',
-    'nppc', 'nppidei', 'nppicc',
+    'nppc', 'nppidei', 'nppicc', 'nppif',
     'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_cudaimgproc', 'opencv_cudastereo', 'opencv_cudawarping',
   ]
 )

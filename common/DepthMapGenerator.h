@@ -5,6 +5,7 @@
 #include "common/SHMSegment.h"
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
+#include "rhi/cuda/CudaUtil.h"
 #include <glm/glm.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
@@ -110,6 +111,7 @@ protected:
     ViewData() {}
     virtual ~ViewData() {
       free(m_debugCPUDisparity);
+      CUDA_SAFE_FREE(m_medianFilterScratchBuffer);
     }
 
     bool m_isStereoView = false;
@@ -123,6 +125,10 @@ protected:
     std::vector<cv::cuda::GpuMat> m_disparityMinMaxMips;
 
     cv::cuda::GpuMat m_disparityGpuMat;
+
+    cv::cuda::GpuMat m_disparityMedianFilterSourceGpuMat;
+    CUdeviceptr m_medianFilterScratchBuffer = 0;
+
     RHISurface::ptr m_disparityTexture;
     RHISurface::ptr m_leftGray, m_rightGray;
 
@@ -153,7 +159,8 @@ protected:
   size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount, m_geoDepthMapPointTristripIndexCount;
 
   // Processing settings
-  uint32_t m_holeFillingIterations = 8;
+  bool m_useMedianFilter = true;
+  bool m_useHoleFillingPass = true;
 
   // Render settings
   int m_trimLeft = 8, m_trimTop = 8;

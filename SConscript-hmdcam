@@ -37,7 +37,7 @@ tegraEnv.Append(
     'wayland-client', 'wayland-egl', 'xkbcommon',
     'hidapi-libusb', 'usb-1.0', 'udev',
     'cuda', 'cudart',
-    'nppc', 'nppidei', 'nppitc',
+    'nppc', 'nppidei', 'nppitc', 'nppif',
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco',
     'nvToolsExt',
     'socketcan',

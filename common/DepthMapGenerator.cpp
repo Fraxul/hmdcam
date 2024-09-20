@@ -394,7 +394,8 @@ void DepthMapGenerator::renderIMGUI() {
   this->internalRenderIMGUI();
 
   // Common processing settings
-  ImGui::SliderInt("Hole-filling Iterations", (int*) &m_holeFillingIterations, 0, 16);
+  ImGui::Checkbox("Median filter", &m_useMedianFilter);
+  ImGui::Checkbox("Hole-filling pass", &m_useHoleFillingPass);
 
   // Common render settings -- these don't affect the algorithm.
   ImGui::Checkbox("Split depth discontinuity", &m_splitDepthDiscontinuity);
@@ -482,16 +483,53 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
     if (!vd->m_isStereoView)
       continue;
 
-    // Filter and attempt to reconstruct invalid disparities
-    if (m_holeFillingIterations > 0) {
+    if (m_useMedianFilter) {
+      NppiSize dispSize;
+      dispSize.width = vd->m_disparityGpuMat.cols;
+      dispSize.height = vd->m_disparityGpuMat.rows;
+
+      // Copy and expand border for median filter setup
+      {
+        NppiSize expandedSize;
+        expandedSize.width = dispSize.width + 2;
+        expandedSize.height = dispSize.height + 2;
+
+        NPP_CHECK(nppiCopyReplicateBorder_16u_C1R_Ctx(
+          /*pSrc=*/ (const Npp16u*) vd->m_disparityGpuMat.data, /*nSrcStep=*/ vd->m_disparityGpuMat.step, /*oSrcSizeROI=*/ dispSize,
+          /*pDst=*/ (Npp16u*) vd->m_disparityMedianFilterSourceGpuMat.data, /*nDstStep=*/ vd->m_disparityMedianFilterSourceGpuMat.step, /*oDstSizeROI=*/ expandedSize,
+          /*nTopBorderHeight=*/ 1, /*nLeftBorderWidth=*/ 1,
+          m_nppStreamContext));
+      }
+
+      // Run 3x3 median filter to smooth speckles and edge discontinuities
+      NppiSize oMaskSize;
+      oMaskSize.width = oMaskSize.height = 3;
+
+      NppiPoint zeroOffset;
+      zeroOffset.x = zeroOffset.y = 0;
+
+      // Offset source pointer to skip the border
+      const Npp16u* pSrc = reinterpret_cast<const Npp16u*>(reinterpret_cast<uint8_t*>(vd->m_disparityMedianFilterSourceGpuMat.data) + /*offset 1 line*/ (1 * vd->m_disparityMedianFilterSourceGpuMat.step)) + /*offset 1 pixel*/ 1;
+
+      NPP_CHECK(nppiFilterMedian_16u_C1R_Ctx(
+        /*pSrc=*/ pSrc,/*nSrcStep=*/ (Npp32s) vd->m_disparityMedianFilterSourceGpuMat.step,
+        /*pDst=*/ (Npp16u*) vd->m_disparityGpuMat.data, /*nDstStep=*/ (Npp32s) vd->m_disparityGpuMat.step,
+        /*oSizeROI=*/ dispSize,
+        /*oMaskSize=*/ oMaskSize, /*oAnchor=*/ zeroOffset,
+        /*pBuffer=*/ (Npp8u*) vd->m_medianFilterScratchBuffer,
+        m_nppStreamContext));
+    }
+
+    if (m_useHoleFillingPass) {
+      // Filter and attempt to reconstruct invalid disparities. This writes in-place.
       float maxValidDisparityRaw = static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale;
       auto chromaTex = m_cameraSystem->cameraProvider()->cudaChromaTexObject(vd->m_leftCameraIndex);
 
-      disparityFill(chromaTex, vd->m_disparityGpuMat, maxValidDisparityRaw, vd->m_disparityMinMaxMips, m_holeFillingIterations, /*stream=*/ 0);
+      disparityFill(chromaTex, vd->m_disparityGpuMat, maxValidDisparityRaw, vd->m_disparityMinMaxMips, (CUstream) m_globalStream.cudaPtr());
     }
 
     // Copy filtered disparity to render texture
-    RHICUDA::copyGpuMatToSurface(vd->m_disparityGpuMat, vd->m_disparityTexture);
+    RHICUDA::copyGpuMatToSurface(vd->m_disparityGpuMat, vd->m_disparityTexture, m_globalStream);
   }
 }
 
@@ -518,6 +556,34 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
   };
 
   m_disparityGpuMat.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+
+
+  // Allocate buffer for median filter
+  {
+    // The image must be expanded by 1px in all directions for the 3x3 median filter to succeed.
+    // We use one of the nppiCopyReplicateBorder functions into this temporary
+    m_disparityMedianFilterSourceGpuMat.create(/*rows=*/ h + 2, /*cols=*/ w + 2, /*type=*/ cvType);
+
+    // The processing ROI is the original output size
+    NppiSize oSizeROI;
+    oSizeROI.width = w;
+    oSizeROI.height = h;
+
+    NppiSize oMaskSize;
+    oMaskSize.width = oMaskSize.height = 3;
+
+    Npp32u nBufferSize = 0;
+    NPP_CHECK(nppiFilterMedianGetBufferSize_16u_C1R(oSizeROI, oMaskSize, &nBufferSize));
+    printf("updateDisparityTexture(): Npp buffer for %ux%u median filter on %ux%u disparity surface is %u bytes\n",
+      oMaskSize.width, oMaskSize.height, oSizeROI.width, oSizeROI.height, nBufferSize);
+
+    CUDA_SAFE_FREE(m_medianFilterScratchBuffer);
+
+    if (nBufferSize > 0) {
+      CUDA_CHECK(cuMemAlloc(&m_medianFilterScratchBuffer, nBufferSize));
+    }
+  }
+
   // Create minmax mipchain for filtering
   // TODO parameterize pass-count
   const int passes = 2;

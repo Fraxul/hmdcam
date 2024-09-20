@@ -338,7 +338,7 @@ __global__ void disparityFillFinalMat(CUtexObject chromaTex, uint16_t maxValidDi
   disparityMat.ptr(y)[x] = centerDisp;
 }
 
-void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, float maxValidDisparityRaw, std::vector<cv::cuda::GpuMat>& disparityMinMaxMips, uint32_t mipDepth, CUstream stream) {
+void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, float maxValidDisparityRaw, std::vector<cv::cuda::GpuMat>& disparityMinMaxMips, CUstream stream) {
   // Downsample passes
   {
     dim3 block(4, 4);
@@ -381,7 +381,7 @@ void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, float 
   // Upsample passes: fill holes in larger mips from smaller mip levels
   {
     dim3 block(8, 8);
-    ssize_t startMipIdx = std::min<ssize_t>(static_cast<ssize_t>(disparityMinMaxMips.size()) - 2, (mipDepth - 1));
+    ssize_t startMipIdx = static_cast<ssize_t>(disparityMinMaxMips.size()) - 2;
 
     for (ssize_t dstMipIdx = startMipIdx; dstMipIdx >= 0; --dstMipIdx) {
       cv::cuda::GpuMat& dstMip = disparityMinMaxMips[dstMipIdx];
