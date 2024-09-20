@@ -91,36 +91,83 @@ bool ArgusCameraMock::readFrame() {
     char filename[32];
     try {
       sprintf(filename, "camera%zu.png", cameraIdx);
-      cv::Mat m = cv::imread(filename, cv::IMREAD_COLOR);
+      cv::Mat m = cv::imread(filename, cv::IMREAD_COLOR); // input will be in BGRA format
       if (m.cols == streamWidth() && m.rows == streamHeight()) {
-        cv::Mat rgbaMat, lumaMat;
+        cv::Mat rgbaMat;
         cv::cvtColor(m, rgbaMat, cv::COLOR_BGRA2RGBA);
-        cv::cvtColor(m, lumaMat, cv::COLOR_BGRA2GRAY);
         rhi()->loadTextureData(srf, kVertexElementTypeUByte4N, rgbaMat.data);
+
+        cv::Mat lumaMat, chromaMat;
+        cv::Mat yv12Mat;
+        {
+          // Convert from input BGRA format to YV12
+          // The resultant image should be CV_8UC1, same width, and 1.5x the height of the input.
+          // The luma plane is packed first, followed by the half-res chroma
+
+          cv::cvtColor(m, yv12Mat, cv::COLOR_BGRA2YUV_YV12);
+          assert(yv12Mat.rows == (m.rows + (m.rows / 2)));
+          assert(yv12Mat.cols == m.cols);
+          assert(yv12Mat.type() == CV_8UC1);
+
+          lumaMat = yv12Mat.rowRange(0, m.rows);
+          chromaMat = yv12Mat.rowRange(m.rows, yv12Mat.rows).reshape(/*channels=*/ 2);
+        }
+        printf("Stream [%zu]:   Luma: %u x %u, %u channels, %zu bytes/channel\n", cameraIdx, lumaMat.cols, lumaMat.rows, lumaMat.channels(), lumaMat.elemSize1());
+        printf("Stream [%zu]: Chroma: %u x %u, %u channels, %zu bytes/channel\n", cameraIdx, chromaMat.cols, chromaMat.rows, chromaMat.channels(), chromaMat.elemSize1());
 
         stream.lumaGpuMat.create(lumaMat.rows, lumaMat.cols, lumaMat.type());
         stream.lumaGpuMat.upload(lumaMat);
 
-        CUDA_RESOURCE_DESC lumaResourceDescriptor;
-        memset(&lumaResourceDescriptor, 0, sizeof(lumaResourceDescriptor));
-        lumaResourceDescriptor.resType = CU_RESOURCE_TYPE_PITCH2D;
-        lumaResourceDescriptor.res.pitch2D.format = CU_AD_FORMAT_UNSIGNED_INT8;
-        lumaResourceDescriptor.res.pitch2D.numChannels = 1;
-        lumaResourceDescriptor.res.pitch2D.width = stream.lumaGpuMat.cols;
-        lumaResourceDescriptor.res.pitch2D.height = stream.lumaGpuMat.rows;
-        lumaResourceDescriptor.res.pitch2D.pitchInBytes = stream.lumaGpuMat.step;
-        lumaResourceDescriptor.res.pitch2D.devPtr = (CUdeviceptr) stream.lumaGpuMat.cudaPtr();
+        stream.chromaGpuMat.create(chromaMat.rows, chromaMat.cols, chromaMat.type());
+        stream.chromaGpuMat.upload(chromaMat);
 
-        CUDA_TEXTURE_DESC texDesc;
-        memset(&texDesc, 0, sizeof(texDesc));
-        texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
-        texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
-        texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
-        texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
-        // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
-        texDesc.maxAnisotropy = 1;
+        {
+          // Luma
+          CUDA_RESOURCE_DESC lumaResourceDescriptor;
+          memset(&lumaResourceDescriptor, 0, sizeof(lumaResourceDescriptor));
+          lumaResourceDescriptor.resType = CU_RESOURCE_TYPE_PITCH2D;
+          lumaResourceDescriptor.res.pitch2D.format = CU_AD_FORMAT_UNSIGNED_INT8;
+          lumaResourceDescriptor.res.pitch2D.numChannels = 1;
+          lumaResourceDescriptor.res.pitch2D.width = stream.lumaGpuMat.cols;
+          lumaResourceDescriptor.res.pitch2D.height = stream.lumaGpuMat.rows;
+          lumaResourceDescriptor.res.pitch2D.pitchInBytes = stream.lumaGpuMat.step;
+          lumaResourceDescriptor.res.pitch2D.devPtr = (CUdeviceptr) stream.lumaGpuMat.cudaPtr();
 
-        CUDA_CHECK(cuTexObjectCreate(&stream.cudaLumaTexObject, &lumaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));
+          CUDA_TEXTURE_DESC texDesc;
+          memset(&texDesc, 0, sizeof(texDesc));
+          texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
+          texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
+          texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
+          texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
+          // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
+          texDesc.maxAnisotropy = 1;
+
+          CUDA_CHECK(cuTexObjectCreate(&stream.cudaLumaTexObject, &lumaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));
+        }
+
+        {
+          // Chroma -- half-res 2-channel uint8
+          CUDA_RESOURCE_DESC chromaResourceDescriptor;
+          memset(&chromaResourceDescriptor, 0, sizeof(chromaResourceDescriptor));
+          chromaResourceDescriptor.resType = CU_RESOURCE_TYPE_PITCH2D;
+          chromaResourceDescriptor.res.pitch2D.format = CU_AD_FORMAT_UNSIGNED_INT8;
+          chromaResourceDescriptor.res.pitch2D.numChannels = 2;
+          chromaResourceDescriptor.res.pitch2D.width = stream.chromaGpuMat.cols;
+          chromaResourceDescriptor.res.pitch2D.height = stream.chromaGpuMat.rows;
+          chromaResourceDescriptor.res.pitch2D.pitchInBytes = stream.chromaGpuMat.step;
+          chromaResourceDescriptor.res.pitch2D.devPtr = (CUdeviceptr) stream.chromaGpuMat.cudaPtr();
+
+          CUDA_TEXTURE_DESC texDesc;
+          memset(&texDesc, 0, sizeof(texDesc));
+          texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
+          texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
+          texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
+          texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
+          // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
+          texDesc.maxAnisotropy = 1;
+
+          CUDA_CHECK(cuTexObjectCreate(&stream.cudaChromaTexObject, &chromaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));
+        }
 
 #ifdef HAVE_VPI2
         VPIImage vpiRGBAImage;
@@ -183,7 +230,5 @@ CUtexObject ArgusCameraMock::cudaLumaTexObject(size_t sensorIdx) const {
 }
 
 CUtexObject ArgusCameraMock::cudaChromaTexObject(size_t sensorIdx) const {
-  assert(false && "ArgusCameraMock::cudaChromaTexObject: not implemented");
-  return 0;
-  // return m_streamData[sensorIdx].cudaChromaTexObject;
+  return m_streamData[sensorIdx].cudaChromaTexObject;
 }

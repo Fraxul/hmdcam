@@ -35,8 +35,8 @@ protected:
   struct Stream {
     RHISurface::ptr rgbTexture;
     VPIImage vpiImage;
-    cv::cuda::GpuMat lumaGpuMat;
-    CUtexObject cudaLumaTexObject;
+    cv::cuda::GpuMat lumaGpuMat, chromaGpuMat;
+    CUtexObject cudaLumaTexObject, cudaChromaTexObject;
   };
   std::vector<Stream> m_streamData;
 };
