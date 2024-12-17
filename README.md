@@ -2,7 +2,7 @@
 
 
 This application is designed for camera passthrough to a head-mounted display.
-It runs on the Nvidia Jetson family of SoCs and has been developed/tested against the Lenovo Explorer, HP VR1000, and HTC Vive, but should work on any HMD supported by Monado.
+It runs on the Nvidia Jetson Orin family of SoCs and has been developed/tested against 1st-gen Windows Mixed Reality HMDs (Lenovo Explorer, HP VR1000), but should work on any HMD supported by Monado.
 
 Features:
 - Distortion-corrected monoscopic and stereoscopic views positioned in 3d space
@@ -42,7 +42,7 @@ Requirements:
   - A GTX1050 MXM3 module can handle 2 stereo pairs with 1:4 sampling (480x270 depth resolution) at 90+ FPS, but consumes ~40 watts.
 
 The reference test/development platform is:
-- Jetson Orin NX running L4T r35.4.1
+- Jetson Orin NX running L4T r36.4 / JetPack 6
 - 4x [Soho Enterprise](https://soho-enterprise.com) SE-SB2M-IMX662 sensors: 2-lane, 1920x1080, 90fps.
   - These sensors use a custom kernel driver that I haven't published yet
   - Lenses are [Commonlands CIL028-F2.6-M12ANIR](https://commonlands.com/products/wideangle-3mm-lens)

@@ -1,30 +1,25 @@
 =========================== New machine setup ================================
 
-Install the Jetson Multimedia API and other required libraries (CUDA for Tegra):
-  Jetpack 5.0 or newer:
-    sudo apt install nvidia-l4t-jetson-multimedia-api nvidia-cuda
-  Older Jetpack versions (4.x series):
-    Make sure that the Nvidia SDK manager finishes its post-flash SDK install, or required libraries will be missing.
-    If the Jetson Multimedia API is not installed (nothing in /usr/src/jetson_multimedia_api or /usr/src/tegra_multimedia_api):
-      Unpack Tegra_Multimedia_API_R32.2.3_aarch64.tbz2 (or a newer version, from NV developer downloads) to /usr/src
-
-
 Don't forget to set up the submodules after cloning:
   git submodule update --init --recursive
 
 Install prerequisite packages:
-  sudo apt install scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev libsocketcan-dev
+  sudo apt install cmake scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev libsocketcan-dev
 
-If you're on Ubuntu <= 20.04 (L4T < r34.1), libepoxy is too old -- install the included package (borrowed from the Ubuntu 20.04 arm64 repository):
-  sudo dpkg -i libepoxy/libepoxy0_1.5.4-1_arm64.deb  libepoxy/libepoxy-dev_1.5.4-1_arm64.deb
+Install the Jetson Multimedia API and other required libraries (CUDA for Tegra):
+  sudo apt install nvidia-l4t-jetson-multimedia-api nvidia-cuda-dev
 
-If you're on Ubuntu >= 20.04 or L4T >= r34.1 (JetPack >= 5.0), install the packaged cmake:
-  sudo apt install cmake
-Otherwise, use pip3 to get a new enough cmake for the DepthAI build -- 3.10.2 as shipped in 18.04 is too old:
-  sudo apt remove cmake*
-  sudo apt install python3-pip
-  sudo -H pip3 install --upgrade pip
-  sudo -H pip3 install cmake
+Build and install OpenCV 4.10 with some extra opencv_contrib modules. (TODO: more detailed directions)
+  # Prereqs
+  sudo apt install cmake ninja-build libpng-dev libtiff-dev libfreetype6-dev
+  # Git repositories
+  git clone https://github.com/opencv/opencv.git -b 4.10.0
+  git clone https://github.com/opencv/opencv_contrib -b 4.10.0
+  # Make a build directory and run Cmake to configure
+  mkdir opencv-build; cd opencv-build
+  cmake -G Ninja -DOPENCV_EXTRA_MODULES_PATH=/path/to/opencv_contrib/modules -DWITH_CUDA=ON -DBUILD_LIST=aruco,calib3d,core,cudafilters,cudaimgproc,cudastereo,cudawarping,cudev,imgproc,imgcodecs,objdetect,stereo -DCUDA_ARCH_BIN="8.7" /path/to/opencv
+  # Build and install
+  ninja && sudo ninja install
 
 Build the embedded Monado library required for distortion processing
   ./build-monado.sh
