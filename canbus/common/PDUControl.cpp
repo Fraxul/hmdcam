@@ -28,6 +28,20 @@ PDUControl::PDUControl() {
     fprintf(stderr, "PDUControl: Cannot open CAN interface \"%s\": %s\n", interfaceName, strerror(errno));
     return;
   }
+  // Test reading a frame from the device.
+  // We may be able to open it, but socketcanPop will return an error if it's not ready for reading.
+  {
+    CanardFrame rxFrame{};
+    CanardMicrosecond timestamp_us{};
+    char payload_buffer[64];
+    int16_t res = socketcanPop(m_fd, &rxFrame, &timestamp_us, sizeof(payload_buffer), payload_buffer, 1'000'000, /*loopback=*/ nullptr);
+    if (res < 0) {
+      fprintf(stderr, "PDUControl(): Initial test read from CAN socket failed with errno=%d: %s\n", -res, strerror(-res));
+      ::close(m_fd);
+      m_fd = -1;
+      return;
+    }
+  }
 
   m_canard = canardInit(&canardMemAllocate, &canardMemFree);
   m_canard.node_id = 1;
