@@ -13,13 +13,6 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
-#ifdef HAVE_VPI2
-#include "common/VPIUtil.h"
-#include <vpi/Image.h>
-#include <vpi/OpenCVInterop.hpp>
-#include <vpi/Stream.h>
-#include <vpi/algo/ConvertImageFormat.h>
-#endif // HAVE_VPI2
 
 bool skipFramePacing = false;
 
@@ -63,29 +56,14 @@ bool ArgusCameraMock::readFrame() {
     m_frameMetadata[i].sensorTimestamp = now - m_targetCaptureIntervalNs;
   }
 
-#ifdef HAVE_VPI2
-  VPIStream vpiStream = nullptr;
-
-#endif
   for (size_t cameraIdx = 0; cameraIdx < m_streamData.size(); ++cameraIdx) {
     Stream& stream = m_streamData[cameraIdx];
 
     if (stream.rgbTexture)
       continue; // already initialized
 
-#ifdef HAVE_VPI2
-    if (!vpiStream) {
-      VPI_CHECK(vpiStreamCreate(VPI_BACKEND_CPU | VPI_BACKEND_VIC, &vpiStream));
-    }
-#endif
-
     RHISurface::ptr srf = rhi()->newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
     stream.rgbTexture = srf;
-
-#ifdef HAVE_VPI2
-    // Argus NVBuffers wrapped into VPIImage are VPI_IMAGE_FORMAT_NV12_ER
-    VPI_CHECK(vpiImageCreate(streamWidth(), streamHeight(), VPI_IMAGE_FORMAT_NV12_ER, VPI_BACKEND_VIC | VPI_BACKEND_CUDA, &stream.vpiImage));
-#endif
 
     bool haveImageData = false;
     char filename[32];
@@ -169,17 +147,6 @@ bool ArgusCameraMock::readFrame() {
           CUDA_CHECK(cuTexObjectCreate(&stream.cudaChromaTexObject, &chromaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));
         }
 
-#ifdef HAVE_VPI2
-        VPIImage vpiRGBAImage;
-        VPI_CHECK(vpiImageCreateWrapperOpenCVMat(rgbaMat, VPI_IMAGE_FORMAT_RGBA8, VPI_BACKEND_CPU | VPI_BACKEND_VIC, &vpiRGBAImage));
-
-        VPIConvertImageFormatParams convertParams;
-        vpiInitConvertImageFormatParams(&convertParams);
-        VPI_CHECK(vpiSubmitConvertImageFormat(vpiStream, VPI_BACKEND_VIC, vpiRGBAImage, stream.vpiImage, &convertParams));
-        vpiStreamSync(vpiStream);
-        vpiImageDestroy(vpiRGBAImage);
-#endif
-
         haveImageData = true;
       } else {
         printf("ArgusCameraMock: loaded %s but the dimensions didn't match (expected %ux%u, got %ux%u)\n",
@@ -211,18 +178,8 @@ bool ArgusCameraMock::readFrame() {
 
   }
 
-#ifdef HAVE_VPI2
-    if (vpiStream) {
-      vpiStreamDestroy(vpiStream);
-    }
-#endif
-
   m_previousFrameReadTime = now;
   return true;
-}
-
-VPIImage ArgusCameraMock::vpiImage(size_t sensorIndex) const {
-  return m_streamData[sensorIndex].vpiImage;
 }
 
 CUtexObject ArgusCameraMock::cudaLumaTexObject(size_t sensorIdx) const {

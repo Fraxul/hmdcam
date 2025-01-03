@@ -4,9 +4,6 @@
 #ifdef HAVE_OPENCV_CUDA
   #include "common/DepthMapGeneratorSHM.h"
 #endif
-#ifdef HAVE_VPI2
-  #include "common/DepthMapGeneratorVPI.h"
-#endif
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
@@ -35,8 +32,6 @@ DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr) {
     return kDepthBackendDGPU;
   } else if ((!strcasecmp(backendStr, "depthai")) || (!strcasecmp(backendStr, "depth-ai"))) {
     return kDepthBackendDepthAI;
-  } else if ((!strcasecmp(backendStr, "vpi")) || (!strcasecmp(backendStr, "vpi2"))) {
-    return kDepthBackendVPI;
   } else {
     fprintf(stderr, "depthBackendStringToEnum: unrecognized worker type \"%s\"\n", backendStr);
     return kDepthBackendNone;
@@ -57,13 +52,6 @@ DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend backend) {
     return new DepthMapGeneratorSHM(backend);
 #else
     assert(false && "createDepthMapGenerator: SHM-based backends were disabled at compile time (no opencv_cudaimgproc support).");
-#endif
-
-  case kDepthBackendVPI:
-#ifdef HAVE_VPI2
-    return new DepthMapGeneratorVPI();
-#else
-    assert(false && "createDepthMapGenerator: The VPI backend was disabled at compile time.");
 #endif
 
   default:

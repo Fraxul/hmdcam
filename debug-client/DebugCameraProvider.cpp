@@ -2,7 +2,6 @@
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
-#include "common/VPIUtil.h"
 #include "common/glmCvInterop.h"
 #include "common/remapArray.h"
 #include "rhi/RHI.h"
@@ -254,26 +253,6 @@ bool DebugCameraProvider::connect(const char* debugHost) {
     }
   }
 
-#ifdef HAVE_VPI2
-  // Wrap GpuMats to create VPIImages
-  for (size_t streamIdx = 0; streamIdx < m_streamCount; ++streamIdx) {
-    StreamData& sd = m_streamData[streamIdx];
-
-    VPIImageData data;
-    memset(&data, 0, sizeof(VPIImageData));
-    data.bufferType = VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR;
-    data.buffer.pitch.format = VPI_IMAGE_FORMAT_Y8_ER;
-    data.buffer.pitch.numPlanes = 1;
-    data.buffer.pitch.planes[0].pixelType = vpiImageFormatGetPlanePixelType(data.buffer.pitch.format, 0);
-    data.buffer.pitch.planes[0].width = m_streamWidth;
-    data.buffer.pitch.planes[0].height = m_streamHeight;
-    data.buffer.pitch.planes[0].pitchBytes = sd.gpuMatLuma.step;
-    data.buffer.pitch.planes[0].data = sd.gpuMatLuma.cudaPtr();
-
-    VPI_CHECK(vpiImageCreateWrapper(&data, /*params=*/ NULL, VPI_BACKEND_CUDA | VPI_REQUIRE_BACKENDS, &sd.vpiImage));
-  }
-#endif
-
   // Start the frame reader thread
   pthread_create(&m_streamThread, NULL, &streamThreadEntryPoint, (void*) this);
   return true;
@@ -314,9 +293,6 @@ DebugCameraProvider::~DebugCameraProvider() {
   for (StreamData& sd : m_streamData) {
     cuTexObjectDestroy(sd.cudaLumaTexObject);
     cuTexObjectDestroy(sd.cudaChromaTexObject);
-#ifdef HAVE_VPI2
-    vpiImageDestroy(sd.vpiImage);
-#endif
 
     if (sd.hostLumaBuffer)
       cuMemFreeHost(sd.hostLumaBuffer);
@@ -397,15 +373,6 @@ cv::Mat DebugCameraProvider::cvMatChroma(size_t streamIdx) const {
 
 cv::cuda::GpuMat DebugCameraProvider::gpuMatGreyscale(size_t streamIdx) {
   return m_streamData[streamIdx].gpuMatLuma;
-}
-
-VPIImage DebugCameraProvider::vpiImage(size_t streamIdx) const {
-#if HAVE_VPI2
-  return m_streamData[streamIdx].vpiImage;
-#else
-  assert(false && "vpiImageGreyscale: HAVE_VPI2 was not defined at compile time");
-  return nullptr;
-#endif
 }
 
 RHISurface::ptr DebugCameraProvider::rgbTexture(size_t streamIdx) const {

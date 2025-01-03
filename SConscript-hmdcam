@@ -126,8 +126,6 @@ else:
   liveMediaStatics = []
   tegra_mmapi_src = []
 
-if (env['HAVE_VPI2']):
-  tegraEnv.Append(LIBS=['nvvpi'])
 if (env['HAVE_OPENCV_CUDA']):
   tegraEnv.Append(LIBS=['opencv_cudafilters', 'opencv_cudaimgproc', 'opencv_cudawarping'])
 

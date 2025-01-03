@@ -13,10 +13,6 @@
 #include <EGLStream/EGLStream.h>
 #include <cudaEGL.h>
 #include <opencv2/cvconfig.h>
-#ifdef HAVE_VPI2
-#include "common/VPIUtil.h"
-#include <vpi/Image.h>
-#endif // HAVE_VPI2
 
 #ifdef USE_NVBUF_UTILS
 #include <nvbuf_utils.h>
@@ -379,20 +375,6 @@ void ArgusCamera::buildCaptureSessions() {
         CUDA_CHECK(cuTexObjectCreate(&b.cudaChromaTexObject, &resDesc, &texDesc, /*resourceViewDescriptor=*/ nullptr));
       }
 
-#ifdef HAVE_VPI2
-      VPIImageData vid;
-      memset(&vid, 0, sizeof(vid));
-      vid.buffer.fd = b.nativeBuffer;
-      vid.bufferType = VPI_IMAGE_BUFFER_NVBUFFER;
-      VPI_CHECK(vpiImageCreateWrapper(&vid, NULL, /*flags=*/ 0, &b.vpiImage));
-
-      if (i == 0) { // only report for the first buffer created
-        VPIImageFormat imageFormat;
-        VPI_CHECK(vpiImageGetFormat(b.vpiImage, &imageFormat) );
-        printf("Stream [%zu]: VPIImageFormat is %s\n", cameraIdx, vpiImageFormatGetName(imageFormat));
-      }
-#endif
-
       m_bufferPools[cameraIdx].buffers.push_back(b);
     }
 
@@ -457,10 +439,6 @@ void ArgusCamera::teardownCaptureSessions() {
       NvBufSurfaceFromFd(b.nativeBuffer, (void**)(&nvbuf_surf));
       if (nvbuf_surf != nullptr)
         NvBufSurfaceDestroy(nvbuf_surf);
-#endif
-
-#ifdef HAVE_VPI2
-      vpiImageDestroy(b.vpiImage);
 #endif
     }
   }

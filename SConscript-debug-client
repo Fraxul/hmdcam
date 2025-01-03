@@ -16,8 +16,6 @@ debugClientEnv.Append(
     'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect', 'opencv_cudaimgproc', 'opencv_cudastereo', 'opencv_cudawarping',
   ]
 )
-if (env['HAVE_VPI2']):
-  debugClientEnv.Append(LIBS=['nvvpi'])
 
 debugClientEnv.CompilationDatabase()
 debugClientEnv.Program(

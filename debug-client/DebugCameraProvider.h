@@ -5,9 +5,6 @@
 #include "rhi/RHISurface.h"
 #include <vector>
 #include <opencv2/core/mat.hpp>
-#ifdef HAVE_VPI2
-#include <vpi/Image.h>
-#endif
 #include "rhi/gl/GLCommon.h" // must be included before cudaEGL
 #include <cudaEGL.h>
 
@@ -25,7 +22,6 @@ public:
   virtual CUtexObject cudaLumaTexObject(size_t streamIdx) const;
   virtual CUtexObject cudaChromaTexObject(size_t streamIdx) const;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t streamIdx);
-  virtual VPIImage vpiImage(size_t streamIdx) const;
 
   // -- DepthMapGenerator
 
@@ -78,7 +74,6 @@ protected:
     cv::cuda::GpuMat gpuMatLuma, gpuMatChroma, gpuMatRGBA;
     CUtexObject cudaLumaTexObject = 0;
     CUtexObject cudaChromaTexObject = 0;
-    VPIImage vpiImage = nullptr;
   };
 
   std::vector<StreamData> m_streamData;

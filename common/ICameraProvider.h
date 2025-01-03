@@ -4,9 +4,6 @@
 #include <cuda.h>
 #include <opencv2/core/cuda.hpp>
 
-struct VPIImageImpl;
-typedef struct VPIImageImpl* VPIImage;
-
 class ICameraProvider {
 public:
   virtual ~ICameraProvider() {}
@@ -17,7 +14,6 @@ public:
   virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const = 0;
   virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const = 0;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex) = 0;
-  virtual VPIImage vpiImage(size_t sensorIndex) const = 0;
   virtual unsigned int streamWidth() const = 0;
   virtual unsigned int streamHeight() const = 0;
 };
@@ -33,7 +29,6 @@ public:
   virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { return 0; }
   virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return 0; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex) { return cv::cuda::GpuMat(); }
-  virtual VPIImage vpiImage(size_t sensorIndex) const { return nullptr; }
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
 protected:

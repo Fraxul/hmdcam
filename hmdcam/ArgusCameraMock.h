@@ -13,7 +13,6 @@ public:
   virtual CUtexObject cudaLumaTexObject(size_t sensorIdx) const;
   virtual CUtexObject cudaChromaTexObject(size_t sensorIdx) const;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx) { return m_streamData[sensorIdx].lumaGpuMat; }
-  virtual VPIImage vpiImage(size_t sensorIndex) const;
 
   // === IArgusCamera ===
   virtual size_t sessionCount() const { return 1; }
@@ -34,7 +33,6 @@ protected:
   uint64_t m_previousFrameReadTime = 0;
   struct Stream {
     RHISurface::ptr rgbTexture;
-    VPIImage vpiImage;
     cv::cuda::GpuMat lumaGpuMat, chromaGpuMat;
     CUtexObject cudaLumaTexObject, cudaChromaTexObject;
   };

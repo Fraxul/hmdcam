@@ -24,7 +24,6 @@ enum DepthMapGeneratorBackend {
   kDepthBackendMock,
   kDepthBackendDGPU,
   kDepthBackendDepthAI,
-  kDepthBackendVPI,
 };
 
 DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr);

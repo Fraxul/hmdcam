@@ -11,7 +11,6 @@ Features:
   - Depending on your camera configuration and platform, this may require an additional discrete GPU or VPU for processing.
   - Supports multiple depth processing backends:
     - Luxonis DepthAI VPU modules. (Recommended -- these are currently the best perf/watt)
-    - Nvidia VPI 2.0 on the Jetson's integrated GPU (requires JetPack 5.0.2+, Orin or Xavier modules only)
     - OpenCV+CUDA on a separate Nvidia discrete GPU
 - Configuration menu with built-in calibration tools
 - Remote viewing via RTSP (embedded live555 server + nvenc)

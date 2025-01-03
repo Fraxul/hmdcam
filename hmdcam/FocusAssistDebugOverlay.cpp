@@ -2,7 +2,6 @@
 
 #include "FocusAssistDebugOverlay.h"
 #include "common/ICameraProvider.h"
-#include "common/VPIUtil.h"
 #include "imgui.h"
 #include "rhi/RHI.h"
 #include "rhi/cuda/RHICVInterop.h"

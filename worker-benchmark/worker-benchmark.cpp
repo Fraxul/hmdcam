@@ -48,7 +48,6 @@ enum DepthMapGeneratorBackend {
   kDepthBackendNone,
   kDepthBackendDGPU,
   kDepthBackendDepthAI,
-  //kDepthBackendVPI
 };
 
 DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr) {
@@ -58,8 +57,6 @@ DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr) {
     return kDepthBackendDGPU;
   } else if ((!strcasecmp(backendStr, "depthai")) || (!strcasecmp(backendStr, "depth-ai"))) {
     return kDepthBackendDepthAI;
-//  } else if ((!strcasecmp(backendStr, "vpi")) || (!strcasecmp(backendStr, "vpi2"))) {
-//    return kDepthBackendVPI;
   } else {
     fprintf(stderr, "depthBackendStringToEnum: unrecognized worker type \"%s\"\n", backendStr);
     return kDepthBackendNone;
