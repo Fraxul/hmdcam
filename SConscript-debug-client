@@ -17,9 +17,24 @@ debugClientEnv.Append(
   ]
 )
 
+tegraSrc = []
+if debugClientEnv['IS_TEGRA']:
+  debugClientEnv.Append(
+    CPPPATH=[
+      '#common/tegra',
+      '#nvsci_headers',
+      '#nvmedia',
+    ],
+    LIBS=[
+      'nvmedia_iofa_sci',
+      'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync',
+    ],
+  )
+  tegraSrc = Glob('common/tegra/*.cpp')
+
 debugClientEnv.CompilationDatabase()
 debugClientEnv.Program(
   target = '../bin/debug-client', # relative to build/debug-client
-  source = Glob('debug-client/*.cpp') + Glob('debug-client/*.cu') + Glob('common/*.cpp') + Glob('common/*.cu') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp'),
+  source = Glob('debug-client/*.cpp') + Glob('debug-client/*.cu') + Glob('common/*.cpp') + Glob('common/*.cu') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp') + tegraSrc,
 )
 

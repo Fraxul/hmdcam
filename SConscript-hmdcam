@@ -60,19 +60,24 @@ monadoStatics = \
 
 if tegraEnv['IS_TEGRA']:
   # Building natively on Tegra enables Argus camera library and nvenc support
-  # Pull in nvargus, nvbuf, v4l2, and live555
+  # Pull in nvargus, nvbuf, nvmedia_iofa_sci, nvsci, v4l2, and live555
   tegraEnv.Append(
     CPPPATH=[
       '#hmdcam/tegra',
+      '#common/tegra',
       '#live555/include',
       tegraEnv['TEGRA_MMAPI'],
       tegraEnv['TEGRA_MMAPI'] + '/include',
       tegraEnv['TEGRA_MMAPI'] + '/argus/include',
       '#tegra_mmapi',
+      '#nvsci_headers',
+      '#nvmedia',
     ],
     LIBS=[
       'nvargus',
       'nvbufsurface', 'nvbufsurftransform',
+      'nvmedia_iofa_sci',
+      'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync',
       'v4l2'
     ],
     CPPDEFINES=[
@@ -84,7 +89,7 @@ if tegraEnv['IS_TEGRA']:
   if (tegraEnv['TEGRA_RELEASE'] < 35):
     tegraEnv.Append(LIBS=['nvbuf_utils'], CPPDEFINES=['USE_NVBUF_UTILS'])
 
-  tegra_src = Glob('hmdcam/tegra/*.cpp')
+  tegra_src = Glob('hmdcam/tegra/*.cpp') + Glob('common/tegra/*.cpp')
 
 else:
   tegra_src = []

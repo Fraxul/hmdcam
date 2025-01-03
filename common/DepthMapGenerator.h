@@ -24,6 +24,7 @@ enum DepthMapGeneratorBackend {
   kDepthBackendMock,
   kDepthBackendDGPU,
   kDepthBackendDepthAI,
+  kDepthBackendOFA,
 };
 
 DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr);
@@ -85,6 +86,7 @@ protected:
   virtual void internalRenderIMGUI() = 0;
   virtual void internalRenderIMGUIPerformanceGraphs() = 0;
   virtual void internalProcessFrame() = 0;
+  virtual void internalPostInitWithCameraSystem(); // optional override, called after initWithCameraSystem()
 
   // Data format controls that should be set in the backend
   uint32_t m_algoDownsampleX = 1;

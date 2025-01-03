@@ -4,6 +4,9 @@
 #ifdef HAVE_OPENCV_CUDA
   #include "common/DepthMapGeneratorSHM.h"
 #endif
+#ifdef L4T_RELEASE_MAJOR
+  #include "common/tegra/DepthMapGeneratorOFA.h"
+#endif
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
@@ -32,6 +35,8 @@ DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr) {
     return kDepthBackendDGPU;
   } else if ((!strcasecmp(backendStr, "depthai")) || (!strcasecmp(backendStr, "depth-ai"))) {
     return kDepthBackendDepthAI;
+  } else if (!strcasecmp(backendStr, "ofa")) {
+    return kDepthBackendOFA;
   } else {
     fprintf(stderr, "depthBackendStringToEnum: unrecognized worker type \"%s\"\n", backendStr);
     return kDepthBackendNone;
@@ -52,6 +57,13 @@ DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend backend) {
     return new DepthMapGeneratorSHM(backend);
 #else
     assert(false && "createDepthMapGenerator: SHM-based backends were disabled at compile time (no opencv_cudaimgproc support).");
+#endif
+
+  case kDepthBackendOFA:
+#ifdef L4T_RELEASE_MAJOR
+    return new DepthMapGeneratorOFA();
+#else
+    assert(false && "createDepthMapGenerator: OFA backend was disabled at compile time (not building on Tegra).");
 #endif
 
   default:
@@ -243,6 +255,13 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
 
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
   }
+
+  // Allow derived classes to do additional init after the CameraSystem is known
+  this->internalPostInitWithCameraSystem();
+}
+
+void DepthMapGenerator::internalPostInitWithCameraSystem() {
+  // Empty default implementation
 }
 
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
