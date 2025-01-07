@@ -30,3 +30,6 @@
 [submodule "canard/libcanard"]
 	path = canbus/libcanard
 	url = https://github.com/OpenCyphal/libcanard
+[submodule "nvsci_headers"]
+	path = nvsci_headers
+	url = https://nv-tegra.nvidia.com/r/tegra/nv-sci-src/nvsci_headers.git
