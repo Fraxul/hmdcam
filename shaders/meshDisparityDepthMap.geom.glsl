@@ -27,7 +27,9 @@ void main() {
     return;
 
   for (int viewport = 0; viewport < 2; ++viewport) {
+#ifndef SKIP_VIEWPORT_WRITE
     gl_ViewportIndex = viewport;
+#endif
     for (int vtx = 0; vtx < 3; ++vtx) {
       gl_Position = modelViewProjection[viewport] * v2g[vtx].P;
       g2f.texCoord = v2g[vtx].texCoord;

@@ -34,7 +34,9 @@ vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
 void main()
 {
   int viewport = gl_InstanceID;
+#ifndef SKIP_VIEWPORT_WRITE
   gl_ViewportIndex = viewport;
+#endif
 
   if (any(notEqual(clamp(vec2(disparitySampleCoordinates.xy), trim_minXY, trim_maxXY), vec2(disparitySampleCoordinates.xy)))) {
     // Trimmed -- collapse primitive in clip space

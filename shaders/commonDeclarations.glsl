@@ -10,6 +10,8 @@
     #extension GL_NV_viewport_array2 : enable
   #elif defined(GL_AMD_vertex_shader_viewport_index) && GL_AMD_vertex_shader_viewport_index
     #extension GL_AMD_vertex_shader_viewport_index : enable
+  #else
+    #define SKIP_VIEWPORT_WRITE
   #endif
 
 #elif RHI_GEOMETRY_SHADER
