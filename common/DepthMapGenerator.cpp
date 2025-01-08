@@ -537,6 +537,11 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
 
     // Copy filtered disparity to render texture
     RHICUDA::copyGpuMatToSurface(vd->m_disparityGpuMat, vd->m_disparityTexture, m_globalStream);
+
+    if (debugDisparityCPUAccessEnabled()) {
+      // Copy filtered disparity to CPU-visible view
+      vd->m_disparityGpuMat.download(vd->m_debugCPUDisparity, m_globalStream);
+    }
   }
 }
 
@@ -563,6 +568,9 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
   };
 
   m_disparityGpuMat.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+
+  // Pre-allocate CPU debug view, identical in size/format to GPU copy
+  m_debugCPUDisparity.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
 
 
   // Allocate buffer for median filter
@@ -604,46 +612,28 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
   }
 
   m_disparityTexture = rhi()->newTexture2D(w, h, RHISurfaceDescriptor(format));
-
-  free(m_debugCPUDisparity);
-  m_debugCPUDisparity = nullptr;
-  m_debugCPUDisparityBytesPerPixel = 0;
 }
-
-void DepthMapGenerator::ViewData::ensureDebugCPUAccessEnabled(uint8_t disparityBytesPerPixel) {
-  if (m_debugCPUDisparity == nullptr || m_debugCPUDisparityBytesPerPixel != disparityBytesPerPixel) {
-    free(m_debugCPUDisparity);
-
-    m_debugCPUDisparityBytesPerPixel = disparityBytesPerPixel;
-    m_debugCPUDisparity = malloc(m_debugCPUDisparityBytesPerPixel * m_disparityTexture->width() * m_disparityTexture->height());
-  }
-}
-
 
 float DepthMapGenerator::debugPeekDisparityTexel(size_t viewIdx, glm::ivec2 texelCoord) const {
   const ViewData* vd = viewDataAtIndex(viewIdx);
 
-  texelCoord = glm::clamp(texelCoord, glm::ivec2(0, 0), glm::ivec2(vd->m_disparityTexture->width() - 1, vd->m_disparityTexture->height() - 1));
-
-  if (vd->m_debugCPUDisparity == nullptr || vd->m_debugCPUDisparityBytesPerPixel == 0) {
+  if (vd->m_debugCPUDisparity.empty()) {
     return -1.0f;
   }
-  size_t pIdx = (texelCoord.y * vd->m_disparityTexture->width()) + texelCoord.x;
+
+  texelCoord = glm::clamp(texelCoord, glm::ivec2(0, 0), glm::ivec2(vd->m_debugCPUDisparity.cols - 1, vd->m_debugCPUDisparity.rows - 1));
   float disparityRaw = 0;
 
+  // .at(row, col) -- Y rows, X columns.
   if (m_useFP16Disparity) {
-    uint16_t v = reinterpret_cast<uint16_t*>(vd->m_debugCPUDisparity)[pIdx];
-    disparityRaw = glm::unpackHalf1x16(v);
+    disparityRaw = glm::unpackHalf1x16(vd->m_debugCPUDisparity.at<uint16_t>(texelCoord.y, texelCoord.x));
   } else {
-    uint32_t v = 0;
-    switch (vd->m_debugCPUDisparityBytesPerPixel) {
-      case 1: v = reinterpret_cast<uint8_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
-      case 2: v = reinterpret_cast<uint16_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
-      case 4: v = reinterpret_cast<uint32_t*>(vd->m_debugCPUDisparity)[pIdx]; break;
+    switch (vd->m_debugCPUDisparity.type()) {
+      case CV_8U:  disparityRaw = static_cast<float>(vd->m_debugCPUDisparity.at<uint8_t >(texelCoord.y, texelCoord.x)); break;
+      case CV_16U: disparityRaw = static_cast<float>(vd->m_debugCPUDisparity.at<uint16_t>(texelCoord.y, texelCoord.x)); break;
       default:
-        assert(false && "DepthMapGenerator::debugPeekDisparity: unhandled m_debugCPUDisparityBytesPerPixel");
+        assert(false && "DepthMapGenerator::debugPeekDisparity: unhandled m_debugCPUDisparity.type()");
     }
-    disparityRaw = static_cast<float>(v);
   }
   return disparityRaw * m_disparityPrescale;
 }

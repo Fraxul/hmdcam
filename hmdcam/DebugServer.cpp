@@ -248,8 +248,8 @@ void DebugServer::frameProcessingEnded() {
       if (!vd->m_isStereoView)
         continue;
 
-      if (vd->m_debugCPUDisparity)
-        memcpy(m_disparityStreams[dispStreamIdx].data, vd->m_debugCPUDisparity, m_disparityStreamSizeBytes);
+      if (!vd->m_debugCPUDisparity.empty())
+        memcpy(m_disparityStreams[dispStreamIdx].data, vd->m_debugCPUDisparity.ptr(), m_disparityStreamSizeBytes);
 
       ++dispStreamIdx;
     }

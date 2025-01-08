@@ -423,13 +423,7 @@ void DebugCameraProvider::internalProcessFrame() {
     if (!vd->m_isStereoView)
       continue;
 
-    if (m_debugDisparityCPUAccessEnabled)
-      vd->ensureDebugCPUAccessEnabled(/*bytesPerPixel=*/ 2);
-
     vd->m_disparityGpuMat.upload(vd->receivedDisparity);
-
-    if (m_debugDisparityCPUAccessEnabled)
-      memcpy(vd->m_debugCPUDisparity, vd->receivedDisparity.ptr<uint16_t>(0), sizeof(uint16_t) * vd->receivedDisparity.cols * vd->receivedDisparity.rows);
 
 #if 0
     if (m_populateDebugTextures) {

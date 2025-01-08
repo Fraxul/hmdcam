@@ -111,7 +111,6 @@ protected:
   struct ViewData {
     ViewData() {}
     virtual ~ViewData() {
-      free(m_debugCPUDisparity);
       CUDA_SAFE_FREE(m_medianFilterScratchBuffer);
     }
 
@@ -135,10 +134,7 @@ protected:
 
     float m_CameraDistanceMeters = 0.0f;
 
-    void* m_debugCPUDisparity = nullptr;
-    uint8_t m_debugCPUDisparityBytesPerPixel = 0;
-
-    void ensureDebugCPUAccessEnabled(uint8_t disparityBytesPerPixel); // requires disparity texture to exist for array sizing
+    cv::Mat m_debugCPUDisparity;
 
   private:
     ViewData(const ViewData&);
