@@ -132,7 +132,7 @@ else:
   tegra_mmapi_src = []
 
 if (env['HAVE_OPENCV_CUDA']):
-  tegraEnv.Append(LIBS=['opencv_cudafilters', 'opencv_cudaimgproc'])
+  tegraEnv.Append(LIBS=['opencv_cudafilters'])
 
 tegraEnv.CompilationDatabase()
 tegraEnv.Program(
