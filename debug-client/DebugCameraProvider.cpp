@@ -184,11 +184,19 @@ bool DebugCameraProvider::connect(const char* debugHost) {
     m_disparityPrescale = cfg.get_float();
     m_useFP16Disparity = cfg.get_u32();
 
+    m_stereoDisparityInputSizeBytes = m_disparityWidth * m_disparityHeight * sizeof(uint8_t);
     m_stereoDisparitySizeBytes = m_disparityWidth * m_disparityHeight * sizeof(uint16_t);
 
-    printf("Disp: %ux%u Downsample: %ux%u maxDisp=%u prescale=%f useFP16=%u sizeBytes=%u\n",
+    printf("Disp: %ux%u Downsample: %ux%u maxDisp=%u prescale=%f useFP16=%u inputSizeBytes=%u sizeBytes=%u\n",
       m_disparityWidth, m_disparityHeight, m_algoDownsampleX, m_algoDownsampleY,
-      m_maxDisparity, m_disparityPrescale, m_useFP16Disparity, m_stereoDisparitySizeBytes);
+      m_maxDisparity, m_disparityPrescale, m_useFP16Disparity, m_stereoDisparityInputSizeBytes, m_stereoDisparitySizeBytes);
+
+    for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+      m_stereoDisparityInputRecvMats[eyeIdx].resize(m_stereoViewCount);
+      for (uint32_t viewIdx = 0; viewIdx < m_stereoViewCount; ++viewIdx) {
+        m_stereoDisparityInputRecvMats[eyeIdx][viewIdx].create(m_disparityHeight, m_disparityWidth, CV_8U);
+      }
+    }
 
     m_stereoDisparityRecvMats.resize(m_stereoViewCount);
     for (uint32_t viewIdx = 0; viewIdx < m_stereoViewCount; ++viewIdx) {
@@ -275,6 +283,8 @@ void DebugCameraProvider::streamThreadFn() {
       if (!safe_read(m_fd, m_streamData[streamIdx].hostChromaBuffer, m_chromaPlaneSizeBytes)) goto cleanup;
     }
     for (uint32_t stereoViewIdx = 0; stereoViewIdx < m_stereoViewCount; ++stereoViewIdx) {
+      if (!safe_read(m_fd, m_stereoDisparityInputRecvMats[0][stereoViewIdx].data, m_stereoDisparityInputSizeBytes)) goto cleanup;
+      if (!safe_read(m_fd, m_stereoDisparityInputRecvMats[1][stereoViewIdx].data, m_stereoDisparityInputSizeBytes)) goto cleanup;
       if (!safe_read(m_fd, m_stereoDisparityRecvMats[stereoViewIdx].data, m_stereoDisparitySizeBytes)) goto cleanup;
     }
 
@@ -352,7 +362,12 @@ void DebugCameraProvider::updateSurfaces() {
     if (!vd->m_isStereoView)
       continue;
 
+    vd->receivedDisparityInput[0].create(m_disparityHeight, m_disparityWidth, CV_8U);
+    vd->receivedDisparityInput[1].create(m_disparityHeight, m_disparityWidth, CV_8U);
     vd->receivedDisparity.create(m_disparityHeight, m_disparityWidth, CV_16UC1);
+
+    memcpy(vd->receivedDisparityInput[0].data, m_stereoDisparityInputRecvMats[0][srcStereoViewIdx].data, m_stereoDisparityInputSizeBytes);
+    memcpy(vd->receivedDisparityInput[1].data, m_stereoDisparityInputRecvMats[1][srcStereoViewIdx].data, m_stereoDisparityInputSizeBytes);
     memcpy(vd->receivedDisparity.data, m_stereoDisparityRecvMats[srcStereoViewIdx].data, m_stereoDisparitySizeBytes);
 
     ++srcStereoViewIdx;
@@ -410,6 +425,8 @@ void DebugCameraProvider::internalUpdateViewData() {
 
     vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
+    vd->receivedDisparityInput[0].create(internalHeight(), internalWidth(), CV_8U);
+    vd->receivedDisparityInput[1].create(internalHeight(), internalWidth(), CV_8U);
     vd->receivedDisparity.create(internalHeight(), internalWidth(), CV_16UC1);
   }
 }
@@ -417,7 +434,7 @@ void DebugCameraProvider::internalUpdateViewData() {
 
 void DebugCameraProvider::internalProcessFrame() {
 
-  // Fill render surfaces with fake data
+  // Fill render surfaces with received data
   for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
     if (!vd->m_isStereoView)
@@ -425,7 +442,6 @@ void DebugCameraProvider::internalProcessFrame() {
 
     vd->m_disparityGpuMat.upload(vd->receivedDisparity);
 
-#if 0
     if (m_populateDebugTextures) {
       if (!vd->m_leftGray)
         vd->m_leftGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
@@ -433,10 +449,9 @@ void DebugCameraProvider::internalProcessFrame() {
       if (!vd->m_rightGray)
         vd->m_rightGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
 
-      RHICUDA::copyGpuMatToSurface(vd->resizedLeft_gpu, vd->m_leftGray, m_globalStream);
-      RHICUDA::copyGpuMatToSurface(vd->resizedRight_gpu, vd->m_rightGray, m_globalStream);
+      rhi()->loadTextureData(vd->m_leftGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[0].ptr());
+      rhi()->loadTextureData(vd->m_rightGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[1].ptr());
     }
-#endif
   }
 
   internalFinalizeDisparityTexture();

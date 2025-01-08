@@ -63,6 +63,10 @@ protected:
   uint32_t m_lumaPlaneSizeBytes = 0;
   uint32_t m_chromaPlaneSizeBytes = 0;
 
+  // L/R inputs to disparity algo
+  std::vector<cv::Mat> m_disparityInputStreams[2];
+  uint32_t m_disparityInputStreamSizeBytes = 0;
+
   std::vector<cv::Mat> m_disparityStreams;
   uint32_t m_disparityStreamSizeBytes = 0;
 

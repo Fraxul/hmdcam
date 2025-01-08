@@ -84,6 +84,7 @@ protected:
     ViewDataDebug() {}
     virtual ~ViewDataDebug() {}
 
+    cv::Mat receivedDisparityInput[2];
     cv::Mat receivedDisparity;
   };
 
@@ -92,8 +93,11 @@ protected:
   ViewDataDebug* viewDataAtIndex(size_t index) { return static_cast<ViewDataDebug*>(m_viewData[index]); }
 
   uint32_t m_stereoViewCount = 0;
+  uint32_t m_stereoDisparityInputSizeBytes = 0;
   uint32_t m_stereoDisparitySizeBytes = 0;
   uint32_t m_disparityWidth = 0, m_disparityHeight = 0;
+
+  std::vector<cv::Mat> m_stereoDisparityInputRecvMats[2];
   std::vector<cv::Mat> m_stereoDisparityRecvMats;
 };
 

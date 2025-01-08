@@ -432,6 +432,11 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
       RHICUDA::copyGpuMatToSurface(vd->resizedLeft_gpu, vd->m_leftGray, m_globalStream);
       RHICUDA::copyGpuMatToSurface(vd->resizedRight_gpu, vd->m_rightGray, m_globalStream);
     }
+
+    if (debugDisparityCPUAccessEnabled()) {
+      vd->resizedLeft_gpu.download(vd->m_debugCPUDisparityInput[0], m_globalStream);
+      vd->resizedRight_gpu.download(vd->m_debugCPUDisparityInput[1], m_globalStream);
+    }
   }
 
   internalFinalizeDisparityTexture();

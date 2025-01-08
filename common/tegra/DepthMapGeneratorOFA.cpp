@@ -393,6 +393,10 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
       copyNvSciBufToSurface(vd->m_ofaInputBuffer[0], vd->m_leftGray, (CUstream) m_globalStream.cudaPtr());
       copyNvSciBufToSurface(vd->m_ofaInputBuffer[1], vd->m_rightGray, (CUstream) m_globalStream.cudaPtr());
     }
+
+    if (debugDisparityCPUAccessEnabled()) {
+      PER_EYE vd->m_rectifiedMat[eyeIdx].download(vd->m_debugCPUDisparityInput[eyeIdx], m_globalStream);
+    }
   }
 
   internalFinalizeDisparityTexture();

@@ -163,6 +163,14 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
     cfg.put_float(m_depthMapGenerator->m_disparityPrescale);
     cfg.put_u32(m_depthMapGenerator->m_useFP16Disparity);
 
+    m_disparityInputStreamSizeBytes = m_depthMapGenerator->internalWidth() * m_depthMapGenerator->internalHeight() * sizeof(uint8_t);
+    for (uint32_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+      m_disparityInputStreams[eyeIdx].resize(stereoViews);
+      for (uint32_t viewIdx = 0; viewIdx < stereoViews; ++viewIdx) {
+        m_disparityInputStreams[eyeIdx][viewIdx].create(m_depthMapGenerator->internalHeight(), m_depthMapGenerator->internalWidth(), CV_8U);
+      }
+    }
+
     m_disparityStreamSizeBytes = m_depthMapGenerator->internalWidth() * m_depthMapGenerator->internalHeight() * sizeof(uint16_t);
     m_disparityStreams.resize(stereoViews);
     for (uint32_t i = 0; i < stereoViews; ++i) {
@@ -248,8 +256,13 @@ void DebugServer::frameProcessingEnded() {
       if (!vd->m_isStereoView)
         continue;
 
-      if (!vd->m_debugCPUDisparity.empty())
-        memcpy(m_disparityStreams[dispStreamIdx].data, vd->m_debugCPUDisparity.ptr(), m_disparityStreamSizeBytes);
+      if (vd->m_debugCPUDisparity.empty() || vd->m_debugCPUDisparityInput[0].empty() || vd->m_debugCPUDisparityInput[1].empty())
+        continue;
+
+      for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
+        memcpy(m_disparityInputStreams[eyeIdx][dispStreamIdx].data, vd->m_debugCPUDisparityInput[eyeIdx].ptr(), m_disparityInputStreamSizeBytes);
+
+      memcpy(m_disparityStreams[dispStreamIdx].data, vd->m_debugCPUDisparity.ptr(), m_disparityStreamSizeBytes);
 
       ++dispStreamIdx;
     }
@@ -346,6 +359,8 @@ void DebugServer::streamThreadFn() {
           if (!safe_write(clientFd, m_streamResources[streamIdx].m_chromaPlane, m_chromaPlaneSizeBytes)) goto cleanup;
         }
         for (size_t dispStreamIdx = 0; dispStreamIdx < m_disparityStreams.size(); ++dispStreamIdx) {
+          if (!safe_write(clientFd, m_disparityInputStreams[0][dispStreamIdx].data, m_disparityInputStreamSizeBytes)) goto cleanup;
+          if (!safe_write(clientFd, m_disparityInputStreams[1][dispStreamIdx].data, m_disparityInputStreamSizeBytes)) goto cleanup;
           if (!safe_write(clientFd, m_disparityStreams[dispStreamIdx].data, m_disparityStreamSizeBytes)) goto cleanup;
         }
       } // frame loop

@@ -134,6 +134,7 @@ protected:
 
     float m_CameraDistanceMeters = 0.0f;
 
+    cv::Mat m_debugCPUDisparityInput[2]; // L/R inputs to stereo matching algorithm
     cv::Mat m_debugCPUDisparity;
 
   private:

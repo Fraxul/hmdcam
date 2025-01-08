@@ -572,6 +572,11 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
   // Pre-allocate CPU debug view, identical in size/format to GPU copy
   m_debugCPUDisparity.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
 
+  // Pre-allocate CPU debug view of L/R inputs
+  for (size_t i = 0; i < 2; ++i) {
+    m_debugCPUDisparityInput[i].create(h, w, CV_8U);
+  }
+
 
   // Allocate buffer for median filter
   {
