@@ -252,7 +252,6 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
 
     // Build a half-res undistortRectifyMap to save some processing time
     unsigned int downsampleFactor = 2;
-    cv::Size rectifiedSize = cv::Size(inputWidth() / downsampleFactor, inputHeight() / downsampleFactor);
 
     PER_EYE {
       CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
@@ -260,10 +259,7 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
     }
 
     // Output from remapArray
-    PER_EYE vd->m_rectifiedMat[eyeIdx].create(rectifiedSize, CV_8U);
-
-    // Output from final resize
-    PER_EYE vd->m_disparityInputMat[eyeIdx].create(cv::Size(internalWidth(), internalHeight()), CV_8U);
+    PER_EYE vd->m_rectifiedMat[eyeIdx].create(cv::Size(internalWidth(), internalHeight()), CV_8U);
 
     // OFA input buffers
     PER_EYE {
@@ -296,9 +292,14 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
 }
 
 void copyGpuMatToNvSciBuf(cv::cuda::GpuMat& inGpuMat, NvSciCudaInteropBuffer* buf, CUstream stream) {
+  // Sanity checks
+  assert(inGpuMat.cols && inGpuMat.rows);
+  assert(buf->m_width && buf->m_height);
+  assert(inGpuMat.cols == buf->m_width);
+  assert(inGpuMat.rows == buf->m_height);
 
-  size_t copyWidth = std::min<size_t>(inGpuMat.cols, buf->m_width);
-  size_t copyHeight = std::min<size_t>(inGpuMat.rows, buf->m_height);
+  size_t copyWidth = buf->m_width;
+  size_t copyHeight = buf->m_height;
 
   CUDA_MEMCPY2D copyDescriptor;
   memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
@@ -317,9 +318,15 @@ void copyGpuMatToNvSciBuf(cv::cuda::GpuMat& inGpuMat, NvSciCudaInteropBuffer* bu
 }
 
 void copyNvSciBufToGpuMat(NvSciCudaInteropBuffer* buf, cv::cuda::GpuMat& outGpuMat, CUstream stream) {
+  // Sanity checks
+  assert(outGpuMat.cols && outGpuMat.rows);
+  assert(buf->m_width && buf->m_height);
+  assert(outGpuMat.cols == buf->m_width);
+  assert(outGpuMat.rows == buf->m_height);
 
-  size_t copyWidth = std::min<size_t>(outGpuMat.cols, buf->m_width);
-  size_t copyHeight = std::min<size_t>(outGpuMat.rows, buf->m_height);
+  size_t copyWidth = buf->m_width;
+  size_t copyHeight = buf->m_height;
+
 
   CUDA_MEMCPY2D copyDescriptor;
   memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
@@ -409,12 +416,9 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     cv::Size inputSize = cv::Size(inputWidth(), inputHeight());
     PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), inputSize, vd->m_undistortRectifyMap_gpu[eyeIdx], vd->m_rectifiedMat[eyeIdx], (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ 2);
 
-    // Final resize
-    PER_EYE cv::cuda::resize(vd->m_rectifiedMat[eyeIdx], vd->m_disparityInputMat[eyeIdx], cv::Size(internalWidth(), internalHeight()), 0, 0, cv::INTER_LINEAR, m_globalStream);
-
     // Populate NvSci input buffer
-    // TODO: This really should be merged in with the resize above -- write straight to the CUarray, skip a copy.
-    PER_EYE copyGpuMatToNvSciBuf(vd->m_disparityInputMat[eyeIdx], vd->m_ofaInputBuffer[eyeIdx], (CUstream) m_globalStream.cudaPtr());
+    // TODO: This really should be merged in with the remap above -- write straight to the CUarray, skip a copy.
+    PER_EYE copyGpuMatToNvSciBuf(vd->m_rectifiedMat[eyeIdx], vd->m_ofaInputBuffer[eyeIdx], (CUstream) m_globalStream.cudaPtr());
 
     // Signal preprocess semaphore for OFA handoff
     vd->m_ofaPreSync->signalCudaToNvSci((CUstream) m_globalStream.cudaPtr());

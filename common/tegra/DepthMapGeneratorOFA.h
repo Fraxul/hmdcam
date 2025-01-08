@@ -61,12 +61,8 @@ protected:
     // Remap payloads for rectification
     cv::cuda::GpuMat m_undistortRectifyMap_gpu[2];
 
-    // Output from remap
+    // Output from remap+downsample
     cv::cuda::GpuMat m_rectifiedMat[2];
-
-    // Output from resize of m_rectifiedMat
-    cv::cuda::GpuMat m_disparityInputMat[2];
-
 
     // Reference to the IOFA, which is required to unregister buffers during destruction
     NvMediaIofa* m_iofa = nullptr;
