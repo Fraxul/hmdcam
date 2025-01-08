@@ -94,6 +94,24 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     printf("DEBUG: Using %u streams per session\n", m_streamsPerSession);
   }
 
+  std::vector<int> selectedSensorIndices;
+  if (readEnvironmentVariableVector("ARGUS_SENSOR_INDICES", selectedSensorIndices) && (!selectedSensorIndices.empty())) {
+    printf("DEBUG: Selecting %zu of %zu sensors: ", selectedSensorIndices.size(), m_cameraDevices.size());
+
+    // Remap camera devices by index
+    std::vector<Argus::CameraDevice*> selectedCameraDevices;
+    for (size_t i = 0; i < selectedSensorIndices.size(); ++i) {
+      printf("%d ", selectedSensorIndices[i]);
+      assert(selectedSensorIndices[i] < m_cameraDevices.size());
+      selectedCameraDevices.push_back(m_cameraDevices[selectedSensorIndices[i]]);
+    }
+    printf("\n");
+
+    // Swap in newly remapped list
+    m_cameraDevices.swap(selectedCameraDevices);
+
+  }
+
   // Get the selected camera device and sensor mode.
   for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
     printf("Sensor %zu:\n", cameraIdx);
