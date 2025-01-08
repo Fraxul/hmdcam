@@ -37,8 +37,6 @@ protected:
     RHIRenderTarget::ptr origLeftBlitRT;
     RHIRenderTarget::ptr origRightBlitRT;
 
-    cv::cuda::GpuMat rectLeft_gpu;
-    cv::cuda::GpuMat rectRight_gpu;
     cv::cuda::GpuMat resizedLeft_gpu;
     cv::cuda::GpuMat resizedRight_gpu;
     cv::cuda::GpuMat resizedTransposedLeft_gpu;

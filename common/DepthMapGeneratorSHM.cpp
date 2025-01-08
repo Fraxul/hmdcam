@@ -213,7 +213,6 @@ void DepthMapGeneratorSHM::internalUpdateViewData() {
 
       // Build a half-res undistortRectifyMap to save some processing time
       unsigned int downsampleFactor = 2;
-      cv::Size rectifiedSize = cv::Size(inputWidth() / downsampleFactor, inputHeight() / downsampleFactor);
 
       PER_EYE {
         CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
@@ -221,9 +220,6 @@ void DepthMapGeneratorSHM::internalUpdateViewData() {
       }
 
       //Set up what matrices we can to prevent dynamic memory allocation.
-      vd->rectLeft_gpu = cv::cuda::GpuMat(rectifiedSize, CV_8U);
-      vd->rectRight_gpu = cv::cuda::GpuMat(rectifiedSize, CV_8U);
-
       vd->resizedLeft_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
       vd->resizedRight_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
 
