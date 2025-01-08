@@ -18,7 +18,6 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/cudaimgproc.hpp>
-#include <opencv2/cudawarping.hpp>
 #include <cuda.h>
 #include <npp.h>
 #include <epoxy/gl.h> // epoxy_is_desktop_gl

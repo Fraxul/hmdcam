@@ -14,7 +14,6 @@
 #include <opencv2/core.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/cudaimgproc.hpp>
-#include <opencv2/cudawarping.hpp>
 #include <opencv2/cvconfig.h>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgproc/types_c.h>
