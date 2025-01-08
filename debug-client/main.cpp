@@ -3,7 +3,6 @@
 #include "implot/implot.h"
 #include <stdio.h>
 #include <SDL.h>
-#include <cuda.h>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/aruco/charuco.hpp>
 #include <glm/gtx/transform.hpp>
@@ -21,6 +20,9 @@
 #include "rhi/RHIResources.h"
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
 #include "rhi/gl/RHISurfaceGL.h"
+
+#include <cuda.h>
+#include <cudaGL.h>
 
 RHIWindowRenderTargetGL::ptr windowRenderTarget;
 class RHISDLWindowRenderTargetGL : public RHIWindowRenderTargetGL {
@@ -245,6 +247,7 @@ int main(int argc, char** argv) {
 
 
   // CUDA init
+  bool cudaGLInteropOK = true;
   {
     cuInit(0);
 
@@ -256,6 +259,13 @@ int main(int argc, char** argv) {
 
     cuDevicePrimaryCtxRetain(&cudaContext, cudaDevice);
     cuCtxSetCurrent(cudaContext);
+
+    unsigned int cudaGLDeviceCount = 0;
+    CUdevice cudaGLDevices[8];
+    if (CUDA_SUCCESS != cuGLGetDevices(&cudaGLDeviceCount, cudaGLDevices, 8, CU_GL_DEVICE_LIST_ALL) || cudaGLDeviceCount == 0) {
+      printf("WARNING: CUDA-OpenGL interop is not possible with this rendering configuration.\n");
+      cudaGLInteropOK = false;
+    }
   }
   cv::cuda::Stream cvCudaStream;
   CUstream cuStream = (CUstream) cvCudaStream.cudaPtr();
@@ -263,6 +273,8 @@ int main(int argc, char** argv) {
 
   // Debug server connection
   cameraProvider = new DebugCameraProvider();
+  cameraProvider->setCudaGLInteropOK(cudaGLInteropOK);
+
   if (!cameraProvider->connect(debugHost)) {
     printf("Failed to connect to debug server (%s)\n", debugHost);
     return -1;

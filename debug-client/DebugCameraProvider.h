@@ -35,6 +35,7 @@ public:
 
   // -- Other DebugCameraProvider-specific functions
 
+  void setCudaGLInteropOK(bool value) { m_doCudaGLInterop = value; }
   cv::Mat cvMatLuma(size_t streamIdx) const;
   cv::Mat cvMatChroma(size_t streamIdx) const;
   bool connect(const char* hostname);
@@ -43,6 +44,7 @@ public:
   const cv::String& cameraSystemConfig() const { return m_cameraSystemConfig; }
 
 protected:
+  bool m_doCudaGLInterop = true;
   int m_fd = -1;
 
   static void* streamThreadEntryPoint(void* x) { reinterpret_cast<DebugCameraProvider*>(x)->streamThreadFn(); return NULL; }
@@ -72,6 +74,8 @@ protected:
 
     RHISurface::ptr rhiSurfaceRGBA;
     cv::cuda::GpuMat gpuMatLuma, gpuMatChroma, gpuMatRGBA;
+
+    void* hostRGBABuffer = nullptr; // used on fallback path
     CUtexObject cudaLumaTexObject = 0;
     CUtexObject cudaChromaTexObject = 0;
   };

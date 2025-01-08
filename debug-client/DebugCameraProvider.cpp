@@ -309,6 +309,9 @@ DebugCameraProvider::~DebugCameraProvider() {
 
     if (sd.hostChromaBuffer)
       cuMemFreeHost(sd.hostChromaBuffer);
+
+    if (sd.hostRGBABuffer)
+      cuMemFreeHost(sd.hostRGBABuffer);
   }
 }
 
@@ -353,7 +356,28 @@ void DebugCameraProvider::updateSurfaces() {
       (Npp8u*) sd.gpuMatRGBA.cudaPtr(), sd.gpuMatRGBA.step,
       sz, destinationOrder, /*constant (source channel 3) value=*/ 0xff);
 
-    RHICUDA::copyGpuMatToSurface(sd.gpuMatRGBA, sd.rhiSurfaceRGBA);
+    if (m_doCudaGLInterop) {
+      // Direct path
+      RHICUDA::copyGpuMatToSurface(sd.gpuMatRGBA, sd.rhiSurfaceRGBA);
+    } else {
+      // Fallback path
+      if (!sd.hostRGBABuffer) {
+        CUDA_CHECK(cuMemHostAlloc(&sd.hostRGBABuffer, streamWidth() * streamHeight() * 4, /*flags=*/ 0));
+      }
+
+      CUDA_MEMCPY2D copyDescriptor;
+      memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
+      copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+      copyDescriptor.srcDevice = (CUdeviceptr) sd.gpuMatRGBA.cudaPtr();
+      copyDescriptor.srcPitch = sd.gpuMatRGBA.step;
+      copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
+      copyDescriptor.dstHost = sd.hostRGBABuffer;
+      copyDescriptor.dstPitch = streamWidth() * 4;
+      copyDescriptor.WidthInBytes = streamWidth() * 4;
+      copyDescriptor.Height = streamHeight();
+      CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+      rhi()->loadTextureData(sd.rhiSurfaceRGBA, kVertexElementTypeUByte4N, sd.hostRGBABuffer);
+    }
   }
 
   uint32_t srcStereoViewIdx = 0;
@@ -361,10 +385,6 @@ void DebugCameraProvider::updateSurfaces() {
     auto vd = viewDataAtIndex(viewIdx);
     if (!vd->m_isStereoView)
       continue;
-
-    vd->receivedDisparityInput[0].create(m_disparityHeight, m_disparityWidth, CV_8U);
-    vd->receivedDisparityInput[1].create(m_disparityHeight, m_disparityWidth, CV_8U);
-    vd->receivedDisparity.create(m_disparityHeight, m_disparityWidth, CV_16UC1);
 
     memcpy(vd->receivedDisparityInput[0].data, m_stereoDisparityInputRecvMats[0][srcStereoViewIdx].data, m_stereoDisparityInputSizeBytes);
     memcpy(vd->receivedDisparityInput[1].data, m_stereoDisparityInputRecvMats[1][srcStereoViewIdx].data, m_stereoDisparityInputSizeBytes);
@@ -425,9 +445,20 @@ void DebugCameraProvider::internalUpdateViewData() {
 
     vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
-    vd->receivedDisparityInput[0].create(internalHeight(), internalWidth(), CV_8U);
-    vd->receivedDisparityInput[1].create(internalHeight(), internalWidth(), CV_8U);
-    vd->receivedDisparity.create(internalHeight(), internalWidth(), CV_16UC1);
+    // Create receive Mats for the disparity inputs and outputs
+    vd->receivedDisparityInput[0].create(m_disparityHeight, m_disparityWidth, CV_8U);
+    vd->receivedDisparityInput[1].create(m_disparityHeight, m_disparityWidth, CV_8U);
+    vd->receivedDisparity.create(m_disparityHeight, m_disparityWidth, CV_16UC1);
+
+    // These can directly alias the receivedDisparityInput to save a copy
+    vd->m_debugCPUDisparityInput[0] = vd->receivedDisparityInput[0];
+    vd->m_debugCPUDisparityInput[1] = vd->receivedDisparityInput[1];
+
+    if (!m_doCudaGLInterop) {
+      // If we're not doing CUDA-GL interop, the disparity debug view mats can also directly alias its receive mat.
+      // The debug mat won't be written because internalFinalizeDisparityTexture won't be called.
+      vd->m_debugCPUDisparity = vd->receivedDisparity;
+    }
   }
 }
 
@@ -452,9 +483,16 @@ void DebugCameraProvider::internalProcessFrame() {
       rhi()->loadTextureData(vd->m_leftGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[0].ptr());
       rhi()->loadTextureData(vd->m_rightGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[1].ptr());
     }
+
+    if (!m_doCudaGLInterop) {
+      // Skip CUDA filtering, just upload the disparity directly
+      rhi()->loadTextureData(vd->m_disparityTexture, kVertexElementTypeShort1, vd->receivedDisparity.data);
+    }
   }
 
-  internalFinalizeDisparityTexture();
+  if (m_doCudaGLInterop) {
+    internalFinalizeDisparityTexture();
+  }
 }
 
 void DebugCameraProvider::internalRenderIMGUI() {
