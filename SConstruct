@@ -149,7 +149,6 @@ if not is_tegra:
 
 if have_opencv_cuda:
   SConscript('SConscript-debug-client', variant_dir = 'build/debug-client', duplicate = 0)
-SConscript('SConscript-eyectl', variant_dir = 'build/eyectl', duplicate = 0)
 if (build_dgpu):
   SConscript('SConscript-dgpu-worker', variant_dir = 'build/dgpu-worker', duplicate = 0)
 
