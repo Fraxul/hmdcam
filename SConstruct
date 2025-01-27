@@ -117,6 +117,7 @@ else:
 # Common env
 if (env['debug']):
   env.Append(NVCCFLAGS=['--debug', '--device-debug'])
+  env.Append(CPPFLAGS=['-fstandalone-debug'])
 else:
   env.Append(CPPFLAGS=['-O2'])
 
@@ -125,11 +126,22 @@ conf = Configure(env)
 if not conf.CheckLib('opencv_cudaimgproc'):
   print("OpenCV doesn't appear to have been built with cudaimgproc -- SHM-based backends and the RDMA client will not build.")
   have_opencv_cuda = False
+
+# Detect TensorRT
+have_tensorrt = True
+if not conf.CheckLib('nvinfer'):
+  print("TensorRT / libnvinfer not found")
+  have_tensorrt = False
+
 conf.Finish()
+
 if (have_opencv_cuda):
   env.Append(CPPDEFINES=['HAVE_OPENCV_CUDA'])
 env['HAVE_OPENCV_CUDA'] = have_opencv_cuda
 
+env['HAVE_TENSORRT'] = have_tensorrt
+if (have_tensorrt):
+  env.Append(CPPDEFINES=['HAVE_TENSORRT'])
 
 Export('env')
 
@@ -162,4 +174,8 @@ if os.path.isdir('build/depthai-core/install'):
 else:
   print('Did not find build artifacts from depthai-core -- the DepthAI worker will be disabled.')
   print('If you want to build the DepthAI worker, run ./build-depthai-core.sh first')
+
+# Eyetracking test harness
+if (have_tensorrt):
+  SConscript('eyetracking/test/SConscript', variant_dir = 'build/eyetracking-test', duplicate = 0)
 

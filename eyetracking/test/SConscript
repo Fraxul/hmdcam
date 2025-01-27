@@ -1,0 +1,13 @@
+Import('env')
+
+etEnv = env.Clone()
+
+etEnv.CompilationDatabase()
+etEnv.Append(CPPPATH=['#eyetracking'])
+etEnv.Program(
+  target = '../bin/eyetracking-test',
+  source = Glob('#eyetracking/*.cpp') + Glob('#eyetracking/*.cu') + Glob('#eyetracking/test/*.cpp'),
+  LIBS=['stdc++', 'pthread', 'rt', 'opencv_core', 'opencv_imgproc', 'opencv_videoio', 'opencv_cudaimgproc', 'nppc', 'nppig', 'nppim', 'nppitc', 'nvinfer', 'cuda', 'cudart', 'boost_thread'],
+)
+
+

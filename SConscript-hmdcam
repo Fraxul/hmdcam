@@ -132,6 +132,10 @@ else:
 
 if (env['HAVE_OPENCV_CUDA']):
   tegraEnv.Append(LIBS=['opencv_cudafilters'])
+if (env['HAVE_TENSORRT']):
+  tegraEnv.Append(LIBS=['nvinfer'])
+  tegra_src += Glob('eyetracking/*.cpp')
+
 
 tegraEnv.CompilationDatabase()
 tegraEnv.Program(
