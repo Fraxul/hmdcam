@@ -7,7 +7,7 @@ Don't forget to set up the submodules after cloning:
   git submodule update --init --recursive
 
 Install prerequisite packages:
-  sudo apt install cmake scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev libsocketcan-dev
+  sudo apt install cmake scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev libsocketcan-dev libeigen3-dev libceres-dev
 
 Install the Jetson Multimedia API and other required libraries (CUDA for Tegra):
   sudo apt install nvidia-l4t-jetson-multimedia-api nvidia-cuda-dev
