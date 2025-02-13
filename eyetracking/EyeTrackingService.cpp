@@ -354,55 +354,90 @@ bool EyeTrackingService::processFrame() {
 
     bool didFitEllipse = false;
     if (!contours.empty()) {
-      std::vector<float> contourAreas;
-      contourAreas.resize(contours.size());
 
+      // Find largest-area contour
       size_t bestContourIdx = 0;
-      float bestContourArea = 0;
+      float bestContourArea = cv::contourArea(contours[0]);
 
-      for (size_t contourIdx = 0; contourIdx < contours.size(); ++contourIdx) {
+      for (size_t contourIdx = 1; contourIdx < contours.size(); ++contourIdx) {
         float area = cv::contourArea(contours[contourIdx]);
-        contourAreas[contourIdx] = area;
-        printf("Contour %zu: area = %f, %zu points\n", contourIdx, area, contours[contourIdx].size());
 
         if (area > bestContourArea) {
           bestContourArea = area;
-          bestContourArea = contourIdx;
+          bestContourIdx = contourIdx;
         }
       }
+
+      const auto& bestContour = contours[bestContourIdx];
+
+      printf("Contour %zu/%zu: area = %f, %zu points\n", bestContourIdx, contours.size(), bestContourArea, bestContour.size());
 
       // The algorithm needs a bare minimum of 5px to fit an ellipse
       // Try and give it a healthy margin
-      if (contours[bestContourIdx].size() >= 20) {
-        const auto& bestContour = contours[bestContourIdx];
+      if (contours[bestContourIdx].size() < 20) {
+        printf(" -- Failed on point count threshold\n");
+        goto skipFitting;
+      }
 
-        ps.m_pupilContourArea = bestContourArea;
-        ps.m_pupilEllipse = cv::fitEllipse(bestContour);
-        didFitEllipse = true;
+      // Simple area threshold
+      // TODO configurable
+      if (bestContourArea < 1000.0f) {
+        printf(" -- Failed on area threshold\n");
+        goto skipFitting;
+      }
 
-        std::vector<cv::Point2f> pupil_inliers;
-        pupil_inliers.resize(bestContour.size());
-        for (size_t i = 0; i < pupil_inliers.size(); ++i) {
-          pupil_inliers[i] = cv::Point2f(bestContour[i].x, bestContour[i].y);
-        }
+      // Circularity
 
-        // Add this observation to the eye model fitter
-        ps.m_eyeModelFitter.add_observation(
-          /*image (unused)=*/cv::Mat(),
-          /*pupil=*/ singleeyefitter::toEllipse<double>(ps.m_pupilEllipse),
-          /*inliers=*/ pupil_inliers);
+      float perimeter = cv::arcLength(bestContour, /*is_closed=*/ true);
+      float circularity = (4.0f * M_PI * bestContourArea) / (perimeter * perimeter);
+      if (fabs(1.0f - circularity) > 0.10f) {
+        printf(" -- Failed on circularity test (ratio %.3f)\n", circularity);
+        goto skipFitting;
+      }
 
-        // Try and fit the model
-        if (((ps.m_eyeModelFitter.pupils.size() & 63) == 0) && ps.m_eyeModelFitter.model_version == 0) {
-          printf("Attempting eye model fit\n");
-          if (ps.m_eyeModelFitter.unproject_observations()) {
-            ps.m_eyeModelFitter.initialise_model();
-          } else {
-            printf("Eye model fit failed; unproject_observations() returned false.\n");
-          }
+      // Convexity
+      std::vector<cv::Point> hull;
+      cv::convexHull(bestContour, hull);
+      float convexHullArea = fabs(cv::contourArea(hull));
+      if (convexHullArea < 1.0f) {
+        printf(" -- Failed to fit a convex hull\n");
+        goto skipFitting;
+      }
+
+      float convexity = bestContourArea / convexHullArea;
+      if (fabs(1.0f - convexity) > 0.10f) {
+        printf(" -- Failed on convexity test (ratio %.3f)\n", convexity);
+        goto skipFitting;
+      }
+
+      // Tests passed
+      ps.m_pupilContourArea = bestContourArea;
+      ps.m_pupilEllipse = cv::fitEllipse(bestContour);
+      didFitEllipse = true;
+
+      std::vector<cv::Point2f> pupil_inliers;
+      pupil_inliers.resize(bestContour.size());
+      for (size_t i = 0; i < pupil_inliers.size(); ++i) {
+        pupil_inliers[i] = cv::Point2f(bestContour[i].x, bestContour[i].y);
+      }
+
+      // Add this observation to the eye model fitter
+      ps.m_eyeModelFitter.add_observation(
+        /*image (unused)=*/cv::Mat(),
+        /*pupil=*/ singleeyefitter::toEllipse<double>(ps.m_pupilEllipse),
+        /*inliers=*/ pupil_inliers);
+
+      // Try and fit the model
+      if (((ps.m_eyeModelFitter.pupils.size() & 63) == 0) && ps.m_eyeModelFitter.model_version == 0) {
+        printf("Attempting eye model fit\n");
+        if (ps.m_eyeModelFitter.unproject_observations()) {
+          ps.m_eyeModelFitter.initialise_model();
+        } else {
+          printf("Eye model fit failed; unproject_observations() returned false.\n");
         }
       }
     }
+skipFitting:
 
     if (!didFitEllipse) {
       // Clear pupil ellipse, since we didn't find anything useful this round.
@@ -515,11 +550,15 @@ bool EyeTrackingService::processFrame() {
   }
 
 
-#if 0
+#if 1 // Histogram equalization switch
+
+#if 1 // CLAHE vs global (equalizeHist) switch
   // CLAHE Histogram equalization
-  //ps.m_clahe->apply(/*src=*/ ps.m_preHistEqMat, /*dst=*/ ps.m_postHistEqMat, m_cvStream);
+  ps.m_clahe->apply(/*src=*/ ps.m_preHistEqMat, /*dst=*/ ps.m_postHistEqMat, m_cvStream);
+#else
   // TODO: Enable CLAHE (maybe as an option).
   cv::cuda::equalizeHist(/*src=*/ ps.m_preHistEqMat, /*dst=*/ ps.m_postHistEqMat, m_cvStream);
+#endif
 
   // Apply format conversion for TRT input
   ApplyLUT8to16(ps.m_postHistEqMat, ps.m_trtInputMat, (const ushort*) m_inputLUT, m_cuStream);
