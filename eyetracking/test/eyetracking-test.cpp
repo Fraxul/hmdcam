@@ -66,7 +66,8 @@ int main(int argc, char* argv[]) {
 
   EyeTrackingService* svc = new EyeTrackingService();
   //svc->setInputFilename(0, "/mnt/scratch/eyetracking/demo3_200x150.mp4");
-  svc->setInputFilename(0, "/mnt/scratch/eyetracking/ViveProEye_left_200x150.mp4");
+  //svc->setInputFilename(0, "/mnt/scratch/eyetracking/ViveProEye_left_200x150.mp4");
+  svc->setInputFilename(0, "/mnt/scratch/eyetracking/openEDS_S_1_crop.mp4");
 
   cv::VideoWriter videoOut;
 

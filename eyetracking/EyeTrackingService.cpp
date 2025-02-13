@@ -2,6 +2,7 @@
 #include "eyeProcessing.h"
 #include "common/Timing.h"
 #include "common/mmfile.h"
+#include "SingleEyeFitter/projection.h"
 #include <cuda.h>
 #include <npp.h>
 #include <opencv2/core.hpp>
@@ -181,6 +182,12 @@ EyeTrackingService::EyeTrackingService() {
 
   PER_EYE {
     ProcessingState& ps = m_processingState[eyeIdx];
+
+    // Init eye-fitter
+    // Focal length computation is taken from the SingleEyeFitter sample tool
+    double fov = 45.0; // TODO parameterize
+    double fov_radians = fov * (M_PI / 180.0);
+    ps.m_eyeModelFitter.focal_length = static_cast<double>(m_trtInputWidth / 2) / std::tan(fov_radians / 2.0);
 
     // CLAHE processor, which has some internal allocations
     ps.m_clahe = cv::cuda::createCLAHE(/*clipLimit=*/ 1.5, /*tileGridSize=*/ cv::Size(8, 8));
@@ -362,9 +369,33 @@ bool EyeTrackingService::processFrame() {
       // The algorithm needs a bare minimum of 5px to fit an ellipse
       // Try and give it a healthy margin
       if (contours[bestContourIdx].size() >= 20) {
+        const auto& bestContour = contours[bestContourIdx];
+
         ps.m_pupilContourArea = bestContourArea;
-        ps.m_pupilEllipse = cv::fitEllipse(contours[bestContourIdx]);
+        ps.m_pupilEllipse = cv::fitEllipse(bestContour);
         didFitEllipse = true;
+
+        std::vector<cv::Point2f> pupil_inliers;
+        pupil_inliers.resize(bestContour.size());
+        for (size_t i = 0; i < pupil_inliers.size(); ++i) {
+          pupil_inliers[i] = cv::Point2f(bestContour[i].x, bestContour[i].y);
+        }
+
+        // Add this observation to the eye model fitter
+        ps.m_eyeModelFitter.add_observation(
+          /*image (unused)=*/cv::Mat(),
+          /*pupil=*/ singleeyefitter::toEllipse<double>(ps.m_pupilEllipse),
+          /*inliers=*/ pupil_inliers);
+
+        // Try and fit the model
+        if (((ps.m_eyeModelFitter.pupils.size() & 63) == 0) && ps.m_eyeModelFitter.model_version == 0) {
+          printf("Attempting eye model fit\n");
+          if (ps.m_eyeModelFitter.unproject_observations()) {
+            ps.m_eyeModelFitter.initialise_model();
+          } else {
+            printf("Eye model fit failed; unproject_observations() returned false.\n");
+          }
+        }
       }
     }
 
@@ -482,6 +513,8 @@ bool EyeTrackingService::processFrame() {
 
   }
 
+
+#if 0
   // CLAHE Histogram equalization
   //ps.m_clahe->apply(/*src=*/ ps.m_preHistEqMat, /*dst=*/ ps.m_postHistEqMat, m_cvStream);
   // TODO: Enable CLAHE (maybe as an option).
@@ -489,6 +522,12 @@ bool EyeTrackingService::processFrame() {
 
   // Apply format conversion for TRT input
   ApplyLUT8to16(ps.m_postHistEqMat, ps.m_trtInputMat, (const ushort*) m_inputLUT, m_cuStream);
+
+#else
+  // Format conversion only, no histogram equalization
+  ApplyLUT8to16(ps.m_preHistEqMat, ps.m_trtInputMat, (const ushort*) m_inputLUT, m_cuStream);
+
+#endif
 
 #if USE_CUDA_GRAPH
   // Launch TRT processing graph for the currently selected eye.
@@ -630,6 +669,31 @@ void polyline(cv::Mat& img, const cv::Point2f* points, size_t startIdx, size_t e
 }
 
 
+#if 0
+cv::Point2f toImgCoord(const cv::Point2f& point, uint32_t width, uint32_t height) {
+    return cv::Point2f(static_cast<float>((width/2 + point.x)),
+        static_cast<float>((height/2 + point.y)));
+}
+cv::Point toImgCoord(const cv::Point& point, uint32_t width, uint32_t height) {
+    return cv::Point(static_cast<int>((width/2 + point.x)),
+        static_cast<int>((height/2 + point.y)));
+}
+cv::RotatedRect toImgCoord(const cv::RotatedRect& rect, uint32_t width, uint32_t height) {
+    return cv::RotatedRect(toImgCoord(rect.center, width, height),
+        cv::Size2f(rect.size.width, rect.size.height), rect.angle);
+}
+#else
+cv::Point2f toImgCoord(const cv::Point2f& point, uint32_t width, uint32_t height) {
+    return point;
+}
+cv::Point toImgCoord(const cv::Point& point, uint32_t width, uint32_t height) {
+    return point;
+}
+cv::RotatedRect toImgCoord(const cv::RotatedRect& rect, uint32_t width, uint32_t height) {
+    return rect;
+}
+#endif
+
 cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
   assert(eyeIdx < 2);
   ProcessingState& ps = m_processingState[eyeIdx];
@@ -672,6 +736,28 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
   // Draw pupil ellipse, if present
   if (!ps.m_pupilEllipse.size.empty()) {
     cv::ellipse(ps.m_debugViewRGB, ps.m_pupilEllipse, cv::Scalar(0xff, 0, 0xff), /*thickness=*/ 2);
+  }
+
+  if (ps.m_eyeModelFitter.hasEyeModel()) {
+    singleeyefitter::Circle3D<double> circle;
+    if (ps.m_eyeModelFitter.unproject_single_observation(circle, singleeyefitter::toEllipse<double>(ps.m_pupilEllipse))) {
+      singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(circle, ps.m_eyeModelFitter.focal_length);
+      singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
+
+
+      cv::ellipse(ps.m_debugViewRGB, toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), m_trtInputWidth, m_trtInputHeight), cv::Scalar(60, 60, 0), /*thickness=*/ 2);
+      cv::ellipse(ps.m_debugViewRGB, toImgCoord(toRotatedRect(eye_ellipse), m_trtInputWidth, m_trtInputHeight), cv::Scalar(0, 60, 60), /*thickness=*/ 2);
+
+      printf("Circle: center=%.3f %.3f %.3f normal=%.3f %.3f %.3f radius=%.3f\n",
+        circle.centre[0], circle.centre[1], circle.centre[2],
+        circle.normal[0], circle.normal[1], circle.normal[2],
+        circle.radius);
+
+      //printf("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
+      //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
+      //    ps.m_pupilEllipse.size.width, ps.m_pupilEllipse.size.height);
+
+    }
   }
 
   // Convert markers to pixel coordinates

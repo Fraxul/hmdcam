@@ -1,6 +1,7 @@
 #pragma once
 #include "common/DepthMapGenerator.h"
 #include "common/ScrollingBuffer.h"
+#include "SingleEyeFitter/SingleEyeFitter.h"
 #include <boost/atomic.hpp>
 #include <boost/thread.hpp>
 #include <opencv2/core.hpp>
@@ -140,6 +141,9 @@ protected:
     // Postprocessing output
     cv::RotatedRect m_pupilEllipse;
     float m_pupilContourArea = 0;
+
+    // Eye fitter
+    singleeyefitter::EyeModelFitter m_eyeModelFitter;
 
     // CUDA graph capture of the tracking model run
     // Internally the TensorRT engine launches several dozen kernels, so capturing
