@@ -1111,7 +1111,10 @@ singleeyefitter::EyeModelFitter::Index singleeyefitter::EyeModelFitter::add_obse
 
 singleeyefitter::EyeModelFitter::Index singleeyefitter::EyeModelFitter::add_observation(cv::Mat image, Ellipse pupil, std::vector<cv::Point2f> pupil_inliers)
 {
+#ifdef USE_SPII
+    // Image only needs to be populated when using SPII for image-based refinement
     assert(image.channels() == 1 && image.depth() == CV_8U);
+#endif
 
     std::lock_guard<std::mutex> lock_model(model_mutex);
 
@@ -1313,13 +1316,21 @@ const singleeyefitter::EyeModelFitter::Circle& singleeyefitter::EyeModelFitter::
 
 const singleeyefitter::EyeModelFitter::Circle& singleeyefitter::EyeModelFitter::unproject_single_observation(Pupil& pupil, double pupil_radius /*= 1*/) const
 {
-    if (eye == Sphere::Null) {
+    if (!unproject_single_observation(pupil.circle, pupil.observation.ellipse)) {
         throw std::runtime_error("Need to get eye centre estimate first (by unprojecting multiple observations)");
     }
+    return pupil.circle;
+}
+
+
+bool singleeyefitter::EyeModelFitter::unproject_single_observation(Circle& outCircle, const Ellipse& ellipse, double pupil_radius /*= 1*/) const
+{
+    if (eye == Sphere::Null)
+        return false; // No valid eye center estimate
 
     // Single pupil version of "unproject_observations"
 
-    auto unprojection_pair = unproject(pupil.observation.ellipse, pupil_radius, focal_length);
+    auto unprojection_pair = unproject(ellipse, pupil_radius, focal_length);
 
     const Vector3& c = unprojection_pair.first.centre;
     const Vector3& v = unprojection_pair.first.normal;
@@ -1332,13 +1343,12 @@ const singleeyefitter::EyeModelFitter::Circle& singleeyefitter::EyeModelFitter::
     Vector2 eye_centre_proj = project(eye.centre, focal_length);
 
     if ((c_proj - eye_centre_proj).dot(v_proj) >= 0) {
-        pupil.circle = std::move(unprojection_pair.first);
+        outCircle = std::move(unprojection_pair.first);
     }
     else {
-        pupil.circle = std::move(unprojection_pair.second);
+        outCircle = std::move(unprojection_pair.second);
     }
-
-    return pupil.circle;
+    return true;
 }
 
 const singleeyefitter::EyeModelFitter::Circle& singleeyefitter::EyeModelFitter::unproject_single_observation(Index id, double pupil_radius /*= 1*/)
@@ -1608,6 +1618,9 @@ void singleeyefitter::EyeModelFitter::initialise_model()
 
 void singleeyefitter::EyeModelFitter::unproject_observations(double pupil_radius /*= 1*/, double eye_z /*= 20*/, bool use_ransac /*= true*/)
 {
+
+    assert(focal_length > 0.0);
+
     using math::sq;
 
     std::lock_guard<std::mutex> lock_model(model_mutex);

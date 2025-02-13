@@ -127,6 +127,9 @@ namespace singleeyefitter {
         // Model version gets incremented on initialisation/reset, so that long-running background-thread refines don't overwrite the model
         int model_version = 0;
 
+        bool hasEyeModel() const { return (!(eye == Sphere::Null)); }
+
+        bool unproject_single_observation(Circle& outCircle, const Ellipse& pupil, double pupil_radius = 1) const;
         const Circle& unproject_single_observation(Pupil& pupil, double pupil_radius = 1) const;
         const Circle& initialise_single_observation(Pupil& pupil);
 #ifdef USE_SPII
