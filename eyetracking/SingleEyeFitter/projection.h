@@ -140,7 +140,7 @@ namespace singleeyefitter {
 
 
     template<typename Scalar>
-    std::pair<Circle3D<Scalar>, Circle3D<Scalar>> unproject(const Ellipse2D<Scalar>& ellipse, Scalar circle_radius, Scalar focal_length)
+    bool unproject(std::pair<Circle3D<Scalar>, Circle3D<Scalar>>& outSolutions, const Ellipse2D<Scalar>& ellipse, Scalar circle_radius, Scalar focal_length)
     {
         using std::sqrt;
         using std::abs;
@@ -183,9 +183,8 @@ namespace singleeyefitter {
         RowArray3 lambda;
         std::tie(lambda(0), lambda(1), lambda(2)) = solve(1., -(a + b + c), (b*c + c*a + a*b - f*f - g*g - h*h), -(a*b*c + 2 * f*g*h - a*f*f - b*g*g - c*h*h));
 
-        assert(lambda(0) >= lambda(1));
-        assert(lambda(1) > 0);
-        assert(lambda(2) < 0);
+        if (! ((lambda(0) >= lambda(1)) && (lambda(1) > 0) && (lambda(2) < 0)) )
+            return false; // Invalid solution
 
         // Now want to calculate l,m,n of the plane
         //     lX + mY + nZ = p
@@ -302,7 +301,8 @@ namespace singleeyefitter {
             // Save the results
             solutions[i] = Circle(centre, gaze, circle_radius);
         }
-        return std::make_pair(solutions[0], solutions[1]);
+        outSolutions = std::make_pair(solutions[0], solutions[1]);
+        return true;
     }
 
 }

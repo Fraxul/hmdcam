@@ -1330,7 +1330,9 @@ bool singleeyefitter::EyeModelFitter::unproject_single_observation(Circle& outCi
 
     // Single pupil version of "unproject_observations"
 
-    auto unprojection_pair = unproject(ellipse, pupil_radius, focal_length);
+    std::pair<Circle, Circle> unprojection_pair;
+    if (!unproject(unprojection_pair, ellipse, pupil_radius, focal_length))
+        return false; // Unprojection failure
 
     const Vector3& c = unprojection_pair.first.centre;
     const Vector3& v = unprojection_pair.first.normal;
@@ -1616,7 +1618,7 @@ void singleeyefitter::EyeModelFitter::initialise_model()
     }*/
 }
 
-void singleeyefitter::EyeModelFitter::unproject_observations(double pupil_radius /*= 1*/, double eye_z /*= 20*/, bool use_ransac /*= true*/)
+bool singleeyefitter::EyeModelFitter::unproject_observations(double pupil_radius /*= 1*/, double eye_z /*= 20*/, bool use_ransac /*= true*/)
 {
 
     assert(focal_length > 0.0);
@@ -1625,9 +1627,8 @@ void singleeyefitter::EyeModelFitter::unproject_observations(double pupil_radius
 
     std::lock_guard<std::mutex> lock_model(model_mutex);
 
-    if (pupils.size() < 2) {
-        throw std::runtime_error("Need at least two observations");
-    }
+    if (pupils.size() < 2)
+        return false; // Need at least two observations. No model changes.
 
     std::vector<std::pair<Circle, Circle>> pupil_unprojection_pairs;
     std::vector<Line> pupil_gazelines_proj;
@@ -1638,8 +1639,9 @@ void singleeyefitter::EyeModelFitter::unproject_observations(double pupil_radius
         // Do a per-image unprojection of the pupil ellipse into the two fixed
         // size circles that would project onto it. The size of the circles
         // doesn't matter here, only their centre and normal does.
-        auto unprojection_pair = unproject(pupil.observation.ellipse,
-            pupil_radius, focal_length);
+        std::pair<Circle, Circle> unprojection_pair;
+        if (!unproject(unprojection_pair, pupil.observation.ellipse, pupil_radius, focal_length))
+            continue;
 
         // Get projected circles and gaze vectors
         //
@@ -1659,6 +1661,9 @@ void singleeyefitter::EyeModelFitter::unproject_observations(double pupil_radius
         pupil_unprojection_pairs.push_back(std::move(unprojection_pair));
         pupil_gazelines_proj.emplace_back(c_proj, v_proj);
     }
+
+    if (pupil_unprojection_pairs.size() < 2)
+        return false; // Didn't get enough usable observations. No model changes.
 
 
     // Get eyeball centre
@@ -1803,4 +1808,5 @@ void singleeyefitter::EyeModelFitter::unproject_observations(double pupil_radius
     }
 
     model_version++;
+    return valid_eye;
 }

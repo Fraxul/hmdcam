@@ -75,7 +75,7 @@ namespace singleeyefitter {
         // Global (eye+pupils) calculations
         //
 
-        void unproject_observations(double pupil_radius = 1, double eye_z = 20, bool use_ransac = true);
+        bool unproject_observations(double pupil_radius = 1, double eye_z = 20, bool use_ransac = true);
 
         void initialise_model();
 
