@@ -142,6 +142,8 @@ protected:
     cv::RotatedRect m_pupilEllipse;
     float m_pupilContourArea = 0;
 
+    std::vector<cv::RotatedRect> m_eyeFitterSamples;
+
     // Eye fitter
     singleeyefitter::EyeModelFitter m_eyeModelFitter;
 

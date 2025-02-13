@@ -415,25 +415,46 @@ bool EyeTrackingService::processFrame() {
       ps.m_pupilEllipse = cv::fitEllipse(bestContour);
       didFitEllipse = true;
 
-      std::vector<cv::Point2f> pupil_inliers;
-      pupil_inliers.resize(bestContour.size());
-      for (size_t i = 0; i < pupil_inliers.size(); ++i) {
-        pupil_inliers[i] = cv::Point2f(bestContour[i].x, bestContour[i].y);
+      bool isNovelSample = true;
+      if (ps.m_eyeModelFitter.pupils.size()) {
+        float minDist = FLT_MAX;
+        for (const auto& pupilSample : ps.m_eyeModelFitter.pupils) {
+          cv::Point2f delta = cv::Point2f(
+            ps.m_pupilEllipse.center.x - pupilSample.observation.ellipse.centre[0],
+            ps.m_pupilEllipse.center.y - pupilSample.observation.ellipse.centre[1]);
+          float dist = sqrtf((delta.x * delta.x) + (delta.y * delta.y));
+          minDist = std::min<float>(minDist, dist);
+        }
+        printf("Min sample distance = %.3f\n", minDist);
+        isNovelSample = (minDist > 3.0f);
       }
 
-      // Add this observation to the eye model fitter
-      ps.m_eyeModelFitter.add_observation(
-        /*image (unused)=*/cv::Mat(),
-        /*pupil=*/ singleeyefitter::toEllipse<double>(ps.m_pupilEllipse),
-        /*inliers=*/ pupil_inliers);
+      if (isNovelSample) {
+        ps.m_eyeFitterSamples.push_back(ps.m_pupilEllipse);
 
-      // Try and fit the model
-      if (((ps.m_eyeModelFitter.pupils.size() & 63) == 0) && ps.m_eyeModelFitter.model_version == 0) {
-        printf("Attempting eye model fit\n");
-        if (ps.m_eyeModelFitter.unproject_observations()) {
-          ps.m_eyeModelFitter.initialise_model();
-        } else {
-          printf("Eye model fit failed; unproject_observations() returned false.\n");
+        std::vector<cv::Point2f> pupil_inliers;
+        pupil_inliers.resize(bestContour.size());
+        for (size_t i = 0; i < pupil_inliers.size(); ++i) {
+          pupil_inliers[i] = cv::Point2f(bestContour[i].x, bestContour[i].y);
+        }
+
+        // Add this observation to the eye model fitter
+        ps.m_eyeModelFitter.add_observation(
+          /*image (unused)=*/cv::Mat(),
+          /*pupil=*/ singleeyefitter::toEllipse<double>(ps.m_pupilEllipse),
+          /*inliers=*/ pupil_inliers);
+
+        // Try and fit the model
+        if (ps.m_eyeModelFitter.pupils.size() > 20) {
+          printf("Attempting eye model fit. ps.m_eyeFitterSamples.size()=%zu ps.m_eyeModelFitter.pupils.size()=%zu\n",
+            ps.m_eyeFitterSamples.size(), ps.m_eyeModelFitter.pupils.size());
+
+          if (ps.m_eyeModelFitter.unproject_observations()) {
+            ps.m_eyeModelFitter.initialise_model();
+            //ps.m_eyeModelFitter.refine_with_inliers();
+          } else {
+            printf("Eye model fit failed; unproject_observations() returned false.\n");
+          }
         }
       }
     }
@@ -773,6 +794,11 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
     }
   }
 #endif
+
+  // Draw eye-fitter sample ellipses
+  for (const auto& el : ps.m_eyeFitterSamples) {
+    cv::ellipse(ps.m_debugViewRGB, el, cv::Scalar(0x3f, 0, 0x3f), /*thickness=*/ 2);
+  }
 
   // Draw pupil ellipse, if present
   if (!ps.m_pupilEllipse.size.empty()) {

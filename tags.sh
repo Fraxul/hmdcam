@@ -5,6 +5,7 @@ ctags -R \
   depthai-worker \
   dgpu-fans \
   dgpu-worker \
+  eyetracking \
   hmdcam \
   imgui/*.h \
   imgui/*.cpp \
