@@ -1396,15 +1396,15 @@ void singleeyefitter::EyeModelFitter::refine_with_inliers(const CallbackFunction
 
             virtual ceres::CallbackReturnType operator() (const ceres::IterationSummary& summary) {
                 Eigen::Matrix<double, 3, 1> eye_pos(x[0], x[1], x[2]);
-                Sphere eye(eye_pos, eye_radius);
+                Sphere eye_(eye_pos, eye_radius);
 
-                std::vector<Circle> pupils;
+                std::vector<Circle> pupils_;
                 for (int i = 0; i < (x.size() - 3)/3; ++i) {
                     auto&& pupil_param_v = x.segment<3>(3 + 3 * i);
-                    pupils.push_back(EyeModelFitter::circleFromParams(eye, PupilParams(pupil_param_v[0], pupil_param_v[1], pupil_param_v[2])));
+                    pupils_.push_back(EyeModelFitter::circleFromParams(eye_, PupilParams(pupil_param_v[0], pupil_param_v[1], pupil_param_v[2])));
                 }
 
-                callback(eye, pupils);
+                callback(eye_, pupils_);
 
                 return ceres::SOLVER_CONTINUE;
             }
@@ -1671,6 +1671,7 @@ void singleeyefitter::EyeModelFitter::unproject_observations(double pupil_radius
         int k = ceil(log(1 - p) / log(1 - pow(w, n)));
 
         double epsilon = 10;
+#if 0
         auto huber_error = [&](const Vector2& point, const Line& line) {
             double dist = euclidean_distance(point, line);
             if (sq(dist) < sq(epsilon))
@@ -1678,6 +1679,7 @@ void singleeyefitter::EyeModelFitter::unproject_observations(double pupil_radius
             else
                 return epsilon*(abs(dist) - epsilon / 2);
         };
+#endif
         auto m_error = [&](const Vector2& point, const Line& line) {
             double dist = euclidean_distance(point, line);
             if (sq(dist) < sq(epsilon))

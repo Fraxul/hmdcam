@@ -64,8 +64,6 @@ typename boost::range_value<Range>::type::VectorType nearest_intersect(const Ran
 
     static_assert(Vector::ColsAtCompileTime == 1, "Requires column vector");
 
-    size_t N = lines.size();
-
     std::vector<Matrix> Ivv;
     Matrix A = Matrix::Zero();
     Vector b = Vector::Zero();

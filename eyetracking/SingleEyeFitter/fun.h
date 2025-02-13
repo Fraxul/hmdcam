@@ -194,7 +194,7 @@ namespace singleeyefitter {
         template<class Container, class Function>
         auto sum(Function func, Container src) -> decltype(func(*begin(src))) {
             typedef decltype(func(*begin(src))) acc_type;
-            typedef decltype(*begin(src)) con_type;
+            //typedef decltype(*begin(src)) con_type;
 
             auto it = begin(src);
             auto last = end(src);

@@ -170,7 +170,7 @@ namespace singleeyefitter {
         auto u = pupil_cone.U;
         auto v = pupil_cone.V;
         auto w = pupil_cone.W;
-        auto d = pupil_cone.D;
+        //auto d = pupil_cone.D;
 
         // Get canonical conic form:
         //     lambda(1) X^2 + lambda(2) Y^2 + lambda(3) Z^2 = mu
@@ -194,7 +194,7 @@ namespace singleeyefitter {
         // [Safaee-Rad 1992 eq (33) comes out of this as a result of lambda(1) == lambda(2)]
         auto n = sqrt((lambda(1) - lambda(2)) / (lambda(0) - lambda(2)));
         auto m = 0.0;
-        auto l = sqrt((lambda(0) - lambda(1)) / (lambda(0) - lambda(2)));
+        auto l_ = sqrt((lambda(0) - lambda(1)) / (lambda(0) - lambda(2)));
         // There are two solutions for l, positive and negative, we handle these later
 
         // Want to calculate T1, the rotation transformation from image
@@ -230,7 +230,7 @@ namespace singleeyefitter {
         T2.translation() = -(u*li + v*mi + w*ni).array() / lambda;
 
         Circle solutions[2];
-        Scalar ls[2] = { l, -l };
+        Scalar ls[2] = { l_, -l_ };
         for (int i = 0; i < 2; i++) {
             auto l = ls[i];
             // Circle normal in image space (i.e. gaze vector)
@@ -259,7 +259,6 @@ namespace singleeyefitter {
                     0, 0, 1;
             }
             else {
-                auto sgnl = sign(l);
                 T3 << 0, -n*sign(l), l,
                     sign(l), 0, 0,
                     0, abs(l), n;
