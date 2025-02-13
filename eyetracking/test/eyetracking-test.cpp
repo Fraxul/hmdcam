@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <signal.h>
 
+#include <opencv2/highgui.hpp>
 #include <opencv2/videoio.hpp>
 
 #include "common/Timing.h"
@@ -69,8 +70,10 @@ int main(int argc, char* argv[]) {
   //svc->setInputFilename(0, "/mnt/scratch/eyetracking/ViveProEye_left_200x150.mp4");
   svc->setInputFilename(0, "/mnt/scratch/eyetracking/openEDS_S_1_crop.mp4");
 
-  cv::VideoWriter videoOut;
-
+  //cv::VideoWriter videoOut;
+  cv::startWindowThread();
+  cv::String hWindow = "Eyetracking-Test";
+  cv::namedWindow(hWindow);
 
   //for (size_t frameIdx = 0; frameIdx < 10; ++frameIdx) {
   for (size_t frameIdx = 0; ; ++frameIdx) {
@@ -81,23 +84,42 @@ int main(int argc, char* argv[]) {
 
       cv::Mat& dbgView = svc->getDebugViewForEye(0);
       if (!dbgView.empty()) {
+/*
         if (!videoOut.isOpened()) {
           videoOut.open("eyetracking-test-out.mp4", cv::VideoWriter::fourcc('H', '2', '6', '4'), 30, dbgView.size());
         }
         videoOut.write(dbgView);
+*/
+        cv::imshow(hWindow, dbgView);
       }
     }
 
     uint64_t frameEndNs = currentTimeNs();
-
     uint64_t frameTimeNs = (frameEndNs - frameStartNs);
-    const uint64_t frameTargetTimeNs = 11'111'111; // 11.1ms, 90fps
-    if (frameTimeNs < frameTargetTimeNs) {
-      delayNs(frameTargetTimeNs - frameTimeNs);
+    //const uint64_t frameTargetTimeNs = 11'111'111; // 11.1ms, 90fps
+    const uint64_t frameTargetTimeNs = (1'000'000'000 / 30); // 30fps
+    int delayMs = std::max<int>((frameTimeNs < frameTargetTimeNs) ? ((frameTargetTimeNs - frameTimeNs) / 1'000'000U) : 1, 1);
+    int key = cv::waitKey(delayMs);
+    switch (key) {
+      case 'q':
+        want_quit = true;
+        break;
+
+      default:
+        printf("Key = %c %d 0x%x\n", key, key, key);
+        break;
+
+      case -1:
+        // No key pressed
+        break;
     }
 
+    //if (frameTimeNs < frameTargetTimeNs) {
+    //  delayNs(frameTargetTimeNs - frameTimeNs);
+    //}
+
     if (want_quit) {
-      videoOut.release();
+      //videoOut.release();
       break;
     }
   }

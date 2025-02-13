@@ -189,6 +189,11 @@ EyeTrackingService::EyeTrackingService() {
     double fov_radians = fov * (M_PI / 180.0);
     ps.m_eyeModelFitter.focal_length = static_cast<double>(m_trtInputWidth / 2) / std::tan(fov_radians / 2.0);
 
+    // Pre-create m_preHistEq and m_postHistEq to be the same size/dimensions as the TRT input mat
+    // (histogram equalization happens after warp/resize, right before TRT processing)
+    ps.m_preHistEqMat.create(m_trtInputHeight, m_trtInputWidth, CV_8U);
+    ps.m_postHistEqMat.create(m_trtInputHeight, m_trtInputWidth, CV_8U);
+
     // CLAHE processor, which has some internal allocations
     ps.m_clahe = cv::cuda::createCLAHE(/*clipLimit=*/ 1.5, /*tileGridSize=*/ cv::Size(8, 8));
 
@@ -461,10 +466,6 @@ bool EyeTrackingService::processFrame() {
     cuMemcpy2DAsync(&copy, m_cuStream);
   }
 
-  // Pre-create m_preHistEq and m_postHistEq to be the same size/dimensions as the TRT input mat
-  // (histogram equalization happens after warp/resize, right before TRT processing)
-  ps.m_preHistEqMat.create(ps.m_trtInputMat.size(), CV_8U);
-  ps.m_postHistEqMat.create(ps.m_trtInputMat.size(), CV_8U);
   {
     NppiSize srcsz;
     srcsz.height = ps.m_preWarpGpuMat.rows;
@@ -526,6 +527,7 @@ bool EyeTrackingService::processFrame() {
 #else
   // Format conversion only, no histogram equalization
   ApplyLUT8to16(ps.m_preHistEqMat, ps.m_trtInputMat, (const ushort*) m_inputLUT, m_cuStream);
+  ps.m_postHistEqMat = ps.m_preHistEqMat;
 
 #endif
 
@@ -748,10 +750,10 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
       cv::ellipse(ps.m_debugViewRGB, toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), m_trtInputWidth, m_trtInputHeight), cv::Scalar(60, 60, 0), /*thickness=*/ 2);
       cv::ellipse(ps.m_debugViewRGB, toImgCoord(toRotatedRect(eye_ellipse), m_trtInputWidth, m_trtInputHeight), cv::Scalar(0, 60, 60), /*thickness=*/ 2);
 
-      printf("Circle: center=%.3f %.3f %.3f normal=%.3f %.3f %.3f radius=%.3f\n",
-        circle.centre[0], circle.centre[1], circle.centre[2],
-        circle.normal[0], circle.normal[1], circle.normal[2],
-        circle.radius);
+      char buf[64];
+      snprintf(buf, 64, "n=%.3f %.3f %.3f", circle.normal[0], circle.normal[1], circle.normal[2]);
+
+      cv::putText(ps.m_debugViewRGB, buf, cv::Point2f(/*x=*/ 5, /*y=*/ m_trtInputHeight - 16), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
 
       //printf("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
       //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
