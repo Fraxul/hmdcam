@@ -39,7 +39,6 @@ public:
   float m_lastFramePostProcessingTimeMs = 0.0f;
 
   cv::Mat& getDebugViewForEye(size_t eyeIdx);
-protected:
 
   struct CaptureBuffer {
     cv::Mat mat;
@@ -146,6 +145,10 @@ protected:
 
     // Eye fitter
     singleeyefitter::EyeModelFitter m_eyeModelFitter;
+    double m_focalLength = 6.0; // mm
+    double m_mm2px_scaling;
+    const double pupilRadius() { return 2.0 * m_mm2px_scaling; }
+    const double initialEyeZ() { return 100.0 * m_mm2px_scaling; }
 
     // CUDA graph capture of the tracking model run
     // Internally the TensorRT engine launches several dozen kernels, so capturing
@@ -176,6 +179,7 @@ protected:
   CaptureState m_captureState[2];
   ProcessingState m_processingState[2];
 
+protected:
   size_t m_currentlyProcessingEyeIdx = 0;
 
   // Low-priority CUDA stream

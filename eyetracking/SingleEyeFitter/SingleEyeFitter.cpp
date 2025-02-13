@@ -1090,11 +1090,7 @@ EyeModelFitter::Observation::Observation()
 }
 
 
-singleeyefitter::EyeModelFitter::EyeModelFitter() : region_band_width(5), region_step_epsilon(0.5), region_scale(1)
-{
-
-}
-singleeyefitter::EyeModelFitter::EyeModelFitter(double focal_length, double region_band_width, double region_step_epsilon) : focal_length(focal_length), region_band_width(region_band_width), region_step_epsilon(region_step_epsilon), region_scale(1)
+singleeyefitter::EyeModelFitter::EyeModelFitter()
 {
 
 }
@@ -1316,7 +1312,7 @@ const singleeyefitter::EyeModelFitter::Circle& singleeyefitter::EyeModelFitter::
 
 const singleeyefitter::EyeModelFitter::Circle& singleeyefitter::EyeModelFitter::unproject_single_observation(Pupil& pupil, double pupil_radius /*= 1*/) const
 {
-    if (!unproject_single_observation(pupil.circle, pupil.observation.ellipse)) {
+    if (!unproject_single_observation(pupil.circle, pupil.observation.ellipse, pupil_radius)) {
         throw std::runtime_error("Need to get eye centre estimate first (by unprojecting multiple observations)");
     }
     return pupil.circle;

@@ -185,9 +185,22 @@ EyeTrackingService::EyeTrackingService() {
 
     // Init eye-fitter
     // Focal length computation is taken from the SingleEyeFitter sample tool
-    double fov = 45.0; // TODO parameterize
-    double fov_radians = fov * (M_PI / 180.0);
-    ps.m_eyeModelFitter.focal_length = static_cast<double>(m_trtInputWidth / 2) / std::tan(fov_radians / 2.0);
+    //double fov = 120.0; // TODO parameterize
+    //double fov_radians = fov * (M_PI / 180.0);
+    //ps.m_eyeModelFitter.focal_length = static_cast<double>(m_trtInputWidth / 2) / std::tan(fov_radians / 2.0);
+
+    // Focal length computation / mm2px scaling is taken from deepvog
+    double sensor_size[] = {4.8, 3.6};
+    double sensor_native_res[] = {640, 400};
+
+    // self.mm2px_scaling = np.linalg.norm(self.ori_video_shape) / np.linalg.norm(self.sensor_size)
+    ps.m_mm2px_scaling =
+      sqrt((sensor_native_res[0] * sensor_native_res[0]) + (sensor_native_res[1] * sensor_native_res[1])) /
+      sqrt((sensor_size[0] * sensor_size[0]) + (sensor_size[1] * sensor_size[1]));
+    printf("mm2px scaling: %.6f\n", ps.m_mm2px_scaling);
+
+    ps.m_eyeModelFitter.focal_length = ps.m_focalLength * ps.m_mm2px_scaling;
+    printf("Using focal length: %.6f\n", ps.m_eyeModelFitter.focal_length);
 
     // Pre-create m_preHistEq and m_postHistEq to be the same size/dimensions as the TRT input mat
     // (histogram equalization happens after warp/resize, right before TRT processing)
@@ -370,7 +383,7 @@ bool EyeTrackingService::processFrame() {
 
       const auto& bestContour = contours[bestContourIdx];
 
-      printf("Contour %zu/%zu: area = %f, %zu points\n", bestContourIdx, contours.size(), bestContourArea, bestContour.size());
+      // printf("Contour %zu/%zu: area = %f, %zu points\n", bestContourIdx, contours.size(), bestContourArea, bestContour.size());
 
       // The algorithm needs a bare minimum of 5px to fit an ellipse
       // Try and give it a healthy margin
@@ -420,12 +433,12 @@ bool EyeTrackingService::processFrame() {
         float minDist = FLT_MAX;
         for (const auto& pupilSample : ps.m_eyeModelFitter.pupils) {
           cv::Point2f delta = cv::Point2f(
-            ps.m_pupilEllipse.center.x - pupilSample.observation.ellipse.centre[0],
-            ps.m_pupilEllipse.center.y - pupilSample.observation.ellipse.centre[1]);
+            ps.m_pupilEllipse.center.x - (pupilSample.observation.ellipse.centre[0] + static_cast<double>(m_trtInputWidth/2)),
+            ps.m_pupilEllipse.center.y - (pupilSample.observation.ellipse.centre[1] + static_cast<double>(m_trtInputHeight/2)));
           float dist = sqrtf((delta.x * delta.x) + (delta.y * delta.y));
           minDist = std::min<float>(minDist, dist);
         }
-        printf("Min sample distance = %.3f\n", minDist);
+        // printf("Min sample distance = %.3f\n", minDist);
         isNovelSample = (minDist > 3.0f);
       }
 
@@ -435,13 +448,18 @@ bool EyeTrackingService::processFrame() {
         std::vector<cv::Point2f> pupil_inliers;
         pupil_inliers.resize(bestContour.size());
         for (size_t i = 0; i < pupil_inliers.size(); ++i) {
-          pupil_inliers[i] = cv::Point2f(bestContour[i].x, bestContour[i].y);
+          pupil_inliers[i] = cv::Point2f(
+            bestContour[i].x - static_cast<float>(m_trtInputWidth/2),
+            bestContour[i].y - static_cast<float>(m_trtInputHeight/2));
         }
 
         // Add this observation to the eye model fitter
+        // The eyefitter works in a coordinate system where the center of the image is at (0, 0),
+        // so we need to offset the ellipse center coordinate (via toEllipseWithOffset)
+
         ps.m_eyeModelFitter.add_observation(
           /*image (unused)=*/cv::Mat(),
-          /*pupil=*/ singleeyefitter::toEllipse<double>(ps.m_pupilEllipse),
+          /*pupil=*/ singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, m_trtInputWidth/2, m_trtInputHeight/2),
           /*inliers=*/ pupil_inliers);
 
         // Try and fit the model
@@ -449,7 +467,7 @@ bool EyeTrackingService::processFrame() {
           printf("Attempting eye model fit. ps.m_eyeFitterSamples.size()=%zu ps.m_eyeModelFitter.pupils.size()=%zu\n",
             ps.m_eyeFitterSamples.size(), ps.m_eyeModelFitter.pupils.size());
 
-          if (ps.m_eyeModelFitter.unproject_observations()) {
+          if (ps.m_eyeModelFitter.unproject_observations(ps.pupilRadius(), ps.initialEyeZ())) {
             ps.m_eyeModelFitter.initialise_model();
             //ps.m_eyeModelFitter.refine_with_inliers();
           } else {
@@ -466,7 +484,9 @@ skipFitting:
     }
 
     float postTimeMs = deltaTimeMs(startTimeNs, currentTimeNs());
-    printf("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, postTimeMs);
+    if (postTimeMs > 0.25f) {
+      printf("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, postTimeMs);
+    }
 
     //printf("Eye %zu postprocess required. coordinates:\n", eyeIdx);
     //for (size_t i = 0; i < m_trtOutputKeypointCount; ++i) {
@@ -731,14 +751,16 @@ void polyline(cv::Mat& img, const cv::Point2f* points, size_t startIdx, size_t e
 }
 
 
-#if 0
+#if 1
 cv::Point2f toImgCoord(const cv::Point2f& point, uint32_t width, uint32_t height) {
-    return cv::Point2f(static_cast<float>((width/2 + point.x)),
-        static_cast<float>((height/2 + point.y)));
+    return cv::Point2f(
+        static_cast<float>(width/2) + point.x,
+        static_cast<float>(height/2) + point.y);
 }
 cv::Point toImgCoord(const cv::Point& point, uint32_t width, uint32_t height) {
-    return cv::Point(static_cast<int>((width/2 + point.x)),
-        static_cast<int>((height/2 + point.y)));
+    return cv::Point(
+        static_cast<int>(width/2) + point.x,
+        static_cast<int>(height/2) + point.y);
 }
 cv::RotatedRect toImgCoord(const cv::RotatedRect& rect, uint32_t width, uint32_t height) {
     return cv::RotatedRect(toImgCoord(rect.center, width, height),
@@ -807,13 +829,38 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
 
   if (ps.m_eyeModelFitter.hasEyeModel()) {
     singleeyefitter::Circle3D<double> circle;
-    if (ps.m_eyeModelFitter.unproject_single_observation(circle, singleeyefitter::toEllipse<double>(ps.m_pupilEllipse))) {
+    if (ps.m_eyeModelFitter.unproject_single_observation(circle, singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, m_trtInputWidth/2, m_trtInputHeight/2), ps.pupilRadius())) {
       singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(circle, ps.m_eyeModelFitter.focal_length);
       singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
 
 
-      cv::ellipse(ps.m_debugViewRGB, toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), m_trtInputWidth, m_trtInputHeight), cv::Scalar(60, 60, 0), /*thickness=*/ 2);
-      cv::ellipse(ps.m_debugViewRGB, toImgCoord(toRotatedRect(eye_ellipse), m_trtInputWidth, m_trtInputHeight), cv::Scalar(0, 60, 60), /*thickness=*/ 2);
+      cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), m_trtInputWidth, m_trtInputHeight);
+      cv::ellipse(ps.m_debugViewRGB, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
+
+      cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), m_trtInputWidth, m_trtInputHeight);
+      cv::ellipse(ps.m_debugViewRGB, eyeEllipseImg, cv::Scalar(0, 60, 60), /*thickness=*/ 2);
+
+      // order is _bottomLeft_, _topLeft_, topRight, bottomRight
+      cv::Point2f rectPoints[4];
+      eyeEllipseImg.points(rectPoints);
+
+      // Draw crosshairs through the eye-ellipse
+      cv::line(ps.m_debugViewRGB,
+        (rectPoints[0] + rectPoints[1]) * 0.5f,
+        (rectPoints[2] + rectPoints[3]) * 0.5f,
+        cv::Scalar(0, 60, 60), /*thickness=*/2);
+
+      cv::line(ps.m_debugViewRGB,
+        (rectPoints[1] + rectPoints[2]) * 0.5f,
+        (rectPoints[0] + rectPoints[3]) * 0.5f,
+        cv::Scalar(0, 60, 60), /*thickness=*/2);
+
+      // Draw a small marker on the eye center point
+      cv::circle(ps.m_debugViewRGB, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(255, 0, 0), /*thickness=*/ -1);
+
+      // Line from the eye center through the pupil center
+      cv::line(ps.m_debugViewRGB, eyeEllipseImg.center, pupilEllipseImg.center, cv::Scalar(0, 255, 0), /*thickness=*/ 1);
+
 
       char buf[64];
       snprintf(buf, 64, "n=%.3f %.3f %.3f", circle.normal[0], circle.normal[1], circle.normal[2]);

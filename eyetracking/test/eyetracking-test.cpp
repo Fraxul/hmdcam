@@ -75,12 +75,24 @@ int main(int argc, char* argv[]) {
   cv::String hWindow = "Eyetracking-Test";
   cv::namedWindow(hWindow);
 
+  int mm2px_int = static_cast<int>(svc->m_processingState[0].m_mm2px_scaling);
+  auto mm2px_callback = [](int newValue, void* svc_) {
+    EyeTrackingService* svc = reinterpret_cast<EyeTrackingService*>(svc_);
+    svc->m_processingState[0].m_mm2px_scaling = newValue;
+
+    svc->m_processingState[0].m_eyeModelFitter.focal_length =
+      svc->m_processingState[0].m_focalLength * svc->m_processingState[0].m_mm2px_scaling;
+  };
+
+  cv::createTrackbar("mm2px", hWindow, &mm2px_int, 500, mm2px_callback, svc);
+
   //for (size_t frameIdx = 0; frameIdx < 10; ++frameIdx) {
   for (size_t frameIdx = 0; ; ++frameIdx) {
     uint64_t frameStartNs = currentTimeNs();
 
     if (svc->processFrame()) {
-      printf("Frame %zu processing time: %.3fms inference, %.3fms post\n", frameIdx, svc->m_lastFrameProcessingTimeMs, svc->m_lastFramePostProcessingTimeMs);
+      if ((frameIdx & 127) == 0)
+        printf("Frame %zu processing time: %.3fms inference, %.3fms post\n", frameIdx, svc->m_lastFrameProcessingTimeMs, svc->m_lastFramePostProcessingTimeMs);
 
       cv::Mat& dbgView = svc->getDebugViewForEye(0);
       if (!dbgView.empty()) {
@@ -103,6 +115,17 @@ int main(int argc, char* argv[]) {
     switch (key) {
       case 'q':
         want_quit = true;
+        break;
+
+      case 'r':
+        printf("Attempting refine\n");
+        svc->m_processingState[0].m_eyeModelFitter.refine_with_inliers();
+        break;
+
+      case 'c':
+        printf("Clearing samples and model\n");
+        svc->m_processingState[0].m_eyeModelFitter.reset();
+        svc->m_processingState[0].m_eyeFitterSamples.clear();
         break;
 
       default:

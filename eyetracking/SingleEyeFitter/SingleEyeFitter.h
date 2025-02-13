@@ -41,6 +41,16 @@ namespace singleeyefitter {
             static_cast<Scalar>(rect.size.height / 2),
             static_cast<Scalar>(rect.angle*PI / 180));
     }
+    template<typename Scalar>
+    inline Ellipse2D<Scalar> toEllipseWithOffset(const cv::RotatedRect& rect, Scalar offsetX, Scalar offsetY) {
+        return Ellipse2D<Scalar>(
+            Eigen::Matrix<Scalar, 2, 1>(
+                static_cast<Scalar>(rect.center.x) - offsetX,
+                static_cast<Scalar>(rect.center.y) - offsetY),
+            static_cast<Scalar>(rect.size.width / 2),
+            static_cast<Scalar>(rect.size.height / 2),
+            static_cast<Scalar>(rect.angle*PI / 180));
+    }
 
     class EyeModelFitter {
     public:
@@ -57,14 +67,17 @@ namespace singleeyefitter {
         static const Vector3 camera_centre;
 
         // Public fields
-        double focal_length;
-        double region_band_width;
-        double region_step_epsilon;
-        double region_scale;
+        double focal_length = 0;
+
+#if USE_SPII
+        // Contrast fitting parameters
+        double region_band_width = 5;
+        double region_step_epsilon = 0.5;
+        double region_scale = 1;
+#endif
 
         // Constructors
         EyeModelFitter();
-        EyeModelFitter(double focal_length, double region_band_width, double region_step_epsilon);
 
         Index add_observation(cv::Mat image, Ellipse pupil, int n_pseudo_inliers = 0);
         Index add_observation(cv::Mat image, Ellipse pupil, std::vector<cv::Point2f> pupil_inliers);
@@ -75,7 +88,7 @@ namespace singleeyefitter {
         // Global (eye+pupils) calculations
         //
 
-        bool unproject_observations(double pupil_radius = 1, double eye_z = 20, bool use_ransac = true);
+        bool unproject_observations(double pupil_radius /*= 1*/, double eye_z /*= 20*/, bool use_ransac = true);
 
         void initialise_model();
 
@@ -113,7 +126,7 @@ namespace singleeyefitter {
         //
         // Local (single pupil) calculations
         //
-        const Circle& unproject_single_observation(Index id, double pupil_radius = 1);
+        const Circle& unproject_single_observation(Index id, double pupil_radius);
         const Circle& initialise_single_observation(Index id);
 #ifdef USE_SPII
         const Circle& refine_single_with_contrast(Index id);
@@ -129,8 +142,8 @@ namespace singleeyefitter {
 
         bool hasEyeModel() const { return (!(eye == Sphere::Null)); }
 
-        bool unproject_single_observation(Circle& outCircle, const Ellipse& pupil, double pupil_radius = 1) const;
-        const Circle& unproject_single_observation(Pupil& pupil, double pupil_radius = 1) const;
+        bool unproject_single_observation(Circle& outCircle, const Ellipse& pupil, double pupil_radius) const;
+        const Circle& unproject_single_observation(Pupil& pupil, double pupil_radius) const;
         const Circle& initialise_single_observation(Pupil& pupil);
 #ifdef USE_SPII
         const Circle& refine_single_with_contrast(Pupil& pupil);
