@@ -177,5 +177,5 @@ else:
 
 # Eyetracking test harness
 if (have_tensorrt):
-  SConscript('eyetracking/test/SConscript', variant_dir = 'build/eyetracking-test', duplicate = 0)
+  SConscript('SConscript-eyetracking-test', variant_dir = 'build/eyetracking-test', duplicate = 0)
 
