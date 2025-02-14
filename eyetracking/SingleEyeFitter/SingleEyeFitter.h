@@ -42,11 +42,11 @@ namespace singleeyefitter {
             static_cast<Scalar>(rect.angle*PI / 180));
     }
     template<typename Scalar>
-    inline Ellipse2D<Scalar> toEllipseWithOffset(const cv::RotatedRect& rect, Scalar offsetX, Scalar offsetY) {
+    inline Ellipse2D<Scalar> toEllipseWithOffset(const cv::RotatedRect& rect, const cv::Point2f& offset) {
         return Ellipse2D<Scalar>(
             Eigen::Matrix<Scalar, 2, 1>(
-                static_cast<Scalar>(rect.center.x) - offsetX,
-                static_cast<Scalar>(rect.center.y) - offsetY),
+                static_cast<Scalar>(rect.center.x) - offset.x,
+                static_cast<Scalar>(rect.center.y) - offset.y),
             static_cast<Scalar>(rect.size.width / 2),
             static_cast<Scalar>(rect.size.height / 2),
             static_cast<Scalar>(rect.angle*PI / 180));

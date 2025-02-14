@@ -112,6 +112,14 @@ public:
       m_trtInputMat = cv::cuda::GpuMat();
     }
 
+    // Processing region-of-interest -- cropped from the capture buffer and scaled
+    // to the size of the TRT processing buffer.
+    cv::Rect m_processingROI;
+
+    // Center offset of the camera capture, used for translating between the eye-fitter
+    // coordinate system (zero at center) and the capture/image coordinate system (zero at left-top)
+    cv::Point2f m_captureCenterOffset;
+
     // Input to TensorRT -- fp16, -1...1 range
     cv::cuda::GpuMat m_trtInputMat;
 
@@ -139,7 +147,6 @@ public:
 
     // Postprocessing output
     cv::RotatedRect m_pupilEllipse;
-    float m_pupilContourArea = 0;
 
     std::vector<cv::RotatedRect> m_eyeFitterSamples;
 
@@ -170,6 +177,9 @@ public:
     uint64_t newerCaptureBufferTimestamp() { return std::max<uint64_t>(captureBufferTimestamp(0), captureBufferTimestamp(1)); }
 
     // Debug view support
+    cv::Mat m_debugROIViewGrey;
+    cv::Mat m_debugROIViewRGB;
+
     cv::Mat m_debugViewGrey;
     cv::Mat m_debugViewRGB;
   };

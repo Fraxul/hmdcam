@@ -68,7 +68,7 @@ int main(int argc, char* argv[]) {
   EyeTrackingService* svc = new EyeTrackingService();
   //svc->setInputFilename(0, "/mnt/scratch/eyetracking/demo3_200x150.mp4");
   //svc->setInputFilename(0, "/mnt/scratch/eyetracking/ViveProEye_left_200x150.mp4");
-  svc->setInputFilename(0, "/mnt/scratch/eyetracking/openEDS_S_1_crop.mp4");
+  svc->setInputFilename(0, "/mnt/scratch/eyetracking/openEDS_S_1.mp4");
 
   //cv::VideoWriter videoOut;
   cv::startWindowThread();
@@ -85,6 +85,10 @@ int main(int argc, char* argv[]) {
   };
 
   cv::createTrackbar("mm2px", hWindow, &mm2px_int, 500, mm2px_callback, svc);
+  cv::createTrackbar("ROI X", hWindow, &svc->m_processingState[0].m_processingROI.x, 639, nullptr, nullptr);
+  cv::createTrackbar("ROI Y", hWindow, &svc->m_processingState[0].m_processingROI.y, 399, nullptr, nullptr);
+  cv::createTrackbar("ROI W", hWindow, &svc->m_processingState[0].m_processingROI.width, 640, nullptr, nullptr);
+  cv::createTrackbar("ROI H", hWindow, &svc->m_processingState[0].m_processingROI.height, 400, nullptr, nullptr);
 
   //for (size_t frameIdx = 0; frameIdx < 10; ++frameIdx) {
   for (size_t frameIdx = 0; ; ++frameIdx) {
