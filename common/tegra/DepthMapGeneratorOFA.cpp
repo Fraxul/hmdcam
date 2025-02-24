@@ -275,10 +275,10 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
 
     // OFA syncs
 
-    vd->m_ofaPreSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncCudaSignalerToNvSciWaiter);
+    vd->m_ofaPreSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncCudaSignalerToNvSciWaiter, m_iofa);
     NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(m_iofa, NVMEDIA_PRESYNCOBJ, vd->m_ofaPreSync->m_nvSciSync));
     
-    vd->m_ofaEofSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncNvSciSignalerToCudaWaiter);
+    vd->m_ofaEofSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncNvSciSignalerToCudaWaiter, m_iofa);
     NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(m_iofa, NVMEDIA_EOFSYNCOBJ, vd->m_ofaEofSync->m_nvSciSync));
 
     // OFA surface array setup

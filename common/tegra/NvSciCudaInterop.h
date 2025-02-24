@@ -3,6 +3,7 @@
 #include <cuda.h>
 #include "nvscibuf.h"
 #include "nvscisync.h"
+#include "nvmedia_iofa.h"
 
 // Global NvSci module instances, created on-demand
 extern NvSciSyncModule gSyncModule();
@@ -33,7 +34,7 @@ public:
     kNvSciCudaInteropSyncDirection_Count
   };
 
-  NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction);
+  NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction, NvMediaIofa* iofa);
   ~NvSciCudaInteropSync();
 
   void signalCudaToNvSci(CUstream hStream);

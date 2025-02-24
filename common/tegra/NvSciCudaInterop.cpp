@@ -99,7 +99,7 @@ NvSciCudaInteropBuffer::~NvSciCudaInteropBuffer() {
   NvSciBufObjFree(m_nvSciBuf);
 }
 
-NvSciCudaInteropSync::NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction) : m_direction(direction) {
+NvSciCudaInteropSync::NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction, NvMediaIofa* iofa) : m_direction(direction) {
   static NvSciSyncAttrList interopSyncAttrList[kNvSciCudaInteropSyncDirection_Count];
 
   // Demand-create the attribute list for this sync direction
@@ -108,8 +108,7 @@ NvSciCudaInteropSync::NvSciCudaInteropSync(NvSciCudaInteropSyncDirection directi
     NVSCI_CHECK(NvSciSyncAttrListCreate(gSyncModule(), &syncAttrList[0]));
     NVSCI_CHECK(NvSciSyncAttrListCreate(gSyncModule(), &syncAttrList[1]));
 
-    // The function that creates the sync doesn't actually use the NvMediaIofa pointer, so we just pass null here
-    NVMEDIA_CHECK(NvMediaIOFAFillNvSciSyncAttrList(nullptr, syncAttrList[0], direction == kSyncNvSciSignalerToCudaWaiter ? NVMEDIA_SIGNALER : NVMEDIA_WAITER));
+    NVMEDIA_CHECK(NvMediaIOFAFillNvSciSyncAttrList(iofa, syncAttrList[0], direction == kSyncNvSciSignalerToCudaWaiter ? NVMEDIA_SIGNALER : NVMEDIA_WAITER));
     CUDA_CHECK(cuDeviceGetNvSciSyncAttributes(syncAttrList[1], cudaDevice, direction == kSyncNvSciSignalerToCudaWaiter ? CUDA_NVSCISYNC_ATTR_WAIT : CUDA_NVSCISYNC_ATTR_SIGNAL));
 
     NvSciSyncAttrList syncConflictList = nullptr;
