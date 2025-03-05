@@ -1,0 +1,10 @@
+[Unit]
+Description=Power management overrides
+Before=nvargus-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/systemd/set-power-management-overrides.sh
+
+[Install]
+WantedBy=multi-user.target

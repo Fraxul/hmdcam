@@ -39,11 +39,12 @@ ae.ExposureTuningTable.Preview[4] = {2.4, 0.03333, 8.0, 1.0};
 ae.ExposureTuningTable.Preview[5] = {2.4, 0.06666, 8.0, 1.0};
 ae.ExposureTuningTable.Preview[6] = {2.4, 0.06666, 16.0, 1.0};
 ae.ExposureTuningTable.Preview[6] = {2.4, 0.06666, 22.0, 1.0};
-flicker.ConfidenceThreshold = 32;
-flicker.SuccessFrameCount = 8;
-flicker.FailureFrameCount = 3;
-flicker.CorrectionFreqListEntries = 4;
-flicker.CorrectionFreqList = {60, 90, 120, 180};
+### Flicker correction has been disabled because it completely breaks capture on r36.4 -- images come back as pure noise.
+#flicker.ConfidenceThreshold = 32;
+#flicker.SuccessFrameCount = 8;
+#flicker.FailureFrameCount = 3;
+#flicker.CorrectionFreqListEntries = 4;
+#flicker.CorrectionFreqList = {60, 90, 120, 180};
 defaults.saturation = 1.0;
 ae.saturation.Preview[0] = {100, 100, 100, 100, 100, 100, 100};
 ae.saturation.Preview[1] = {100, 100, 100, 100, 100, 100, 100};

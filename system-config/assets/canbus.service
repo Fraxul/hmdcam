@@ -1,0 +1,10 @@
+[Unit]
+Description=CAN link configuration
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ip link set can0 up type can bitrate 500000 berr-reporting off
+
+[Install]
+WantedBy=multi-user.target

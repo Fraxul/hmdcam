@@ -1,5 +1,8 @@
 =========================== New machine setup ================================
 
+IMPORTANT: Before the first run, apply various required system configuration changes. (Read the script for documentation about what changes are applied)
+  sudo system-config/apply-tegra-system-config.sh
+
 Don't forget to set up the submodules after cloning:
   git submodule update --init --recursive
 
@@ -11,7 +14,7 @@ Install the Jetson Multimedia API and other required libraries (CUDA for Tegra):
 
 Build and install OpenCV 4.10 with some extra opencv_contrib modules. (TODO: more detailed directions)
   # Prereqs
-  sudo apt install cmake ninja-build libpng-dev libtiff-dev libfreetype6-dev
+  sudo apt install cmake ninja-build libpng-dev libtiff-dev libfreetype6-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libtbb-dev
   # Git repositories
   git clone https://github.com/opencv/opencv.git -b 4.10.0
   git clone https://github.com/opencv/opencv_contrib -b 4.10.0
@@ -31,11 +34,6 @@ Finally, build the project:
   scons
 
 
-Before the first run, set up udev rules to make the HMD usb-hid devices accessible:
-  sudo cp config-examples/83-hmd.rules /etc/udev/rules.d
-  sudo udevadm control --reload
-
-
 
 ==============================================================================
 
@@ -43,32 +41,6 @@ Before the first run, set up udev rules to make the HMD usb-hid devices accessib
 If using the DepthAI backend, you might need to increase the usbfs buffer memory limit. The default of 16MB can be exhausted when using multiple devices.
   - Either set it via kernel boot parameter (in /boot/extlinux/extlinux.conf): usbcore.usbfs_memory_mb=128
   - Or add a startup task to run: sudo sh -c 'echo 128 > /sys/module/usbcore/parameters/usbfs_memory_mb'
-
-
-Make sure that the user you're running as is members of the "plugdev" and "input" groups.
-plugdev is required to open the HMD's /dev/hidraw* node
-input is required to open nodes under /dev/input for the USB-HID remote control
-
-To avoid accidentally powering off the Jetson with the USB-HID remote, disable systemd's response to power/suspend/hibernate/whatever keys:
-edit /etc/systemd/logind.conf :
-
-[Login]
-HandlePowerKey=ignore
-HandleSuspendKey=ignore
-HandleHibernateKey=ignore
-HandleLidSwitch=ignore
-HandleLidSwitchDocked=ignore
-
-then sudo systemctl restart systemd-logind #(NOTE: this will kill your login session!)
-
-Disabling the desktop environment:
-sudo systemctl isolate multi-user.target            # takes effect immediately
-sudo systemctl set-default multi-user.target        # to persist across reboots
-
-Reenabling the desktop environment
-sudo systemctl isolate graphical.target             # takes effect immediately
-sudo systemctl set-default graphical.target         # to persist across reboots
-
 
 
 Camera ISP settings are stored at /var/nvidia/nvcam/settings/camera_overrides.isp
