@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <algorithm>
 
 // CUDA graph can only be used if the model doesn't run on the DLA
 #define USE_CUDA_GRAPH 0
@@ -316,6 +317,7 @@ void EyeTrackingService::internalSaveSettings(cv::FileStorage& fs) {
 
 
 bool EyeTrackingService::processFrame() {
+  printf("\x1b[2J\x1b[H"); // Clear terminal per frame
 
   // Capture thread maintenance:
   // Start captures if they're not running, clean up after exited threads
@@ -367,65 +369,67 @@ bool EyeTrackingService::processFrame() {
     // Find contours in the pupil mask
     cv::Mat pupilMask(m_trtInputHeight, m_trtInputWidth, CV_8UC1, ps.m_pupilMask1, /*step=*/ m_trtInputWidth);
 
-    std::vector<std::vector<cv::Point> > contours;
-    cv::findContoursLinkRuns(pupilMask, contours);
+    struct Contour {
+      std::vector<cv::Point> points;
+      float area;
+      float perimeter;
+    };
+    std::vector<Contour> filteredContours;
+
+
+    // Collect stats and filter contours
+    {
+      std::vector<std::vector<cv::Point> > contours;
+      cv::findContoursLinkRuns(pupilMask, contours);
+
+
+      for (size_t contourIdx = 0; contourIdx < contours.size(); ++contourIdx) {
+        auto& points = contours[contourIdx];
+        if (points.size() < 20)
+          continue; // Not enough points
+
+        Contour c;
+        c.area = fabs(cv::contourArea(points));
+        if (c.area < 1000.0f)
+          continue; // Not enough area
+
+        c.perimeter = cv::arcLength(points, /*is_closed=*/ true);
+
+        c.points = std::move(points);
+        filteredContours.push_back(c);
+      }
+
+      // Sort filtered contours by area descending
+      if (!filteredContours.empty())
+        std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.area > right.area; } );
+    }
 
     bool didFitEllipse = false;
-    if (!contours.empty()) {
-
-      // Find largest-area contour
-      size_t bestContourIdx = 0;
-      float bestContourArea = cv::contourArea(contours[0]);
-
-      for (size_t contourIdx = 1; contourIdx < contours.size(); ++contourIdx) {
-        float area = cv::contourArea(contours[contourIdx]);
-
-        if (area > bestContourArea) {
-          bestContourArea = area;
-          bestContourIdx = contourIdx;
-        }
-      }
-
-      const auto& bestContour = contours[bestContourIdx];
-
-      // printf("Contour %zu/%zu: area = %f, %zu points\n", bestContourIdx, contours.size(), bestContourArea, bestContour.size());
-
-      // The algorithm needs a bare minimum of 5px to fit an ellipse
-      // Try and give it a healthy margin
-      if (contours[bestContourIdx].size() < 20) {
-        printf(" -- Failed on point count threshold\n");
-        goto skipFitting;
-      }
-
-      // Simple area threshold
-      // TODO configurable
-      if (bestContourArea < 1000.0f) {
-        printf(" -- Failed on area threshold\n");
-        goto skipFitting;
-      }
+    for (size_t contourIdx = 0; contourIdx < filteredContours.size(); ++contourIdx) {
+      Contour& contour = filteredContours[contourIdx];
+      printf("Contour %zu/%zu: area = %f, perimeter = %f, %zu points\n", contourIdx, filteredContours.size(), contour.area, contour.perimeter, contour.points.size());
 
       // Circularity
 
-      float perimeter = cv::arcLength(bestContour, /*is_closed=*/ true);
-      float circularity = (4.0f * M_PI * bestContourArea) / (perimeter * perimeter);
+      float circularity = (4.0f * M_PI * contour.area) / (contour.perimeter * contour.perimeter);
       if (fabs(1.0f - circularity) > 0.10f) {
         printf(" -- Failed on circularity test (ratio %.3f)\n", circularity);
-        goto skipFitting;
+        continue;
       }
 
       // Convexity
       std::vector<cv::Point> hull;
-      cv::convexHull(bestContour, hull);
+      cv::convexHull(contour.points, hull);
       float convexHullArea = fabs(cv::contourArea(hull));
       if (convexHullArea < 1.0f) {
         printf(" -- Failed to fit a convex hull\n");
-        goto skipFitting;
+        continue;
       }
 
-      float convexity = bestContourArea / convexHullArea;
+      float convexity = contour.area / convexHullArea;
       if (fabs(1.0f - convexity) > 0.10f) {
         printf(" -- Failed on convexity test (ratio %.3f)\n", convexity);
-        goto skipFitting;
+        continue;
       }
 
       // Tests passed
@@ -434,11 +438,11 @@ bool EyeTrackingService::processFrame() {
       // (easier to transform points than the ellipse equation, given that the scale can be nonuniform)
 
       std::vector<cv::Point2f> transformedContour;
-      transformedContour.resize(bestContour.size());
-      for (size_t i = 0; i < bestContour.size(); ++i) {
+      transformedContour.resize(contour.points.size());
+      for (size_t i = 0; i < contour.points.size(); ++i) {
 
         // Transform from TRT processing dimensions to normalized space
-        cv::Point2f np = bestContour[i];
+        cv::Point2f np = contour.points[i];
         np.x /= static_cast<float>(m_trtInputWidth);
         np.y /= static_cast<float>(m_trtInputHeight);
 
@@ -502,8 +506,11 @@ bool EyeTrackingService::processFrame() {
           }
         }
       }
+
+      // Only need to fit one ellipse.
+      if (didFitEllipse)
+        break;
     }
-skipFitting:
 
     if (!didFitEllipse) {
       // Clear pupil ellipse, since we didn't find anything useful this round.
@@ -628,7 +635,7 @@ skipFitting:
   }
 
 
-#if 1 // Histogram equalization switch
+#if 0 // Histogram equalization switch
 
 #if 1 // CLAHE vs global (equalizeHist) switch
   // CLAHE Histogram equalization
