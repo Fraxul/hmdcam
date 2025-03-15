@@ -24,7 +24,7 @@
 #define USE_CUDA_GRAPH 0
 
 const char* kInputImageTensorName = "input";
-const char* kOutputTensorName = "output";
+const char* kOutputTensorName = "out_conv1";
 
 class InferLogger : public nvinfer1::ILogger {
 public:
@@ -168,8 +168,9 @@ EyeTrackingService::EyeTrackingService() {
     // Ensure output width and height match
     assert(m_trtInputWidth == outSize.d[outSize.nbDims - 1]);
     assert(m_trtInputHeight == outSize.d[outSize.nbDims - 2]);
-    // Output should have 4 channels
-    assert(4 == outSize.d[outSize.nbDims - 3]);
+
+    // Output should have 1 channel
+    assert(1 == outSize.d[outSize.nbDims - 3]);
 
     nvinfer1::Dims strides = m_processingState[0].m_exec->getTensorStrides(kOutputTensorName);
     m_trtOutputSizeBytes = strides.d[0] * (/*sizeof(fp16)=*/ 2);
@@ -660,10 +661,6 @@ skipFitting:
   }
 
   // Run CUDA postprocessing operations:
-
-  // Run argmax over the return from the segmentation network to find the class index
-  ComputeClassIndex(ps.m_trtOutputHostPtr, ps.m_classIndex, m_trtInputWidth, m_trtInputHeight, m_cuStream);
-
   {
     NppiSize sz;
     sz.width = m_trtInputWidth;
@@ -674,7 +671,14 @@ skipFitting:
     zero.y = 0;
 
 
-    // Generate a binary mask from the pupil class
+    // Run threshold over the return from the segmentation network to find the pupil mask
+    union {
+      _Float16 fval;
+      int16_t ival;
+    } a;
+    a.fval = 0.5f;
+
+    int16_t threshold = a.ival;
 
     // NppStatus nppiCompareC_8u_C1R_Ctx(
     //   const Npp8u *pSrc, int nSrcStep,
@@ -682,12 +686,12 @@ skipFitting:
     //   Npp8u *pDst, int nDstStep,
     //   NppiSize oSizeROI,
     //   NppCmpOp eComparisonOperation, NppStreamContext nppStreamCtx)
-    NPP_CHECK(nppiCompareC_8u_C1R_Ctx(
-      ps.m_classIndex, m_trtInputWidth,
-      /*pupil class=*/ 3,
+    NPP_CHECK(nppiCompareC_16s_C1R_Ctx(
+      reinterpret_cast<const Npp16s*>(ps.m_trtOutputHostPtr), m_trtInputWidth * sizeof(uint16_t),
+      threshold,
       ps.m_pupilMask1, m_trtInputWidth,
       sz,
-      NPP_CMP_EQ, m_nppContext));
+      NPP_CMP_GREATER_EQ, m_nppContext));
 
     // Run closure operation to fill holes in the mask -- 3x3 dilation followed by 3x3 erosion
 
