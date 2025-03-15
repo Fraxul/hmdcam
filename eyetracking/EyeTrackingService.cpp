@@ -267,11 +267,12 @@ EyeTrackingService::EyeTrackingService() {
 #endif
   } // PER_EYE
 
-  // Create the u8 -> fp16 LUT for edgaze input processing
-  // The LUT applies a gamma curve of 0.8, then remaps to -1...1 range in fp16.
+  // Create the u8 -> fp16 LUT for eye segmentation processing
+  // The LUT applies remaps to -1...1 range in fp16.
   _Float16 lut[256];
   for (size_t lutIdx = 0; lutIdx < 256; ++lutIdx) {
-	  lut[lutIdx] = static_cast<_Float16>((pow(static_cast<float>(lutIdx) / 255.0f, 0.8f) * 2.0f) - 1.0f);
+	  //lut[lutIdx] = static_cast<_Float16>((pow(static_cast<float>(lutIdx) / 255.0f, 0.8f) * 2.0f) - 1.0f);
+	  lut[lutIdx] = static_cast<_Float16>((static_cast<float>(lutIdx) / 127.5f) - 1.0f);
 	}
   CUDA_CHECK(cuMemAlloc(&m_inputLUT, 256 * sizeof(_Float16)));
   CUDA_CHECK(cuMemcpyHtoD(m_inputLUT, lut, 256 * sizeof(_Float16)));
