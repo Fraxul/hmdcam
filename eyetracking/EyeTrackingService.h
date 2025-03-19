@@ -6,7 +6,6 @@
 #include <boost/thread.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/videoio.hpp>
-#include <opencv2/cudaimgproc.hpp>
 
 #include "rhi/cuda/CudaUtil.h"
 #include <cuda.h>
@@ -83,11 +82,11 @@ public:
 
     void releaseResources() {
       m_segmentationExec.reset(nullptr);
+      m_roiExec.reset(nullptr);
 
-      CUDA_SAFE_FREE(m_trtInputMatPtr);
-      CUDA_SAFE_FREE_HOST(m_trtOutputHostPtr);
+      CUDA_SAFE_FREE_HOST(m_segInputTensorPtr);
+      CUDA_SAFE_FREE_HOST(m_segOutputTensorPtr);
 
-      CUDA_SAFE_FREE_HOST(m_classIndex);
       CUDA_SAFE_FREE_HOST(m_pupilMask1);
       CUDA_SAFE_FREE_HOST(m_pupilMask2);
 
@@ -103,42 +102,34 @@ public:
         cuGraphDestroy(m_frameProcessingGraph);
         m_frameProcessingGraph = nullptr;
       }
-
-      m_trtInputMat = cv::cuda::GpuMat();
     }
-
-    // Processing region-of-interest -- cropped from the capture buffer and scaled
-    // to the size of the TRT processing buffer.
-    cv::Rect m_processingROI;
 
     // Center offset of the camera capture, used for translating between the eye-fitter
     // coordinate system (zero at center) and the capture/image coordinate system (zero at left-top)
     cv::Point2f m_captureCenterOffset;
 
-    // Input to TensorRT -- fp16, -1...1 range
-    cv::cuda::GpuMat m_trtInputMat;
+    // ROI scale output
+    cv::Mat m_roiScaleMat;
 
-    // Explicit allocations for TensorRT GpuMats, since we need control over the pitch
-    CUdeviceptr m_trtInputMatPtr = 0;
+    // Offset from segmentation ROI coordinates to capture mat coordinates. Always positive.
+    cv::Point2i m_lastSegROIToCaptureMatOffset;
+
+    // Host/device shared allocation for ROI prediction input. Can be fp16 or int8.
+    void* m_roiInputTensorPtr = nullptr;
+
+    // Host/device shared allocation for ROI prediction output. Can be fp16 or int8.
+    void* m_roiOutputTensorPtr = nullptr;
+
+    // Host/device shared input to segmentation network -- fp16, -1...1 range.
+    _Float16* m_segInputTensorPtr = nullptr;
+    size_t m_segInputTensorStrideElements = 0;
 
     // Host/device shared allocation for TRT output
-    _Float16* m_trtOutputHostPtr = 0;
-
-    // Host/device shared allocation for class index
-    uint8_t* m_classIndex = 0;
+    _Float16* m_segOutputTensorPtr = nullptr;
 
     // Host/device shared allocations for pupil mask processing
-    uint8_t* m_pupilMask1 = 0;
-    uint8_t* m_pupilMask2 = 0;
-
-    // Upload of capture buffer
-    cv::cuda::GpuMat m_preWarpGpuMat;
-    cv::cuda::GpuMat m_preHistEqMat;
-
-    cv::cuda::GpuMat m_postHistEqMat;
-
-    // CLAHE processor
-    cv::Ptr<cv::cuda::CLAHE> m_clahe;
+    uint8_t* m_pupilMask1 = nullptr;
+    uint8_t* m_pupilMask2 = nullptr;
 
     // Postprocessing output
     cv::RotatedRect m_pupilEllipse;
@@ -148,7 +139,7 @@ public:
     // Eye fitter
     singleeyefitter::EyeModelFitter m_eyeModelFitter;
     double m_focalLength = 6.0; // mm
-    double m_mm2px_scaling;
+    double m_mm2px_scaling = 0;
     const double pupilRadius() { return 2.0 * m_mm2px_scaling; }
     const double initialEyeZ() { return 100.0 * m_mm2px_scaling; }
 
@@ -160,6 +151,7 @@ public:
 
     // Execution context for running the tracking model
     std::unique_ptr<nvinfer1::IExecutionContext> m_segmentationExec;
+    std::unique_ptr<nvinfer1::IExecutionContext> m_roiExec;
 
 
     // We store two capture buffers to ensure that we don't lose the most recent buffer when swapping with the capture thread.
@@ -172,11 +164,10 @@ public:
     uint64_t newerCaptureBufferTimestamp() { return std::max<uint64_t>(captureBufferTimestamp(0), captureBufferTimestamp(1)); }
 
     // Debug view support
-    cv::Mat m_debugROIViewGrey;
-    cv::Mat m_debugROIViewRGB;
-
-    cv::Mat m_debugViewGrey;
-    cv::Mat m_debugViewRGB;
+    cv::Point2i m_debugLastPredictedROICenter; // in m_debugView coordinates
+    cv::Rect m_debugLastSegmentationROI; // in m_debugView coordinates
+    cv::Mat m_debugViewGrey; // Full copy of the capture mat, not circle-cropped
+    cv::Mat m_debugViewRGB; // Cached allocation for RGB version of m_debugViewGrey
   };
 
 
@@ -192,12 +183,19 @@ protected:
   cv::cuda::Stream m_cvStream = cv::cuda::Stream::Null(); // filled in during constructor
   NppStreamContext m_nppContext;
 
-  // Input image size
-  uint32_t m_trtInputWidth = 0, m_trtInputHeight = 0;
+  // Segmentation model I/O sizes
+  uint32_t m_segInputWidth = 0, m_segInputHeight = 0;
 
-  size_t m_trtOutputSizeBytes = 0;
-  size_t m_trtOutputRowPitchElements = 0;
-  size_t m_trtOutputPlanePitchElements = 0;
+  size_t m_segOutputSizeBytes = 0;
+  size_t m_segOutputRowPitchElements = 0;
+  size_t m_segOutputPlanePitchElements = 0;
+
+  // ROI model I/O sizes
+  bool m_roiIOIsInt8 = false;
+  size_t roiElementSize() const { return m_roiIOIsInt8 ? 1 : 2; }
+  uint32_t m_roiInputWidth = 0, m_roiInputHeight = 0;
+  uint32_t m_roiOutputWidth = 0, m_roiOutputHeight = 0;
+  size_t m_roiOutputSizeBytes = 0;
 
   // Profiling events
   bool m_enableProfiling = true;
@@ -206,12 +204,16 @@ protected:
   CUevent m_frameProcessingEndEvent;
 
   // Shared data
-  InferLogger* m_logger = nullptr;
-  nvinfer1::IRuntime* m_inferRuntime = nullptr;
-  nvinfer1::ICudaEngine* m_segmentationEngine = nullptr;
+  std::unique_ptr<InferLogger> m_logger;
+  std::unique_ptr<nvinfer1::IRuntime> m_inferRuntime;
+  std::unique_ptr<nvinfer1::ICudaEngine> m_segmentationEngine;
+  // names are owned by m_segmentationEngine, don't delete
+  const char* m_segInputTensorName = nullptr;
+  const char* m_segOutputTensorName = nullptr;
 
-  // Input LUT
-  CUdeviceptr m_inputLUT = 0;
-
+  std::unique_ptr<nvinfer1::ICudaEngine> m_roiEngine;
+  // names are owned by m_roiEngine, don't delete
+  const char* m_roiInputTensorName = nullptr;
+  const char* m_roiOutputTensorName = nullptr;
 };
 

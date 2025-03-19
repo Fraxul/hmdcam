@@ -90,10 +90,9 @@ int main(int argc, char* argv[]) {
   };
 
   cv::createTrackbar("mm2px", hWindow, &mm2px_int, 500, mm2px_callback, svc);
-  cv::createTrackbar("ROI X", hWindow, &svc->m_processingState[0].m_processingROI.x, 639, nullptr, nullptr);
-  cv::createTrackbar("ROI Y", hWindow, &svc->m_processingState[0].m_processingROI.y, 399, nullptr, nullptr);
-  cv::createTrackbar("ROI W", hWindow, &svc->m_processingState[0].m_processingROI.width, 640, nullptr, nullptr);
-  cv::createTrackbar("ROI H", hWindow, &svc->m_processingState[0].m_processingROI.height, 400, nullptr, nullptr);
+  //cv::createTrackbar("Circular crop X", hWindow, &svc->m_processingState[0].m_cropCenter.x, 639, nullptr, nullptr);
+  //cv::createTrackbar("Circular crop Y", hWindow, &svc->m_processingState[0].m_cropCenter.y, 479, nullptr, nullptr);
+  //cv::createTrackbar("Circular crop Radius", hWindow, (int*) &svc->m_processingState[0].m_cropRadius, 240, nullptr, nullptr);
 
   //for (size_t frameIdx = 0; frameIdx < 10; ++frameIdx) {
   for (size_t frameIdx = 0; ; ++frameIdx) {

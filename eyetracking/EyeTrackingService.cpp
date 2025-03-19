@@ -24,9 +24,6 @@
 // CUDA graph can only be used if the model doesn't run on the DLA
 #define USE_CUDA_GRAPH 0
 
-const char* kInputImageTensorName = "input";
-const char* kOutputTensorName = "out_conv1";
-
 class InferLogger : public nvinfer1::ILogger {
 public:
   InferLogger() = default;
@@ -86,8 +83,95 @@ static void dumpIOBindings(nvinfer1::ICudaEngine* engine) {
   }
 }
 
+const char* getIOTensorName(nvinfer1::ICudaEngine* engine, nvinfer1::TensorIOMode ioMode) {
+  int32_t nbIOTensors = engine->getNbIOTensors();
+  for (int32_t i = 0; i < nbIOTensors; ++i) {
+    const char* name = engine->getIOTensorName(i);
+    if (engine->getTensorIOMode(name) == ioMode)
+      return name;
+  }
+  assert(false && "getIOTensorName: no IO tensors matching given mode");
+  return nullptr;
+}
+
+const char* getSingleInputTensorName(nvinfer1::ICudaEngine* engine) { return getIOTensorName(engine, nvinfer1::TensorIOMode::kINPUT); }
+const char* getSingleOutputTensorName(nvinfer1::ICudaEngine* engine) { return getIOTensorName(engine, nvinfer1::TensorIOMode::kOUTPUT); }
+
 template <typename T> T clamp(T value, T min_, T max_) {
   return std::min<T>(max_, std::max<T>(min_, value));
+}
+
+// Fast conversion of 0....255 range uint8 values to -1...1 range fp16 values
+// Has a tiny precision loss around input 127 / output zero:
+//
+// Input  Expected fp16     Actual fp16
+// ------------------------------------
+//   124  -0.02745 a707   -0.02747 a708
+//   125  -0.01961 a505   -0.01962 a506
+//   126  -0.01176 a206   -0.01178 a208
+//   127  -0.00392 9c04   -0.00394 9c08
+//   128   0.00392 1c04    0.00391 1c00
+//   129   0.01176 2206    0.01175 2204
+//   130   0.01961 2505    0.01959 2504
+//
+// All other values are bitwise-identical to the reference algorithm, which converts/rescales in fp32 and then downcasts to fp16:
+//     _Float16 f16 = static_cast<_Float16>((static_cast<float>(input_u8) / 127.5f) - 1.0f)
+//
+// (The accuracy of doing the convert/rescale in fp16 is worse than this version)
+//
+// Requires compiler ARM NEON FP16 support to be enabled: -march=armv8.2-a+fp16 (for both gcc and clang)
+//
+void convertUnorm8ToSnormFp16(const uint8_t* inU8, void* outFP16, const size_t elementCount) {
+  // Only support chunks of 8 elements right now
+  assert((elementCount & 7) == 0);
+
+  float16x8_t* vectorOut = reinterpret_cast<float16x8_t*>(outFP16);
+  const uint16x8_t signFixup = vdupq_n_u16(0x8000);
+  for (size_t chunkIdx = 0; chunkIdx < (elementCount / 8); ++chunkIdx) {
+    // Load 8x 8-bit values and widen to 16 bit
+    uint16x8_t ux16 = vmovl_u8(vld1_u8(inU8 + (chunkIdx * 8)));
+
+    // Replicate low 8 to high 8
+    ux16 = vsliq_n_u16(ux16, ux16, 8);
+
+    // Fixup sign bit for unorm to snorm conversion, then reinterpret as s16
+    int16x8_t x = vreinterpretq_s16_u16(veorq_u16(ux16, signFixup));
+
+    // Convert signed fixed-point to fp16
+    float16x8_t f = vcvtq_n_f16_s16(x, 15);
+
+    // Write output
+    vectorOut[chunkIdx] = f;
+  }
+}
+
+// Convert 0...255 uint8 values to DLA-int8 -127...127 range
+// Conversion equation: out = max(in - 128, -127)
+// The input value 0 would map to -128, but that is not valid for the DLA's narrow int8 range;
+// input 0 is clipped to output -127.
+
+void convertUnorm8ToDLAInt8(const uint8_t* inU8, void* outDLAInt8, size_t elementCount) {
+  // Only support chunks of 16 elements right now
+  assert((elementCount & 15) == 0);
+
+  int8x16_t* vectorOut = reinterpret_cast<int8x16_t*>(outDLAInt8);
+  const uint8x16_t signFixup = vdupq_n_u8(0x80);
+  const int8x16_t cutoff = vdupq_n_s8(-127);
+
+  for (size_t chunkIdx = 0; chunkIdx < (elementCount / 16); ++chunkIdx) {
+
+    // Load 16x 8-bit values and widen to 16 bit
+    uint8x16_t ux = vld1q_u8(inU8 + (chunkIdx * 16));
+
+    // Fixup sign bit for unorm to snorm conversion, then reinterpret as s8
+    int8x16_t x = vreinterpretq_s8_u8(veorq_u8(ux, signFixup));
+
+    // Max with cutoff value to remove out-of-bounds -128 value (DLA int8 is narrow, so -127...127)
+    x = vmaxq_s8(x, cutoff);
+
+    // Write output
+    vectorOut[chunkIdx] = x;
+  }
 }
 
 
@@ -132,55 +216,112 @@ EyeTrackingService::EyeTrackingService() {
   CUDA_CHECK(cuEventRecord(m_frameProcessingEndEvent, m_cuStream));
 
 
-  m_logger = new InferLogger();
-  m_inferRuntime = nvinfer1::createInferRuntime(*m_logger);
+  m_logger.reset(new InferLogger());
+  m_inferRuntime.reset(nvinfer1::createInferRuntime(*m_logger));
 
-  mmfile fp("eyetracking/models/model-dla.engine");
-  m_segmentationEngine = m_inferRuntime->deserializeCudaEngine(fp.data(), fp.size());
+  // Load segmentation engine
+  {
+    mmfile fp("eyetracking/models/segmentation-dla.engine");
+    m_segmentationEngine.reset(m_inferRuntime->deserializeCudaEngine(fp.data(), fp.size()));
+    m_segInputTensorName = getSingleInputTensorName(m_segmentationEngine.get());
+    m_segOutputTensorName = getSingleOutputTensorName(m_segmentationEngine.get());
+  }
+
+  // Load ROI engine
+  {
+    mmfile fp("eyetracking/models/roi-gpu.engine");
+    m_roiEngine.reset(m_inferRuntime->deserializeCudaEngine(fp.data(), fp.size()));
+    m_roiInputTensorName = getSingleInputTensorName(m_roiEngine.get());
+    m_roiOutputTensorName = getSingleOutputTensorName(m_roiEngine.get());
+  }
 
   // Create TensorRT execution contexts
   PER_EYE {
     m_processingState[eyeIdx].m_segmentationExec.reset(m_segmentationEngine->createExecutionContext());
+    m_processingState[eyeIdx].m_roiExec.reset(m_roiEngine->createExecutionContext());
   }
 
   // Debug: Dump out information about the I/O bindings
-  dumpIOBindings(m_segmentationEngine);
+  dumpIOBindings(m_segmentationEngine.get());
+  printf("Segmentation Input strides: "); printDims(m_processingState[0].m_segmentationExec->getTensorStrides(m_segInputTensorName)); printf("\n");
+  printf("Segmentation Output strides: "); printDims(m_processingState[0].m_segmentationExec->getTensorStrides(m_segOutputTensorName)); printf("\n");
 
-
-  // Setup buffers
-  printf("Input strides: "); printDims(m_processingState[0].m_segmentationExec->getTensorStrides(kInputImageTensorName)); printf("\n");
-  printf("Output strides: "); printDims(m_processingState[0].m_segmentationExec->getTensorStrides(kOutputTensorName)); printf("\n");
+  dumpIOBindings(m_roiEngine.get());
+  printf("ROI Input strides: "); printDims(m_processingState[0].m_roiExec->getTensorStrides(m_roiInputTensorName)); printf("\n");
+  printf("ROI Output strides: "); printDims(m_processingState[0].m_roiExec->getTensorStrides(m_roiOutputTensorName)); printf("\n");
 
   // Get the input size
   {
-    nvinfer1::Dims inSize = m_processingState[0].m_segmentationExec->getTensorShape(kInputImageTensorName);
+    // Segmentation
+    nvinfer1::Dims inSize = m_processingState[0].m_segmentationExec->getTensorShape(m_segInputTensorName);
     assert(inSize.nbDims >= 2);
-    m_trtInputWidth = inSize.d[inSize.nbDims - 1];
-    m_trtInputHeight = inSize.d[inSize.nbDims - 2];
-    assert(m_trtInputWidth > 1 && m_trtInputHeight > 1);
-    printf("Input image dimensions: %ux%u\n", m_trtInputWidth, m_trtInputHeight);
+    m_segInputWidth = inSize.d[inSize.nbDims - 1];
+    m_segInputHeight = inSize.d[inSize.nbDims - 2];
+    assert(m_segInputWidth > 1 && m_segInputHeight > 1);
+    printf("Segmentation image dimensions: %ux%u\n", m_segInputWidth, m_segInputHeight);
+
+    // ROI
+    inSize = m_processingState[0].m_roiExec->getTensorShape(m_roiInputTensorName);
+    assert(inSize.nbDims >= 2);
+    m_roiInputWidth = inSize.d[inSize.nbDims - 1];
+    m_roiInputHeight = inSize.d[inSize.nbDims - 2];
+    assert(m_roiInputWidth > 1 && m_roiInputHeight > 1);
+    printf("ROI image dimensions: %ux%u\n", m_roiInputWidth, m_roiInputHeight);
   }
 
   // Get the output size
   {
-    assert(m_segmentationEngine->getTensorDataType(kOutputTensorName) == nvinfer1::DataType::kHALF);
-    nvinfer1::Dims outSize = m_processingState[0].m_segmentationExec->getTensorShape(kOutputTensorName);
+    // Segmentation
+    assert(m_segmentationEngine->getTensorDataType(m_segOutputTensorName) == nvinfer1::DataType::kHALF);
+    nvinfer1::Dims outSize = m_processingState[0].m_segmentationExec->getTensorShape(m_segOutputTensorName);
     assert(outSize.nbDims >= 3);
     // Ensure output width and height match
-    assert(m_trtInputWidth == outSize.d[outSize.nbDims - 1]);
-    assert(m_trtInputHeight == outSize.d[outSize.nbDims - 2]);
+    assert(m_segInputWidth == outSize.d[outSize.nbDims - 1]);
+    assert(m_segInputHeight == outSize.d[outSize.nbDims - 2]);
 
     // Output should have 1 channel
     assert(1 == outSize.d[outSize.nbDims - 3]);
 
-    nvinfer1::Dims strides = m_processingState[0].m_segmentationExec->getTensorStrides(kOutputTensorName);
-    m_trtOutputSizeBytes = strides.d[0] * (/*sizeof(fp16)=*/ 2);
+    nvinfer1::Dims strides = m_processingState[0].m_segmentationExec->getTensorStrides(m_segOutputTensorName);
+    m_segOutputSizeBytes = strides.d[0] * (/*sizeof(fp16)=*/ 2);
 
-    m_trtOutputRowPitchElements = strides.d[strides.nbDims - 2];
-    m_trtOutputPlanePitchElements = strides.d[strides.nbDims - 3];
+    m_segOutputRowPitchElements = strides.d[strides.nbDims - 2];
+    m_segOutputPlanePitchElements = strides.d[strides.nbDims - 3];
 
-    printf("Output is %zu bytes. Row pitch is %zu elements, plane pitch is %zu elements\n", m_trtOutputSizeBytes, m_trtOutputRowPitchElements, m_trtOutputPlanePitchElements);
+    printf("Segmentation output is %zu bytes. Row pitch is %zu elements, plane pitch is %zu elements\n", m_segOutputSizeBytes, m_segOutputRowPitchElements, m_segOutputPlanePitchElements);
   }
+
+  {
+    // ROI
+
+    // Only support same input and output types
+    auto roiIOType = m_roiEngine->getTensorDataType(m_roiInputTensorName);
+    assert(m_roiEngine->getTensorDataType(m_roiOutputTensorName) == roiIOType);
+
+    if (roiIOType == nvinfer1::DataType::kINT8) {
+      m_roiIOIsInt8 = true;
+    } else if (roiIOType == nvinfer1::DataType::kHALF) {
+      m_roiIOIsInt8 = false;
+    } else {
+      assert(false && "ROI engine: unsupported I/O type (must be kHALF or kINT8)");
+    }
+
+    nvinfer1::Dims outSize = m_processingState[0].m_roiExec->getTensorShape(m_roiOutputTensorName);
+    assert(outSize.nbDims >= 3);
+
+    // Output W/H depends on network config
+    m_roiOutputWidth = outSize.d[outSize.nbDims - 1];
+    m_roiOutputHeight = outSize.d[outSize.nbDims - 2];
+    // Output should have 1 channel
+    assert(1 == outSize.d[outSize.nbDims - 3]);
+
+    nvinfer1::Dims strides = m_processingState[0].m_roiExec->getTensorStrides(m_roiOutputTensorName);
+    size_t roiOutputSizeElements = strides.d[0];
+
+    m_roiOutputSizeBytes = roiOutputSizeElements * roiElementSize();
+    printf("ROI Output is %ux%u, %zu bytes\n", m_roiOutputWidth, m_roiOutputHeight, m_roiOutputSizeBytes);
+  }
+
 
   // Set up per-eye output buffers and TensorRT dispatches
   // We cook the per-eye output buffer address into the TRT dispatch,
@@ -193,11 +334,11 @@ EyeTrackingService::EyeTrackingService() {
     // Focal length computation is taken from the SingleEyeFitter sample tool
     //double fov = 120.0; // TODO parameterize
     //double fov_radians = fov * (M_PI / 180.0);
-    //ps.m_eyeModelFitter.focal_length = static_cast<double>(m_trtInputWidth / 2) / std::tan(fov_radians / 2.0);
+    //ps.m_eyeModelFitter.focal_length = static_cast<double>(m_segInputWidth / 2) / std::tan(fov_radians / 2.0);
 
     // Focal length computation / mm2px scaling is taken from deepvog
     double sensor_size[] = {4.8, 3.6};
-    double sensor_native_res[] = {640, 400};
+    double sensor_native_res[] = {640, 480};
 
     // self.mm2px_scaling = np.linalg.norm(self.ori_video_shape) / np.linalg.norm(self.sensor_size)
     ps.m_mm2px_scaling =
@@ -208,49 +349,56 @@ EyeTrackingService::EyeTrackingService() {
     ps.m_eyeModelFitter.focal_length = ps.m_focalLength * ps.m_mm2px_scaling;
     printf("Using focal length: %.6f\n", ps.m_eyeModelFitter.focal_length);
 
-    // Pre-create m_preHistEq and m_postHistEq to be the same size/dimensions as the TRT input mat
-    // (histogram equalization happens after warp/resize, right before TRT processing)
-    ps.m_preHistEqMat.create(m_trtInputHeight, m_trtInputWidth, CV_8U);
-    ps.m_postHistEqMat.create(m_trtInputHeight, m_trtInputWidth, CV_8U);
-
-    // CLAHE processor, which has some internal allocations
-    ps.m_clahe = cv::cuda::createCLAHE(/*clipLimit=*/ 1.5, /*tileGridSize=*/ cv::Size(8, 8));
-
-    // Postprocessing buffers
-    CUDA_CHECK(cuMemHostAlloc((void**) &ps.m_classIndex, m_trtInputWidth * m_trtInputHeight, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
-    CUDA_CHECK(cuMemHostAlloc((void**) &ps.m_pupilMask1, m_trtInputWidth * m_trtInputHeight, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
-    CUDA_CHECK(cuMemHostAlloc((void**) &ps.m_pupilMask2, m_trtInputWidth * m_trtInputHeight, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
-
-    // CV GpuMat for the TensorRT input
-    // This needs to be manually allocated to match the stride requirements set by TensorRT.
     {
-      nvinfer1::Dims strides = ps.m_segmentationExec->getTensorStrides(kInputImageTensorName);
+      // ROI network setup
+      CUDA_CHECK(cuMemHostAlloc(&ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight * roiElementSize(), /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
+      CUDA_CHECK(cuMemHostAlloc(&ps.m_roiOutputTensorPtr, m_roiOutputSizeBytes, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
 
-      size_t inputStrideBytes = strides.d[2] * sizeof(_Float16);
-      CUDA_CHECK(cuMemAlloc(&m_processingState[eyeIdx].m_trtInputMatPtr, strides.d[0]));
-      m_processingState[eyeIdx].m_trtInputMat = cv::cuda::GpuMat(m_trtInputHeight, m_trtInputWidth, CV_16U, (void*) m_processingState[eyeIdx].m_trtInputMatPtr, inputStrideBytes);
-      //printf("trtInputMat: step=%zu step1=%zu\n", m_processingState[eyeIdx].m_trtInputMat.step, m_processingState[eyeIdx].m_trtInputMat.step1());
+      // Wire tensor I/O buffers into execution context
+      assert(ps.m_roiExec->setTensorAddress(m_roiInputTensorName, (void*) ps.m_roiInputTensorPtr));
+      assert(ps.m_roiExec->setTensorAddress(m_roiOutputTensorName, (void*) ps.m_roiOutputTensorPtr));
+
+      // Enqueue one run to initialize internal data structures -- required before the graph recording
+      // The inital run takes longer than subsequent ones, so we should pay that startup cost now
+      // instead of during the frame loop.
+      assert(ps.m_roiExec->enqueueV3(m_cuStream));
     }
 
-    // TensorRT output allocation
-    CUDA_CHECK(cuMemHostAlloc((void**) &m_processingState[eyeIdx].m_trtOutputHostPtr, m_trtOutputSizeBytes, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
+    {
+      // Segmentation network setup
 
-    CUdeviceptr trtOutputDevicePtr;
+      // Segmentation mask postprocessing buffers
+      CUDA_CHECK(cuMemHostAlloc((void**) &ps.m_pupilMask1, m_segInputWidth * m_segInputHeight, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
+      CUDA_CHECK(cuMemHostAlloc((void**) &ps.m_pupilMask2, m_segInputWidth * m_segInputHeight, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
 
-    if (unifiedAddressingSupport) {
-      trtOutputDevicePtr = (CUdeviceptr) m_processingState[eyeIdx].m_trtOutputHostPtr;
-    } else {
-      CUDA_CHECK(cuMemHostGetDevicePointer(&trtOutputDevicePtr, &m_processingState[eyeIdx].m_trtOutputHostPtr, /*flags=*/ 0));
+      // Segmentation network input buffer
+      {
+        nvinfer1::Dims strides = ps.m_segmentationExec->getTensorStrides(m_segInputTensorName);
+
+        ps.m_segInputTensorStrideElements = strides.d[2];
+        CUDA_CHECK(cuMemHostAlloc((void**) &m_processingState[eyeIdx].m_segInputTensorPtr, strides.d[0] * /*sizeof(fp16)=*/ 2, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
+      }
+
+      // Segmentation network output allocation
+      CUDA_CHECK(cuMemHostAlloc((void**) &m_processingState[eyeIdx].m_segOutputTensorPtr, m_segOutputSizeBytes, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
+
+      CUdeviceptr segOutputTensorDevicePtr;
+
+      if (unifiedAddressingSupport) {
+        segOutputTensorDevicePtr = (CUdeviceptr) m_processingState[eyeIdx].m_segOutputTensorPtr;
+      } else {
+        CUDA_CHECK(cuMemHostGetDevicePointer(&segOutputTensorDevicePtr, &m_processingState[eyeIdx].m_segOutputTensorPtr, /*flags=*/ 0));
+      }
+
+      // Wire tensor I/O buffers into execution context
+      assert(ps.m_segmentationExec->setTensorAddress(m_segInputTensorName, (void*) m_processingState[eyeIdx].m_segInputTensorPtr));
+      assert(ps.m_segmentationExec->setTensorAddress(m_segOutputTensorName, (void*) segOutputTensorDevicePtr));
+
+      // Enqueue one run to initialize internal data structures -- required before the graph recording
+      // The inital run takes longer than subsequent ones, so we should pay that startup cost now
+      // instead of during the frame loop.
+      assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
     }
-
-    // Wire tensor I/O buffers into execution context
-    assert(ps.m_segmentationExec->setTensorAddress(kInputImageTensorName, m_processingState[eyeIdx].m_trtInputMat.cudaPtr()));
-    assert(ps.m_segmentationExec->setTensorAddress(kOutputTensorName, (void*) trtOutputDevicePtr));
-
-    // Enqueue one run to initialize internal data structures -- required before the graph recording
-    // The inital run takes longer than subsequent ones, so we should pay that startup cost now
-    // instead of during the frame loop.
-    assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
 
 #if USE_CUDA_GRAPH
     // Compile the TensorRT dispatch into a CUDA graph
@@ -266,16 +414,6 @@ EyeTrackingService::EyeTrackingService() {
     CUDA_CHECK(cuGraphUpload(m_processingState[eyeIdx].m_frameProcessingGraphExec, m_cuStream));
 #endif
   } // PER_EYE
-
-  // Create the u8 -> fp16 LUT for eye segmentation processing
-  // The LUT applies remaps to -1...1 range in fp16.
-  _Float16 lut[256];
-  for (size_t lutIdx = 0; lutIdx < 256; ++lutIdx) {
-	  //lut[lutIdx] = static_cast<_Float16>((pow(static_cast<float>(lutIdx) / 255.0f, 0.8f) * 2.0f) - 1.0f);
-	  lut[lutIdx] = static_cast<_Float16>((static_cast<float>(lutIdx) / 127.5f) - 1.0f);
-	}
-  CUDA_CHECK(cuMemAlloc(&m_inputLUT, 256 * sizeof(_Float16)));
-  CUDA_CHECK(cuMemcpyHtoD(m_inputLUT, lut, 256 * sizeof(_Float16)));
 }
 
 EyeTrackingService::~EyeTrackingService() {
@@ -285,15 +423,10 @@ EyeTrackingService::~EyeTrackingService() {
     m_processingState[eyeIdx].releaseResources();
   }
 
-  delete m_logger; m_logger = nullptr;
-  delete m_segmentationEngine; m_segmentationEngine = nullptr;
-  delete m_inferRuntime; m_inferRuntime = nullptr;
-
   cuStreamDestroy(m_cuStream);
   cuEventDestroy(m_frameProcessingStartEvent);
   cuEventDestroy(m_framePostProcessingStartEvent);
   cuEventDestroy(m_frameProcessingEndEvent);
-  CUDA_SAFE_FREE(m_inputLUT);
 }
 
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
@@ -368,7 +501,7 @@ bool EyeTrackingService::processFrame() {
     uint64_t startTimeNs = currentTimeNs();
 
     // Find contours in the pupil mask
-    cv::Mat pupilMask(m_trtInputHeight, m_trtInputWidth, CV_8UC1, ps.m_pupilMask1, /*step=*/ m_trtInputWidth);
+    cv::Mat pupilMask(m_segInputHeight, m_segInputWidth, CV_8UC1, ps.m_pupilMask1, /*step=*/ m_segInputWidth);
 
     struct Contour {
       std::vector<cv::Point> points;
@@ -413,7 +546,7 @@ bool EyeTrackingService::processFrame() {
       // Circularity
 
       float circularity = (4.0f * M_PI * contour.area) / (contour.perimeter * contour.perimeter);
-      if (fabs(1.0f - circularity) > 0.10f) {
+      if (fabs(1.0f - circularity) > 0.15f) {
         printf(" -- Failed on circularity test (ratio %.3f)\n", circularity);
         continue;
       }
@@ -441,19 +574,10 @@ bool EyeTrackingService::processFrame() {
       std::vector<cv::Point2f> transformedContour;
       transformedContour.resize(contour.points.size());
       for (size_t i = 0; i < contour.points.size(); ++i) {
-
-        // Transform from TRT processing dimensions to normalized space
         cv::Point2f np = contour.points[i];
-        np.x /= static_cast<float>(m_trtInputWidth);
-        np.y /= static_cast<float>(m_trtInputHeight);
-
-        // from normalized space to ROI region dimensions
-        np.x *= static_cast<float>(ps.m_processingROI.width);
-        np.y *= static_cast<float>(ps.m_processingROI.height);
-
         // Add ROI offset
-        np.x += static_cast<float>(ps.m_processingROI.x);
-        np.y += static_cast<float>(ps.m_processingROI.y);
+        np.x += static_cast<float>(ps.m_lastSegROIToCaptureMatOffset.x);
+        np.y += static_cast<float>(ps.m_lastSegROIToCaptureMatOffset.y);
 
         transformedContour[i] = np;
       }
@@ -525,7 +649,7 @@ bool EyeTrackingService::processFrame() {
 
     //printf("Eye %zu postprocess required. coordinates:\n", eyeIdx);
     //for (size_t i = 0; i < m_trtOutputKeypointCount; ++i) {
-    //  printf("  %.4f %.4f\n", ps.m_trtOutputHostPtr[(i * 2) + 0], ps.m_trtOutputHostPtr[(i * 2) + 1]);
+    //  printf("  %.4f %.4f\n", ps.m_segOutputTensorPtr[(i * 2) + 0], ps.m_segOutputTensorPtr[(i * 2) + 1]);
     //}
 
   } // PER_EYE postprocessing
@@ -552,109 +676,145 @@ bool EyeTrackingService::processFrame() {
   }
   ps.m_lastProcessingTimeNs = capture->timestamp;
 
-  // Make sure the ProcessingState's RoI makes sense
-  // It can be empty on first initialization, since we don't know the capture dimensions yet.
-  if (ps.m_processingROI.empty())
-    ps.m_processingROI = cv::Rect(0, 0, m_trtInputWidth, m_trtInputHeight);
-
   // Update the capture center offset, now that we know the frame dimensions.
   ps.m_captureCenterOffset = cv::Point2f(
     static_cast<float>(capture->mat.cols) / 2.0f,
     static_cast<float>(capture->mat.rows) / 2.0f);
 
-  // Submit the next eye's image
+  // Start working on the next eye's image
+
+  // Copy capture mat for debug view
+  capture->mat.copyTo(ps.m_debugViewGrey);
+
+  // Scale from capture mat to the input size for the ROI prediction network
+  cv::resize(capture->mat, ps.m_roiScaleMat, cv::Size(m_roiInputWidth, m_roiInputHeight));
+
+  // Convert CV_U8 from the scale output to int8 or half for the ROI network input
+
+  assert(ps.m_roiScaleMat.isContinuous()); // Conversion assumes continuous input and output mats
+  if (m_roiIOIsInt8) {
+    convertUnorm8ToDLAInt8(ps.m_roiScaleMat.ptr<uint8_t>(0), ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight);
+  } else {
+    convertUnorm8ToSnormFp16(ps.m_roiScaleMat.ptr<uint8_t>(0), ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight);
+  }
+
+  // Run ROI network
+
   if (m_enableProfiling) {
     CUDA_CHECK(cuEventRecord(m_frameProcessingStartEvent, m_cuStream));
   }
 
-  // Upload to m_preWarpGpuMat
-  ps.m_preWarpGpuMat.create(capture->mat.size(), capture->mat.type());
-  {
-    CUDA_MEMCPY2D copy;
-    memset(&copy, 0, sizeof(copy));
-    copy.srcMemoryType = CU_MEMORYTYPE_HOST;
-    copy.srcHost = capture->mat.data;
-    copy.srcPitch = capture->mat.step;
+  assert(ps.m_roiExec->enqueueV3(m_cuStream));
 
-    copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    copy.dstDevice = (CUdeviceptr) ps.m_preWarpGpuMat.cudaPtr();
-    copy.dstPitch = ps.m_preWarpGpuMat.step;
+  // Wait for ROI to finish processing
+  cuStreamSynchronize(m_cuStream);
 
-    copy.WidthInBytes = capture->mat.cols * capture->mat.elemSize();
-    copy.Height = capture->mat.rows;
 
-    cuMemcpy2DAsync(&copy, m_cuStream);
-  }
+  // Compute center of ROI heatmap
+  float roiOutput[2]; // 0...1 coordinate range
 
-  {
-    NppiSize srcsz;
-    srcsz.height = ps.m_preWarpGpuMat.rows;
-    srcsz.width = ps.m_preWarpGpuMat.cols;
-
-    NppiRect srcroi;
-    // Apply m_processingROI, while clamping to sensible values
-    srcroi.x = clamp<int>(ps.m_processingROI.x, 0, ps.m_preWarpGpuMat.cols);
-    srcroi.y = clamp<int>(ps.m_processingROI.y, 0, ps.m_preWarpGpuMat.rows);
-    srcroi.width = clamp<int>(ps.m_processingROI.width, 1, ps.m_preWarpGpuMat.cols - srcroi.x);
-    srcroi.height = clamp<int>(ps.m_processingROI.height, 1, ps.m_preWarpGpuMat.rows - srcroi.y);
-
-    NppiSize dstsz;
-    dstsz.height = ps.m_preHistEqMat.rows;
-    dstsz.width = ps.m_preHistEqMat.cols;
-
-    NppiRect dstroi;
-    dstroi.x = 0;
-    dstroi.y = 0;
-    dstroi.height = ps.m_preHistEqMat.rows;
-    dstroi.width = ps.m_preHistEqMat.cols;
+  if (m_roiIOIsInt8) {
+    assert(false && "TODO: ROI heatmap center computation for int8 i/o");
+  } else {
+    _Float16* roiBasePtr = reinterpret_cast<_Float16*>(ps.m_roiOutputTensorPtr);
 
 #if 0
-    // Crop/rotate the capture buffer
+    // Simple argmax variant
+    _Float16 maxValue = 0.0f;
+    uint32_t maxValueX = m_roiOutputWidth / 2, maxValueY = m_roiOutputHeight / 2;
 
-    double coeffs[2][3];
-    Mat coeffsMat(2, 3, CV_64F, (void*)coeffs);
-    M.convertTo(coeffsMat, coeffsMat.type());
+    for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
+      _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
+      for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
+        if (roiRowPtr[x] > maxValue) {
+          maxValue = roiRowPtr[x];
+          maxValueX = x;
+          maxValueY = y;
+        }
+      }
+    }
 
-    nppiWarpAffine_8u_C1R_Ctx(
-      ps.m_preWarpGpuMat.ptr<Npp8u>(), srcsz, static_cast<int>(ps.m_preWarpGpuMat.step), srcroi,
-      ps.m_preHistEqMat.ptr<Npp8u>(), static_cast<int>(ps.m_preHistEqMat.step), dstroi,
-      coeffs, NPPI_INTER_LINEAR, m_nppContext);
-
+    roiOutput[0] = static_cast<float>(maxValueX) / static_cast<float>(m_roiOutputWidth);
+    roiOutput[1] = static_cast<float>(maxValueY) / static_cast<float>(m_roiOutputHeight);
 #else
-    // Just resize the capture buffer
-    // NppStatus nppiResize_8u_C1R_Ctx(
-    //    const Npp8u *pSrc, int nSrcStep, NppiSize oSrcSize, NppiRect oSrcRectROI,
-    //    Npp8u *pDst, int nDstStep, NppiSize oDstSize, NppiRect oDstRectROI,
-    //    int eInterpolation, NppStreamContext nppStreamCtx)
+    // Weighted sampling variant
 
-    NPP_CHECK(nppiResize_8u_C1R_Ctx(
-      ps.m_preWarpGpuMat.ptr<Npp8u>(), static_cast<int>(ps.m_preWarpGpuMat.step), srcsz, srcroi,
-      ps.m_preHistEqMat.ptr<Npp8u>(), static_cast<int>(ps.m_preHistEqMat.step), dstsz, dstroi,
-      NPPI_INTER_LINEAR, m_nppContext));
+    // Find the max value. TODO: This can be vectorized
+    _Float16 maxValue = 0.0f;
+    for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
+      _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
+      for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
+        maxValue = std::max<_Float16>(roiRowPtr[x], maxValue);
+      }
+    }
+
+    // Gather all sample points >= 0.85x max value and compute their average position.
+    _Float16 threshold = maxValue * 0.85f16;
+
+    uint32_t sampleCount = 0;
+    uint32_t xAccum = 0;
+    uint32_t yAccum = 0;
+
+    for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
+      _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
+      for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
+        if (roiRowPtr[x] >= threshold) {
+          sampleCount += 1;
+          xAccum += x;
+          yAccum += y;
+        }
+      }
+    }
+
+    if (sampleCount > 0) {
+      roiOutput[0] = (static_cast<float>(xAccum) / static_cast<float>(sampleCount)) / static_cast<float>(m_roiOutputWidth);
+      roiOutput[1] = (static_cast<float>(yAccum) / static_cast<float>(sampleCount)) / static_cast<float>(m_roiOutputHeight);
+    } else {
+      // No samples? Default to center of image.
+      roiOutput[0] = 0.5f;
+      roiOutput[1] = 0.5f;
+    }
+
+
 #endif
-
   }
 
+  // Use center coordinates computed from the ROI network to compute the ROI aligned inside the original capture mat
+  // ROI Rect needs to be fixed size of the segmentation network input (no edge clipping allowed)
+  // TODO: May need to be 8-byte aligned on input too for the fp16 conversion code?
 
-#if 0 // Histogram equalization switch
+  printf("ROI computed center (0...1): (%f, %f)\n", roiOutput[0], roiOutput[1]);
 
-#if 1 // CLAHE vs global (equalizeHist) switch
-  // CLAHE Histogram equalization
-  ps.m_clahe->apply(/*src=*/ ps.m_preHistEqMat, /*dst=*/ ps.m_postHistEqMat, m_cvStream);
-#else
-  // TODO: Enable CLAHE (maybe as an option).
-  cv::cuda::equalizeHist(/*src=*/ ps.m_preHistEqMat, /*dst=*/ ps.m_postHistEqMat, m_cvStream);
-#endif
+  // Rescale to 0...1f and multiply by the actual source w/h
+  cv::Point2i roiCenter_captureRelative = cv::Point2i(
+    clamp<int32_t>(roiOutput[0] * static_cast<float>(capture->mat.cols - 1), 0, capture->mat.cols - 1),
+    clamp<int32_t>(roiOutput[1] * static_cast<float>(capture->mat.rows - 1), 0, capture->mat.rows - 1)
+  );
+  ps.m_debugLastPredictedROICenter = roiCenter_captureRelative; // Save for debug view.
 
-  // Apply format conversion for TRT input
-  ApplyLUT8to16(ps.m_postHistEqMat, ps.m_trtInputMat, (const ushort*) m_inputLUT, m_cuStream);
+  // Clip the capture-relative ROI center to the capture dimensions inset by half of the segmentation network input size. This should ensure that the
+  // segmentation ROI rect fits entirely within the capture region.
 
-#else
-  // Format conversion only, no histogram equalization
-  ApplyLUT8to16(ps.m_preHistEqMat, ps.m_trtInputMat, (const ushort*) m_inputLUT, m_cuStream);
-  ps.m_postHistEqMat = ps.m_preHistEqMat;
+  roiCenter_captureRelative.x = clamp<int32_t>(roiCenter_captureRelative.x, (m_segInputWidth / 2), (capture->mat.cols - 1) - (m_segInputWidth / 2));
+  roiCenter_captureRelative.y = clamp<int32_t>(roiCenter_captureRelative.y, (m_segInputHeight / 2), (capture->mat.rows - 1) - (m_segInputHeight / 2));
 
-#endif
+  // Build segmentation input crop rect in capture mat coordinates
+  cv::Point2i segROIRect_tl = (roiCenter_captureRelative - cv::Point2i(m_segInputWidth / 2, m_segInputHeight / 2));
+  // Just in case, clamp the top left corner so it doesn't go negative
+  segROIRect_tl.x = std::max<int32_t>(segROIRect_tl.x, 0);
+  segROIRect_tl.y = std::max<int32_t>(segROIRect_tl.y, 0);
+
+  cv::Rect segROIRect = cv::Rect(segROIRect_tl, cv::Size(m_segInputWidth, m_segInputHeight));
+  ps.m_debugLastSegmentationROI = segROIRect;
+  ps.m_lastSegROIToCaptureMatOffset = segROIRect_tl; // save for eyefitter processing
+
+  cv::Mat segROIMat = cv::Mat(capture->mat, segROIRect);
+
+  // Convert ROI window to fp16 to populate ps.m_segInputTensor
+  // The ROI input is known not to be contiguous, so we do it row-by-row.
+  for (size_t y = 0; y < m_segInputHeight; ++y) {
+    convertUnorm8ToSnormFp16(segROIMat.ptr<uint8_t>(y, 0), ps.m_segInputTensorPtr + (y * ps.m_segInputTensorStrideElements), m_segInputWidth);
+  }
 
 #if USE_CUDA_GRAPH
   // Launch TRT processing graph for the currently selected eye.
@@ -671,8 +831,8 @@ bool EyeTrackingService::processFrame() {
   // Run CUDA postprocessing operations:
   {
     NppiSize sz;
-    sz.width = m_trtInputWidth;
-    sz.height = m_trtInputHeight;
+    sz.width = m_segInputWidth;
+    sz.height = m_segInputHeight;
 
     NppiPoint zero;
     zero.x = 0;
@@ -695,12 +855,12 @@ bool EyeTrackingService::processFrame() {
     //   NppiSize oSizeROI,
     //   NppCmpOp eComparisonOperation, NppStreamContext nppStreamCtx)
     NPP_CHECK(nppiCompareC_16s_C1R_Ctx(
-      reinterpret_cast<const Npp16s*>(ps.m_trtOutputHostPtr), m_trtInputWidth * sizeof(uint16_t),
+      reinterpret_cast<const Npp16s*>(ps.m_segOutputTensorPtr), m_segInputWidth * sizeof(uint16_t),
       threshold,
-      ps.m_pupilMask1, m_trtInputWidth,
+      ps.m_pupilMask1, m_segInputWidth,
       sz,
       NPP_CMP_GREATER_EQ, m_nppContext));
-
+#if 1
     // Run closure operation to fill holes in the mask -- 3x3 dilation followed by 3x3 erosion
 
     // NppStatus nppiDilate3x3Border_8u_C1R_Ctx(
@@ -709,8 +869,8 @@ bool EyeTrackingService::processFrame() {
     //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
     //
     NPP_CHECK(nppiDilate3x3Border_8u_C1R_Ctx(
-      ps.m_pupilMask1, m_trtInputWidth, sz, zero,
-      ps.m_pupilMask2, m_trtInputWidth, sz,
+      ps.m_pupilMask1, m_segInputWidth, sz, zero,
+      ps.m_pupilMask2, m_segInputWidth, sz,
       NPP_BORDER_REPLICATE, m_nppContext));
 
     // NppStatus nppiErode3x3Border_8u_C1R_Ctx(
@@ -718,10 +878,34 @@ bool EyeTrackingService::processFrame() {
     //         Npp8u *pDst, Npp32s nDstStep, NppiSize oSizeROI,
     //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
     NPP_CHECK(nppiErode3x3Border_8u_C1R_Ctx(
-      ps.m_pupilMask2, m_trtInputWidth, sz, zero,
-      ps.m_pupilMask1, m_trtInputWidth, sz,
+      ps.m_pupilMask2, m_segInputWidth, sz, zero,
+      ps.m_pupilMask1, m_segInputWidth, sz,
+      NPP_BORDER_REPLICATE, m_nppContext));
+#else
+
+    // Try double erode operation to clean up edges and tiny bridges on the pupil mask
+
+    // NppStatus nppiErode3x3Border_8u_C1R_Ctx(
+    //   const Npp8u *pSrc, Npp32s nSrcStep, NppiSize oSrcSize, NppiPoint oSrcOffset,
+    //         Npp8u *pDst, Npp32s nDstStep, NppiSize oSizeROI,
+    //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
+    NPP_CHECK(nppiErode3x3Border_8u_C1R_Ctx(
+      ps.m_pupilMask1, m_segInputWidth, sz, zero,
+      ps.m_pupilMask2, m_segInputWidth, sz,
       NPP_BORDER_REPLICATE, m_nppContext));
 
+
+    // NppStatus nppiErode3x3Border_8u_C1R_Ctx(
+    //   const Npp8u *pSrc, Npp32s nSrcStep, NppiSize oSrcSize, NppiPoint oSrcOffset,
+    //         Npp8u *pDst, Npp32s nDstStep, NppiSize oSizeROI,
+    //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
+    NPP_CHECK(nppiErode3x3Border_8u_C1R_Ctx(
+      ps.m_pupilMask2, m_segInputWidth, sz, zero,
+      ps.m_pupilMask1, m_segInputWidth, sz,
+      NPP_BORDER_REPLICATE, m_nppContext));
+
+
+#endif
   }
 
   ps.m_requiresPostProcessing = true;
@@ -816,61 +1000,39 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
   assert(eyeIdx < 2);
   ProcessingState& ps = m_processingState[eyeIdx];
 
-  if (ps.m_postHistEqMat.empty()) {
-    ps.m_debugViewRGB = cv::Mat(); // clear to empty mat
+  if (ps.m_debugViewGrey.empty()) {
+    // No data yet
     return ps.m_debugViewRGB;
   }
-
-  // Download last GPU copy of the greyscale mat that was the TensorRT input (after all cropping/scaling, before LUT/format conversion)
-  ps.m_postHistEqMat.download(ps.m_debugROIViewGrey);
-
-  // Promote greyscale mat to RGB so we can draw markers on it
-  cv::cvtColor(/*src=*/ ps.m_debugROIViewGrey, /*dst=*/ ps.m_debugROIViewRGB, cv::COLOR_GRAY2BGR);
-
-  // Draw segmentation class colors
-#if 1
-  for (size_t row = 0; row < ps.m_debugROIViewRGB.rows; ++row) {
-    uint8_t* pupilRowPtr = ps.m_pupilMask1 + (row * m_trtInputWidth);
-    for (size_t col = 0; col < ps.m_debugROIViewRGB.cols; ++col) {
-      if (pupilRowPtr[col])
-        ps.m_debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/2] = 0x7f;
-    }
-  }
-
-#else
-  for (size_t row = 0; row < ps.m_debugViewRGB.rows; ++row) {
-    uint8_t* classRowPtr = ps.m_classIndex + (row * m_trtInputWidth);
-    for (size_t col = 0; col < ps.m_debugViewRGB.cols; ++col) {
-      uint8_t classIdx = classRowPtr[col];
-      if (classIdx > 0) { // non-BG
-        // Saturate one of the color channels matching the class index
-        ps.m_debugViewRGB.ptr<uint8_t>(row, col)[classIdx - 1] = 0xff;
-      }
-      ps.m_debugViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/0] = 0xff;
-    }
-  }
-#endif
-
-  // Download the full capture buffer upload to show context -- we'll composite the ROI into it
-  ps.m_preWarpGpuMat.download(ps.m_debugViewGrey);
 
   // Promote full capture buffer to RGB
   cv::cvtColor(/*src=*/ ps.m_debugViewGrey, /*dst=*/ ps.m_debugViewRGB, cv::COLOR_GRAY2BGR);
 
-  // Composite/scale the ROI region on top of the full capture buffer.
-  // This lets us show the result of the histogram equalization, as well as any scaling artifacts
+  if (ps.m_debugLastSegmentationROI.empty()) {
+    // No segmentation ROI means nothing to draw, just return now.
+    return ps.m_debugViewRGB;
+  }
 
-  cv::resize(ps.m_debugROIViewRGB, cv::Mat(ps.m_debugViewRGB, /*roi=*/ ps.m_processingROI), ps.m_processingROI.size());
+  // Segmentation ROI view of the RGB debug mat
+  cv::Mat debugROIViewRGB = cv::Mat(ps.m_debugViewRGB, ps.m_debugLastSegmentationROI);
 
-  // Draw the ROI rectangle
-  cv::rectangle(ps.m_debugViewRGB, ps.m_processingROI.tl(), ps.m_processingROI.br(), cv::Scalar(0, 255, 0));
+  // Draw segmentation mask colors
+  for (size_t row = 0; row < debugROIViewRGB.rows; ++row) {
+    uint8_t* pupilRowPtr = ps.m_pupilMask1 + (row * m_segInputWidth);
+    for (size_t col = 0; col < debugROIViewRGB.cols; ++col) {
+      if (pupilRowPtr[col])
+        debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/2] = 0xcc;
+    }
+  }
 
   // Now operating on the full view; coordinates that are relative to the ROI will need to be translated.
 
+#if 0
   // Draw eye-fitter sample ellipses
   for (const auto& el : ps.m_eyeFitterSamples) {
     cv::ellipse(ps.m_debugViewRGB, el, cv::Scalar(0x3f, 0, 0x3f), /*thickness=*/ 2);
   }
+#endif
 
   // Draw pupil ellipse, if present
   if (!ps.m_pupilEllipse.size.empty()) {
@@ -924,11 +1086,18 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
     }
   }
 
+  // Draw the ROI centroid
+  cv::circle(ps.m_debugViewRGB, ps.m_debugLastPredictedROICenter, /*r=*/ 3, cv::Scalar(192, 0, 192));
+
+  // Draw the ROI rectangle
+  cv::rectangle(ps.m_debugViewRGB, ps.m_debugLastSegmentationROI.tl(), ps.m_debugLastSegmentationROI.br(), cv::Scalar(0, 255, 0));
+
+
   // Convert markers to pixel coordinates
   //for (size_t markerIdx = 0; markerIdx < m_trtOutputKeypointCount; ++markerIdx) {
   //  markers[markerIdx] = cv::Point2f(
-  //    ps.m_trtOutputHostPtr[(markerIdx * 2) + 0] * static_cast<float>(ps.m_debugViewRGB.cols),
-  //    ps.m_trtOutputHostPtr[(markerIdx * 2) + 1] * static_cast<float>(ps.m_debugViewRGB.rows));
+  //    ps.m_segOutputTensorPtr[(markerIdx * 2) + 0] * static_cast<float>(ps.m_debugViewRGB.cols),
+  //    ps.m_segOutputTensorPtr[(markerIdx * 2) + 1] * static_cast<float>(ps.m_debugViewRGB.rows));
   //}
 
   // Draw dots on all  markers
