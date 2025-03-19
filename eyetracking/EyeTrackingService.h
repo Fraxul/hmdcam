@@ -14,6 +14,7 @@
 #include <nppdefs.h>
 #include <NvInfer.h>
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 class InferLogger;
@@ -81,10 +82,7 @@ public:
     }
 
     void releaseResources() {
-      if (m_exec) {
-        delete m_exec;
-        m_exec = nullptr;
-      }
+      m_segmentationExec.reset(nullptr);
 
       CUDA_SAFE_FREE(m_trtInputMatPtr);
       CUDA_SAFE_FREE_HOST(m_trtOutputHostPtr);
@@ -94,10 +92,7 @@ public:
       CUDA_SAFE_FREE_HOST(m_pupilMask2);
 
       for (size_t bufIdx = 0; bufIdx < 2; ++bufIdx) {
-        if (m_captureBuffers[bufIdx]) {
-          delete m_captureBuffers[bufIdx];
-          m_captureBuffers[bufIdx] = nullptr;
-        }
+        m_captureBuffers[bufIdx].reset(nullptr);
       }
 
       if (m_frameProcessingGraphExec) {
@@ -164,14 +159,14 @@ public:
     CUgraphExec m_frameProcessingGraphExec = nullptr;
 
     // Execution context for running the tracking model
-    nvinfer1::IExecutionContext* m_exec = nullptr;
+    std::unique_ptr<nvinfer1::IExecutionContext> m_segmentationExec;
 
 
     // We store two capture buffers to ensure that we don't lose the most recent buffer when swapping with the capture thread.
     // The capture thread's buffer is not guaranteed to be newer than what we're currently holding.
-    CaptureBuffer* m_captureBuffers[2] = {nullptr, nullptr};
+    std::unique_ptr<CaptureBuffer> m_captureBuffers[2];
 
-    uint64_t captureBufferTimestamp(size_t idx) const { return (m_captureBuffers[idx] == nullptr) ? 0 : m_captureBuffers[idx]->timestamp; }
+    uint64_t captureBufferTimestamp(size_t idx) const { return m_captureBuffers[idx] ? m_captureBuffers[idx]->timestamp : 0; }
     size_t olderCaptureBufferIdx() { return (captureBufferTimestamp(0) < captureBufferTimestamp(1)) ? 0 : 1; }
     size_t newerCaptureBufferIdx() { return (captureBufferTimestamp(0) < captureBufferTimestamp(1)) ? 1 : 0; }
     uint64_t newerCaptureBufferTimestamp() { return std::max<uint64_t>(captureBufferTimestamp(0), captureBufferTimestamp(1)); }
@@ -213,7 +208,7 @@ protected:
   // Shared data
   InferLogger* m_logger = nullptr;
   nvinfer1::IRuntime* m_inferRuntime = nullptr;
-  nvinfer1::ICudaEngine* m_inferEngine = nullptr;
+  nvinfer1::ICudaEngine* m_segmentationEngine = nullptr;
 
   // Input LUT
   CUdeviceptr m_inputLUT = 0;

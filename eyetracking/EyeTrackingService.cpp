@@ -58,6 +58,34 @@ static void printDims(const nvinfer1::Dims& d) {
   printf("}");
 }
 
+static void dumpIOBindings(nvinfer1::ICudaEngine* engine) {
+  for (int32_t ioTensorIdx = 0; ioTensorIdx < engine->getNbIOTensors(); ++ioTensorIdx) {
+    const char* dataTypes[] = {"fp32", "fp16", "int8", "int32", "bool8", "uint8"};
+
+    const char* n = engine->getIOTensorName(ioTensorIdx);
+    bool input = engine->getTensorIOMode(n) == nvinfer1::TensorIOMode::kINPUT;
+
+    nvinfer1::Dims d = engine->getTensorShape(n);
+
+    nvinfer1::DataType dt = engine->getTensorDataType(n);
+    nvinfer1::TensorLocation loc = engine->getTensorLocation(n);
+
+    printf("[%d] %s %s Loc=%s Dims=",
+      ioTensorIdx, n, input ? "(input)" : "(output)",
+      loc == nvinfer1::TensorLocation::kDEVICE ? "(device)" : "(host)");
+    printDims(d);
+
+    printf(" DataType=%s Format=%u (%s)", dataTypes[(int) dt], (uint32_t) engine->getTensorFormat(n), engine->getTensorFormatDesc(n));
+
+    int32_t vDim = engine->getTensorVectorizedDim(n);
+    if (vDim >= 0) {
+      printf(" VectorizedDim=%d", vDim);
+      printf(" Bytes/Component=%d Components/Element=%d", engine->getTensorBytesPerComponent(n), engine->getTensorComponentsPerElement(n));
+    }
+    printf("\n");
+  }
+}
+
 template <typename T> T clamp(T value, T min_, T max_) {
   return std::min<T>(max_, std::max<T>(min_, value));
 }
@@ -108,52 +136,24 @@ EyeTrackingService::EyeTrackingService() {
   m_inferRuntime = nvinfer1::createInferRuntime(*m_logger);
 
   mmfile fp("eyetracking/models/model-dla.engine");
-  m_inferEngine = m_inferRuntime->deserializeCudaEngine(fp.data(), fp.size());
+  m_segmentationEngine = m_inferRuntime->deserializeCudaEngine(fp.data(), fp.size());
 
   // Create TensorRT execution contexts
   PER_EYE {
-    m_processingState[eyeIdx].m_exec = m_inferEngine->createExecutionContext();
+    m_processingState[eyeIdx].m_segmentationExec.reset(m_segmentationEngine->createExecutionContext());
   }
-
 
   // Debug: Dump out information about the I/O bindings
-  for (int32_t ioTensorIdx = 0; ioTensorIdx < m_inferEngine->getNbIOTensors(); ++ioTensorIdx) {
-    const char* dataTypes[] = {"fp32", "fp16", "int8", "int32", "bool8", "uint8"};
-
-    const char* n = m_inferEngine->getIOTensorName(ioTensorIdx);
-    bool input = m_inferEngine->getTensorIOMode(n) == nvinfer1::TensorIOMode::kINPUT;
-
-    nvinfer1::Dims d = m_inferEngine->getTensorShape(n);
-
-    nvinfer1::DataType dt = m_inferEngine->getTensorDataType(n);
-    nvinfer1::TensorLocation loc = m_inferEngine->getTensorLocation(n);
-
-    printf("[%d] %s %s Loc=%s Dims=",
-      ioTensorIdx, n, input ? "(input)" : "(output)",
-      loc == nvinfer1::TensorLocation::kDEVICE ? "(device)" : "(host)");
-    printDims(d);
-
-    printf(" DataType=%s Format=%u (%s) Strides=", dataTypes[(int) dt], (uint32_t) m_inferEngine->getTensorFormat(n), m_inferEngine->getTensorFormatDesc(n));
-    nvinfer1::Dims strides = m_processingState[0].m_exec->getTensorStrides(n);
-    printDims(strides);
-
-    int32_t vDim = m_inferEngine->getTensorVectorizedDim(n);
-    if (vDim >= 0) {
-      printf(" VectorizedDim=%d", vDim);
-      printf(" Bytes/Component=%d Components/Element=%d", m_inferEngine->getTensorBytesPerComponent(n), m_inferEngine->getTensorComponentsPerElement(n));
-    }
-
-    printf("\n");
-  }
+  dumpIOBindings(m_segmentationEngine);
 
 
   // Setup buffers
-  printf("Input strides: "); printDims(m_processingState[0].m_exec->getTensorStrides(kInputImageTensorName)); printf("\n");
-  printf("Output strides: "); printDims(m_processingState[0].m_exec->getTensorStrides(kOutputTensorName)); printf("\n");
+  printf("Input strides: "); printDims(m_processingState[0].m_segmentationExec->getTensorStrides(kInputImageTensorName)); printf("\n");
+  printf("Output strides: "); printDims(m_processingState[0].m_segmentationExec->getTensorStrides(kOutputTensorName)); printf("\n");
 
   // Get the input size
   {
-    nvinfer1::Dims inSize = m_processingState[0].m_exec->getTensorShape(kInputImageTensorName);
+    nvinfer1::Dims inSize = m_processingState[0].m_segmentationExec->getTensorShape(kInputImageTensorName);
     assert(inSize.nbDims >= 2);
     m_trtInputWidth = inSize.d[inSize.nbDims - 1];
     m_trtInputHeight = inSize.d[inSize.nbDims - 2];
@@ -163,8 +163,8 @@ EyeTrackingService::EyeTrackingService() {
 
   // Get the output size
   {
-    assert(m_inferEngine->getTensorDataType(kOutputTensorName) == nvinfer1::DataType::kHALF);
-    nvinfer1::Dims outSize = m_processingState[0].m_exec->getTensorShape(kOutputTensorName);
+    assert(m_segmentationEngine->getTensorDataType(kOutputTensorName) == nvinfer1::DataType::kHALF);
+    nvinfer1::Dims outSize = m_processingState[0].m_segmentationExec->getTensorShape(kOutputTensorName);
     assert(outSize.nbDims >= 3);
     // Ensure output width and height match
     assert(m_trtInputWidth == outSize.d[outSize.nbDims - 1]);
@@ -173,7 +173,7 @@ EyeTrackingService::EyeTrackingService() {
     // Output should have 1 channel
     assert(1 == outSize.d[outSize.nbDims - 3]);
 
-    nvinfer1::Dims strides = m_processingState[0].m_exec->getTensorStrides(kOutputTensorName);
+    nvinfer1::Dims strides = m_processingState[0].m_segmentationExec->getTensorStrides(kOutputTensorName);
     m_trtOutputSizeBytes = strides.d[0] * (/*sizeof(fp16)=*/ 2);
 
     m_trtOutputRowPitchElements = strides.d[strides.nbDims - 2];
@@ -224,7 +224,7 @@ EyeTrackingService::EyeTrackingService() {
     // CV GpuMat for the TensorRT input
     // This needs to be manually allocated to match the stride requirements set by TensorRT.
     {
-      nvinfer1::Dims strides = ps.m_exec->getTensorStrides(kInputImageTensorName);
+      nvinfer1::Dims strides = ps.m_segmentationExec->getTensorStrides(kInputImageTensorName);
 
       size_t inputStrideBytes = strides.d[2] * sizeof(_Float16);
       CUDA_CHECK(cuMemAlloc(&m_processingState[eyeIdx].m_trtInputMatPtr, strides.d[0]));
@@ -244,13 +244,13 @@ EyeTrackingService::EyeTrackingService() {
     }
 
     // Wire tensor I/O buffers into execution context
-    assert(ps.m_exec->setTensorAddress(kInputImageTensorName, m_processingState[eyeIdx].m_trtInputMat.cudaPtr()));
-    assert(ps.m_exec->setTensorAddress(kOutputTensorName, (void*) trtOutputDevicePtr));
+    assert(ps.m_segmentationExec->setTensorAddress(kInputImageTensorName, m_processingState[eyeIdx].m_trtInputMat.cudaPtr()));
+    assert(ps.m_segmentationExec->setTensorAddress(kOutputTensorName, (void*) trtOutputDevicePtr));
 
     // Enqueue one run to initialize internal data structures -- required before the graph recording
     // The inital run takes longer than subsequent ones, so we should pay that startup cost now
     // instead of during the frame loop.
-    assert(ps.m_exec->enqueueV3(m_cuStream));
+    assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
 
 #if USE_CUDA_GRAPH
     // Compile the TensorRT dispatch into a CUDA graph
@@ -258,7 +258,7 @@ EyeTrackingService::EyeTrackingService() {
     CUDA_CHECK(cuStreamBeginCapture(m_cuStream, CU_STREAM_CAPTURE_MODE_GLOBAL));
 
     // Record TensorRT dispatch
-    assert(ps.m_exec->enqueueV3(m_cuStream));
+    assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
 
     // End recording and instantiate executable graph
     CUDA_CHECK(cuStreamEndCapture(m_cuStream, &m_processingState[eyeIdx].m_frameProcessingGraph));
@@ -286,7 +286,7 @@ EyeTrackingService::~EyeTrackingService() {
   }
 
   delete m_logger; m_logger = nullptr;
-  delete m_inferEngine; m_inferEngine = nullptr;
+  delete m_segmentationEngine; m_segmentationEngine = nullptr;
   delete m_inferRuntime; m_inferRuntime = nullptr;
 
   cuStreamDestroy(m_cuStream);
@@ -330,7 +330,7 @@ bool EyeTrackingService::processFrame() {
     if (cs.m_captureThreadAlive) {
       // Update buffer from the capture thread
       size_t bufIdx = ps.olderCaptureBufferIdx();
-      ps.m_captureBuffers[bufIdx] = cs.m_captureBufferMailbox.exchange(ps.m_captureBuffers[bufIdx]);
+      ps.m_captureBuffers[bufIdx].reset(cs.m_captureBufferMailbox.exchange(ps.m_captureBuffers[bufIdx].release()));
       //printf("captureThreadAlive(%zu) buf %zu => %p\n", eyeIdx, bufIdx, ps.m_captureBuffers[bufIdx]);
     } else {
       if (!cs.m_inputFilename.empty()) {
@@ -543,7 +543,7 @@ bool EyeTrackingService::processFrame() {
   }
 
   ProcessingState& ps = m_processingState[m_currentlyProcessingEyeIdx];
-  CaptureBuffer* capture = ps.m_captureBuffers[ps.newerCaptureBufferIdx()];
+  CaptureBuffer* capture = ps.m_captureBuffers[ps.newerCaptureBufferIdx()].get();
 
   if (capture == nullptr) {
     // sanity check
@@ -661,7 +661,7 @@ bool EyeTrackingService::processFrame() {
   CUDA_CHECK(cuGraphLaunch(ps.m_frameProcessingGraphExec, m_cuStream));
 #else
   // Launch TRT processing (no graph)
-  assert(ps.m_exec->enqueueV3(m_cuStream));
+  assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
 #endif
 
   if (m_enableProfiling) {
