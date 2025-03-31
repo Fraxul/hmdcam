@@ -86,6 +86,19 @@ if [ ! -f /var/nvidia/nvcam/settings/camera_overrides.isp ]; then
   cp assets/camera_overrides-li-imx290.isp /var/nvidia/nvcam/settings/camera_overrides.isp
 fi
 
+# Install patched libnvisppg.so to work around Jetpack 6.2 / r36.4 blurry image from camera capture
+# Ref topic: https://forums.developer.nvidia.com/t/poor-image-quality-after-flashing/320681/
+# TODO: Once this is fixed in a release build, compare the version from /etc/nv_tegra_release to see if the patch is required.
+# As of this writing, r36.4.3 is the newest version and requires the patch.
+echo "83cf72a4f58728508914d3fb14c25fb39245dd05f9e2c7e0048f374784982e25  /usr/lib/aarch64-linux-gnu/tegra/libnvisppg.so" | sha256sum --check --quiet
+if  [ $? -ne 0 ]; then
+  echo "Installing patched /usr/lib/aarch64-linux-gnu/tegra/libnvisppg.so to work around blurry capture on L4T r36.4"
+  echo "Original will be saved as /usr/lib/aarch64-linux-gnu/tegra/libnvisppg-orig.so"
+  mv /usr/lib/aarch64-linux-gnu/tegra/libnvisppg.so /usr/lib/aarch64-linux-gnu/tegra/libnvisppg-orig.so
+  cp assets/libnvisppg-Topic320681_2025Mar07_patch_for_jp62_blurry_capture.so /usr/lib/aarch64-linux-gnu/tegra/libnvisppg.so
+  systemctl restart nvargus-daemon.service
+fi
+
 # Final step: nvpmodel should be set to MAXN
 nvpmodel -q | grep -q MAXN
 if [ $? -ne 0 ]; then
