@@ -33,6 +33,14 @@ if [ "$(systemctl get-default)" != "multi-user.target" ]; then
   systemctl set-default multi-user.target
 fi
 
+if [ ! -f /etc/systemd/system/hmdcam.service ]; then
+  echo "Installing hmdcam boot service (/etc/systemd/system/hmdcam.service)"
+  echo "The service will be installed, but not set to run at startup yet."
+  echo "When you're ready for that, run: sudo systemctl enable hmdcam.service"
+
+  cp assets/hmdcam.service /etc/systemd/system/hmdcam.service
+fi
+
 # Disable some unwanted services
 systemctl disable nvzramconfig.service
 systemctl disable nvmemwarning.service

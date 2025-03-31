@@ -1,0 +1,28 @@
+# copy to /etc/systemd/system
+# then run sudo systemctl enable hmdcam.service
+#
+# Note that nvargus-daemon.service (which this depends on) should be modified:
+# The dependency on network-online.target needs to be removed to avoid delaying
+# startup due to missing network link. (nvargus-daemon doesn't actually need
+# networking to function)
+
+[Unit]
+Description=hmdcam
+After=nvpmodel.service
+After=nvargus-daemon.service
+
+[Service]
+Type=simple
+User=tegra
+WorkingDirectory=/home/tegra/hmdcam
+ExecStartPre=-rm -f /dev/shm/depth-worker
+ExecStart=/home/tegra/hmdcam/build/bin/hmdcam --depth-backend ofa
+Restart=always
+RestartSec=3
+# Required for depth-worker SHM segment to work correctly
+LimitMEMLOCK=infinity
+
+
+[Install]
+WantedBy=multi-user.target
+
