@@ -42,7 +42,7 @@ env = Environment(tools = env_tools, toolpath=['scons-tools'],
   ],
   NVCCFLAGS=['--expt-relaxed-constexpr', '-g'],
   CPPDEFINES=['GLM_ENABLE_EXPERIMENTAL'],
-  CPPFLAGS=['-g', '-Wall'],
+  CPPFLAGS=['-g', '-Wall', '-Wshadow'],
   CXXFLAGS=['-std=c++14'],
   LINKFLAGS=['-g'],
   LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
@@ -104,7 +104,8 @@ if is_tegra:
   env['IS_TEGRA'] = True
   env['TEGRA_RELEASE'] = tegra_release
   env.Append(
-    CPPDEFINES=[('L4T_RELEASE_MAJOR', tegra_release)]
+    CPPDEFINES=[('L4T_RELEASE_MAJOR', tegra_release)],
+    CXXFLAGS=['-march=armv8.2-a+fp16'],
   )
 
 else:
