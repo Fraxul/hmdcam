@@ -279,6 +279,10 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  // Clear the DISPLAY environment variable. Having this variable exist, even if blank,
+  // will break EGL initialization in libargus and nvbufsurface.
+  unsetenv("DISPLAY");
+
   DepthMapGenerator* depthMapGenerator = createDepthMapGenerator(depthBackend);
 
   if (depthBackend == kDepthBackendDepthAI) {
