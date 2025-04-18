@@ -20,6 +20,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#include <math.h>
 
 // CUDA graph can only be used if the model doesn't run on the DLA
 #define USE_CUDA_GRAPH 0
@@ -632,6 +633,32 @@ bool EyeTrackingService::processFrame() {
         }
       }
 
+      // Apply model to ellipse to generate 3d fit
+      if (ps.m_eyeModelFitter.hasEyeModel()) {
+        ps.m_eyeFitterOutputsValid = ps.m_eyeModelFitter.unproject_single_observation(ps.m_fitPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset), ps.pupilRadius());
+        if (ps.m_eyeFitterOutputsValid) {
+          // Original coordinate system:
+          // +x is left
+          // -y is up
+          // -z is forward
+
+          // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
+          float x =  ps.m_fitPupilCircle.normal[0];
+          float y =  ps.m_fitPupilCircle.normal[1];
+          float z = -ps.m_fitPupilCircle.normal[2];
+
+          // +pitch = right
+          // +yaw = up
+          float pitch = asin(-y);
+          float yaw = atan2(x, z);
+
+          printf("n=%.3f %.3f %.3f\n", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
+          printf("pitch = %.3f, yaw = %.3f\n", pitch * (180.0 / M_PI), yaw * (180.0 / M_PI));
+        }
+      } else {
+        ps.m_eyeFitterOutputsValid = false;
+      }
+
       // Only need to fit one ellipse.
       if (didFitEllipse)
         break;
@@ -1039,51 +1066,49 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
     cv::ellipse(ps.m_debugViewRGB, ps.m_pupilEllipse, cv::Scalar(0xff, 0, 0xff), /*thickness=*/ 2);
   }
 
-  if (ps.m_eyeModelFitter.hasEyeModel()) {
-    singleeyefitter::Circle3D<double> circle;
-    if (ps.m_eyeModelFitter.unproject_single_observation(circle, singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset), ps.pupilRadius())) {
-      singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(circle, ps.m_eyeModelFitter.focal_length);
-      singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
+  if (ps.m_eyeFitterOutputsValid) {
+
+    singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(ps.m_fitPupilCircle, ps.m_eyeModelFitter.focal_length);
+    singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
 
 
-      cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), ps.m_captureCenterOffset);
-      cv::ellipse(ps.m_debugViewRGB, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
+    cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), ps.m_captureCenterOffset);
+    cv::ellipse(ps.m_debugViewRGB, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
 
-      cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), ps.m_captureCenterOffset);
-      cv::ellipse(ps.m_debugViewRGB, eyeEllipseImg, cv::Scalar(0, 60, 60), /*thickness=*/ 2);
+    cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), ps.m_captureCenterOffset);
+    cv::ellipse(ps.m_debugViewRGB, eyeEllipseImg, cv::Scalar(0, 60, 60), /*thickness=*/ 2);
 
-      // order is _bottomLeft_, _topLeft_, topRight, bottomRight
-      cv::Point2f rectPoints[4];
-      eyeEllipseImg.points(rectPoints);
+    // order is _bottomLeft_, _topLeft_, topRight, bottomRight
+    cv::Point2f rectPoints[4];
+    eyeEllipseImg.points(rectPoints);
 
-      // Draw crosshairs through the eye-ellipse
-      cv::line(ps.m_debugViewRGB,
-        (rectPoints[0] + rectPoints[1]) * 0.5f,
-        (rectPoints[2] + rectPoints[3]) * 0.5f,
-        cv::Scalar(0, 60, 60), /*thickness=*/2);
+    // Draw crosshairs through the eye-ellipse
+    cv::line(ps.m_debugViewRGB,
+      (rectPoints[0] + rectPoints[1]) * 0.5f,
+      (rectPoints[2] + rectPoints[3]) * 0.5f,
+      cv::Scalar(0, 60, 60), /*thickness=*/2);
 
-      cv::line(ps.m_debugViewRGB,
-        (rectPoints[1] + rectPoints[2]) * 0.5f,
-        (rectPoints[0] + rectPoints[3]) * 0.5f,
-        cv::Scalar(0, 60, 60), /*thickness=*/2);
+    cv::line(ps.m_debugViewRGB,
+      (rectPoints[1] + rectPoints[2]) * 0.5f,
+      (rectPoints[0] + rectPoints[3]) * 0.5f,
+      cv::Scalar(0, 60, 60), /*thickness=*/2);
 
-      // Draw a small marker on the eye center point
-      cv::circle(ps.m_debugViewRGB, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(255, 0, 0), /*thickness=*/ -1);
+    // Draw a small marker on the eye center point
+    cv::circle(ps.m_debugViewRGB, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(255, 0, 0), /*thickness=*/ -1);
 
-      // Line from the eye center through the pupil center
-      cv::line(ps.m_debugViewRGB, eyeEllipseImg.center, pupilEllipseImg.center, cv::Scalar(0, 255, 0), /*thickness=*/ 1);
+    // Line from the eye center through the pupil center
+    cv::line(ps.m_debugViewRGB, eyeEllipseImg.center, pupilEllipseImg.center, cv::Scalar(0, 255, 0), /*thickness=*/ 1);
 
 
-      char buf[64];
-      snprintf(buf, 64, "n=%.3f %.3f %.3f", circle.normal[0], circle.normal[1], circle.normal[2]);
+    char buf[64];
+    snprintf(buf, 64, "n=%.3f %.3f %.3f", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
 
-      cv::putText(ps.m_debugViewRGB, buf, cv::Point2f(/*x=*/ 5, /*y=*/ ps.m_debugViewRGB.rows - 16), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
+    cv::putText(ps.m_debugViewRGB, buf, cv::Point2f(/*x=*/ 5, /*y=*/ ps.m_debugViewRGB.rows - 16), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
 
-      //printf("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
-      //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
-      //    ps.m_pupilEllipse.size.width, ps.m_pupilEllipse.size.height);
+    //printf("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
+    //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
+    //    ps.m_pupilEllipse.size.width, ps.m_pupilEllipse.size.height);
 
-    }
   }
 
   // Draw the ROI centroid

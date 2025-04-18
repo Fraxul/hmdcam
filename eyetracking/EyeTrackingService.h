@@ -133,15 +133,17 @@ public:
 
     // Postprocessing output
     cv::RotatedRect m_pupilEllipse;
+    bool m_eyeFitterOutputsValid = false;
+    singleeyefitter::Circle3D<double> m_fitPupilCircle;
 
     std::vector<cv::RotatedRect> m_eyeFitterSamples;
 
     // Eye fitter
     singleeyefitter::EyeModelFitter m_eyeModelFitter;
-    double m_focalLength = 6.0; // mm
+    double m_focalLength = 4.0; // mm
     double m_mm2px_scaling = 0;
     const double pupilRadius() { return 2.0 * m_mm2px_scaling; }
-    const double initialEyeZ() { return 100.0 * m_mm2px_scaling; }
+    const double initialEyeZ() { return 50.0 * m_mm2px_scaling; }
 
     // CUDA graph capture of the tracking model run
     // Internally the TensorRT engine launches several dozen kernels, so capturing
