@@ -544,9 +544,9 @@ bool EyeTrackingService::processFrame() {
       printf("Contour %zu/%zu: area = %f, perimeter = %f, %zu points\n", contourIdx, filteredContours.size(), contour.area, contour.perimeter, contour.points.size());
 
       // Circularity
-
+      // 80% circularity seems to be a good threshold for valid ellipses even at extreme angles
       float circularity = (4.0f * M_PI * contour.area) / (contour.perimeter * contour.perimeter);
-      if (fabs(1.0f - circularity) > 0.15f) {
+      if (fabs(1.0f - circularity) > 0.2f) {
         printf(" -- Failed on circularity test (ratio %.3f)\n", circularity);
         continue;
       }
