@@ -17,11 +17,13 @@ tegraEnv.Append(
   CPPDEFINES=['IMGUI_DISABLE_OBSOLETE_KEYIO', 'IMGUI_DISABLE_OBSOLETE_FUNCTIONS'],
   CPPPATH=[
     'hmdcam',
+    'eyetracking',
     'wayland',
     MONADO_BUILD + '/src/xrt/include', # Contains generated config headers
     MONADO_BASE + '/src/xrt/include',
     MONADO_BASE + '/src/xrt/auxiliary',
     '/usr/include/drm',
+    '/usr/include/eigen3',
     '#canbus',
     '#canbus/common',
     '#canbus/socketcan',
@@ -37,8 +39,8 @@ tegraEnv.Append(
     'wayland-client', 'wayland-egl', 'xkbcommon',
     'hidapi-libusb', 'usb-1.0', 'udev',
     'cuda', 'cudart',
-    'nppc', 'nppidei', 'nppitc', 'nppif',
-    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
+    'nppc', 'nppidei', 'nppitc', 'nppif', 'nppim',
+    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect', 'opencv_videoio',
     'nvToolsExt',
     'socketcan',
   ]
@@ -133,8 +135,8 @@ else:
 if (env['HAVE_OPENCV_CUDA']):
   tegraEnv.Append(LIBS=['opencv_cudafilters'])
 if (env['HAVE_TENSORRT']):
-  tegraEnv.Append(LIBS=['nvinfer'])
-  tegra_src += Glob('eyetracking/*.cpp')
+  tegraEnv.Append(LIBS=['nvinfer', 'ceres', 'glog'])
+  tegra_src += Glob('eyetracking/*.cpp') + Glob('eyetracking/*.cu') + Glob('eyetracking/SingleEyeFitter/*.cpp')
 
 
 tegraEnv.CompilationDatabase()
