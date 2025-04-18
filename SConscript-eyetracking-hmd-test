@@ -1,0 +1,86 @@
+import os
+import platform
+import sys
+Import('env')
+
+etEnv = env.Clone()
+
+etEnv.CompilationDatabase()
+etEnv.Append(
+  CPPPATH=[
+    'eyetracking',
+    '/usr/include/eigen3',
+  ]
+)
+
+# Import locally built Monado static libraries
+MONADO_BASE='#monado'
+MONADO_BUILD='#build/monado'
+
+if not os.path.exists(str(Dir(MONADO_BUILD))):
+  sys.exit('Monado build artifacts are not present. Please run ./build-monado.sh first.')
+
+etEnv.Append(
+  CPPDEFINES=['IMGUI_DISABLE_OBSOLETE_KEYIO', 'IMGUI_DISABLE_OBSOLETE_FUNCTIONS'],
+  CPPPATH=[
+    'hmdcam',
+    'eyetracking',
+    'wayland',
+    MONADO_BUILD + '/src/xrt/include', # Contains generated config headers
+    MONADO_BASE + '/src/xrt/include',
+    MONADO_BASE + '/src/xrt/auxiliary',
+    '#nvsci_headers',
+    '/usr/include/drm',
+    '/usr/include/eigen3',
+  ],
+  LIBS=[
+    'z',
+    'dl',
+    'pthread', 'rt',
+    'boost_chrono', 'boost_system', 'boost_thread',
+    'epoxy',
+    'drm',
+    'wayland-client', 'wayland-egl', 'xkbcommon',
+    'hidapi-libusb', 'usb-1.0', 'udev',
+    'cuda', 'cudart',
+    'nppc', 'nppidei', 'nppitc', 'nppif', 'nppim',
+    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect', 'opencv_videoio',
+    'nvinfer',
+    'nvToolsExt',
+    'ceres', 'glog',
+  ]
+)
+monadoStatics = \
+    Glob(MONADO_BUILD + '/src/xrt/targets/common/*.a') + \
+    Glob(MONADO_BUILD + '/src/xrt/state_trackers/prober/*.a') + \
+    Glob(MONADO_BUILD + '/src/xrt/drivers/*.a') + \
+    Glob(MONADO_BUILD + '/src/xrt/state_trackers/oxr/*.a') + \
+    [
+      MONADO_BUILD + '/src/xrt/auxiliary/os/libaux_os.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/util/libaux_util.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/util/libaux_util_sink.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/vive/libaux_vive.a',
+      MONADO_BUILD + '/src/xrt/auxiliary/tracking/libaux_tracking.a', # Needs to be after libaux_vive.a
+      MONADO_BUILD + '/src/xrt/auxiliary/math/libaux_math.a', # Needs to be after libaux_tracking.a for symbol resolution.
+      MONADO_BUILD + '/src/xrt/auxiliary/bindings/libaux_generated_bindings.a' # Needs to be after libaux_util.a
+    ]
+
+
+etEnv.Program(
+  target = '../bin/eyetracking-hmd-test',
+  source = Glob('eyetracking/*.cpp')
+    + Glob('eyetracking/*.cu')
+    + Glob('eyetracking/SingleEyeFitter/*.cpp')
+    + ['eyetracking/test/eyetracking-hmd-test.cpp']
+    + Glob('common/Fx*.cpp')
+    + Glob('hmdcam/RenderBackend*.cpp')
+    + ['hmdcam/Render.cpp', 'hmdcam/imgui_backend.cpp', 'hmdcam/InputListener.cpp']
+    + Glob('rhi/*.cpp')
+    + Glob('rhi/cuda/*.cpp')
+    + Glob('rhi/gl/*.cpp')
+    + Glob('rhi/egl/*.cpp')
+    + Glob('imgui/*.cpp')
+    + Glob('implot/*.cpp')
+    + Glob('wayland/*.c')
+    + monadoStatics
+)
