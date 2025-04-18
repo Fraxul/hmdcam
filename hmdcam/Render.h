@@ -17,10 +17,6 @@ extern RHIRenderTarget::ptr windowRenderTarget;
 bool RenderInit(ERenderBackend);
 void RenderShutdown();
 void renderHMDFrame();
-void RenderInitDebugSurface(uint32_t width, uint32_t height);
-RHISurface::ptr renderAcquireDebugSurface();
-void renderSubmitDebugSurface(RHISurface::ptr);
-const std::string& renderDebugURL();
 
 void recomputeHMDParameters();
 

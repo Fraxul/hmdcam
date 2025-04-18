@@ -101,7 +101,6 @@ else:
 
 if (tegraEnv['IS_TEGRA'] and not tegraEnv['nsight']):
   tegraEnv.Append(
-    CPPDEFINES=['USE_NVENC'],
     CPPPATH=['#hmdcam/tegra/nvenc']
   )
   liveMediaStatics = [

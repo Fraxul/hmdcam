@@ -40,6 +40,7 @@
 #include "PDUComms.h"
 #include "Render.h"
 #include "RenderBackend.h"
+#include "RenderDebug.h"
 #include "nvToolsExt.h"
 
 #include "imgui_backend.h"
@@ -385,7 +386,7 @@ int main(int argc, char* argv[]) {
 
 
   std::vector<RHIRect> debugSurfaceCameraRects;
-  {
+  if (RenderDebugSubsystemEnabled()) {
     // Size and allocate debug surface area based on camera count
     unsigned int debugColumns = 1, debugRows = 1;
     if (argusCamera->streamCount() > 1) {
@@ -404,6 +405,8 @@ int main(int argc, char* argv[]) {
       debugSurfaceCameraRects.push_back(r);
     }
     RenderInitDebugSurface(dsW, dsH);
+  } else {
+    printf("Render debug subsystem disabled at compile time.\n");
   }
 
   cameraSystem = new CameraSystem(argusCamera);
@@ -870,8 +873,8 @@ int main(int argc, char* argv[]) {
 
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
 
-        if (ImGui::CollapsingHeader("Remote Debug")) {
-          ImGui::Text("Debug URL: %s", renderDebugURL().c_str());
+        if (RenderDebugSubsystemEnabled() && ImGui::CollapsingHeader("Remote Debug")) {
+          ImGui::Text("Debug URL: %s", renderDebugURL());
           ImGui::Checkbox("Distortion correction", &debugUseDistortion);
           ImGui::Checkbox("Show depth map", &debugShowDepthMap);
           if (ImGui::RadioButton("No overlay", !debugOverlay)) {
@@ -1193,7 +1196,7 @@ int main(int argc, char* argv[]) {
       rhi()->endRenderPass(eyeRT);
 
       // Debug feedback rendering
-      {
+      if (RenderDebugSubsystemEnabled()) {
         RHISurface::ptr debugSurface = renderAcquireDebugSurface();
         if (depthMapGenerator) {
           depthMapGenerator->setPopulateDebugTextures((bool) debugSurface);
