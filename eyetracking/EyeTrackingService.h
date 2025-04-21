@@ -67,7 +67,7 @@ public:
     // Main thread will swap it with its previous buffer (or NULL if it didn't have one)
     // Capture thread will swap its just-filled buffer with whatever's in here, and allocate a new one if it gets back NULL
     // We should end up with 3 buffers in-flight between the capture thread, main thread, and mailbox.
-    boost::atomic<CaptureBuffer*> m_captureBufferMailbox;
+    boost::atomic<CaptureBuffer*> m_captureBufferMailbox { nullptr };
 
   };
 
@@ -135,6 +135,7 @@ public:
     cv::RotatedRect m_pupilEllipse;
     bool m_eyeFitterOutputsValid = false;
     singleeyefitter::Circle3D<double> m_fitPupilCircle;
+    float m_pupilRawPitchDeg = 0.0f, m_pupilRawYawDeg = 0.0f;
 
     std::vector<cv::RotatedRect> m_eyeFitterSamples;
 

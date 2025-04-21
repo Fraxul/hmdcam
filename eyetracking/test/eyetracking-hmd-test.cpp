@@ -29,6 +29,7 @@
 #include "common/FxCamera.h"
 #include "common/FxThreading.h"
 
+#include "EyeTrackingService.h"
 #include "InputListener.h"
 #include "Render.h"
 #include "RenderBackend.h"
@@ -111,6 +112,17 @@ int main(int argc, char* argv[]) {
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
 
+
+  // Eyetracking service init
+  EyeTrackingService* eyeTrackingService = new EyeTrackingService();
+  if (argc > 1) {
+    printf("Using input filename %s\n", argv[1]);
+    eyeTrackingService->setInputFilename(0, argv[1]);
+  } else {
+    eyeTrackingService->setInputFilename(0, "/dev/video4");
+  }
+
+
   {
     // Accumulators to track frame timing statistics
     uint64_t frameCounter = 0;
@@ -148,6 +160,14 @@ int main(int argc, char* argv[]) {
       }
 
       uint64_t frameStartTimeNs = currentTimeNs();
+
+
+      // Eyetracking
+      if (eyeTrackingService->processFrame()) {
+        if ((frameCounter & 127) == 0)
+          printf("Frame %zu processing time: %.3fms inference, %.3fms post\n", frameCounter, eyeTrackingService->m_lastFrameProcessingTimeMs, eyeTrackingService->m_lastFramePostProcessingTimeMs);
+      }
+
 
       if (ImGui::IsKeyPressed(ImGuiKey_Menu, /*repeat=*/ false) ||
           ImGui::IsKeyPressed(ImGuiKey_F1, /*repeat=*/ false)) {
@@ -255,7 +275,7 @@ int main(int argc, char* argv[]) {
 
         // TODO wire up rotation angles
         glm::mat4 modelMatrix =
-            glm::eulerAngleXYZ(glm::radians(15.0f), glm::radians(0.0f), glm::radians(0.0f))
+            glm::eulerAngleXYZ(glm::radians(eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg), glm::radians(-eyeTrackingService->m_processingState[0].m_pupilRawYawDeg), glm::radians(0.0f))
           * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
           * glm::scale(glm::vec3(0.005f));
 
@@ -352,6 +372,9 @@ int main(int argc, char* argv[]) {
   signal(SIGINT,  SIG_DFL);
   signal(SIGTERM, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
+
+  delete eyeTrackingService;
+  eyeTrackingService = nullptr;
 
   // clear screen
   rhi()->beginRenderPass(windowRenderTarget, kLoadClear);

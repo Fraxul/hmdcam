@@ -22,6 +22,12 @@
 #include <algorithm>
 #include <math.h>
 
+#if 0
+#define FRAME_DEBUG_LOG printf
+#else
+#define FRAME_DEBUG_LOG(...)
+#endif
+
 // CUDA graph can only be used if the model doesn't run on the DLA
 #define USE_CUDA_GRAPH 0
 
@@ -452,7 +458,7 @@ void EyeTrackingService::internalSaveSettings(cv::FileStorage& fs) {
 
 
 bool EyeTrackingService::processFrame() {
-  printf("\x1b[2J\x1b[H"); // Clear terminal per frame
+  FRAME_DEBUG_LOG("\x1b[2J\x1b[H"); // Clear terminal per frame
 
   // Capture thread maintenance:
   // Start captures if they're not running, clean up after exited threads
@@ -465,7 +471,7 @@ bool EyeTrackingService::processFrame() {
       // Update buffer from the capture thread
       size_t bufIdx = ps.olderCaptureBufferIdx();
       ps.m_captureBuffers[bufIdx].reset(cs.m_captureBufferMailbox.exchange(ps.m_captureBuffers[bufIdx].release()));
-      //printf("captureThreadAlive(%zu) buf %zu => %p\n", eyeIdx, bufIdx, ps.m_captureBuffers[bufIdx]);
+      //FRAME_DEBUG_LOG("captureThreadAlive(%zu) buf %zu => %p\n", eyeIdx, bufIdx, ps.m_captureBuffers[bufIdx]);
     } else {
       if (!cs.m_inputFilename.empty()) {
         // Try re-opening capture, ratelimited to once a second
@@ -542,13 +548,13 @@ bool EyeTrackingService::processFrame() {
     bool didFitEllipse = false;
     for (size_t contourIdx = 0; contourIdx < filteredContours.size(); ++contourIdx) {
       Contour& contour = filteredContours[contourIdx];
-      printf("Contour %zu/%zu: area = %f, perimeter = %f, %zu points\n", contourIdx, filteredContours.size(), contour.area, contour.perimeter, contour.points.size());
+      FRAME_DEBUG_LOG("Contour %zu/%zu: area = %f, perimeter = %f, %zu points\n", contourIdx, filteredContours.size(), contour.area, contour.perimeter, contour.points.size());
 
       // Circularity
       // 80% circularity seems to be a good threshold for valid ellipses even at extreme angles
       float circularity = (4.0f * M_PI * contour.area) / (contour.perimeter * contour.perimeter);
       if (fabs(1.0f - circularity) > 0.2f) {
-        printf(" -- Failed on circularity test (ratio %.3f)\n", circularity);
+        FRAME_DEBUG_LOG(" -- Failed on circularity test (ratio %.3f)\n", circularity);
         continue;
       }
 
@@ -557,13 +563,13 @@ bool EyeTrackingService::processFrame() {
       cv::convexHull(contour.points, hull);
       float convexHullArea = fabs(cv::contourArea(hull));
       if (convexHullArea < 1.0f) {
-        printf(" -- Failed to fit a convex hull\n");
+        FRAME_DEBUG_LOG(" -- Failed to fit a convex hull\n");
         continue;
       }
 
       float convexity = contour.area / convexHullArea;
       if (fabs(1.0f - convexity) > 0.10f) {
-        printf(" -- Failed on convexity test (ratio %.3f)\n", convexity);
+        FRAME_DEBUG_LOG(" -- Failed on convexity test (ratio %.3f)\n", convexity);
         continue;
       }
 
@@ -596,7 +602,7 @@ bool EyeTrackingService::processFrame() {
           float dist = sqrtf((delta.x * delta.x) + (delta.y * delta.y));
           minDist = std::min<float>(minDist, dist);
         }
-        // printf("Min sample distance = %.3f\n", minDist);
+        // FRAME_DEBUG_LOG("Min sample distance = %.3f\n", minDist);
         isNovelSample = (minDist > 3.0f);
       }
 
@@ -621,14 +627,14 @@ bool EyeTrackingService::processFrame() {
 
         // Try and fit the model
         if (ps.m_eyeModelFitter.pupils.size() > 20) {
-          printf("Attempting eye model fit. ps.m_eyeFitterSamples.size()=%zu ps.m_eyeModelFitter.pupils.size()=%zu\n",
+          FRAME_DEBUG_LOG("Attempting eye model fit. ps.m_eyeFitterSamples.size()=%zu ps.m_eyeModelFitter.pupils.size()=%zu\n",
             ps.m_eyeFitterSamples.size(), ps.m_eyeModelFitter.pupils.size());
 
           if (ps.m_eyeModelFitter.unproject_observations(ps.pupilRadius(), ps.initialEyeZ())) {
             ps.m_eyeModelFitter.initialise_model();
             //ps.m_eyeModelFitter.refine_with_inliers();
           } else {
-            printf("Eye model fit failed; unproject_observations() returned false.\n");
+            FRAME_DEBUG_LOG("Eye model fit failed; unproject_observations() returned false.\n");
           }
         }
       }
@@ -649,11 +655,11 @@ bool EyeTrackingService::processFrame() {
 
           // +pitch = right
           // +yaw = up
-          float pitch = asin(-y);
-          float yaw = atan2(x, z);
+          ps.m_pupilRawPitchDeg = asin(-y) * (180.0 / M_PI);
+          ps.m_pupilRawYawDeg = atan2(x, z) * (180.0 / M_PI);
 
-          printf("n=%.3f %.3f %.3f\n", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
-          printf("pitch = %.3f, yaw = %.3f\n", pitch * (180.0 / M_PI), yaw * (180.0 / M_PI));
+          FRAME_DEBUG_LOG("n=%.3f %.3f %.3f\n", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
+          FRAME_DEBUG_LOG("pitch = %.3f, yaw = %.3f\n", ps.m_pupilRawPitchDeg, ps.m_pupilRawYawDeg);
         }
       } else {
         ps.m_eyeFitterOutputsValid = false;
@@ -671,12 +677,12 @@ bool EyeTrackingService::processFrame() {
 
     float postTimeMs = deltaTimeMs(startTimeNs, currentTimeNs());
     if (postTimeMs > 0.25f) {
-      printf("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, postTimeMs);
+      FRAME_DEBUG_LOG("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, postTimeMs);
     }
 
-    //printf("Eye %zu postprocess required. coordinates:\n", eyeIdx);
+    //FRAME_DEBUG_LOG("Eye %zu postprocess required. coordinates:\n", eyeIdx);
     //for (size_t i = 0; i < m_trtOutputKeypointCount; ++i) {
-    //  printf("  %.4f %.4f\n", ps.m_segOutputTensorPtr[(i * 2) + 0], ps.m_segOutputTensorPtr[(i * 2) + 1]);
+    //  FRAME_DEBUG_LOG("  %.4f %.4f\n", ps.m_segOutputTensorPtr[(i * 2) + 0], ps.m_segOutputTensorPtr[(i * 2) + 1]);
     //}
 
   } // PER_EYE postprocessing
@@ -698,7 +704,7 @@ bool EyeTrackingService::processFrame() {
 
   if (capture == nullptr) {
     // sanity check
-    printf("EyeTrackingService::processFrame(): buffer for eye %zu is null!\n", m_currentlyProcessingEyeIdx);
+    FRAME_DEBUG_LOG("EyeTrackingService::processFrame(): buffer for eye %zu is null!\n", m_currentlyProcessingEyeIdx);
     return false;
   }
   ps.m_lastProcessingTimeNs = capture->timestamp;
@@ -810,7 +816,7 @@ bool EyeTrackingService::processFrame() {
   // ROI Rect needs to be fixed size of the segmentation network input (no edge clipping allowed)
   // TODO: May need to be 8-byte aligned on input too for the fp16 conversion code?
 
-  printf("ROI computed center (0...1): (%f, %f)\n", roiOutput[0], roiOutput[1]);
+  FRAME_DEBUG_LOG("ROI computed center (0...1): (%f, %f)\n", roiOutput[0], roiOutput[1]);
 
   // Rescale to 0...1f and multiply by the actual source w/h
   cv::Point2i roiCenter_captureRelative = cv::Point2i(
@@ -1105,7 +1111,7 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
 
     cv::putText(ps.m_debugViewRGB, buf, cv::Point2f(/*x=*/ 5, /*y=*/ ps.m_debugViewRGB.rows - 16), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
 
-    //printf("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
+    //FRAME_DEBUG_LOG("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
     //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
     //    ps.m_pupilEllipse.size.width, ps.m_pupilEllipse.size.height);
 
