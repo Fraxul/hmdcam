@@ -457,6 +457,184 @@ void EyeTrackingService::internalSaveSettings(cv::FileStorage& fs) {
 #undef writeNode
 
 
+void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
+
+  ProcessingState& ps = m_processingState[eyeIdx];
+  cv::Mat pupilMask(m_segInputHeight, m_segInputWidth, CV_8UC1, ps.m_pupilMask1, /*step=*/ m_segInputWidth);
+
+  // Find contours in the pupil mask
+  struct Contour {
+    std::vector<cv::Point> points;
+    float area;
+    float perimeter;
+  };
+  std::vector<Contour> filteredContours;
+
+
+  // Collect stats and filter contours
+  {
+    std::vector<std::vector<cv::Point> > contours;
+    cv::findContoursLinkRuns(pupilMask, contours);
+
+
+    for (size_t contourIdx = 0; contourIdx < contours.size(); ++contourIdx) {
+      auto& points = contours[contourIdx];
+      if (points.size() < 20)
+        continue; // Not enough points
+
+      Contour c;
+      c.area = fabs(cv::contourArea(points));
+      if (c.area < 1000.0f)
+        continue; // Not enough area
+
+      c.perimeter = cv::arcLength(points, /*is_closed=*/ true);
+
+      c.points = std::move(points);
+      filteredContours.push_back(c);
+    }
+
+    // Sort filtered contours by area descending
+    if (filteredContours.size() > 1)
+      std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.area > right.area; } );
+  }
+
+  bool didFitEllipse = false;
+  std::vector<cv::Point2f> transformedContour;
+
+  for (size_t contourIdx = 0; contourIdx < filteredContours.size(); ++contourIdx) {
+    Contour& contour = filteredContours[contourIdx];
+    FRAME_DEBUG_LOG("Contour %zu/%zu: area = %f, perimeter = %f, %zu points\n", contourIdx, filteredContours.size(), contour.area, contour.perimeter, contour.points.size());
+
+    // Circularity
+    // 80% circularity seems to be a good threshold for valid ellipses even at extreme angles
+    float circularity = (4.0f * M_PI * contour.area) / (contour.perimeter * contour.perimeter);
+    if (fabs(1.0f - circularity) > 0.2f) {
+      FRAME_DEBUG_LOG(" -- Failed on circularity test (ratio %.3f)\n", circularity);
+      continue;
+    }
+
+    // Convexity
+    std::vector<cv::Point> hull;
+    cv::convexHull(contour.points, hull);
+    float convexHullArea = fabs(cv::contourArea(hull));
+    if (convexHullArea < 1.0f) {
+      FRAME_DEBUG_LOG(" -- Failed to fit a convex hull\n");
+      continue;
+    }
+
+    float convexity = contour.area / convexHullArea;
+    if (fabs(1.0f - convexity) > 0.10f) {
+      FRAME_DEBUG_LOG(" -- Failed on convexity test (ratio %.3f)\n", convexity);
+      continue;
+    }
+
+    // Tests passed
+
+    // Transform contour points from ROI into full image space prior to ellipse fitting.
+    // (easier to transform points than the ellipse equation, given that the scale can be nonuniform)
+
+    transformedContour.resize(contour.points.size());
+    for (size_t i = 0; i < contour.points.size(); ++i) {
+      cv::Point2f np = contour.points[i];
+      // Add ROI offset
+      np.x += static_cast<float>(ps.m_lastSegROIToCaptureMatOffset.x);
+      np.y += static_cast<float>(ps.m_lastSegROIToCaptureMatOffset.y);
+
+      transformedContour[i] = np;
+    }
+
+    ps.m_pupilEllipse = cv::fitEllipse(transformedContour);
+    didFitEllipse = true;
+    // Only need to fit one ellipse.
+    break;
+  }
+
+  if (!didFitEllipse) {
+    // Clear pupil ellipse, since we didn't find anything useful this round.
+    ps.m_pupilEllipse = cv::RotatedRect();
+    ps.m_eyeFitterOutputsValid = false;
+
+    // Can't do anything else right now.
+    return;
+  }
+
+
+  bool isNovelSample = true;
+  if (ps.m_eyeModelFitter.pupils.size()) {
+    float minDist = FLT_MAX;
+    for (const auto& pupilSample : ps.m_eyeModelFitter.pupils) {
+      cv::Point2f delta = cv::Point2f(
+        ps.m_pupilEllipse.center.x - (pupilSample.observation.ellipse.centre[0] + ps.m_captureCenterOffset.x),
+        ps.m_pupilEllipse.center.y - (pupilSample.observation.ellipse.centre[1] + ps.m_captureCenterOffset.y));
+      float dist = sqrtf((delta.x * delta.x) + (delta.y * delta.y));
+      minDist = std::min<float>(minDist, dist);
+    }
+    // FRAME_DEBUG_LOG("Min sample distance = %.3f\n", minDist);
+    isNovelSample = (minDist > 3.0f);
+  }
+
+  if (isNovelSample) {
+    // Add this observation to the eye model fitter
+    ps.m_eyeFitterSamples.push_back(ps.m_pupilEllipse);
+
+    // pupil_inliers needs to be in camera space, so apply captureCenterOffset
+    std::vector<cv::Point2f> pupil_inliers;
+    pupil_inliers.resize(transformedContour.size());
+    for (size_t i = 0; i < pupil_inliers.size(); ++i) {
+      pupil_inliers[i] = transformedContour[i] - ps.m_captureCenterOffset;
+    }
+
+    // The eyefitter works in a coordinate system where the center of the image is at (0, 0),
+    // so we need to offset the ellipse center coordinate (via toEllipseWithOffset)
+
+    ps.m_eyeModelFitter.add_observation(
+      /*image (unused)=*/cv::Mat(),
+      /*pupil=*/ singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset),
+      /*inliers=*/ pupil_inliers);
+
+    // Try and fit the model
+    if (ps.m_eyeModelFitter.pupils.size() > 20) {
+      FRAME_DEBUG_LOG("Attempting eye model fit. ps.m_eyeFitterSamples.size()=%zu ps.m_eyeModelFitter.pupils.size()=%zu\n",
+        ps.m_eyeFitterSamples.size(), ps.m_eyeModelFitter.pupils.size());
+
+      if (ps.m_eyeModelFitter.unproject_observations(ps.pupilRadius(), ps.initialEyeZ())) {
+        ps.m_eyeModelFitter.initialise_model();
+        //ps.m_eyeModelFitter.refine_with_inliers();
+      } else {
+        FRAME_DEBUG_LOG("Eye model fit failed; unproject_observations() returned false.\n");
+      }
+    }
+  }
+
+  // Apply model to ellipse to generate 3d fit
+  if (ps.m_eyeModelFitter.hasEyeModel()) {
+    ps.m_eyeFitterOutputsValid = ps.m_eyeModelFitter.unproject_single_observation(ps.m_fitPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset), ps.pupilRadius());
+    if (ps.m_eyeFitterOutputsValid) {
+      // Original coordinate system:
+      // +x is left
+      // -y is up
+      // -z is forward
+
+      // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
+      float x =  ps.m_fitPupilCircle.normal[0];
+      float y =  ps.m_fitPupilCircle.normal[1];
+      float z = -ps.m_fitPupilCircle.normal[2];
+
+      // +pitch = right
+      // +yaw = up
+      ps.m_pupilRawPitchDeg = asin(-y) * (180.0 / M_PI);
+      ps.m_pupilRawYawDeg = atan2(x, z) * (180.0 / M_PI);
+
+      FRAME_DEBUG_LOG("n=%.3f %.3f %.3f\n", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
+      FRAME_DEBUG_LOG("pitch = %.3f, yaw = %.3f\n", ps.m_pupilRawPitchDeg, ps.m_pupilRawYawDeg);
+    }
+  } else {
+    ps.m_eyeFitterOutputsValid = false;
+  }
+
+}
+
+
 bool EyeTrackingService::processFrame() {
   FRAME_DEBUG_LOG("\x1b[2J\x1b[H"); // Clear terminal per frame
 
@@ -513,204 +691,32 @@ bool EyeTrackingService::processFrame() {
     ps.m_requiresPostProcessing = false;
     uint64_t startTimeNs = currentTimeNs();
 
-    // Find contours in the pupil mask
-    cv::Mat pupilMask(m_segInputHeight, m_segInputWidth, CV_8UC1, ps.m_pupilMask1, /*step=*/ m_segInputWidth);
-
-    struct Contour {
-      std::vector<cv::Point> points;
-      float area;
-      float perimeter;
-    };
-    std::vector<Contour> filteredContours;
-
-
-    // Collect stats and filter contours
-    {
-      std::vector<std::vector<cv::Point> > contours;
-      cv::findContoursLinkRuns(pupilMask, contours);
-
-
-      for (size_t contourIdx = 0; contourIdx < contours.size(); ++contourIdx) {
-        auto& points = contours[contourIdx];
-        if (points.size() < 20)
-          continue; // Not enough points
-
-        Contour c;
-        c.area = fabs(cv::contourArea(points));
-        if (c.area < 1000.0f)
-          continue; // Not enough area
-
-        c.perimeter = cv::arcLength(points, /*is_closed=*/ true);
-
-        c.points = std::move(points);
-        filteredContours.push_back(c);
-      }
-
-      // Sort filtered contours by area descending
-      if (!filteredContours.empty())
-        std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.area > right.area; } );
-    }
-
-    bool didFitEllipse = false;
-    for (size_t contourIdx = 0; contourIdx < filteredContours.size(); ++contourIdx) {
-      Contour& contour = filteredContours[contourIdx];
-      FRAME_DEBUG_LOG("Contour %zu/%zu: area = %f, perimeter = %f, %zu points\n", contourIdx, filteredContours.size(), contour.area, contour.perimeter, contour.points.size());
-
-      // Circularity
-      // 80% circularity seems to be a good threshold for valid ellipses even at extreme angles
-      float circularity = (4.0f * M_PI * contour.area) / (contour.perimeter * contour.perimeter);
-      if (fabs(1.0f - circularity) > 0.2f) {
-        FRAME_DEBUG_LOG(" -- Failed on circularity test (ratio %.3f)\n", circularity);
-        continue;
-      }
-
-      // Convexity
-      std::vector<cv::Point> hull;
-      cv::convexHull(contour.points, hull);
-      float convexHullArea = fabs(cv::contourArea(hull));
-      if (convexHullArea < 1.0f) {
-        FRAME_DEBUG_LOG(" -- Failed to fit a convex hull\n");
-        continue;
-      }
-
-      float convexity = contour.area / convexHullArea;
-      if (fabs(1.0f - convexity) > 0.10f) {
-        FRAME_DEBUG_LOG(" -- Failed on convexity test (ratio %.3f)\n", convexity);
-        continue;
-      }
-
-      // Tests passed
-
-      // Transform contour points from ROI into full image space prior to ellipse fitting.
-      // (easier to transform points than the ellipse equation, given that the scale can be nonuniform)
-
-      std::vector<cv::Point2f> transformedContour;
-      transformedContour.resize(contour.points.size());
-      for (size_t i = 0; i < contour.points.size(); ++i) {
-        cv::Point2f np = contour.points[i];
-        // Add ROI offset
-        np.x += static_cast<float>(ps.m_lastSegROIToCaptureMatOffset.x);
-        np.y += static_cast<float>(ps.m_lastSegROIToCaptureMatOffset.y);
-
-        transformedContour[i] = np;
-      }
-
-      ps.m_pupilEllipse = cv::fitEllipse(transformedContour);
-      didFitEllipse = true;
-
-      bool isNovelSample = true;
-      if (ps.m_eyeModelFitter.pupils.size()) {
-        float minDist = FLT_MAX;
-        for (const auto& pupilSample : ps.m_eyeModelFitter.pupils) {
-          cv::Point2f delta = cv::Point2f(
-            ps.m_pupilEllipse.center.x - (pupilSample.observation.ellipse.centre[0] + ps.m_captureCenterOffset.x),
-            ps.m_pupilEllipse.center.y - (pupilSample.observation.ellipse.centre[1] + ps.m_captureCenterOffset.y));
-          float dist = sqrtf((delta.x * delta.x) + (delta.y * delta.y));
-          minDist = std::min<float>(minDist, dist);
-        }
-        // FRAME_DEBUG_LOG("Min sample distance = %.3f\n", minDist);
-        isNovelSample = (minDist > 3.0f);
-      }
-
-      if (isNovelSample) {
-        ps.m_eyeFitterSamples.push_back(ps.m_pupilEllipse);
-
-        // pupil_inliers needs to be in camera space, so apply captureCenterOffset
-        std::vector<cv::Point2f> pupil_inliers;
-        pupil_inliers.resize(transformedContour.size());
-        for (size_t i = 0; i < pupil_inliers.size(); ++i) {
-          pupil_inliers[i] = transformedContour[i] - ps.m_captureCenterOffset;
-        }
-
-        // Add this observation to the eye model fitter
-        // The eyefitter works in a coordinate system where the center of the image is at (0, 0),
-        // so we need to offset the ellipse center coordinate (via toEllipseWithOffset)
-
-        ps.m_eyeModelFitter.add_observation(
-          /*image (unused)=*/cv::Mat(),
-          /*pupil=*/ singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset),
-          /*inliers=*/ pupil_inliers);
-
-        // Try and fit the model
-        if (ps.m_eyeModelFitter.pupils.size() > 20) {
-          FRAME_DEBUG_LOG("Attempting eye model fit. ps.m_eyeFitterSamples.size()=%zu ps.m_eyeModelFitter.pupils.size()=%zu\n",
-            ps.m_eyeFitterSamples.size(), ps.m_eyeModelFitter.pupils.size());
-
-          if (ps.m_eyeModelFitter.unproject_observations(ps.pupilRadius(), ps.initialEyeZ())) {
-            ps.m_eyeModelFitter.initialise_model();
-            //ps.m_eyeModelFitter.refine_with_inliers();
-          } else {
-            FRAME_DEBUG_LOG("Eye model fit failed; unproject_observations() returned false.\n");
-          }
-        }
-      }
-
-      // Apply model to ellipse to generate 3d fit
-      if (ps.m_eyeModelFitter.hasEyeModel()) {
-        ps.m_eyeFitterOutputsValid = ps.m_eyeModelFitter.unproject_single_observation(ps.m_fitPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset), ps.pupilRadius());
-        if (ps.m_eyeFitterOutputsValid) {
-          // Original coordinate system:
-          // +x is left
-          // -y is up
-          // -z is forward
-
-          // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
-          float x =  ps.m_fitPupilCircle.normal[0];
-          float y =  ps.m_fitPupilCircle.normal[1];
-          float z = -ps.m_fitPupilCircle.normal[2];
-
-          // +pitch = right
-          // +yaw = up
-          ps.m_pupilRawPitchDeg = asin(-y) * (180.0 / M_PI);
-          ps.m_pupilRawYawDeg = atan2(x, z) * (180.0 / M_PI);
-
-          FRAME_DEBUG_LOG("n=%.3f %.3f %.3f\n", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
-          FRAME_DEBUG_LOG("pitch = %.3f, yaw = %.3f\n", ps.m_pupilRawPitchDeg, ps.m_pupilRawYawDeg);
-        }
-      } else {
-        ps.m_eyeFitterOutputsValid = false;
-      }
-
-      // Only need to fit one ellipse.
-      if (didFitEllipse)
-        break;
-    }
-
-    if (!didFitEllipse) {
-      // Clear pupil ellipse, since we didn't find anything useful this round.
-      ps.m_pupilEllipse = cv::RotatedRect();
-    }
+    postprocessOneEye(eyeIdx);
 
     float postTimeMs = deltaTimeMs(startTimeNs, currentTimeNs());
     if (postTimeMs > 0.25f) {
       FRAME_DEBUG_LOG("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, postTimeMs);
     }
 
-    //FRAME_DEBUG_LOG("Eye %zu postprocess required. coordinates:\n", eyeIdx);
-    //for (size_t i = 0; i < m_trtOutputKeypointCount; ++i) {
-    //  FRAME_DEBUG_LOG("  %.4f %.4f\n", ps.m_segOutputTensorPtr[(i * 2) + 0], ps.m_segOutputTensorPtr[(i * 2) + 1]);
-    //}
-
   } // PER_EYE postprocessing
-
 
   // Pick which eye we're working on:
   // Use the eye with the oldest processing timestamp, but only if the capture is newer than that processing timestamp.
-  m_currentlyProcessingEyeIdx = 0;
+  size_t currentlyProcessingEyeIdx = 0;
   if (m_processingState[1].m_lastProcessingTimeNs < m_processingState[0].m_lastProcessingTimeNs) {
     // Eye 1 is older, make sure that we have a valid buffer
     if (m_processingState[1].newerCaptureBufferTimestamp() > m_processingState[1].m_lastProcessingTimeNs) {
       // Eye 1 was processed less recently and has a new enough buffer on deck.
-      m_currentlyProcessingEyeIdx = 1;
+      currentlyProcessingEyeIdx = 1;
     }
   }
 
-  ProcessingState& ps = m_processingState[m_currentlyProcessingEyeIdx];
+  ProcessingState& ps = m_processingState[currentlyProcessingEyeIdx];
   CaptureBuffer* capture = ps.m_captureBuffers[ps.newerCaptureBufferIdx()].get();
 
   if (capture == nullptr) {
     // sanity check
-    FRAME_DEBUG_LOG("EyeTrackingService::processFrame(): buffer for eye %zu is null!\n", m_currentlyProcessingEyeIdx);
+    FRAME_DEBUG_LOG("EyeTrackingService::processFrame(): buffer for eye %zu is null!\n", currentlyProcessingEyeIdx);
     return false;
   }
   ps.m_lastProcessingTimeNs = capture->timestamp;

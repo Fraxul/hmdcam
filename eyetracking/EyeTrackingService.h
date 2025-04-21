@@ -179,7 +179,8 @@ public:
   ProcessingState m_processingState[2];
 
 protected:
-  size_t m_currentlyProcessingEyeIdx = 0;
+
+  void postprocessOneEye(size_t eyeIdx);
 
   // Low-priority CUDA stream
   CUstream m_cuStream;
