@@ -493,8 +493,14 @@ bool EyeTrackingService::processFrame() {
   }
 
 
-  // Wait for previous processing to finish.
-  cuEventSynchronize(m_frameProcessingEndEvent);
+  // Check if previous processing has finished
+  {
+    CUresult res = cuEventQuery(m_frameProcessingEndEvent);
+    if (res == CUDA_ERROR_NOT_READY)
+      return false;
+  }
+
+  // Update stats
   cuEventElapsedTime(&m_lastFrameProcessingTimeMs, m_frameProcessingStartEvent, m_framePostProcessingStartEvent);
   cuEventElapsedTime(&m_lastFramePostProcessingTimeMs, m_framePostProcessingStartEvent, m_frameProcessingEndEvent);
 
@@ -732,10 +738,7 @@ bool EyeTrackingService::processFrame() {
   }
 
   // Run ROI network
-
-  if (m_enableProfiling) {
-    CUDA_CHECK(cuEventRecord(m_frameProcessingStartEvent, m_cuStream));
-  }
+  CUDA_CHECK(cuEventRecord(m_frameProcessingStartEvent, m_cuStream));
 
   assert(ps.m_roiExec->enqueueV3(m_cuStream));
 
@@ -857,9 +860,7 @@ bool EyeTrackingService::processFrame() {
   assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
 #endif
 
-  if (m_enableProfiling) {
-    CUDA_CHECK(cuEventRecord(m_framePostProcessingStartEvent, m_cuStream));
-  }
+  CUDA_CHECK(cuEventRecord(m_framePostProcessingStartEvent, m_cuStream));
 
   // Run CUDA postprocessing operations:
   {
@@ -943,9 +944,7 @@ bool EyeTrackingService::processFrame() {
 
   ps.m_requiresPostProcessing = true;
 
-  if (m_enableProfiling) {
-    CUDA_CHECK(cuEventRecord(m_frameProcessingEndEvent, m_cuStream));
-  }
+  CUDA_CHECK(cuEventRecord(m_frameProcessingEndEvent, m_cuStream));
 
   return true;
 }

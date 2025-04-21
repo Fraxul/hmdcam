@@ -200,8 +200,7 @@ protected:
   uint32_t m_roiOutputWidth = 0, m_roiOutputHeight = 0;
   size_t m_roiOutputSizeBytes = 0;
 
-  // Profiling events
-  bool m_enableProfiling = true;
+  // Sync/profiling events
   CUevent m_frameProcessingStartEvent;
   CUevent m_framePostProcessingStartEvent;
   CUevent m_frameProcessingEndEvent;
