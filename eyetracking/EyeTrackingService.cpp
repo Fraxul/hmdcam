@@ -600,9 +600,9 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
     FRAME_DEBUG_LOG("Contour %zu/%zu: area = %f, perimeter = %f, %zu points\n", contourIdx, filteredContours.size(), contour.area, contour.perimeter, contour.points.size());
 
     // Circularity
-    // 80% circularity seems to be a good threshold for valid ellipses even at extreme angles
+    // 75% circularity seems to be a good threshold for valid ellipses even at extreme angles
     float circularity = (4.0f * M_PI * contour.area) / (contour.perimeter * contour.perimeter);
-    if (fabs(1.0f - circularity) > 0.2f) {
+    if (fabs(1.0f - circularity) > 0.25f) {
       FRAME_DEBUG_LOG(" -- Failed on circularity test (ratio %.3f)\n", circularity);
       continue;
     }
@@ -1202,38 +1202,39 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
   }
 
   if (ps.m_eyeFitterOutputsValid) {
+    // Try-catch block avoids cv drawing functions crashing the app if we pass NaNs or something
+    try {
+      singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(ps.m_fitPupilCircle, ps.m_eyeModelFitter.focal_length);
+      singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
 
-    singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(ps.m_fitPupilCircle, ps.m_eyeModelFitter.focal_length);
-    singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
+      cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), ps.m_captureCenterOffset);
+      cv::ellipse(ps.m_debugViewRGB, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
 
+      cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), ps.m_captureCenterOffset);
+      cv::ellipse(ps.m_debugViewRGB, eyeEllipseImg, cv::Scalar(0, 60, 60), /*thickness=*/ 2);
 
-    cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), ps.m_captureCenterOffset);
-    cv::ellipse(ps.m_debugViewRGB, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
+      // order is _bottomLeft_, _topLeft_, topRight, bottomRight
+      cv::Point2f rectPoints[4];
+      eyeEllipseImg.points(rectPoints);
 
-    cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), ps.m_captureCenterOffset);
-    cv::ellipse(ps.m_debugViewRGB, eyeEllipseImg, cv::Scalar(0, 60, 60), /*thickness=*/ 2);
+      // Draw crosshairs through the eye-ellipse
+      cv::line(ps.m_debugViewRGB,
+        (rectPoints[0] + rectPoints[1]) * 0.5f,
+        (rectPoints[2] + rectPoints[3]) * 0.5f,
+        cv::Scalar(0, 60, 60), /*thickness=*/2);
 
-    // order is _bottomLeft_, _topLeft_, topRight, bottomRight
-    cv::Point2f rectPoints[4];
-    eyeEllipseImg.points(rectPoints);
+      cv::line(ps.m_debugViewRGB,
+        (rectPoints[1] + rectPoints[2]) * 0.5f,
+        (rectPoints[0] + rectPoints[3]) * 0.5f,
+        cv::Scalar(0, 60, 60), /*thickness=*/2);
 
-    // Draw crosshairs through the eye-ellipse
-    cv::line(ps.m_debugViewRGB,
-      (rectPoints[0] + rectPoints[1]) * 0.5f,
-      (rectPoints[2] + rectPoints[3]) * 0.5f,
-      cv::Scalar(0, 60, 60), /*thickness=*/2);
+      // Draw a small marker on the eye center point
+      cv::circle(ps.m_debugViewRGB, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(255, 0, 0), /*thickness=*/ -1);
 
-    cv::line(ps.m_debugViewRGB,
-      (rectPoints[1] + rectPoints[2]) * 0.5f,
-      (rectPoints[0] + rectPoints[3]) * 0.5f,
-      cv::Scalar(0, 60, 60), /*thickness=*/2);
+      // Line from the eye center through the pupil center
+      cv::line(ps.m_debugViewRGB, eyeEllipseImg.center, pupilEllipseImg.center, cv::Scalar(0, 255, 0), /*thickness=*/ 1);
 
-    // Draw a small marker on the eye center point
-    cv::circle(ps.m_debugViewRGB, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(255, 0, 0), /*thickness=*/ -1);
-
-    // Line from the eye center through the pupil center
-    cv::line(ps.m_debugViewRGB, eyeEllipseImg.center, pupilEllipseImg.center, cv::Scalar(0, 255, 0), /*thickness=*/ 1);
-
+    } catch (...) {}
 
     char buf[64];
     snprintf(buf, 64, "n=%.3f %.3f %.3f", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);

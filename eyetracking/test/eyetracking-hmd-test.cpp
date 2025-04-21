@@ -115,6 +115,9 @@ int main(int argc, char* argv[]) {
 
   // Eyetracking service init
   EyeTrackingService* eyeTrackingService = new EyeTrackingService();
+  RHISurface::ptr eyeTrackingDebugTexture;
+  cv::Mat eyeTrackingDebugViewRGBA;
+
   if (argc > 1) {
     printf("Using input filename %s\n", argv[1]);
     eyeTrackingService->setInputFilename(0, argv[1]);
@@ -265,6 +268,36 @@ int main(int argc, char* argv[]) {
       // TODO: Render
 
 
+      // TODO Render eyetracking debug view
+      {
+        const cv::Mat& debugView = eyeTrackingService->getDebugViewForEye(0);
+        if (debugView.cols && debugView.rows) {
+
+          if (!eyeTrackingDebugTexture || (eyeTrackingDebugTexture->width() != debugView.cols) || (eyeTrackingDebugTexture->height() != debugView.rows)) {
+            eyeTrackingDebugTexture = rhi()->newTexture2D(debugView.cols, debugView.rows, kSurfaceFormat_RGBA8);
+          }
+
+          // TODO this is probably inefficient
+          cv::cvtColor(/*src=*/ debugView, /*dst=*/ eyeTrackingDebugViewRGBA, cv::COLOR_BGR2RGBA);
+          rhi()->loadTextureData(eyeTrackingDebugTexture, kVertexElementTypeUByte4N, eyeTrackingDebugViewRGBA.ptr());
+
+
+          rhi()->bindBlendState(disabledBlendState);
+          rhi()->bindDepthStencilState(disabledDepthStencilState);
+          rhi()->bindRenderPipeline(uiLayerStereoPipeline);
+          rhi()->loadTexture(ksImageTex, eyeTrackingDebugTexture, linearClampSampler);
+          // rhi()->setViewports(eyeViewports, 2); // should already be set
+
+          UILayerStereoUniformBlock ub;
+          glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth)) * glm::scale(glm::vec3(uiScale * (static_cast<float>(eyeTrackingDebugTexture->width()) / static_cast<float>(eyeTrackingDebugTexture->height())), -uiScale, uiScale));
+          ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
+          ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
+
+          rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
+          rhi()->drawNDCQuad();
+
+        }
+      }
 
       // Render eyetracking gizmos
 
