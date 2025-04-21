@@ -71,8 +71,28 @@ public:
 
   };
 
+  enum CalibrationState {
+    kWaitingForValidFrames,
+    kCentering,
+    kCalibrated
+  };
+
   struct ProcessingState {
     uint64_t m_lastProcessingTimeNs = 0;
+
+    // Calibration state machine data
+
+    uint32_t m_contiguousValidFrameCounter = 0;
+    uint32_t m_contiguousInvalidFrameCounter = 0;
+
+    ScrollingBuffer<cv::RotatedRect> m_calibrationSamples {24};
+    cv::RotatedRect m_centerCalibrationSample;
+    float m_centerPitchDeg = 0.0f;
+    float m_centerYawDeg = 0.0f;
+
+    CalibrationState m_calibrationState = kWaitingForValidFrames;
+
+
 
     bool m_requiresPostProcessing = false; // True when we have launched CUDA ops that will update m_trtOutputHostPtr with new data
 
@@ -181,6 +201,7 @@ public:
 protected:
 
   void postprocessOneEye(size_t eyeIdx);
+  bool postprocessOneEye_fitEllipse(size_t eyeIdx);
 
   // Low-priority CUDA stream
   CUstream m_cuStream;

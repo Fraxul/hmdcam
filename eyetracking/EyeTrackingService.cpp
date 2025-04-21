@@ -167,7 +167,7 @@ void convertUnorm8ToDLAInt8(const uint8_t* inU8, void* outDLAInt8, size_t elemen
 
   for (size_t chunkIdx = 0; chunkIdx < (elementCount / 16); ++chunkIdx) {
 
-    // Load 16x 8-bit values and widen to 16 bit
+    // Load 16x 8-bit values
     uint8x16_t ux = vld1q_u8(inU8 + (chunkIdx * 16));
 
     // Fixup sign bit for unorm to snorm conversion, then reinterpret as s8
@@ -458,6 +458,100 @@ void EyeTrackingService::internalSaveSettings(cv::FileStorage& fs) {
 
 
 void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
+  ProcessingState& ps = m_processingState[eyeIdx];
+
+  bool fitEllipse = postprocessOneEye_fitEllipse(eyeIdx);
+
+  // Update counters for calibration state machine
+  if (fitEllipse) {
+    ps.m_contiguousValidFrameCounter += 1;
+    ps.m_contiguousInvalidFrameCounter = 0;
+  } else {
+    ps.m_contiguousValidFrameCounter = 0;
+    ps.m_contiguousInvalidFrameCounter += 1;
+  }
+
+  switch (ps.m_calibrationState) {
+    case kWaitingForValidFrames: {
+      if (ps.m_contiguousValidFrameCounter > 25) {
+        printf("EyeTrackingService::postprocessOneEye(%zu): waiting -> centering\n", eyeIdx);
+        ps.m_calibrationSamples.clear();
+        ps.m_calibrationState = kCentering;
+      }
+    } break;
+
+    case kCentering: {
+      // Add valid samples to the scrolling buffer.
+      // We throw away the first couple samples after a run of invalid samples to reduce noise
+      if (fitEllipse && ps.m_contiguousValidFrameCounter >= 3) {
+        ps.m_calibrationSamples.push_back(ps.m_pupilEllipse);
+
+        if (ps.m_calibrationSamples.full()) {
+          // Collected enough samples, see if they're consistent enough
+          glm::vec2 mean(0.0f, 0.0f);
+          for (size_t i = 0; i < ps.m_calibrationSamples.size(); ++i) {
+            mean.x += ps.m_calibrationSamples[i].center.x;
+            mean.y += ps.m_calibrationSamples[i].center.y;
+          }
+          mean /= static_cast<float>(ps.m_calibrationSamples.size());
+
+          float maxDeviation = 0.0f;
+
+          float minDeviation = FLT_MAX;
+          size_t minDeviationIdx = 0;
+
+          for (size_t i = 0; i < ps.m_calibrationSamples.size(); ++i) {
+            glm::vec2 p = glm::vec2(ps.m_calibrationSamples[i].center.x, ps.m_calibrationSamples[i].center.y);
+            float lp = glm::length(p - mean);
+            maxDeviation = std::max<float>(lp, maxDeviation);
+
+            if (lp < minDeviation) {
+              minDeviation = lp;
+              minDeviationIdx = i;
+            }
+          }
+
+          printf("Center calibration: %zu samples, mean = {%.3f, %.3f}, deviation range = [%.3f, %.3f]\n",
+            ps.m_calibrationSamples.size(), mean.x, mean.y, minDeviation, maxDeviation);
+
+          // TODO adjust threshold
+          if (maxDeviation < 3.0f) {
+            printf("Deviation below threshold, accepting calibration\n");
+            ps.m_centerCalibrationSample = ps.m_calibrationSamples[minDeviationIdx];
+
+
+            // Clear the eye fitter model
+            ps.m_eyeModelFitter.reset();
+            ps.m_eyeFitterSamples.clear();
+
+            // Move to 'calibrated' state.
+            // We still need to rebuild the eye fitter model, but that'll happen over time as the user looks around.
+            ps.m_calibrationState = kCalibrated;
+
+          }
+        }
+      }
+    } break;
+
+    case kCalibrated: {
+      if (ps.m_contiguousInvalidFrameCounter > 50) {
+        printf("EyeTrackingService::postprocessOneEye(%zu): Could not fit pupil for %u frames, resetting calibration.\n", eyeIdx, ps.m_contiguousInvalidFrameCounter);
+        ps.m_calibrationState = kWaitingForValidFrames;
+      }
+
+    } break;
+
+    default:
+      printf("EyeTrackingService::postprocessOneEye(%zu): invalid calibration state %u\n", eyeIdx, ps.m_calibrationState);
+      ps.m_calibrationState = kWaitingForValidFrames;
+      break;
+  };
+
+}
+
+
+// Returns true if an ellipse was fit this frame, even if the full eye model fit/unproject wasn't successful.
+bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 
   ProcessingState& ps = m_processingState[eyeIdx];
   cv::Mat pupilMask(m_segInputHeight, m_segInputWidth, CV_8UC1, ps.m_pupilMask1, /*step=*/ m_segInputWidth);
@@ -554,8 +648,8 @@ void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
     ps.m_pupilEllipse = cv::RotatedRect();
     ps.m_eyeFitterOutputsValid = false;
 
-    // Can't do anything else right now.
-    return;
+    // No valid ellipse this frame.
+    return false;
   }
 
 
@@ -600,6 +694,34 @@ void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
       if (ps.m_eyeModelFitter.unproject_observations(ps.pupilRadius(), ps.initialEyeZ())) {
         ps.m_eyeModelFitter.initialise_model();
         //ps.m_eyeModelFitter.refine_with_inliers();
+
+
+        // Use the center calibration sample to find angle offsets
+        singleeyefitter::Circle3D<double> centerPupilCircle;
+        if (ps.m_eyeModelFitter.unproject_single_observation(centerPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_centerCalibrationSample, ps.m_captureCenterOffset), ps.pupilRadius())) {
+          // Original coordinate system:
+          // +x is left
+          // -y is up
+          // -z is forward
+
+          // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
+          float x =  centerPupilCircle.normal[0];
+          float y =  centerPupilCircle.normal[1];
+          float z = -centerPupilCircle.normal[2];
+
+          // +pitch = right
+          // +yaw = up
+          ps.m_centerPitchDeg = asin(-y) * (180.0 / M_PI);
+          ps.m_centerYawDeg = atan2(x, z) * (180.0 / M_PI);
+
+          printf("Center calibration sample pitch=%.3f yaw=%.3f (n=%.3f %.3f %.3f)\n",
+            ps.m_centerPitchDeg, ps.m_centerYawDeg,
+            ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
+        } else {
+          printf("Center calibration sample invalid!\n");
+          // TODO: try and recover from this?
+        }
+
       } else {
         FRAME_DEBUG_LOG("Eye model fit failed; unproject_observations() returned false.\n");
       }
@@ -632,6 +754,8 @@ void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
     ps.m_eyeFitterOutputsValid = false;
   }
 
+  // Had a valid ellipse observation this frame
+  return true;
 }
 
 

@@ -15,6 +15,7 @@ public:
   static size_t stride() { return sizeof(T); }
 
   bool empty() const { return m_data.empty(); }
+  bool full() const { return size() == maxSize(); }
 
   const T& back() const {
     if ((m_data.size() < m_maxSize) || m_offset == 0)
@@ -35,6 +36,9 @@ public:
     m_data.clear();
     m_offset = 0;
   }
+
+  T& operator[](size_t idx) { return m_data[idx]; }
+  const T& operator[](size_t idx) const { return m_data[idx]; }
 
 protected:
   std::vector<T> m_data;
