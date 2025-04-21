@@ -1,11 +1,8 @@
 #version 310 es
 in vec4 position;
-out vec4 fragColor;
+out vec2 ndc;
 
-layout(std140) uniform SolidQuadUniformBlock {
-  mat4 modelViewProjection[2];
-  vec4 color;
-};
+#include "CrosshairUniformBlock.h"
 
 void main() {
 #ifdef SKIP_VIEWPORT_WRITE
@@ -16,7 +13,7 @@ void main() {
 #endif
 
   gl_Position = modelViewProjection[viewport] * position;
-  fragColor = color;
+  ndc = position.xy;
 }
 
 

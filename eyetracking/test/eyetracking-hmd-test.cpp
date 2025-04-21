@@ -18,6 +18,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
+#include <glm/gtx/euler_angles.hpp>
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -39,6 +40,15 @@
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
 
+
+FxAtomicString ksCrosshairUniformBlock("CrosshairUniformBlock");
+struct CrosshairUniformBlock {
+  glm::mat4 modelViewProjection[2];
+  glm::vec4 color;
+  float thickness;
+  float pad2, pad3, pad4;
+};
+RHIRenderPipeline::ptr crosshairPipeline;
 
 FxAtomicString ksImageTex("imageTex");
 float uiScale = 0.2f;
@@ -95,6 +105,7 @@ int main(int argc, char* argv[]) {
   io.DisplaySize = ImVec2(512.0f, 512.0f); // Not the full size, but the size of our overlay RT
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f); // Use HiDPI rendering
 
+  crosshairPipeline = rhi()->compileRenderPipeline("shaders/crosshair.vtx.glsl", "shaders/crosshair.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
 
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
@@ -234,6 +245,59 @@ int main(int argc, char* argv[]) {
       // TODO: Render
 
 
+
+      // Render eyetracking gizmos
+
+
+      // Eye crosshair
+      {
+        CrosshairUniformBlock ub;
+
+        // TODO wire up rotation angles
+        glm::mat4 modelMatrix =
+            glm::eulerAngleXYZ(glm::radians(15.0f), glm::radians(0.0f), glm::radians(0.0f))
+          * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
+          * glm::scale(glm::vec3(0.005f));
+
+        ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
+        ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
+        ub.color = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+        ub.thickness = 0.5f;
+
+        rhi()->bindRenderPipeline(crosshairPipeline);
+        rhi()->bindDepthStencilState(disabledDepthStencilState);
+
+        rhi()->loadUniformBlockImmediate(ksCrosshairUniformBlock, &ub, sizeof(ub));
+        // rhi()->setViewports(eyeViewports, 2); // should already be set
+
+        rhi()->bindStreamBuffer(0, ndcQuadVBO);
+        rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
+      }
+
+      // Center crosshair
+      {
+        CrosshairUniformBlock ub;
+
+        glm::mat4 modelMatrix =
+            glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
+          * glm::scale(glm::vec3(0.005f));
+
+        ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
+        ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
+        ub.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+        ub.thickness = 0.25f;
+
+        rhi()->bindRenderPipeline(crosshairPipeline);
+        rhi()->bindDepthStencilState(disabledDepthStencilState);
+
+        rhi()->loadUniformBlockImmediate(ksCrosshairUniformBlock, &ub, sizeof(ub));
+        // rhi()->setViewports(eyeViewports, 2); // should already be set
+
+        rhi()->bindStreamBuffer(0, ndcQuadVBO);
+        rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
+      }
+
+
       if (debugRenderTiming)
         rhi()->endTimerQuery(viewRenderQuery);
 
@@ -244,7 +308,7 @@ int main(int argc, char* argv[]) {
         rhi()->bindDepthStencilState(disabledDepthStencilState);
         rhi()->bindRenderPipeline(uiLayerStereoPipeline);
         rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
-        rhi()->setViewports(eyeViewports, 2);
+        // rhi()->setViewports(eyeViewports, 2); // should already be set
 
         UILayerStereoUniformBlock ub;
         glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth)) * glm::scale(glm::vec3(uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScale, uiScale));

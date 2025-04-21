@@ -40,7 +40,7 @@ struct NDCQuadUniformBlock {
 extern FxAtomicString ksNDCQuadUniformBlock;
 
 struct SolidQuadUniformBlock {
-  glm::mat4 modelViewProjection;
+  glm::mat4 modelViewProjection[2];
   glm::vec4 color;
 };
 extern FxAtomicString ksSolidQuadUniformBlock;
