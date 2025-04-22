@@ -716,7 +716,7 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 
           printf("Center calibration sample pitch=%.3f yaw=%.3f (n=%.3f %.3f %.3f)\n",
             ps.m_centerPitchDeg, ps.m_centerYawDeg,
-            ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
+            centerPupilCircle.normal[0], centerPupilCircle.normal[1], centerPupilCircle.normal[2]);
         } else {
           printf("Center calibration sample invalid!\n");
           // TODO: try and recover from this?
@@ -947,7 +947,6 @@ bool EyeTrackingService::processFrame() {
 
   // Use center coordinates computed from the ROI network to compute the ROI aligned inside the original capture mat
   // ROI Rect needs to be fixed size of the segmentation network input (no edge clipping allowed)
-  // TODO: May need to be 8-byte aligned on input too for the fp16 conversion code?
 
   FRAME_DEBUG_LOG("ROI computed center (0...1): (%f, %f)\n", roiOutput[0], roiOutput[1]);
 

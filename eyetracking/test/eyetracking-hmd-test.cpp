@@ -337,12 +337,12 @@ int main(int argc, char* argv[]) {
 
         glm::mat4 modelMatrix =
             glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
-          * glm::scale(glm::vec3(0.005f));
+          * glm::scale(glm::vec3(0.00375f));
 
         ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
         ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
         ub.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
-        ub.thickness = 0.25f;
+        ub.thickness = 0.75f;
 
         rhi()->bindRenderPipeline(crosshairPipeline);
         rhi()->bindDepthStencilState(disabledDepthStencilState);
