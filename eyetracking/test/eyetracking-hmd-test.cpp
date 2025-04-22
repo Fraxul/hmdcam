@@ -306,12 +306,14 @@ int main(int argc, char* argv[]) {
       if (eyeTrackingService->m_processingState[0].m_calibrationState == EyeTrackingService::kCalibrated) {
         CrosshairUniformBlock ub;
 
+        glm::mat4 centerOffsetMatrix = glm::transpose(glm::eulerAngleXY(glm::radians(eyeTrackingService->m_processingState[0].m_centerPitchDeg), -glm::radians(eyeTrackingService->m_processingState[0].m_centerYawDeg)));
+
         // TODO wire up rotation angles
         glm::mat4 modelMatrix =
-            //glm::eulerAngleXYZ(glm::radians(eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg), glm::radians(-eyeTrackingService->m_processingState[0].m_pupilRawYawDeg), glm::radians(0.0f))
-            glm::eulerAngleXYZ(
-              glm::radians( eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg - eyeTrackingService->m_processingState[0].m_centerPitchDeg),
-              glm::radians(-(eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg)),
+            centerOffsetMatrix
+          * glm::eulerAngleXYZ(
+              glm::radians( eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg),
+              glm::radians(-eyeTrackingService->m_processingState[0].m_pupilRawYawDeg),
               glm::radians(0.0f))
           * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
           * glm::scale(glm::vec3(0.005f));
