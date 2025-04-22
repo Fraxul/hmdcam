@@ -1388,7 +1388,7 @@ void singleeyefitter::EyeModelFitter::refine_with_inliers(const CallbackFunction
 
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_SCHUR;
-    options.max_num_iterations = 1000;
+    options.max_num_iterations = 16; // Was 1000 -- reduced for real-time performance. Typical solve converges in 7-8 iterations.
     options.function_tolerance = 1e-10;
     options.minimizer_progress_to_stdout = true;
     options.update_state_every_iteration = true;

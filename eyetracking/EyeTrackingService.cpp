@@ -653,77 +653,80 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
   }
 
 
-  bool isNovelSample = true;
-  if (ps.m_eyeModelFitter.pupils.size()) {
-    float minDist = FLT_MAX;
-    for (const auto& pupilSample : ps.m_eyeModelFitter.pupils) {
-      cv::Point2f delta = cv::Point2f(
-        ps.m_pupilEllipse.center.x - (pupilSample.observation.ellipse.centre[0] + ps.m_captureCenterOffset.x),
-        ps.m_pupilEllipse.center.y - (pupilSample.observation.ellipse.centre[1] + ps.m_captureCenterOffset.y));
-      float dist = sqrtf((delta.x * delta.x) + (delta.y * delta.y));
-      minDist = std::min<float>(minDist, dist);
-    }
-    // FRAME_DEBUG_LOG("Min sample distance = %.3f\n", minDist);
-    isNovelSample = (minDist > 3.0f);
-  }
-
-  if (isNovelSample) {
-    // Add this observation to the eye model fitter
-    ps.m_eyeFitterSamples.push_back(ps.m_pupilEllipse);
-
-    // pupil_inliers needs to be in camera space, so apply captureCenterOffset
-    std::vector<cv::Point2f> pupil_inliers;
-    pupil_inliers.resize(transformedContour.size());
-    for (size_t i = 0; i < pupil_inliers.size(); ++i) {
-      pupil_inliers[i] = transformedContour[i] - ps.m_captureCenterOffset;
+  // See if we need to add more samples to the model
+  if (ps.m_eyeModelFitter.pupils.size() < 50) {
+    bool isNovelSample = true;
+    if (ps.m_eyeModelFitter.pupils.size()) {
+      float minDist = FLT_MAX;
+      for (const auto& pupilSample : ps.m_eyeModelFitter.pupils) {
+        cv::Point2f delta = cv::Point2f(
+          ps.m_pupilEllipse.center.x - (pupilSample.observation.ellipse.centre[0] + ps.m_captureCenterOffset.x),
+          ps.m_pupilEllipse.center.y - (pupilSample.observation.ellipse.centre[1] + ps.m_captureCenterOffset.y));
+        float dist = sqrtf((delta.x * delta.x) + (delta.y * delta.y));
+        minDist = std::min<float>(minDist, dist);
+      }
+      // FRAME_DEBUG_LOG("Min sample distance = %.3f\n", minDist);
+      isNovelSample = (minDist > 3.0f);
     }
 
-    // The eyefitter works in a coordinate system where the center of the image is at (0, 0),
-    // so we need to offset the ellipse center coordinate (via toEllipseWithOffset)
+    if (isNovelSample) {
+      // Add this observation to the eye model fitter
+      ps.m_eyeFitterSamples.push_back(ps.m_pupilEllipse);
 
-    ps.m_eyeModelFitter.add_observation(
-      /*image (unused)=*/cv::Mat(),
-      /*pupil=*/ singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset),
-      /*inliers=*/ pupil_inliers);
+      // pupil_inliers needs to be in camera space, so apply captureCenterOffset
+      std::vector<cv::Point2f> pupil_inliers;
+      pupil_inliers.resize(transformedContour.size());
+      for (size_t i = 0; i < pupil_inliers.size(); ++i) {
+        pupil_inliers[i] = transformedContour[i] - ps.m_captureCenterOffset;
+      }
 
-    // Try and fit the model
-    if (ps.m_eyeModelFitter.pupils.size() > 20) {
-      FRAME_DEBUG_LOG("Attempting eye model fit. ps.m_eyeFitterSamples.size()=%zu ps.m_eyeModelFitter.pupils.size()=%zu\n",
-        ps.m_eyeFitterSamples.size(), ps.m_eyeModelFitter.pupils.size());
+      // The eyefitter works in a coordinate system where the center of the image is at (0, 0),
+      // so we need to offset the ellipse center coordinate (via toEllipseWithOffset)
 
-      if (ps.m_eyeModelFitter.unproject_observations(ps.pupilRadius(), ps.initialEyeZ())) {
-        ps.m_eyeModelFitter.initialise_model();
-        //ps.m_eyeModelFitter.refine_with_inliers();
+      ps.m_eyeModelFitter.add_observation(
+        /*image (unused)=*/cv::Mat(),
+        /*pupil=*/ singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset),
+        /*inliers=*/ pupil_inliers);
+
+      // Try and fit the model
+      if (ps.m_eyeModelFitter.pupils.size() > 20) {
+        FRAME_DEBUG_LOG("Attempting eye model fit. ps.m_eyeFitterSamples.size()=%zu ps.m_eyeModelFitter.pupils.size()=%zu\n",
+          ps.m_eyeFitterSamples.size(), ps.m_eyeModelFitter.pupils.size());
+
+        if (ps.m_eyeModelFitter.unproject_observations(ps.pupilRadius(), ps.initialEyeZ())) {
+          ps.m_eyeModelFitter.initialise_model();
+          ps.m_eyeModelFitter.refine_with_inliers();
 
 
-        // Use the center calibration sample to find angle offsets
-        singleeyefitter::Circle3D<double> centerPupilCircle;
-        if (ps.m_eyeModelFitter.unproject_single_observation(centerPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_centerCalibrationSample, ps.m_captureCenterOffset), ps.pupilRadius())) {
-          // Original coordinate system:
-          // +x is left
-          // -y is up
-          // -z is forward
+          // Use the center calibration sample to find angle offsets
+          singleeyefitter::Circle3D<double> centerPupilCircle;
+          if (ps.m_eyeModelFitter.unproject_single_observation(centerPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_centerCalibrationSample, ps.m_captureCenterOffset), ps.pupilRadius())) {
+            // Original coordinate system:
+            // +x is left
+            // -y is up
+            // -z is forward
 
-          // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
-          float x =  centerPupilCircle.normal[0];
-          float y =  centerPupilCircle.normal[1];
-          float z = -centerPupilCircle.normal[2];
+            // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
+            float x =  centerPupilCircle.normal[0];
+            float y =  centerPupilCircle.normal[1];
+            float z = -centerPupilCircle.normal[2];
 
-          // +pitch = right
-          // +yaw = up
-          ps.m_centerPitchDeg = asin(-y) * (180.0 / M_PI);
-          ps.m_centerYawDeg = atan2(x, z) * (180.0 / M_PI);
+            // +pitch = right
+            // +yaw = up
+            ps.m_centerPitchDeg = asin(-y) * (180.0 / M_PI);
+            ps.m_centerYawDeg = atan2(x, z) * (180.0 / M_PI);
 
-          printf("Center calibration sample pitch=%.3f yaw=%.3f (n=%.3f %.3f %.3f)\n",
-            ps.m_centerPitchDeg, ps.m_centerYawDeg,
-            centerPupilCircle.normal[0], centerPupilCircle.normal[1], centerPupilCircle.normal[2]);
+            printf("Center calibration sample pitch=%.3f yaw=%.3f (n=%.3f %.3f %.3f)\n",
+              ps.m_centerPitchDeg, ps.m_centerYawDeg,
+              centerPupilCircle.normal[0], centerPupilCircle.normal[1], centerPupilCircle.normal[2]);
+          } else {
+            printf("Center calibration sample invalid!\n");
+            // TODO: try and recover from this?
+          }
+
         } else {
-          printf("Center calibration sample invalid!\n");
-          // TODO: try and recover from this?
+          FRAME_DEBUG_LOG("Eye model fit failed; unproject_observations() returned false.\n");
         }
-
-      } else {
-        FRAME_DEBUG_LOG("Eye model fit failed; unproject_observations() returned false.\n");
       }
     }
   }
