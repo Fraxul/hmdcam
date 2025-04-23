@@ -86,6 +86,13 @@ public:
     uint32_t m_contiguousInvalidFrameCounter = 0;
 
     ScrollingBuffer<cv::RotatedRect> m_calibrationSamples {24};
+    singleeyefitter::Circle3D<double> m_centerPupilCircle;
+
+    glm::vec3 centerPupilNormal() const {
+      // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
+      return glm::vec3(m_centerPupilCircle.normal[0], m_centerPupilCircle.normal[1], -m_centerPupilCircle.normal[2]);
+    }
+
     cv::RotatedRect m_centerCalibrationSample;
     float m_centerPitchDeg = 0.0f;
     float m_centerYawDeg = 0.0f;
@@ -155,6 +162,12 @@ public:
     cv::RotatedRect m_pupilEllipse;
     bool m_eyeFitterOutputsValid = false;
     singleeyefitter::Circle3D<double> m_fitPupilCircle;
+
+    glm::vec3 fitPupilNormal() const {
+      // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
+      return glm::vec3(m_fitPupilCircle.normal[0], m_fitPupilCircle.normal[1], -m_fitPupilCircle.normal[2]);
+    }
+
     float m_pupilRawPitchDeg = 0.0f, m_pupilRawYawDeg = 0.0f;
 
     std::vector<cv::RotatedRect> m_eyeFitterSamples;

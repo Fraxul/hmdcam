@@ -118,6 +118,24 @@ int main(int argc, char* argv[]) {
   RHISurface::ptr eyeTrackingDebugTexture;
   cv::Mat eyeTrackingDebugViewRGBA;
 
+  int eyeTrackingCalibrationPointIdx = -1;
+  const glm::vec2 eyeTrackingCalibrationPoints[] = {
+    { -1,   0 },
+    {  1,   0 },
+    {  0,   1 },
+    {  0,  -1 },
+    {  1,   1 },
+    {  1,  -1 },
+    { -1,   1 },
+    { -1,  -1 },
+  };
+  const size_t eyeTrackingCalibrationPointCount = (sizeof(eyeTrackingCalibrationPoints) / sizeof(eyeTrackingCalibrationPoints[0]));
+  const float eyeTrackingCalibrationPointScales[] = {
+    2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20
+  };
+  const size_t eyeTrackingCalibrationScaleCount = (sizeof(eyeTrackingCalibrationPoints) / sizeof(eyeTrackingCalibrationPoints[0]));
+  const size_t eyeTrackingCalibrationTotalSampleCount = eyeTrackingCalibrationPointCount * eyeTrackingCalibrationScaleCount;
+
   if (argc > 1) {
     printf("Using input filename %s\n", argv[1]);
     eyeTrackingService->setInputFilename(0, argv[1]);
@@ -178,6 +196,44 @@ int main(int argc, char* argv[]) {
         drawUI = !drawUI;
       }
 
+      if (!drawUI) {
+
+        if (eyeTrackingCalibrationPointIdx >= 0) {
+          // in calibration mode
+          if (ImGui::IsKeyPressed(ImGuiKey_Space)) {
+            // Accept calibration for this point, move to next.
+
+            const glm::vec2& calPoint = eyeTrackingCalibrationPoints[eyeTrackingCalibrationPointIdx % eyeTrackingCalibrationPointCount] * eyeTrackingCalibrationPointScales[eyeTrackingCalibrationPointIdx / eyeTrackingCalibrationPointCount];
+
+            glm::vec2 measuredPoint = glm::vec2(
+              eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg - eyeTrackingService->m_processingState[0].m_centerPitchDeg,
+              -(eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg));
+
+            printf("=== Calibration point %d: cal angles {%f, %f}, measured {%.3f, %.3f}, delta {%.3f, %.3f}, ratio {%.3f, %.3f. dot = %.3fdeg}\n",
+              eyeTrackingCalibrationPointIdx,
+              calPoint.x, calPoint.y,
+              measuredPoint.x, measuredPoint.y,
+              measuredPoint.x - calPoint.x, measuredPoint.y - calPoint.y,
+              measuredPoint.x / calPoint.x, measuredPoint.y / calPoint.y,
+              glm::degrees(glm::acos(glm::dot(eyeTrackingService->m_processingState[0].fitPupilNormal(), eyeTrackingService->m_processingState[0].centerPupilNormal()))));
+
+            glm::vec3 pn = eyeTrackingService->m_processingState[0].fitPupilNormal();
+            glm::vec3 cn = eyeTrackingService->m_processingState[0].centerPupilNormal();
+            FILE* fp = fopen("calibration-samples.txt", "ab");
+            fprintf(fp, "%f, %f, %f, %f, %f, %f, %f, %f, %f, %f\n",
+              calPoint.x, calPoint.y,
+              measuredPoint.x, measuredPoint.y,
+              pn.x, pn.y, pn.z,
+              cn.x, cn.y, cn.z);
+            fclose(fp);
+
+            eyeTrackingCalibrationPointIdx = eyeTrackingCalibrationPointIdx + 1;
+            if (eyeTrackingCalibrationPointIdx >= eyeTrackingCalibrationTotalSampleCount)
+              eyeTrackingCalibrationPointIdx = -1;
+          }
+        }
+      }
+
       ImGui_ImplFxRHI_NewFrame();
       ImGui_ImplInputListener_NewFrame();
       ImGui::NewFrame();
@@ -192,6 +248,10 @@ int main(int argc, char* argv[]) {
 
 
         // TODO settings go here
+
+        if (ImGui::Button("ET calibration points")) {
+          eyeTrackingCalibrationPointIdx = 0;
+        }
 
         if (ImGui::CollapsingHeader("Performance")) {
           int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
@@ -265,10 +325,12 @@ int main(int argc, char* argv[]) {
         renderViews[eyeIdx].viewProjectionMatrix = renderViews[eyeIdx].projectionMatrix * renderViews[eyeIdx].viewMatrix;
       }
 
-      // TODO: Render
+      // === Render objects ===
 
 
-      // TODO Render eyetracking debug view
+
+
+      // Render eyetracking debug view
       {
         const cv::Mat& debugView = eyeTrackingService->getDebugViewForEye(0);
         if (debugView.cols && debugView.rows) {
@@ -300,6 +362,33 @@ int main(int argc, char* argv[]) {
       }
 
       // Render eyetracking gizmos
+
+      // Eyetracking calibration point
+      if (eyeTrackingCalibrationPointIdx >= 0 && eyeTrackingCalibrationPointIdx < eyeTrackingCalibrationTotalSampleCount) {
+        CrosshairUniformBlock ub;
+
+        const glm::vec2& calPoint = eyeTrackingCalibrationPoints[eyeTrackingCalibrationPointIdx % eyeTrackingCalibrationPointCount] * eyeTrackingCalibrationPointScales[eyeTrackingCalibrationPointIdx / eyeTrackingCalibrationPointCount];
+
+        // TODO wire up rotation angles
+        glm::mat4 modelMatrix =
+            glm::eulerAngleXY(glm::radians(calPoint.x), glm::radians(calPoint.y))
+          * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
+          * glm::scale(glm::vec3(0.005f));
+
+        ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
+        ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
+        ub.color = glm::vec4(1.0f, 0.0f, 1.0f, 1.0f);
+        ub.thickness = 0.8f;
+
+        rhi()->bindRenderPipeline(crosshairPipeline);
+        rhi()->bindDepthStencilState(disabledDepthStencilState);
+
+        rhi()->loadUniformBlockImmediate(ksCrosshairUniformBlock, &ub, sizeof(ub));
+        // rhi()->setViewports(eyeViewports, 2); // should already be set
+
+        rhi()->bindStreamBuffer(0, ndcQuadVBO);
+        rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
+      }
 
 
       // Eye crosshair

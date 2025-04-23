@@ -699,26 +699,16 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 
 
           // Use the center calibration sample to find angle offsets
-          singleeyefitter::Circle3D<double> centerPupilCircle;
-          if (ps.m_eyeModelFitter.unproject_single_observation(centerPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_centerCalibrationSample, ps.m_captureCenterOffset), ps.pupilRadius())) {
-            // Original coordinate system:
-            // +x is left
-            // -y is up
-            // -z is forward
-
-            // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
-            float x =  centerPupilCircle.normal[0];
-            float y =  centerPupilCircle.normal[1];
-            float z = -centerPupilCircle.normal[2];
-
+          if (ps.m_eyeModelFitter.unproject_single_observation(ps.m_centerPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_centerCalibrationSample, ps.m_captureCenterOffset), ps.pupilRadius())) {
+            glm::vec3 pupil = ps.centerPupilNormal();
             // +pitch = right
             // +yaw = up
-            ps.m_centerPitchDeg = asin(-y) * (180.0 / M_PI);
-            ps.m_centerYawDeg = atan2(x, z) * (180.0 / M_PI);
+            ps.m_centerPitchDeg = glm::degrees(asin(-pupil.y));
+            ps.m_centerYawDeg = glm::degrees(atan2(pupil.x, pupil.z));
 
             printf("Center calibration sample pitch=%.3f yaw=%.3f (n=%.3f %.3f %.3f)\n",
               ps.m_centerPitchDeg, ps.m_centerYawDeg,
-              centerPupilCircle.normal[0], centerPupilCircle.normal[1], centerPupilCircle.normal[2]);
+              pupil.x, pupil.y, pupil.z);
           } else {
             printf("Center calibration sample invalid!\n");
             // TODO: try and recover from this?
@@ -740,17 +730,14 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
       // -y is up
       // -z is forward
 
-      // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
-      float x =  ps.m_fitPupilCircle.normal[0];
-      float y =  ps.m_fitPupilCircle.normal[1];
-      float z = -ps.m_fitPupilCircle.normal[2];
+      glm::vec3 pupil = ps.fitPupilNormal();
 
       // +pitch = right
       // +yaw = up
-      ps.m_pupilRawPitchDeg = asin(-y) * (180.0 / M_PI);
-      ps.m_pupilRawYawDeg = atan2(x, z) * (180.0 / M_PI);
+      ps.m_pupilRawPitchDeg = glm::degrees(asin(-pupil.y));
+      ps.m_pupilRawYawDeg = glm::degrees(atan2(pupil.x, pupil.z));
 
-      FRAME_DEBUG_LOG("n=%.3f %.3f %.3f\n", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
+      FRAME_DEBUG_LOG("n=%.3f %.3f %.3f\n", pupil.x, pupil.y, pupil.z);
       FRAME_DEBUG_LOG("pitch = %.3f, yaw = %.3f\n", ps.m_pupilRawPitchDeg, ps.m_pupilRawYawDeg);
     }
   } else {
