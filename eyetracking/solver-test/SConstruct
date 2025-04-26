@@ -1,0 +1,17 @@
+import os
+env = Environment(
+  tools = ['clang', 'clangxx', 'link'],
+  CPPPATH=['/usr/include/eigen3'],
+  CPPFLAGS=['-Wall', '-Wshadow'],
+)
+# Fix for clang colored diagnostics
+env['ENV']['TERM'] = os.environ['TERM']
+
+# clang++ -Wall -I/usr/include/eigen3 solver-test.cpp -o solver-test -lceres -lglog
+
+env.Program(
+  target = 'solver-test',
+  source = Glob('*.cpp'),
+  LIBS = ['ceres', 'glog']
+)
+
