@@ -42,6 +42,34 @@
 #include "stb/stb_image_write.h"
 
 
+double applyCorrectionCoeffs(const double* coeffs, double x_, double y_) {
+  const double x2 = x_ * x_;
+  const double x3 = x2 * x_;
+
+  const double y2 = y_ * y_;
+  const double y3 = y2 * y_;
+
+  return
+      coeffs[0]
+    + (coeffs[1] * x_)
+    + (coeffs[2] * x2)
+    + (coeffs[3] * x3)
+    + (coeffs[4] * y_)
+    + (coeffs[5] * x_ * y_)
+    + (coeffs[6] * x2 * y_)
+    + (coeffs[7] * y2)
+    + (coeffs[8] * x_ * y2)
+    + (coeffs[9] * y3);
+}
+
+// Fit with no loss function
+// const double xCoeffs[] =  {0.324752, 1.5627, 0.000968235, -0.000929677, 0.15071, -0.0110994, -4.26023e-05, 0.0138929, -0.000550271, 0.000202301};
+//const double yCoeffs[] =  {-0.0980076, -0.291026, 0.000617239, -0.000153762, 1.12734, -0.0207661, 0.000253921, 0.00120655, -0.000184027, -0.000330396};
+// Robust fit with CauchyLoss(0.5)
+const double xCoeffs[] =  {0.247894, 1.57453, 0.00260591, -0.000964221, 0.195514, -0.00935412, -0.000257241, 0.0137344, -0.000631172, 0.000101815};
+const double yCoeffs[] =  {0.266052, -0.303167, -0.0079304, 0.000470521, 1.13644, -0.0164022, -0.000502884, -0.000723453, -0.000224334, -0.00031778};
+
+
 FxAtomicString ksCrosshairUniformBlock("CrosshairUniformBlock");
 struct CrosshairUniformBlock {
   glm::mat4 modelViewProjection[2];
@@ -395,15 +423,21 @@ int main(int argc, char* argv[]) {
       if (eyeTrackingService->m_processingState[0].m_calibrationState == EyeTrackingService::kCalibrated) {
         CrosshairUniformBlock ub;
 
-        glm::mat4 centerOffsetMatrix = glm::transpose(glm::eulerAngleXY(glm::radians(eyeTrackingService->m_processingState[0].m_centerPitchDeg), -glm::radians(eyeTrackingService->m_processingState[0].m_centerYawDeg)));
+        glm::vec2 measuredPoint = glm::vec2(
+          eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg - eyeTrackingService->m_processingState[0].m_centerPitchDeg,
+          -(eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg));
+
+        glm::vec2 correctedPoint = glm::vec2(
+          applyCorrectionCoeffs(xCoeffs, measuredPoint.x, measuredPoint.y),
+          applyCorrectionCoeffs(yCoeffs, measuredPoint.x, measuredPoint.y)
+        );
+
 
         // TODO wire up rotation angles
         glm::mat4 modelMatrix =
-            centerOffsetMatrix
-          * glm::eulerAngleXYZ(
-              glm::radians( eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg),
-              glm::radians(-eyeTrackingService->m_processingState[0].m_pupilRawYawDeg),
-              glm::radians(0.0f))
+            glm::eulerAngleXY(
+              glm::radians(correctedPoint.x),
+              glm::radians(correctedPoint.y))
           * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
           * glm::scale(glm::vec3(0.005f));
 

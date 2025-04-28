@@ -141,20 +141,20 @@ int main(int argc, char** argv) {
     problem.AddResidualBlock(
         new ceres::AutoDiffCostFunction<BicubicResidual, 1, 10>(
           new BicubicResidual(
-            data[(sampleIdx * kCalibrationSampleColumns) + 0], 
-            data[(sampleIdx * kCalibrationSampleColumns) + 1], 
-            data[(sampleIdx * kCalibrationSampleColumns) + 2]
+            data[(sampleIdx * kCalibrationSampleColumns) + 2],
+            data[(sampleIdx * kCalibrationSampleColumns) + 3],
+            data[(sampleIdx * kCalibrationSampleColumns) + 0]
           )
-        ), nullptr, xCoeffs);
+        ), new ceres::CauchyLoss(0.5), xCoeffs);
 
     problem.AddResidualBlock(
         new ceres::AutoDiffCostFunction<BicubicResidual, 1, 10>(
           new BicubicResidual(
-            data[(sampleIdx * kCalibrationSampleColumns) + 0], 
-            data[(sampleIdx * kCalibrationSampleColumns) + 1], 
-            data[(sampleIdx * kCalibrationSampleColumns) + 3]
+            data[(sampleIdx * kCalibrationSampleColumns) + 2],
+            data[(sampleIdx * kCalibrationSampleColumns) + 3],
+            data[(sampleIdx * kCalibrationSampleColumns) + 1]
           )
-        ), nullptr, yCoeffs);
+        ), new ceres::CauchyLoss(0.5), yCoeffs);
   }
 
   ceres::Solver::Options options;
@@ -165,22 +165,47 @@ int main(int argc, char** argv) {
   ceres::Solve(options, &problem, &summary);
   std::cout << summary.BriefReport() << "\n";
 
+  const char* coeffName[] = {
+    "",
+    "x",
+    "x^2",
+    "x^3",
+    "y",
+    "x y",
+    "x^2 y",
+    "y^2",
+    "x y^2",
+    "y^3",
+  };
+
   for (size_t i = 0; i < 10; ++i) {
-    std::cout << xCoeffs[i] << " " << yCoeffs[i] << std::endl;
+    std::cout << coeffName[i] << " " << xCoeffs[i] << " " << yCoeffs[i] << std::endl;
   }
+
+  std::cout << "const double xCoeffs[] =  {";
+  for (size_t i = 0; i < 10; ++i) {
+    std::cout << xCoeffs[i] << ", ";
+  }
+  std::cout << "};" << std::endl;
+
+  std::cout << "const double yCoeffs[] =  {";
+  for (size_t i = 0; i < 10; ++i) {
+    std::cout << yCoeffs[i] << ", ";
+  }
+  std::cout << "};" << std::endl;
 
 
   for (size_t sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx) {
     const double* sample = data + (sampleIdx * kCalibrationSampleColumns);
-    double xPred = evaluate(xCoeffs, sample[0], sample[1]);
-    double yPred = evaluate(yCoeffs, sample[0], sample[1]);
-    double xGt = sample[2], yGt = sample[3];
+    double xPred = evaluate(xCoeffs, sample[2], sample[3]);
+    double yPred = evaluate(yCoeffs, sample[2], sample[3]);
+    double xGt = sample[0], yGt = sample[1];
 
     double dx = xGt - xPred;
     double dy = yGt - yPred;
     double dist = sqrt((dx * dx) + (dy * dy));
 
-    printf("{%.3f, %.3f} -- pred={%.3f, %.3f} gt={%.3f, %.3f} dist=%.3f\n", sample[0], sample[1], xPred, yPred, xGt, yGt, dist);
+    printf("{%.3f, %.3f} -- pred={%.3f, %.3f} gt={%.3f, %.3f} dist=%.3f\n", sample[2], sample[3], xPred, yPred, xGt, yGt, dist);
   }
 
 
