@@ -703,8 +703,8 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
             glm::vec3 pupil = ps.centerPupilNormal();
             // +pitch = right
             // +yaw = up
-            ps.m_centerPitchDeg = glm::degrees(asin(-pupil.y));
-            ps.m_centerYawDeg = glm::degrees(atan2(pupil.x, pupil.z));
+            ps.m_centerPitchDeg = glm::degrees(atan2(-pupil.z, sqrt((pupil.x * pupil.x) + (pupil.y * pupil.y))));
+            ps.m_centerYawDeg = glm::degrees(atan2(pupil.x, -pupil.y));
 
             printf("Center calibration sample pitch=%.3f yaw=%.3f (n=%.3f %.3f %.3f)\n",
               ps.m_centerPitchDeg, ps.m_centerYawDeg,
@@ -734,8 +734,8 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 
       // +pitch = right
       // +yaw = up
-      ps.m_pupilRawPitchDeg = glm::degrees(asin(-pupil.y));
-      ps.m_pupilRawYawDeg = glm::degrees(atan2(pupil.x, pupil.z));
+      ps.m_pupilRawPitchDeg = glm::degrees(atan2(-pupil.z, sqrt((pupil.x * pupil.x) + (pupil.y * pupil.y))));
+      ps.m_pupilRawYawDeg = glm::degrees(atan2(pupil.x, -pupil.y));
 
       FRAME_DEBUG_LOG("n=%.3f %.3f %.3f\n", pupil.x, pupil.y, pupil.z);
       FRAME_DEBUG_LOG("pitch = %.3f, yaw = %.3f\n", ps.m_pupilRawPitchDeg, ps.m_pupilRawYawDeg);
