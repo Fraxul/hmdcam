@@ -74,35 +74,133 @@ const size_t sampleCount = (sizeof(data) / sizeof(data[0])) / kCalibrationSample
 
 static inline double degrees(double r) { return r * (180.0 / M_PI); }
 static inline double radians(double d) { return d * (M_PI / 180.0); }
+template <typename T> static inline T square(T x) { return x * x; }
 
 enum CoeffID {
   kXOffset,
   kYOffset,
+  kRollAngle,
 
   kCoeffCount
 };
 
+
+template <typename T> void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
+  // Mathematica: evaluated EulerMatrix[{roll, pitch, yaw}, {3, 1, 2}] . {0, 0, 1}
+  // result: {Cos[yaw] Sin[pitch] Sin[roll] + Cos[roll] Sin[yaw], -Cos[roll] Cos[yaw] Sin[pitch] + Sin[roll] Sin[yaw], Cos[pitch] Cos[yaw]}
+  outVec[0] = (cos(yaw)*sin(pitch)*sin(roll)) + (cos(roll)*sin(yaw));
+  outVec[1] = (-cos(roll)*cos(yaw)*sin(pitch)) + (sin(roll)*sin(yaw));
+  outVec[2] = (cos(pitch)*cos(yaw));
+}
+
+template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw) {
+  // Note: argument ordering is atan2(y, x)
+
+  // Pitch is rotation around / flattening along the X axis, where the 2d plane is Z, Y
+  outPitch = atan2(-vec[1], vec[2]);
+
+  // Yaw is rotation around / flattening along the Y axis, where the 2d plane is Z, X
+  //outYaw = atan2(vec[0], vec[2]); // simple, but doesn't round-trip
+  outYaw = atan2(vec[0], sqrt((vec[2] * vec[2]) + (vec[1] * vec[1]))); // based on Mathematica's ToSphericalCoordinates[], round-trips with anglesToVector (when roll == 0)
+  if (outYaw >= M_PI)
+    outYaw -= (2.0 * M_PI);
+}
+
+
 void evaluate(const double* coeffs, double rawPupilPitch, double rawPupilYaw, double& correctedPitch, double& correctedYaw) {
   const double r = 0.5;
+
+  double rollCorrectedPupilPitch;
+  double rollCorrectedPupilYaw;
+
   {
-    const double midGazeX = cos(rawPupilYaw);
-    const double midGazeY = sin(rawPupilYaw);
+    double roll = coeffs[kRollAngle];
+    double v[3];
+    anglesToVector(roll, rawPupilPitch, rawPupilYaw, v);
+    vectorToAngles(v, rollCorrectedPupilPitch, rollCorrectedPupilYaw);
+  }
+
+  {
+    const double midGazeX = cos(rollCorrectedPupilYaw);
+    const double midGazeY = sin(rollCorrectedPupilYaw);
     double offsetX = double(midGazeX);
     double offsetY = midGazeY + (coeffs[kXOffset] / r);
-    double offsetL = sqrt((offsetX * offsetX) + (offsetY * offsetY));
 
-    correctedYaw = atan2(offsetY / offsetL, offsetX / offsetL);
+    correctedYaw = atan2(offsetY, offsetX);
   }
 
   {
-    const double midGazeX = cos(rawPupilPitch);
-    const double midGazeY = sin(rawPupilPitch);
+    const double midGazeX = cos(rollCorrectedPupilPitch);
+    const double midGazeY = sin(rollCorrectedPupilPitch);
     double offsetX = double(midGazeX);
     double offsetY = midGazeY + (coeffs[kYOffset] / r);
-    double offsetL = sqrt((offsetX * offsetX) + (offsetY * offsetY));
-    correctedPitch = atan2(offsetY / offsetL, offsetX / offsetL);
+    correctedPitch = atan2(offsetY, offsetX);
   }
 }
+
+
+
+struct RollResidual {
+  RollResidual(double rawPupilPitch, double rawPupilYaw, double targetPupilPitch, double targetPupilYaw) : m_rawPupilPitch(rawPupilPitch), m_rawPupilYaw(rawPupilYaw), m_gtPupilPitch(targetPupilPitch), m_gtPupilYaw(targetPupilYaw) {}
+
+  template <typename T> bool operator()(const T* const coeffs, T* residual) const {
+    T roll = coeffs[kRollAngle];
+
+    // Compute roll correction residual/error
+    T rolledPupilVec[3];
+    anglesToVector(roll, T(m_rawPupilPitch), T(m_rawPupilYaw), rolledPupilVec);
+
+    double targetPupilVec[3];
+    anglesToVector(0.0, m_gtPupilPitch, m_gtPupilYaw, targetPupilVec);
+
+#if 1
+#if 0
+    // Error is the dot product of the normalized 2d/xy projections of the two vectors (flatten along z-axis)
+    {
+      T tl = sqrt((rolledPupilVec[0] * rolledPupilVec[0]) + (rolledPupilVec[1] * rolledPupilVec[1]));
+      rolledPupilVec[0] /= tl;
+      rolledPupilVec[1] /= tl;
+    }
+    {
+      double l = sqrt((targetPupilVec[0] * targetPupilVec[0]) + (targetPupilVec[1] * targetPupilVec[1]));
+      targetPupilVec[0] /= l;
+      targetPupilVec[1] /= l;
+    }
+
+    residual[0] = 1.0 - ((rolledPupilVec[0] * targetPupilVec[0]) + (rolledPupilVec[1] * targetPupilVec[1]));
+#else
+
+    // Convert rolled vector back to angles
+    {
+      T rp, ry;
+      vectorToAngles(rolledPupilVec, rp, ry);
+
+
+      double gtL = sqrt(square(m_gtPupilPitch) + square(m_gtPupilYaw));
+      T rL = sqrt(square(rp) + square(ry));
+
+      // Dot product between normalized pitch/yaw vectors
+      residual[0] = 1.0 - (((rp/rL) * (m_gtPupilPitch/gtL)) + ((ry/rL) * (m_gtPupilYaw/gtL)));
+    }
+#endif
+#else
+
+    // Error is the dot product of the two vectors
+    residual[0] = 1.0 - (
+      (rolledPupilVec[0] * targetPupilVec[0]) + 
+      (rolledPupilVec[1] * targetPupilVec[1]) + 
+      (rolledPupilVec[2] * targetPupilVec[2]));
+#endif
+    return true;
+  }
+
+ private:
+  const double m_rawPupilPitch;
+  const double m_rawPupilYaw;
+
+  const double m_gtPupilPitch;
+  const double m_gtPupilYaw;
+};
 
 
 struct OffsetResidual {
@@ -121,27 +219,82 @@ struct OffsetResidual {
       correctedEyeAngle = ArcTan[ offsetEye[[1]], offsetEye[[2]] ];
     */
 
+  /*
+  {ArcTan[Cos[pitch] Cos[yaw], -Cos[roll] Cos[yaw] Sin[pitch] + 
+     Sin[roll] Sin[yaw]], 
+   ArcTan[Cos[pitch] Cos[yaw], 
+    Cos[yaw] Sin[pitch] Sin[roll] + Cos[roll] Sin[yaw]]}
+  */
+
+
+
+    T roll = coeffs[kRollAngle];
+
+    // Compute roll correction residual/error
+    T rolledPupilVec[3];
+    anglesToVector(roll, T(m_rawPupilPitch), T(m_rawPupilYaw), rolledPupilVec);
+
+
+    // Apply roll correction and get adjusted pitch/yaw angles
+    T rollCorrectedPupilPitch, rollCorrectedPupilYaw;
+    vectorToAngles(rolledPupilVec, rollCorrectedPupilPitch, rollCorrectedPupilYaw);
+
+#if 1
+#if 0
+    // Error is the dot product of the normalized 2d/xy projections of the two vectors (flatten along z-axis)
+    {
+      T tl = sqrt((rolledPupilVec[0] * rolledPupilVec[0]) + (rolledPupilVec[1] * rolledPupilVec[1]));
+      rolledPupilVec[0] /= tl;
+      rolledPupilVec[1] /= tl;
+    }
+    {
+      double l = sqrt((targetPupilVec[0] * targetPupilVec[0]) + (targetPupilVec[1] * targetPupilVec[1]));
+      targetPupilVec[0] /= l;
+      targetPupilVec[1] /= l;
+    }
+
+    residual[0] = 1.0 - ((rolledPupilVec[0] * targetPupilVec[0]) + (rolledPupilVec[1] * targetPupilVec[1]));
+#else
+
+    // Convert rolled vector back to angles
+    {
+      double gtL = sqrt(square(m_gtPupilPitch) + square(m_gtPupilYaw));
+      T rL = sqrt(square(rollCorrectedPupilPitch) + square(rollCorrectedPupilYaw));
+
+      // Dot product between normalized pitch/yaw vectors
+      residual[0] = 1.0 - (((rollCorrectedPupilPitch/rL) * (m_gtPupilPitch/gtL)) + ((rollCorrectedPupilYaw/rL) * (m_gtPupilYaw/gtL)));
+    }
+#endif
+#else
+
+    // Error is the dot product of the two vectors
+    residual[0] = 1.0 - (
+      (rolledPupilVec[0] * targetPupilVec[0]) + 
+      (rolledPupilVec[1] * targetPupilVec[1]) + 
+      (rolledPupilVec[2] * targetPupilVec[2]));
+#endif
+
     const double r = 0.5;
     {
-      const double midGazeX = cos(m_rawPupilYaw);
-      const double midGazeY = sin(m_rawPupilYaw);
+      T midGazeX = cos(rollCorrectedPupilYaw);
+      T midGazeY = sin(rollCorrectedPupilYaw);
       T offsetX = T(midGazeX);
       T offsetY = midGazeY + (coeffs[kXOffset] / r);
 
       T offsetL = sqrt((offsetX * offsetX) + (offsetY * offsetY));
 
       T correctedYaw = atan2(offsetY / offsetL, offsetX / offsetL);
-      residual[0] = m_gtPupilYaw - correctedYaw;
+      residual[1] = m_gtPupilYaw - correctedYaw;
     }
 
     {
-      const double midGazeX = cos(m_rawPupilPitch);
-      const double midGazeY = sin(m_rawPupilPitch);
+      T midGazeX = cos(rollCorrectedPupilPitch);
+      T midGazeY = sin(rollCorrectedPupilPitch);
       T offsetX = T(midGazeX);
       T offsetY = midGazeY + (coeffs[kYOffset] / r);
       T offsetL = sqrt((offsetX * offsetX) + (offsetY * offsetY));
       T correctedPitch = atan2(offsetY / offsetL, offsetX / offsetL);
-      residual[1] = m_gtPupilPitch - correctedPitch;
+      residual[2] = m_gtPupilPitch - correctedPitch;
     }
 
     return true;
@@ -159,7 +312,7 @@ int main(int argc, char** argv) {
   double coeffs[kCoeffCount];
   memset(coeffs, 0, sizeof(coeffs));
 
-  ceres::Problem problem;
+  ceres::Problem offsetProblem;
   for (size_t sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx) {
     const double* row = data + (sampleIdx * kCalibrationSampleColumns);
 
@@ -167,29 +320,54 @@ int main(int argc, char** argv) {
     double gtPitch = radians(row[0]);
     double gtYaw = radians(row[1]);
 
-    double pupilX = row[4];
-    double pupilY = row[5];
-    double pupilZ = row[6];
-    double centerX = row[7];
-    double centerY = row[8];
-    double centerZ = row[9];
+    const double* pupilVec = row + 4;
+    const double* centerVec = row + 7;
 
-    double centerPitch = atan2(-centerZ, sqrt((centerX * centerX) + (centerY * centerY)));
-    double centerYaw = atan2(centerX, centerY);
+    // ToPitchYaw[vec_] := {ArcTan[vec[[3]], vec[[2]]], ArcTan[vec[[3]], vec[[1]]]};
+    double centerPitch, centerYaw;
+    vectorToAngles(centerVec, centerPitch, centerYaw);
 
-    double pupilPitch = atan2(-pupilZ, sqrt((pupilX * pupilX) + (pupilY * pupilY))) - centerPitch;
-    double pupilYaw = atan2(pupilX, pupilY) - centerYaw;
+    double pupilPitch, pupilYaw;
+    vectorToAngles(pupilVec, pupilPitch, pupilYaw);
 
-    if (pupilYaw > M_PI)
-    pupilYaw = pupilYaw - (M_PI * 2.0);
+    pupilPitch -= centerPitch;
+    pupilYaw -= centerYaw;
 
+#if 0
+    if (sampleIdx == 0) {
+      double vvec[3];
+      anglesToVector(0.0, centerPitch, centerYaw, vvec);
+      printf("anglesToVector Validation: {%.6f, %.6f, %.6f}, {%.6f, %.6f, %.6f}\n",
+        vvec[0], vvec[1], vvec[2], centerVec[0], centerVec[1], centerVec[2]);
+    }
+
+    {
+      double vvec[3];
+      double pitch, yaw;
+      anglesToVector(0.0, gtPitch, gtYaw, vvec);
+      vectorToAngles(vvec, pitch, yaw);
+      printf("vectorToAngles Validation: {%.6f, %.6f} -> {%.6f, %.6f, %.6f} -> {%.6f, %.6f}\n",
+        degrees(gtPitch), degrees(gtYaw),
+        vvec[0], vvec[1], vvec[2],
+        degrees(pitch), degrees(yaw));
+    }
+#endif
+
+#if 1
     printf("Sample [%zu]: GT = {%.3f, %.3f}, raw/center-corrected = {%.3f, %.3f}\n",
       sampleIdx, degrees(gtPitch), degrees(gtYaw), degrees(pupilPitch), degrees(pupilYaw));
+#endif
 
-    problem.AddResidualBlock(
-        new ceres::AutoDiffCostFunction<OffsetResidual, 2, kCoeffCount>(
+    offsetProblem.AddResidualBlock(
+        new ceres::AutoDiffCostFunction<OffsetResidual, /*nResiduals=*/ 3, kCoeffCount>(
           new OffsetResidual(pupilPitch, pupilYaw, gtPitch, gtYaw)
-        ), new ceres::CauchyLoss(0.5), coeffs);
+        ),
+#if 0
+        new ceres::CauchyLoss(0.5),
+#else
+        nullptr,
+#endif
+        coeffs);
   }
 
   ceres::Solver::Options options;
@@ -198,18 +376,18 @@ int main(int argc, char** argv) {
   options.function_tolerance = 1e-10; // default 1e-6
   options.gradient_tolerance = 1e-4 * options.function_tolerance;
   options.minimizer_progress_to_stdout = true;
-  ceres::Solver::Summary summary;
-  ceres::Solve(options, &problem, &summary);
-  std::cout << summary.BriefReport() << "\n";
 
-  const char* coeffName[] = {
-    "xOffset",
-    "yOffset",
-  };
 
-  for (size_t i = 0; i < kCoeffCount; ++i) {
-    printf("%s: %16f\n", coeffName[i], coeffs[i]);
+  {
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &offsetProblem, &summary);
+    std::cout << summary.BriefReport() << "\n";
   }
+
+
+  printf("xOffset: %.2f mm\n", coeffs[0] * 1000.0);
+  printf("yOffset: %.2f mm\n", coeffs[1] * 1000.0);
+  printf("roll: %.2f deg\n", degrees(coeffs[2]));
 
   std::cout << "const double coeffs[] =  {";
   for (size_t i = 0; i < kCoeffCount; ++i) {
@@ -223,20 +401,26 @@ int main(int argc, char** argv) {
     double gtPitch = radians(row[0]);
     double gtYaw = radians(row[1]);
 
-    double pupilX = row[4];
-    double pupilY = row[5];
-    double pupilZ = row[6];
-    double centerX = row[7];
-    double centerY = row[8];
-    double centerZ = row[9];
+    const double* pupilVec = row + 4;
+    const double* centerVec = row + 7;
 
-    double centerPitch = atan2(-centerZ, sqrt((centerX * centerX) + (centerY * centerY)));
-    double centerYaw = atan2(centerX, centerY);
-    if (centerYaw >= M_PI) centerYaw -= (2.0 * M_PI);
+    double centerPitch, centerYaw;
+    vectorToAngles(centerVec, centerPitch, centerYaw);
 
-    double pupilPitch = atan2(-pupilZ, sqrt((pupilX * pupilX) + (pupilY * pupilY))) - centerPitch;
-    double pupilYaw = atan2(pupilX, pupilY) - centerYaw;
-    if (pupilYaw >= M_PI) pupilYaw -= (2.0 * M_PI);
+    double pupilPitch, pupilYaw;
+    vectorToAngles(pupilVec, pupilPitch, pupilYaw);
+
+    pupilPitch -= centerPitch;
+    pupilYaw -= centerYaw;
+
+
+    double rollCorrectedPupilPitch, rollCorrectedPupilYaw;
+    // Apply roll correction only and get adjusted pitch/yaw angles
+    {
+      double rolledPupilVec[3];
+      anglesToVector(coeffs[kRollAngle], pupilPitch, pupilYaw, rolledPupilVec);
+      vectorToAngles(rolledPupilVec, rollCorrectedPupilPitch, rollCorrectedPupilYaw);
+    }
 
     double correctedPitch, correctedYaw;
     evaluate(coeffs, pupilPitch, pupilYaw, correctedPitch, correctedYaw);
@@ -245,7 +429,11 @@ int main(int argc, char** argv) {
     double dy = gtYaw - correctedYaw;
     double dist = sqrt((dp * dp) + (dy * dy));
 
-    printf("{%.3f, %.3f} -- pred={%.3f, %.3f} gt={%.3f, %.3f} dist=%.3f\n", degrees(pupilPitch), degrees(pupilYaw), degrees(correctedPitch), degrees(correctedYaw), degrees(gtPitch), degrees(gtYaw), degrees(dist));
+    printf("{%.3f, %.3f} -- rollCorrected={%.3f, %.3f}, pred={%.3f, %.3f} gt={%.3f, %.3f} dist=%.3f\n",
+      degrees(pupilPitch), degrees(pupilYaw),
+      degrees(rollCorrectedPupilPitch), degrees(rollCorrectedPupilYaw),
+      degrees(correctedPitch), degrees(correctedYaw),
+      degrees(gtPitch), degrees(gtYaw), degrees(dist));
   }
 
 
