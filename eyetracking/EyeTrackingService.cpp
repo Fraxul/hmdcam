@@ -13,6 +13,7 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <NvInfer.h>
 
@@ -30,6 +31,35 @@
 
 // CUDA graph can only be used if the model doesn't run on the DLA
 #define USE_CUDA_GRAPH 0
+
+static inline double degrees(double r) { return r * (180.0 / M_PI); }
+static inline double radians(double d) { return d * (M_PI / 180.0); }
+
+template <typename T> void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
+  // Mathematica: evaluated EulerMatrix[{roll, pitch, yaw}, {3, 1, 2}] . {0, 0, 1}
+  // result: {Cos[yaw] Sin[pitch] Sin[roll] + Cos[roll] Sin[yaw], -Cos[roll] Cos[yaw] Sin[pitch] + Sin[roll] Sin[yaw], Cos[pitch] Cos[yaw]}
+  outVec[0] = (cos(yaw)*sin(pitch)*sin(roll)) + (cos(roll)*sin(yaw));
+  outVec[1] = (-cos(roll)*cos(yaw)*sin(pitch)) + (sin(roll)*sin(yaw));
+  outVec[2] = (cos(pitch)*cos(yaw));
+}
+
+template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, bool toDegrees) {
+  // Note: argument ordering is atan2(y, x)
+
+  // Pitch is rotation around / flattening along the X axis, where the 2d plane is Z, Y
+  outPitch = atan2(-vec[1], vec[2]);
+
+  // Yaw is rotation around / flattening along the Y axis, where the 2d plane is Z, X
+  //outYaw = atan2(vec[0], vec[2]); // simple, but doesn't round-trip
+  outYaw = atan2(vec[0], sqrt((vec[2] * vec[2]) + (vec[1] * vec[1]))); // based on Mathematica's ToSphericalCoordinates[], round-trips with anglesToVector (when roll == 0)
+  if (outYaw >= M_PI)
+    outYaw -= (2.0 * M_PI);
+
+  if (toDegrees) {
+    outPitch = degrees(outPitch);
+    outYaw = degrees(outYaw);
+  }
+}
 
 class InferLogger : public nvinfer1::ILogger {
 public:
@@ -701,10 +731,8 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
           // Use the center calibration sample to find angle offsets
           if (ps.m_eyeModelFitter.unproject_single_observation(ps.m_centerPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_centerCalibrationSample, ps.m_captureCenterOffset), ps.pupilRadius())) {
             glm::vec3 pupil = ps.centerPupilNormal();
-            // +pitch = right
-            // +yaw = up
-            ps.m_centerPitchDeg = glm::degrees(atan2(-pupil.z, sqrt((pupil.x * pupil.x) + (pupil.y * pupil.y))));
-            ps.m_centerYawDeg = glm::degrees(atan2(pupil.x, -pupil.y));
+
+            vectorToAngles(glm::value_ptr(pupil), ps.m_centerPitchDeg, ps.m_centerYawDeg, /*toDegrees=*/ true);
 
             printf("Center calibration sample pitch=%.3f yaw=%.3f (n=%.3f %.3f %.3f)\n",
               ps.m_centerPitchDeg, ps.m_centerYawDeg,
@@ -731,11 +759,7 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
       // -z is forward
 
       glm::vec3 pupil = ps.fitPupilNormal();
-
-      // +pitch = right
-      // +yaw = up
-      ps.m_pupilRawPitchDeg = glm::degrees(atan2(-pupil.z, sqrt((pupil.x * pupil.x) + (pupil.y * pupil.y))));
-      ps.m_pupilRawYawDeg = glm::degrees(atan2(pupil.x, -pupil.y));
+      vectorToAngles(glm::value_ptr(pupil), ps.m_pupilRawPitchDeg, ps.m_pupilRawYawDeg, /*toDegrees=*/ true);
 
       FRAME_DEBUG_LOG("n=%.3f %.3f %.3f\n", pupil.x, pupil.y, pupil.z);
       FRAME_DEBUG_LOG("pitch = %.3f, yaw = %.3f\n", ps.m_pupilRawPitchDeg, ps.m_pupilRawYawDeg);

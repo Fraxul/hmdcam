@@ -159,9 +159,9 @@ int main(int argc, char* argv[]) {
   };
   const size_t eyeTrackingCalibrationPointCount = (sizeof(eyeTrackingCalibrationPoints) / sizeof(eyeTrackingCalibrationPoints[0]));
   const float eyeTrackingCalibrationPointScales[] = {
-    2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20
+    2.5, 5, 7.5, 10, 12.5, 15
   };
-  const size_t eyeTrackingCalibrationScaleCount = (sizeof(eyeTrackingCalibrationPoints) / sizeof(eyeTrackingCalibrationPoints[0]));
+  const size_t eyeTrackingCalibrationScaleCount = (sizeof(eyeTrackingCalibrationPointScales) / sizeof(eyeTrackingCalibrationPointScales[0]));
   const size_t eyeTrackingCalibrationTotalSampleCount = eyeTrackingCalibrationPointCount * eyeTrackingCalibrationScaleCount;
 
   if (argc > 1) {
@@ -235,7 +235,7 @@ int main(int argc, char* argv[]) {
 
             glm::vec2 measuredPoint = glm::vec2(
               eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg - eyeTrackingService->m_processingState[0].m_centerPitchDeg,
-              -(eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg));
+              eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg);
 
             printf("=== Calibration point %d: cal angles {%f, %f}, measured {%.3f, %.3f}, delta {%.3f, %.3f}, ratio {%.3f, %.3f. dot = %.3fdeg}\n",
               eyeTrackingCalibrationPointIdx,
@@ -248,7 +248,7 @@ int main(int argc, char* argv[]) {
             glm::vec3 pn = eyeTrackingService->m_processingState[0].fitPupilNormal();
             glm::vec3 cn = eyeTrackingService->m_processingState[0].centerPupilNormal();
             FILE* fp = fopen("calibration-samples.txt", "ab");
-            fprintf(fp, "%f, %f, %f, %f, %f, %f, %f, %f, %f, %f\n",
+            fprintf(fp, "%f, %f, %f, %f, %f, %f, %f, %f, %f, %f,\n",
               calPoint.x, calPoint.y,
               measuredPoint.x, measuredPoint.y,
               pn.x, pn.y, pn.z,
@@ -425,7 +425,7 @@ int main(int argc, char* argv[]) {
 
         glm::vec2 measuredPoint = glm::vec2(
           eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg - eyeTrackingService->m_processingState[0].m_centerPitchDeg,
-          -(eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg));
+          eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg);
 
         glm::vec2 correctedPoint = glm::vec2(
           applyCorrectionCoeffs(xCoeffs, measuredPoint.x, measuredPoint.y),

@@ -90,7 +90,7 @@ public:
 
     glm::vec3 centerPupilNormal() const {
       // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
-      return glm::vec3(m_centerPupilCircle.normal[0], m_centerPupilCircle.normal[1], -m_centerPupilCircle.normal[2]);
+      return glm::vec3(-m_centerPupilCircle.normal[0], m_centerPupilCircle.normal[1], -m_centerPupilCircle.normal[2]);
     }
 
     cv::RotatedRect m_centerCalibrationSample;
@@ -165,7 +165,7 @@ public:
 
     glm::vec3 fitPupilNormal() const {
       // Swizzle coordinate system to make the pitch/yaw angles a bit more palatable
-      return glm::vec3(m_fitPupilCircle.normal[0], m_fitPupilCircle.normal[1], -m_fitPupilCircle.normal[2]);
+      return glm::vec3(-m_fitPupilCircle.normal[0], m_fitPupilCircle.normal[1], -m_fitPupilCircle.normal[2]);
     }
 
     float m_pupilRawPitchDeg = 0.0f, m_pupilRawYawDeg = 0.0f;
