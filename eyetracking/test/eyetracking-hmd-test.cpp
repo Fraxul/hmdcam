@@ -42,33 +42,76 @@
 #include "stb/stb_image_write.h"
 
 
-double applyCorrectionCoeffs(const double* coeffs, double x_, double y_) {
-  const double x2 = x_ * x_;
-  const double x3 = x2 * x_;
-
-  const double y2 = y_ * y_;
-  const double y3 = y2 * y_;
-
-  return
-      coeffs[0]
-    + (coeffs[1] * x_)
-    + (coeffs[2] * x2)
-    + (coeffs[3] * x3)
-    + (coeffs[4] * y_)
-    + (coeffs[5] * x_ * y_)
-    + (coeffs[6] * x2 * y_)
-    + (coeffs[7] * y2)
-    + (coeffs[8] * x_ * y2)
-    + (coeffs[9] * y3);
+template <typename T> static inline T degrees(T r) { return r * (180.0 / M_PI); }
+template <typename T> static inline T radians(T d) { return d * (M_PI / 180.0); }
+template <typename T> void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
+  // Mathematica: evaluated EulerMatrix[{roll, pitch, yaw}, {3, 1, 2}] . {0, 0, 1}
+  // result: {Cos[yaw] Sin[pitch] Sin[roll] + Cos[roll] Sin[yaw], -Cos[roll] Cos[yaw] Sin[pitch] + Sin[roll] Sin[yaw], Cos[pitch] Cos[yaw]}
+  outVec[0] = (cos(yaw)*sin(pitch)*sin(roll)) + (cos(roll)*sin(yaw));
+  outVec[1] = (-cos(roll)*cos(yaw)*sin(pitch)) + (sin(roll)*sin(yaw));
+  outVec[2] = (cos(pitch)*cos(yaw));
 }
 
-// Fit with no loss function
-// const double xCoeffs[] =  {0.324752, 1.5627, 0.000968235, -0.000929677, 0.15071, -0.0110994, -4.26023e-05, 0.0138929, -0.000550271, 0.000202301};
-//const double yCoeffs[] =  {-0.0980076, -0.291026, 0.000617239, -0.000153762, 1.12734, -0.0207661, 0.000253921, 0.00120655, -0.000184027, -0.000330396};
-// Robust fit with CauchyLoss(0.5)
-const double xCoeffs[] =  {0.247894, 1.57453, 0.00260591, -0.000964221, 0.195514, -0.00935412, -0.000257241, 0.0137344, -0.000631172, 0.000101815};
-const double yCoeffs[] =  {0.266052, -0.303167, -0.0079304, 0.000470521, 1.13644, -0.0164022, -0.000502884, -0.000723453, -0.000224334, -0.00031778};
+template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, bool toDegrees) {
+  // Note: argument ordering is atan2(y, x)
 
+  // Pitch is rotation around / flattening along the X axis, where the 2d plane is Z, Y
+  outPitch = atan2(-vec[1], vec[2]);
+
+  // Yaw is rotation around / flattening along the Y axis, where the 2d plane is Z, X
+  //outYaw = atan2(vec[0], vec[2]); // simple, but doesn't round-trip
+  outYaw = atan2(vec[0], sqrt((vec[2] * vec[2]) + (vec[1] * vec[1]))); // based on Mathematica's ToSphericalCoordinates[], round-trips with anglesToVector (when roll == 0)
+  if (outYaw >= M_PI)
+    outYaw -= (2.0 * M_PI);
+
+  if (toDegrees) {
+    outPitch = degrees(outPitch);
+    outYaw = degrees(outYaw);
+  }
+}
+
+enum CoeffID {
+  kXOffset,
+  kYOffset,
+  kRollAngle,
+  kPitchScale,
+  kYawScale,
+
+  kCoeffCount
+};
+
+const double coeffs[] =  {0.000309591, 0.0179587, -0.212031, 1.40879, 1.34622, };
+
+void applyCorrectionCoeffs(float rawPupilPitchDeg, float rawPupilYawDeg, float& correctedPitchDeg, float& correctedYawDeg) {
+  const double r = 0.5;
+
+  double rollCorrectedPupilPitch;
+  double rollCorrectedPupilYaw;
+
+  {
+    double roll = coeffs[kRollAngle];
+    double v[3];
+    anglesToVector<double>(roll, radians(rawPupilPitchDeg), radians(rawPupilYawDeg), v);
+    vectorToAngles<double>(v, rollCorrectedPupilPitch, rollCorrectedPupilYaw, /*toDegrees=*/ false);
+  }
+
+  {
+    const double midGazeX = cos(rollCorrectedPupilYaw);
+    const double midGazeY = sin(rollCorrectedPupilYaw);
+    double offsetX = double(midGazeX);
+    double offsetY = midGazeY + (coeffs[kXOffset] / r);
+
+    correctedYawDeg = degrees(atan2(offsetY, offsetX) * coeffs[kYawScale]);
+  }
+
+  {
+    const double midGazeX = cos(rollCorrectedPupilPitch);
+    const double midGazeY = sin(rollCorrectedPupilPitch);
+    double offsetX = double(midGazeX);
+    double offsetY = midGazeY + (coeffs[kYOffset] / r);
+    correctedPitchDeg = degrees(atan2(offsetY, offsetX) * coeffs[kPitchScale]);
+  }
+}
 
 FxAtomicString ksCrosshairUniformBlock("CrosshairUniformBlock");
 struct CrosshairUniformBlock {
@@ -159,7 +202,7 @@ int main(int argc, char* argv[]) {
   };
   const size_t eyeTrackingCalibrationPointCount = (sizeof(eyeTrackingCalibrationPoints) / sizeof(eyeTrackingCalibrationPoints[0]));
   const float eyeTrackingCalibrationPointScales[] = {
-    2.5, 5, 7.5, 10, 12.5, 15
+    2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5, 25
   };
   const size_t eyeTrackingCalibrationScaleCount = (sizeof(eyeTrackingCalibrationPointScales) / sizeof(eyeTrackingCalibrationPointScales[0]));
   const size_t eyeTrackingCalibrationTotalSampleCount = eyeTrackingCalibrationPointCount * eyeTrackingCalibrationScaleCount;
@@ -392,7 +435,9 @@ int main(int argc, char* argv[]) {
       // Render eyetracking gizmos
 
       // Eyetracking calibration point
+      bool inEyeTrackingCalibration = false;
       if (eyeTrackingCalibrationPointIdx >= 0 && eyeTrackingCalibrationPointIdx < eyeTrackingCalibrationTotalSampleCount) {
+        inEyeTrackingCalibration = true;
         CrosshairUniformBlock ub;
 
         const glm::vec2& calPoint = eyeTrackingCalibrationPoints[eyeTrackingCalibrationPointIdx % eyeTrackingCalibrationPointCount] * eyeTrackingCalibrationPointScales[eyeTrackingCalibrationPointIdx / eyeTrackingCalibrationPointCount];
@@ -427,10 +472,19 @@ int main(int argc, char* argv[]) {
           eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg - eyeTrackingService->m_processingState[0].m_centerPitchDeg,
           eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg);
 
-        glm::vec2 correctedPoint = glm::vec2(
-          applyCorrectionCoeffs(xCoeffs, measuredPoint.x, measuredPoint.y),
-          applyCorrectionCoeffs(yCoeffs, measuredPoint.x, measuredPoint.y)
-        );
+#if 1
+        glm::vec2 correctedPoint;
+        if (inEyeTrackingCalibration) {
+          // No correction during calibration
+          correctedPoint = measuredPoint;
+        } else {
+          // Apply correction
+          applyCorrectionCoeffs(measuredPoint.x, measuredPoint.y, correctedPoint.x, correctedPoint.y);
+        }
+#else
+        // Correction disabled
+        glm::vec2 correctedPoint = measuredPoint;
+#endif
 
 
         // TODO wire up rotation angles
