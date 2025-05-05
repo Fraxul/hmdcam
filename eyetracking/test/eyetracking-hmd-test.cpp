@@ -70,49 +70,6 @@ template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, 
   }
 }
 
-enum CoeffID {
-  kXOffset,
-  kYOffset,
-  kRollAngle,
-  kPitchScale,
-  kYawScale,
-
-  kCoeffCount
-};
-
-const double coeffs[] =  {0.000309591, 0.0179587, -0.212031, 1.40879, 1.34622, };
-
-void applyCorrectionCoeffs(float rawPupilPitchDeg, float rawPupilYawDeg, float& correctedPitchDeg, float& correctedYawDeg) {
-  const double r = 0.5;
-
-  double rollCorrectedPupilPitch;
-  double rollCorrectedPupilYaw;
-
-  {
-    double roll = coeffs[kRollAngle];
-    double v[3];
-    anglesToVector<double>(roll, radians(rawPupilPitchDeg), radians(rawPupilYawDeg), v);
-    vectorToAngles<double>(v, rollCorrectedPupilPitch, rollCorrectedPupilYaw, /*toDegrees=*/ false);
-  }
-
-  {
-    const double midGazeX = cos(rollCorrectedPupilYaw);
-    const double midGazeY = sin(rollCorrectedPupilYaw);
-    double offsetX = double(midGazeX);
-    double offsetY = midGazeY + (coeffs[kXOffset] / r);
-
-    correctedYawDeg = degrees(atan2(offsetY, offsetX) * coeffs[kYawScale]);
-  }
-
-  {
-    const double midGazeX = cos(rollCorrectedPupilPitch);
-    const double midGazeY = sin(rollCorrectedPupilPitch);
-    double offsetX = double(midGazeX);
-    double offsetY = midGazeY + (coeffs[kYOffset] / r);
-    correctedPitchDeg = degrees(atan2(offsetY, offsetX) * coeffs[kPitchScale]);
-  }
-}
-
 FxAtomicString ksCrosshairUniformBlock("CrosshairUniformBlock");
 struct CrosshairUniformBlock {
   glm::mat4 modelViewProjection[2];
@@ -236,6 +193,7 @@ int main(int argc, char* argv[]) {
     guiRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ guiTex }));
 
     bool drawUI = false;
+    bool drawETDebugOverlay = true;
 
     // Perf queries
     RHITimerQuery::ptr viewRenderQuery = rhi()->newTimerQuery();
@@ -322,7 +280,19 @@ int main(int argc, char* argv[]) {
 
         if (ImGui::Button("ET calibration points")) {
           eyeTrackingCalibrationPointIdx = 0;
+          drawUI = false; // exit UI when selecting calibration points mode
         }
+
+        float fl = eyeTrackingService->m_processingState[0].m_focalLength;
+        if (ImGui::DragFloat("SEF Focal Length", &fl, /*speed=*/ 0.1, /*min=*/ 1.0f, /*max=*/ 20.0f, "%.1f")) {
+          //ps.m_eyeModelFitter.focal_length = ps.m_focalLength / ps.m_pixelPitchMM;
+          //eyeTrackingService->m_processingState[0].m_eyeModelFitter.focal_length = fl;
+
+          eyeTrackingService->m_processingState[0].m_focalLength = fl;
+          eyeTrackingService->m_processingState[0].m_eyeModelFitter.focal_length = eyeTrackingService->m_processingState[0].m_focalLength / eyeTrackingService->m_processingState[0].m_pixelPitchMM;
+        }
+
+        ImGui::Checkbox("ET debug overlay", &drawETDebugOverlay);
 
         if (ImGui::CollapsingHeader("Performance")) {
           int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
@@ -403,7 +373,7 @@ int main(int argc, char* argv[]) {
 
       // Render eyetracking debug view
       {
-        const cv::Mat& debugView = eyeTrackingService->getDebugViewForEye(0);
+        const cv::Mat& debugView = eyeTrackingService->getDebugViewForEye(0, drawETDebugOverlay);
         if (debugView.cols && debugView.rows) {
 
           if (!eyeTrackingDebugTexture || (eyeTrackingDebugTexture->width() != debugView.cols) || (eyeTrackingDebugTexture->height() != debugView.rows)) {
@@ -435,9 +405,7 @@ int main(int argc, char* argv[]) {
       // Render eyetracking gizmos
 
       // Eyetracking calibration point
-      bool inEyeTrackingCalibration = false;
       if (eyeTrackingCalibrationPointIdx >= 0 && eyeTrackingCalibrationPointIdx < eyeTrackingCalibrationTotalSampleCount) {
-        inEyeTrackingCalibration = true;
         CrosshairUniformBlock ub;
 
         const glm::vec2& calPoint = eyeTrackingCalibrationPoints[eyeTrackingCalibrationPointIdx % eyeTrackingCalibrationPointCount] * eyeTrackingCalibrationPointScales[eyeTrackingCalibrationPointIdx / eyeTrackingCalibrationPointCount];
@@ -472,26 +440,12 @@ int main(int argc, char* argv[]) {
           eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg - eyeTrackingService->m_processingState[0].m_centerPitchDeg,
           eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg);
 
-#if 1
-        glm::vec2 correctedPoint;
-        if (inEyeTrackingCalibration) {
-          // No correction during calibration
-          correctedPoint = measuredPoint;
-        } else {
-          // Apply correction
-          applyCorrectionCoeffs(measuredPoint.x, measuredPoint.y, correctedPoint.x, correctedPoint.y);
-        }
-#else
-        // Correction disabled
-        glm::vec2 correctedPoint = measuredPoint;
-#endif
-
 
         // TODO wire up rotation angles
         glm::mat4 modelMatrix =
             glm::eulerAngleXY(
-              glm::radians(correctedPoint.x),
-              glm::radians(correctedPoint.y))
+              glm::radians(measuredPoint.x),
+              glm::radians(measuredPoint.y))
           * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
           * glm::scale(glm::vec3(0.005f));
 

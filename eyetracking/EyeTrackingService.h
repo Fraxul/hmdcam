@@ -38,7 +38,7 @@ public:
   float m_lastFrameProcessingTimeMs = 0.0f;
   float m_lastFramePostProcessingTimeMs = 0.0f;
 
-  cv::Mat& getDebugViewForEye(size_t eyeIdx);
+  cv::Mat& getDebugViewForEye(size_t eyeIdx, bool withOverlayDrawing);
 
   struct CaptureBuffer {
     cv::Mat mat;
@@ -135,6 +135,9 @@ public:
     // coordinate system (zero at center) and the capture/image coordinate system (zero at left-top)
     cv::Point2f m_captureCenterOffset;
 
+    // Output of perspective warp applied to capture
+    cv::Mat m_captureWarpMat;
+
     // ROI scale output
     cv::Mat m_roiScaleMat;
 
@@ -174,10 +177,11 @@ public:
 
     // Eye fitter
     singleeyefitter::EyeModelFitter m_eyeModelFitter;
-    double m_focalLength = 4.0; // mm
-    double m_mm2px_scaling = 0;
-    const double pupilRadius() { return 2.0 * m_mm2px_scaling; }
-    const double initialEyeZ() { return 50.0 * m_mm2px_scaling; }
+    double m_focalLength = 6.0; // seems only vaguely related to the actual lens focal length.
+    double m_pixelPitchMM = 0.003; // Pixel size/pitch of the camera sensor, millimeters.
+    double m_eyeZ = 15.0;
+    const double pupilRadius() { return 2.0 / m_pixelPitchMM; }
+    const double initialEyeZ() { return m_eyeZ / m_pixelPitchMM; }
 
     // CUDA graph capture of the tracking model run
     // Internally the TensorRT engine launches several dozen kernels, so capturing

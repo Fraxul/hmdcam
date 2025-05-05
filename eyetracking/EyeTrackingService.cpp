@@ -368,23 +368,10 @@ EyeTrackingService::EyeTrackingService() {
     ProcessingState& ps = m_processingState[eyeIdx];
 
     // Init eye-fitter
-    // Focal length computation is taken from the SingleEyeFitter sample tool
-    //double fov = 120.0; // TODO parameterize
-    //double fov_radians = fov * (M_PI / 180.0);
-    //ps.m_eyeModelFitter.focal_length = static_cast<double>(m_segInputWidth / 2) / std::tan(fov_radians / 2.0);
 
-    // Focal length computation / mm2px scaling is taken from deepvog
-    double sensor_size[] = {4.8, 3.6};
-    double sensor_native_res[] = {640, 480};
-
-    // self.mm2px_scaling = np.linalg.norm(self.ori_video_shape) / np.linalg.norm(self.sensor_size)
-    ps.m_mm2px_scaling =
-      sqrt((sensor_native_res[0] * sensor_native_res[0]) + (sensor_native_res[1] * sensor_native_res[1])) /
-      sqrt((sensor_size[0] * sensor_size[0]) + (sensor_size[1] * sensor_size[1]));
-    printf("mm2px scaling: %.6f\n", ps.m_mm2px_scaling);
-
-    ps.m_eyeModelFitter.focal_length = ps.m_focalLength * ps.m_mm2px_scaling;
-    printf("Using focal length: %.6f\n", ps.m_eyeModelFitter.focal_length);
+    // Experimentally, roughly 1800.0 is a good ps.m_eyeModelFitter.focal_length value for the OV9281 sensor in 640x480 mode with 60 degree lens.
+    ps.m_eyeModelFitter.focal_length = ps.m_focalLength / ps.m_pixelPitchMM;
+    printf("Using adjusted focal length: %.6f\n", ps.m_eyeModelFitter.focal_length);
 
     {
       // ROI network setup
@@ -866,11 +853,24 @@ bool EyeTrackingService::processFrame() {
 
   // Start working on the next eye's image
 
+
+  // XXX: Apply perspective warp
+
+#if 0
+  cv::Matx33f distCoeffs(1.41499286e+00, 1.23522053e-01,-2.89688293e+01, 2.31679593e-01, 2.26254240e+00,-3.97708847e+01, -4.39070523e-05, 1.91792961e-03, 1.00000000e+00);
+  cv::warpPerspective(/*src=*/ capture->mat, /*dst=*/ ps.m_captureWarpMat, /*M=*/ distCoeffs, /*dsize=*/ cv::Size(capture->mat.cols, capture->mat.rows), /*flags=*/ cv::INTER_LINEAR, /*border=*/ cv::BORDER_REPLICATE);
+#else
+
+  cv::Matx23d distCoeffs = cv::getRotationMatrix2D_(ps.m_captureCenterOffset, /*angle (degrees)=*/ -10.5, /*scale=*/ 1.0);
+  cv::warpAffine(/*src=*/ capture->mat, /*dst=*/ ps.m_captureWarpMat, /*M=*/ distCoeffs, /*dsize=*/ cv::Size(capture->mat.cols, capture->mat.rows), /*flags=*/ cv::INTER_LINEAR, /*border=*/ cv::BORDER_REPLICATE);
+
+#endif
+
   // Copy capture mat for debug view
-  capture->mat.copyTo(ps.m_debugViewGrey);
+  ps.m_captureWarpMat.copyTo(ps.m_debugViewGrey);
 
   // Scale from capture mat to the input size for the ROI prediction network
-  cv::resize(capture->mat, ps.m_roiScaleMat, cv::Size(m_roiInputWidth, m_roiInputHeight));
+  cv::resize(ps.m_captureWarpMat, ps.m_roiScaleMat, cv::Size(m_roiInputWidth, m_roiInputHeight));
 
   // Convert CV_U8 from the scale output to int8 or half for the ROI network input
 
@@ -966,16 +966,16 @@ bool EyeTrackingService::processFrame() {
 
   // Rescale to 0...1f and multiply by the actual source w/h
   cv::Point2i roiCenter_captureRelative = cv::Point2i(
-    clamp<int32_t>(roiOutput[0] * static_cast<float>(capture->mat.cols - 1), 0, capture->mat.cols - 1),
-    clamp<int32_t>(roiOutput[1] * static_cast<float>(capture->mat.rows - 1), 0, capture->mat.rows - 1)
+    clamp<int32_t>(roiOutput[0] * static_cast<float>(ps.m_captureWarpMat.cols - 1), 0, ps.m_captureWarpMat.cols - 1),
+    clamp<int32_t>(roiOutput[1] * static_cast<float>(ps.m_captureWarpMat.rows - 1), 0, ps.m_captureWarpMat.rows - 1)
   );
   ps.m_debugLastPredictedROICenter = roiCenter_captureRelative; // Save for debug view.
 
   // Clip the capture-relative ROI center to the capture dimensions inset by half of the segmentation network input size. This should ensure that the
   // segmentation ROI rect fits entirely within the capture region.
 
-  roiCenter_captureRelative.x = clamp<int32_t>(roiCenter_captureRelative.x, (m_segInputWidth / 2), (capture->mat.cols - 1) - (m_segInputWidth / 2));
-  roiCenter_captureRelative.y = clamp<int32_t>(roiCenter_captureRelative.y, (m_segInputHeight / 2), (capture->mat.rows - 1) - (m_segInputHeight / 2));
+  roiCenter_captureRelative.x = clamp<int32_t>(roiCenter_captureRelative.x, (m_segInputWidth / 2), (ps.m_captureWarpMat.cols - 1) - (m_segInputWidth / 2));
+  roiCenter_captureRelative.y = clamp<int32_t>(roiCenter_captureRelative.y, (m_segInputHeight / 2), (ps.m_captureWarpMat.rows - 1) - (m_segInputHeight / 2));
 
   // Build segmentation input crop rect in capture mat coordinates
   cv::Point2i segROIRect_tl = (roiCenter_captureRelative - cv::Point2i(m_segInputWidth / 2, m_segInputHeight / 2));
@@ -987,7 +987,7 @@ bool EyeTrackingService::processFrame() {
   ps.m_debugLastSegmentationROI = segROIRect;
   ps.m_lastSegROIToCaptureMatOffset = segROIRect_tl; // save for eyefitter processing
 
-  cv::Mat segROIMat = cv::Mat(capture->mat, segROIRect);
+  cv::Mat segROIMat = cv::Mat(ps.m_captureWarpMat, segROIRect);
 
   // Convert ROI window to fp16 to populate ps.m_segInputTensor
   // The ROI input is known not to be contiguous, so we do it row-by-row.
@@ -1171,7 +1171,7 @@ cv::RotatedRect toImgCoord(const cv::RotatedRect& rect, const cv::Point2f& cente
         cv::Size2f(rect.size.width, rect.size.height), rect.angle);
 }
 
-cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
+cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx, bool withDebugOverlay) {
   assert(eyeIdx < 2);
   ProcessingState& ps = m_processingState[eyeIdx];
 
@@ -1183,6 +1183,11 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
   // Promote full capture buffer to RGB
   cv::cvtColor(/*src=*/ ps.m_debugViewGrey, /*dst=*/ ps.m_debugViewRGB, cv::COLOR_GRAY2BGR);
 
+  if (!withDebugOverlay) {
+    // No drawing
+    return ps.m_debugViewRGB;
+  }
+
   if (ps.m_debugLastSegmentationROI.empty()) {
     // No segmentation ROI means nothing to draw, just return now.
     return ps.m_debugViewRGB;
@@ -1191,6 +1196,7 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
   // Segmentation ROI view of the RGB debug mat
   cv::Mat debugROIViewRGB = cv::Mat(ps.m_debugViewRGB, ps.m_debugLastSegmentationROI);
 
+#if 0
   // Draw segmentation mask colors
   for (size_t row = 0; row < debugROIViewRGB.rows; ++row) {
     uint8_t* pupilRowPtr = ps.m_pupilMask1 + (row * m_segInputWidth);
@@ -1199,6 +1205,7 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
         debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/2] = 0xcc;
     }
   }
+#endif
 
   // Now operating on the full view; coordinates that are relative to the ROI will need to be translated.
 
@@ -1221,7 +1228,8 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
       singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
 
       cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), ps.m_captureCenterOffset);
-      cv::ellipse(ps.m_debugViewRGB, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
+      // pupil ellipse was already drawn above
+      //cv::ellipse(ps.m_debugViewRGB, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
 
       cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), ps.m_captureCenterOffset);
       cv::ellipse(ps.m_debugViewRGB, eyeEllipseImg, cv::Scalar(0, 60, 60), /*thickness=*/ 2);
