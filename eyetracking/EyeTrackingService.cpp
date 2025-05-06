@@ -475,6 +475,9 @@ bool EyeTrackingService::loadCalibrationData(cv::FileStorage& fs) {
     readNode(fs, eyeZ);
     cv::read(fs["rollOffsetL"], m_rollOffsetDeg[0], m_rollOffsetDeg[0]);
     cv::read(fs["rollOffsetR"], m_rollOffsetDeg[1], m_rollOffsetDeg[1]);
+    readNode(fs, filterMinCutoff);
+    readNode(fs, filterBetaExponent);
+    readNode(fs, filterDCutoff);
 
   } catch (const std::exception& ex) {
     printf("Unable to load calibration data: %s\n", ex.what());
@@ -491,6 +494,9 @@ void EyeTrackingService::saveCalibrationData(cv::FileStorage& fs) {
   writeNode(fs, eyeZ);
   fs.write("rollOffsetL", m_rollOffsetDeg[0]);
   fs.write("rollOffsetR", m_rollOffsetDeg[1]);
+  writeNode(fs, filterMinCutoff);
+  writeNode(fs, filterBetaExponent);
+  writeNode(fs, filterDCutoff);
 }
 #undef writeNode
 
@@ -771,6 +777,11 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 
       FRAME_DEBUG_LOG("n=%.3f %.3f %.3f\n", pupil.x, pupil.y, pupil.z);
       FRAME_DEBUG_LOG("pitch = %.3f, yaw = %.3f\n", ps.m_pupilRawPitchDeg, ps.m_pupilRawYawDeg);
+
+      // Add sample to filter
+      double ts = static_cast<double>(currentTimeNs() / 1000ULL) / 1'000'000.0;
+      ps.m_pupilFilteredPitchDeg = ps.m_pitchFilter(ps.m_pupilRawPitchDeg, ts);
+      ps.m_pupilFilteredYawDeg = ps.m_yawFilter(ps.m_pupilRawYawDeg, ts);
     }
   } else {
     ps.m_eyeFitterOutputsValid = false;
@@ -1336,20 +1347,34 @@ void EyeTrackingService::applyCalibrationData() {
 
     // Experimentally, roughly 1800.0 is a good ps.m_eyeModelFitter.focal_length value for the OV9281 sensor in 640x480 mode with 60 degree lens.
     ps.m_eyeModelFitter.focal_length = sefFocalLength();
+
+    ps.m_pitchFilter.mincutoff = m_filterMinCutoff;
+    ps.m_pitchFilter.beta = powf(10.0f, m_filterBetaExponent);
+    ps.m_pitchFilter.dcutoff = m_filterDCutoff;
+
+    ps.m_yawFilter.mincutoff = m_filterMinCutoff;
+    ps.m_yawFilter.beta = powf(10.0f, m_filterBetaExponent);
+    ps.m_yawFilter.dcutoff = m_filterDCutoff;
   }
 }
 
 void EyeTrackingService::renderIMGUI() {
   ImGui::PushID(this);
 
+  bool dirty = false;
 
 
   // Roll angles don't require recalibrating
   ImGui::DragFloat("L Roll angle (deg)", &m_rollOffsetDeg[0], /*speed=*/ 0.1f, /*min=*/ -30.0f, /*max=*/ 30.0f, "%.1f");
   ImGui::DragFloat("R Roll angle (deg)", &m_rollOffsetDeg[1], /*speed=*/ 0.1f, /*min=*/ -30.0f, /*max=*/ 30.0f, "%.1f");
 
+  // Filter settings also apply immediately, but still require calling applyCalibrationData
+  ImGui::Separator();
+  dirty |= ImGui::DragFloat("Filter min cutoff", &m_filterMinCutoff, /*speed=*/ 0.01f, /*min=*/ 0.0f, /*max=*/ 2.0f, "%.2f");
+  dirty |= ImGui::DragFloat("Filter D cutoff", &m_filterDCutoff, /*speed=*/ 0.01f, /*min=*/ 0.0f, /*max=*/ 2.0f, "%.2f");
+  dirty |= ImGui::DragFloat("Filter beta exponent", &m_filterBetaExponent, /*speed=*/ 0.1f, /*min=*/ -10.0f, /*max=*/ 10.0f, "%.1f");
+
   // All of these settings require recalibrating the model
-  bool dirty = false;
   ImGui::Separator();
   dirty |= ImGui::DragFloat("Focal Length", &m_focalLength, /*speed=*/ 0.1, /*min=*/ 1.0f, /*max=*/ 20.0f, "%.1f");
   dirty |= ImGui::DragFloat("Distance to eye (mm)", &m_eyeZ, /*speed=*/ 0.5f, /*min=*/ 1.0f, /*max=*/ 50.0f, "%.1f");
@@ -1371,8 +1396,8 @@ glm::vec2 EyeTrackingService::getPitchYawAnglesForEye(size_t eyeIdx) {
   assert(eyeIdx == 0 || eyeIdx == 1);
 
   glm::vec2 angles = glm::vec2(
-    m_processingState[eyeIdx].m_pupilRawPitchDeg - m_processingState[eyeIdx].m_centerPitchDeg,
-    m_processingState[eyeIdx].m_pupilRawYawDeg - m_processingState[eyeIdx].m_centerYawDeg);
+    m_processingState[eyeIdx].m_pupilFilteredPitchDeg - m_processingState[eyeIdx].m_centerPitchDeg,
+    m_processingState[eyeIdx].m_pupilFilteredYawDeg - m_processingState[eyeIdx].m_centerYawDeg);
 
   // Apply roll correction
   glm::vec3 rollCorrectionVector;

@@ -2,6 +2,7 @@
 #include "common/DepthMapGenerator.h"
 #include "common/ScrollingBuffer.h"
 #include "SingleEyeFitter/SingleEyeFitter.h"
+#include "one_euro_filter.h"
 #include <boost/atomic.hpp>
 #include <boost/thread.hpp>
 #include <opencv2/core.hpp>
@@ -176,7 +177,15 @@ public:
       return glm::vec3(-m_fitPupilCircle.normal[0], m_fitPupilCircle.normal[1], -m_fitPupilCircle.normal[2]);
     }
 
+    glm::vec3 fitPupilNormalFiltered() const;
+
     float m_pupilRawPitchDeg = 0.0f, m_pupilRawYawDeg = 0.0f;
+    float m_pupilFilteredPitchDeg = 0.0f, m_pupilFilteredYawDeg = 0.0f;
+
+    // Filters for the rotation angles.
+    // The initializers here are overwritten with the EyeTrackingService's config below.
+    one_euro_filter<float, double> m_pitchFilter = {/*freq=*/ 120, /*minCutoff=*/ 1, /*beta=*/ 0.1, /*dcutoff=*/ 1};
+    one_euro_filter<float, double> m_yawFilter = {/*freq=*/ 120, /*minCutoff=*/ 1, /*beta=*/ 0.1, /*dcutoff=*/ 1};
 
     std::vector<cv::RotatedRect> m_eyeFitterSamples;
 
@@ -222,11 +231,15 @@ protected:
 
 
 
-  // Calibration data
+  // Calibration data and settings
   float m_focalLength = 6.0; // millimeters. seems only vaguely related to the actual lens focal length.
   float m_pixelPitchMicrons = 3.0; // Pixel size/pitch of the camera sensor, micrometers
   float m_eyeZ = 15.0; // millimeters
   float m_rollOffsetDeg[2] = {0.0, 0.0}; // per-eye roll correction angle, degrees
+
+  float m_filterMinCutoff = 0.2;
+  float m_filterDCutoff = 0.2;
+  float m_filterBetaExponent = -0.8; // Filter beta is pow(10.0, m_filterBetaExponent)
 
   void applyCalibrationData();
 
