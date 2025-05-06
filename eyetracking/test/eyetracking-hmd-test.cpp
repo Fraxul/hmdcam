@@ -431,9 +431,7 @@ int main(int argc, char* argv[]) {
       if (eyeTrackingService->m_processingState[0].m_calibrationState == EyeTrackingService::kCalibrated) {
         CrosshairUniformBlock ub;
 
-        glm::vec2 measuredPoint = glm::vec2(
-          eyeTrackingService->m_processingState[0].m_pupilRawPitchDeg - eyeTrackingService->m_processingState[0].m_centerPitchDeg,
-          eyeTrackingService->m_processingState[0].m_pupilRawYawDeg - eyeTrackingService->m_processingState[0].m_centerYawDeg);
+        glm::vec2 measuredPoint = eyeTrackingService->getPitchYawAnglesForEye(0);
 
 
         // TODO wire up rotation angles

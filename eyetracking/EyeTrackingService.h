@@ -43,6 +43,9 @@ public:
   float m_lastFrameProcessingTimeMs = 0.0f;
   float m_lastFramePostProcessingTimeMs = 0.0f;
 
+
+  glm::vec2 getPitchYawAnglesForEye(size_t eyeIdx);
+
   cv::Mat& getDebugViewForEye(size_t eyeIdx, bool withOverlayDrawing);
 
   struct CaptureBuffer {
@@ -139,9 +142,6 @@ public:
     // Center offset of the camera capture, used for translating between the eye-fitter
     // coordinate system (zero at center) and the capture/image coordinate system (zero at left-top)
     cv::Point2f m_captureCenterOffset;
-
-    // Output of perspective warp applied to capture
-    cv::Mat m_captureWarpMat;
 
     // ROI scale output
     cv::Mat m_roiScaleMat;

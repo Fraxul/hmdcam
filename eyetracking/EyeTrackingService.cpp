@@ -874,24 +874,11 @@ bool EyeTrackingService::processFrame() {
 
   // Start working on the next eye's image
 
-
-  // XXX: Apply perspective warp
-
-#if 0
-  cv::Matx33f distCoeffs(1.41499286e+00, 1.23522053e-01,-2.89688293e+01, 2.31679593e-01, 2.26254240e+00,-3.97708847e+01, -4.39070523e-05, 1.91792961e-03, 1.00000000e+00);
-  cv::warpPerspective(/*src=*/ capture->mat, /*dst=*/ ps.m_captureWarpMat, /*M=*/ distCoeffs, /*dsize=*/ cv::Size(capture->mat.cols, capture->mat.rows), /*flags=*/ cv::INTER_LINEAR, /*border=*/ cv::BORDER_REPLICATE);
-#else
-
-  cv::Matx23d distCoeffs = cv::getRotationMatrix2D_(ps.m_captureCenterOffset, /*angle (degrees)=*/ -10.5, /*scale=*/ 1.0);
-  cv::warpAffine(/*src=*/ capture->mat, /*dst=*/ ps.m_captureWarpMat, /*M=*/ distCoeffs, /*dsize=*/ cv::Size(capture->mat.cols, capture->mat.rows), /*flags=*/ cv::INTER_LINEAR, /*border=*/ cv::BORDER_REPLICATE);
-
-#endif
-
   // Copy capture mat for debug view
-  ps.m_captureWarpMat.copyTo(ps.m_debugViewGrey);
+  capture->mat.copyTo(ps.m_debugViewGrey);
 
   // Scale from capture mat to the input size for the ROI prediction network
-  cv::resize(ps.m_captureWarpMat, ps.m_roiScaleMat, cv::Size(m_roiInputWidth, m_roiInputHeight));
+  cv::resize(capture->mat, ps.m_roiScaleMat, cv::Size(m_roiInputWidth, m_roiInputHeight));
 
   // Convert CV_U8 from the scale output to int8 or half for the ROI network input
 
@@ -987,16 +974,16 @@ bool EyeTrackingService::processFrame() {
 
   // Rescale to 0...1f and multiply by the actual source w/h
   cv::Point2i roiCenter_captureRelative = cv::Point2i(
-    clamp<int32_t>(roiOutput[0] * static_cast<float>(ps.m_captureWarpMat.cols - 1), 0, ps.m_captureWarpMat.cols - 1),
-    clamp<int32_t>(roiOutput[1] * static_cast<float>(ps.m_captureWarpMat.rows - 1), 0, ps.m_captureWarpMat.rows - 1)
+    clamp<int32_t>(roiOutput[0] * static_cast<float>(capture->mat.cols - 1), 0, capture->mat.cols - 1),
+    clamp<int32_t>(roiOutput[1] * static_cast<float>(capture->mat.rows - 1), 0, capture->mat.rows - 1)
   );
   ps.m_debugLastPredictedROICenter = roiCenter_captureRelative; // Save for debug view.
 
   // Clip the capture-relative ROI center to the capture dimensions inset by half of the segmentation network input size. This should ensure that the
   // segmentation ROI rect fits entirely within the capture region.
 
-  roiCenter_captureRelative.x = clamp<int32_t>(roiCenter_captureRelative.x, (m_segInputWidth / 2), (ps.m_captureWarpMat.cols - 1) - (m_segInputWidth / 2));
-  roiCenter_captureRelative.y = clamp<int32_t>(roiCenter_captureRelative.y, (m_segInputHeight / 2), (ps.m_captureWarpMat.rows - 1) - (m_segInputHeight / 2));
+  roiCenter_captureRelative.x = clamp<int32_t>(roiCenter_captureRelative.x, (m_segInputWidth / 2), (capture->mat.cols - 1) - (m_segInputWidth / 2));
+  roiCenter_captureRelative.y = clamp<int32_t>(roiCenter_captureRelative.y, (m_segInputHeight / 2), (capture->mat.rows - 1) - (m_segInputHeight / 2));
 
   // Build segmentation input crop rect in capture mat coordinates
   cv::Point2i segROIRect_tl = (roiCenter_captureRelative - cv::Point2i(m_segInputWidth / 2, m_segInputHeight / 2));
@@ -1008,7 +995,7 @@ bool EyeTrackingService::processFrame() {
   ps.m_debugLastSegmentationROI = segROIRect;
   ps.m_lastSegROIToCaptureMatOffset = segROIRect_tl; // save for eyefitter processing
 
-  cv::Mat segROIMat = cv::Mat(ps.m_captureWarpMat, segROIRect);
+  cv::Mat segROIMat = cv::Mat(capture->mat, segROIRect);
 
   // Convert ROI window to fp16 to populate ps.m_segInputTensor
   // The ROI input is known not to be contiguous, so we do it row-by-row.
@@ -1379,4 +1366,19 @@ void EyeTrackingService::renderIMGUI() {
 
   ImGui::PopID();
 }
+
+glm::vec2 EyeTrackingService::getPitchYawAnglesForEye(size_t eyeIdx) {
+  assert(eyeIdx == 0 || eyeIdx == 1);
+
+  glm::vec2 angles = glm::vec2(
+    m_processingState[eyeIdx].m_pupilRawPitchDeg - m_processingState[eyeIdx].m_centerPitchDeg,
+    m_processingState[eyeIdx].m_pupilRawYawDeg - m_processingState[eyeIdx].m_centerYawDeg);
+
+  // Apply roll correction
+  glm::vec3 rollCorrectionVector;
+  anglesToVector<float>(glm::radians(m_rollOffsetDeg[eyeIdx]), glm::radians(angles[0]), glm::radians(angles[1]), glm::value_ptr(rollCorrectionVector));
+  vectorToAngles<float>(glm::value_ptr(rollCorrectionVector), angles[0], angles[1], /*toDegrees=*/ true);
+  return angles;
+}
+
 
