@@ -2,6 +2,7 @@
 #include "eyeProcessing.h"
 #include "common/Timing.h"
 #include "common/mmfile.h"
+#include "imgui.h"
 #include "SingleEyeFitter/projection.h"
 #include <cuda.h>
 #include <npp.h>
@@ -32,8 +33,7 @@
 // CUDA graph can only be used if the model doesn't run on the DLA
 #define USE_CUDA_GRAPH 0
 
-static inline double degrees(double r) { return r * (180.0 / M_PI); }
-static inline double radians(double d) { return d * (M_PI / 180.0); }
+const char* calibrationFilename = "eyetracking-calibration.yml";
 
 template <typename T> void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
   // Mathematica: evaluated EulerMatrix[{roll, pitch, yaw}, {3, 1, 2}] . {0, 0, 1}
@@ -56,8 +56,8 @@ template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, 
     outYaw -= (2.0 * M_PI);
 
   if (toDegrees) {
-    outPitch = degrees(outPitch);
-    outYaw = degrees(outYaw);
+    outPitch = glm::degrees(outPitch);
+    outYaw = glm::degrees(outYaw);
   }
 }
 
@@ -214,6 +214,8 @@ void convertUnorm8ToDLAInt8(const uint8_t* inU8, void* outDLAInt8, size_t elemen
 
 EyeTrackingService::EyeTrackingService() {
 
+  loadCalibrationData();
+
   // Figure out the CUDA stream priority range and create a low-priority stream,
   // then create an NPP stream context associated with that stream
   {
@@ -360,18 +362,14 @@ EyeTrackingService::EyeTrackingService() {
   }
 
 
+  applyCalibrationData();
+
   // Set up per-eye output buffers and TensorRT dispatches
   // We cook the per-eye output buffer address into the TRT dispatch,
   // so each eye needs its own version of the exec graph.
 
   PER_EYE {
     ProcessingState& ps = m_processingState[eyeIdx];
-
-    // Init eye-fitter
-
-    // Experimentally, roughly 1800.0 is a good ps.m_eyeModelFitter.focal_length value for the OV9281 sensor in 640x480 mode with 60 degree lens.
-    ps.m_eyeModelFitter.focal_length = ps.m_focalLength / ps.m_pixelPitchMM;
-    printf("Using adjusted focal length: %.6f\n", ps.m_eyeModelFitter.focal_length);
 
     {
       // ROI network setup
@@ -453,23 +451,46 @@ EyeTrackingService::~EyeTrackingService() {
   cuEventDestroy(m_frameProcessingEndEvent);
 }
 
-#define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
-void EyeTrackingService::internalLoadSettings(cv::FileStorage& fs) {
-  cv::FileNode trt = fs["tensorrt"];
-  if (trt.isMap()) {
-    //cv::read(trt["confidenceThreshold"], m_params.confidenceThreshold, m_params.confidenceThreshold);
-    //cv::read(trt["quality"], m_params.quality, m_params.quality);
+bool EyeTrackingService::loadCalibrationData() {
+
+  cv::FileStorage fs(calibrationFilename, cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+  if (!fs.isOpened()) {
+    printf("Unable to open calibration data file %s\n", calibrationFilename);
+    return false;
   }
+
+  return loadCalibrationData(fs);
+}
+
+void EyeTrackingService::saveCalibrationData() {
+  cv::FileStorage fs(calibrationFilename, cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+  saveCalibrationData(fs);
+}
+
+#define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
+bool EyeTrackingService::loadCalibrationData(cv::FileStorage& fs) {
+  try {
+    readNode(fs, focalLength);
+    readNode(fs, pixelPitchMicrons);
+    readNode(fs, eyeZ);
+    cv::read(fs["rollOffsetL"], m_rollOffsetDeg[0], m_rollOffsetDeg[0]);
+    cv::read(fs["rollOffsetR"], m_rollOffsetDeg[1], m_rollOffsetDeg[1]);
+
+  } catch (const std::exception& ex) {
+    printf("Unable to load calibration data: %s\n", ex.what());
+    return false;
+  }
+  return true;
 }
 #undef readNode
 
 #define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_##settingName)
-void EyeTrackingService::internalSaveSettings(cv::FileStorage& fs) {
-  fs.startWriteStruct(cv::String("tensorrt"), cv::FileNode::MAP, cv::String());
-    //fs.write("confidenceThreshold", m_params.confidenceThreshold);
-    //fs.write("quality", m_params.quality);
-
-  fs.endWriteStruct();
+void EyeTrackingService::saveCalibrationData(cv::FileStorage& fs) {
+  writeNode(fs, focalLength);
+  writeNode(fs, pixelPitchMicrons);
+  writeNode(fs, eyeZ);
+  fs.write("rollOffsetL", m_rollOffsetDeg[0]);
+  fs.write("rollOffsetR", m_rollOffsetDeg[1]);
 }
 #undef writeNode
 
@@ -710,13 +731,13 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
         FRAME_DEBUG_LOG("Attempting eye model fit. ps.m_eyeFitterSamples.size()=%zu ps.m_eyeModelFitter.pupils.size()=%zu\n",
           ps.m_eyeFitterSamples.size(), ps.m_eyeModelFitter.pupils.size());
 
-        if (ps.m_eyeModelFitter.unproject_observations(ps.pupilRadius(), ps.initialEyeZ())) {
+        if (ps.m_eyeModelFitter.unproject_observations(pupilRadius(), initialEyeZ())) {
           ps.m_eyeModelFitter.initialise_model();
           ps.m_eyeModelFitter.refine_with_inliers();
 
 
           // Use the center calibration sample to find angle offsets
-          if (ps.m_eyeModelFitter.unproject_single_observation(ps.m_centerPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_centerCalibrationSample, ps.m_captureCenterOffset), ps.pupilRadius())) {
+          if (ps.m_eyeModelFitter.unproject_single_observation(ps.m_centerPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_centerCalibrationSample, ps.m_captureCenterOffset), pupilRadius())) {
             glm::vec3 pupil = ps.centerPupilNormal();
 
             vectorToAngles(glm::value_ptr(pupil), ps.m_centerPitchDeg, ps.m_centerYawDeg, /*toDegrees=*/ true);
@@ -738,7 +759,7 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 
   // Apply model to ellipse to generate 3d fit
   if (ps.m_eyeModelFitter.hasEyeModel()) {
-    ps.m_eyeFitterOutputsValid = ps.m_eyeModelFitter.unproject_single_observation(ps.m_fitPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset), ps.pupilRadius());
+    ps.m_eyeFitterOutputsValid = ps.m_eyeModelFitter.unproject_single_observation(ps.m_fitPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset), pupilRadius());
     if (ps.m_eyeFitterOutputsValid) {
       // Original coordinate system:
       // +x is left
@@ -1320,5 +1341,42 @@ cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx, bool withDebugOve
 */
 
   return ps.m_debugViewRGB;
+}
+
+void EyeTrackingService::applyCalibrationData() {
+  PER_EYE {
+    ProcessingState& ps = m_processingState[eyeIdx];
+
+    // Experimentally, roughly 1800.0 is a good ps.m_eyeModelFitter.focal_length value for the OV9281 sensor in 640x480 mode with 60 degree lens.
+    ps.m_eyeModelFitter.focal_length = sefFocalLength();
+  }
+}
+
+void EyeTrackingService::renderIMGUI() {
+  ImGui::PushID(this);
+
+
+
+  // Roll angles don't require recalibrating
+  ImGui::DragFloat("L Roll angle (deg)", &m_rollOffsetDeg[0], /*speed=*/ 0.1f, /*min=*/ -30.0f, /*max=*/ 30.0f, "%.1f");
+  ImGui::DragFloat("R Roll angle (deg)", &m_rollOffsetDeg[1], /*speed=*/ 0.1f, /*min=*/ -30.0f, /*max=*/ 30.0f, "%.1f");
+
+  // All of these settings require recalibrating the model
+  bool dirty = false;
+  ImGui::Separator();
+  dirty |= ImGui::DragFloat("Focal Length", &m_focalLength, /*speed=*/ 0.1, /*min=*/ 1.0f, /*max=*/ 20.0f, "%.1f");
+  dirty |= ImGui::DragFloat("Distance to eye (mm)", &m_eyeZ, /*speed=*/ 0.5f, /*min=*/ 1.0f, /*max=*/ 50.0f, "%.1f");
+  dirty |= ImGui::DragFloat("Sensor pixel pitch (um)", &m_pixelPitchMicrons, /*speed=*/ 0.1f, /*min=*/ 0.1f, /*max=*/ 10.0f, "%.1f");
+
+  if (ImGui::Button("Save Settings")) {
+    saveCalibrationData();
+  }
+
+  if (dirty) {
+    applyCalibrationData();
+  }
+
+
+  ImGui::PopID();
 }
 

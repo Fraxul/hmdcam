@@ -25,8 +25,13 @@ public:
   EyeTrackingService();
   ~EyeTrackingService();
 
-  void internalLoadSettings(cv::FileStorage& fs);
-  void internalSaveSettings(cv::FileStorage& fs);
+  bool loadCalibrationData();
+  bool loadCalibrationData(cv::FileStorage&);
+
+  void saveCalibrationData();
+  void saveCalibrationData(cv::FileStorage&);
+
+  void renderIMGUI();
 
   void setInputFilename(size_t eyeIdx, const std::string& s) {
     assert(eyeIdx < 2);
@@ -177,11 +182,6 @@ public:
 
     // Eye fitter
     singleeyefitter::EyeModelFitter m_eyeModelFitter;
-    double m_focalLength = 6.0; // seems only vaguely related to the actual lens focal length.
-    double m_pixelPitchMM = 0.003; // Pixel size/pitch of the camera sensor, millimeters.
-    double m_eyeZ = 15.0;
-    const double pupilRadius() { return 2.0 / m_pixelPitchMM; }
-    const double initialEyeZ() { return m_eyeZ / m_pixelPitchMM; }
 
     // CUDA graph capture of the tracking model run
     // Internally the TensorRT engine launches several dozen kernels, so capturing
@@ -219,6 +219,24 @@ protected:
 
   void postprocessOneEye(size_t eyeIdx);
   bool postprocessOneEye_fitEllipse(size_t eyeIdx);
+
+
+
+  // Calibration data
+  float m_focalLength = 6.0; // millimeters. seems only vaguely related to the actual lens focal length.
+  float m_pixelPitchMicrons = 3.0; // Pixel size/pitch of the camera sensor, micrometers
+  float m_eyeZ = 15.0; // millimeters
+  float m_rollOffsetDeg[2] = {0.0, 0.0}; // per-eye roll correction angle, degrees
+
+  void applyCalibrationData();
+
+
+  // Calibration derived data accessors
+  const double pixelPitchMM() const { return m_pixelPitchMicrons / 1000.0; }
+  const double pupilRadius() const { return 2.0 / pixelPitchMM(); }
+  const double initialEyeZ() const { return m_eyeZ / pixelPitchMM(); }
+  const double sefFocalLength() const { return m_focalLength / pixelPitchMM(); }
+
 
   // Low-priority CUDA stream
   CUstream m_cuStream;

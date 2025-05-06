@@ -283,13 +283,8 @@ int main(int argc, char* argv[]) {
           drawUI = false; // exit UI when selecting calibration points mode
         }
 
-        float fl = eyeTrackingService->m_processingState[0].m_focalLength;
-        if (ImGui::DragFloat("SEF Focal Length", &fl, /*speed=*/ 0.1, /*min=*/ 1.0f, /*max=*/ 20.0f, "%.1f")) {
-          //ps.m_eyeModelFitter.focal_length = ps.m_focalLength / ps.m_pixelPitchMM;
-          //eyeTrackingService->m_processingState[0].m_eyeModelFitter.focal_length = fl;
-
-          eyeTrackingService->m_processingState[0].m_focalLength = fl;
-          eyeTrackingService->m_processingState[0].m_eyeModelFitter.focal_length = eyeTrackingService->m_processingState[0].m_focalLength / eyeTrackingService->m_processingState[0].m_pixelPitchMM;
+        if (ImGui::CollapsingHeader("Eyetracking Config")) {
+          eyeTrackingService->renderIMGUI();
         }
 
         ImGui::Checkbox("ET debug overlay", &drawETDebugOverlay);
