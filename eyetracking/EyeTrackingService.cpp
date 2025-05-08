@@ -30,9 +30,6 @@
 #define FRAME_DEBUG_LOG(...)
 #endif
 
-// CUDA graph can only be used if the model doesn't run on the DLA
-#define USE_CUDA_GRAPH 0
-
 const char* calibrationFilename = "eyetracking-calibration.yml";
 
 template <typename T> void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
@@ -416,25 +413,11 @@ EyeTrackingService::EyeTrackingService() {
       assert(ps.m_segmentationExec->setTensorAddress(m_segInputTensorName, (void*) m_processingState[eyeIdx].m_segInputTensorPtr));
       assert(ps.m_segmentationExec->setTensorAddress(m_segOutputTensorName, (void*) segOutputTensorDevicePtr));
 
-      // Enqueue one run to initialize internal data structures -- required before the graph recording
+      // Enqueue one run to initialize internal data structures
       // The inital run takes longer than subsequent ones, so we should pay that startup cost now
       // instead of during the frame loop.
       assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
     }
-
-#if USE_CUDA_GRAPH
-    // Compile the TensorRT dispatch into a CUDA graph
-    // Begin recording graph
-    CUDA_CHECK(cuStreamBeginCapture(m_cuStream, CU_STREAM_CAPTURE_MODE_GLOBAL));
-
-    // Record TensorRT dispatch
-    assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
-
-    // End recording and instantiate executable graph
-    CUDA_CHECK(cuStreamEndCapture(m_cuStream, &m_processingState[eyeIdx].m_frameProcessingGraph));
-    CUDA_CHECK(cuGraphInstantiateWithFlags(&m_processingState[eyeIdx].m_frameProcessingGraphExec, m_processingState[eyeIdx].m_frameProcessingGraph, /*flags=*/ 0));
-    CUDA_CHECK(cuGraphUpload(m_processingState[eyeIdx].m_frameProcessingGraphExec, m_cuStream));
-#endif
   } // PER_EYE
 }
 
@@ -1014,13 +997,8 @@ bool EyeTrackingService::processFrame() {
     convertUnorm8ToSnormFp16(segROIMat.ptr<uint8_t>(y, 0), ps.m_segInputTensorPtr + (y * ps.m_segInputTensorStrideElements), m_segInputWidth);
   }
 
-#if USE_CUDA_GRAPH
-  // Launch TRT processing graph for the currently selected eye.
-  CUDA_CHECK(cuGraphLaunch(ps.m_frameProcessingGraphExec, m_cuStream));
-#else
-  // Launch TRT processing (no graph)
+  // Launch TRT processing
   assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
-#endif
 
   CUDA_CHECK(cuEventRecord(m_framePostProcessingStartEvent, m_cuStream));
 

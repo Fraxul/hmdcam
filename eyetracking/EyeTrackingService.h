@@ -129,15 +129,6 @@ public:
       for (size_t bufIdx = 0; bufIdx < 2; ++bufIdx) {
         m_captureBuffers[bufIdx].reset(nullptr);
       }
-
-      if (m_frameProcessingGraphExec) {
-        cuGraphExecDestroy(m_frameProcessingGraphExec);
-        m_frameProcessingGraphExec = nullptr;
-      }
-      if (m_frameProcessingGraph) {
-        cuGraphDestroy(m_frameProcessingGraph);
-        m_frameProcessingGraph = nullptr;
-      }
     }
 
     // Center offset of the camera capture, used for translating between the eye-fitter
@@ -191,12 +182,6 @@ public:
 
     // Eye fitter
     singleeyefitter::EyeModelFitter m_eyeModelFitter;
-
-    // CUDA graph capture of the tracking model run
-    // Internally the TensorRT engine launches several dozen kernels, so capturing
-    // that in a graph saves a significant amount of per-frame CPU overhead from kernel launches.
-    CUgraph m_frameProcessingGraph = nullptr;
-    CUgraphExec m_frameProcessingGraphExec = nullptr;
 
     // Execution context for running the tracking model
     std::unique_ptr<nvinfer1::IExecutionContext> m_segmentationExec;
