@@ -70,10 +70,14 @@ public:
 
     // Sync/profiling events
     CUevent m_frameProcessingStartEvent;
+    CUevent m_frameROIEndEvent;
+    CUevent m_frameSegmentationStartEvent;
     CUevent m_framePostProcessingStartEvent;
     CUevent m_frameProcessingEndEvent;
 
-    float m_lastFrameProcessingTimeMs = 0.0f;
+    float m_lastFrameROITimeMs = 0.0f;
+    float m_lastFrameSegmentationTimeMs = 0.0f;
+    float m_lastFrameTotalInferenceLatencyMs = 0.0f;
     float m_lastFramePostProcessingTimeMs = 0.0f;
 
     // Calibration state machine data
@@ -108,7 +112,10 @@ public:
       CUDA_SAFE_FREE_HOST(m_pupilMask2);
 
       cuStreamDestroy(m_cuStream);
+
       cuEventDestroy(m_frameProcessingStartEvent);
+      cuEventDestroy(m_frameROIEndEvent);
+      cuEventDestroy(m_frameSegmentationStartEvent);
       cuEventDestroy(m_framePostProcessingStartEvent);
       cuEventDestroy(m_frameProcessingEndEvent);
     }

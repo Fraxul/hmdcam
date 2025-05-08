@@ -244,11 +244,15 @@ EyeTrackingService::EyeTrackingService() {
   PER_EYE {
     // Profiling events
     CUDA_CHECK(cuEventCreate(&m_processingState[eyeIdx].m_frameProcessingStartEvent, CU_EVENT_DEFAULT));
+    CUDA_CHECK(cuEventCreate(&m_processingState[eyeIdx].m_frameROIEndEvent, CU_EVENT_BLOCKING_SYNC));
+    CUDA_CHECK(cuEventCreate(&m_processingState[eyeIdx].m_frameSegmentationStartEvent, CU_EVENT_DEFAULT));
     CUDA_CHECK(cuEventCreate(&m_processingState[eyeIdx].m_framePostProcessingStartEvent, CU_EVENT_DEFAULT));
     CUDA_CHECK(cuEventCreate(&m_processingState[eyeIdx].m_frameProcessingEndEvent, CU_EVENT_BLOCKING_SYNC));
 
     // Record good initial state for events
     CUDA_CHECK(cuEventRecord(m_processingState[eyeIdx].m_frameProcessingStartEvent, m_processingState[eyeIdx].m_cuStream));
+    CUDA_CHECK(cuEventRecord(m_processingState[eyeIdx].m_frameROIEndEvent, m_processingState[eyeIdx].m_cuStream));
+    CUDA_CHECK(cuEventRecord(m_processingState[eyeIdx].m_frameSegmentationStartEvent, m_processingState[eyeIdx].m_cuStream));
     CUDA_CHECK(cuEventRecord(m_processingState[eyeIdx].m_framePostProcessingStartEvent, m_processingState[eyeIdx].m_cuStream));
     CUDA_CHECK(cuEventRecord(m_processingState[eyeIdx].m_frameProcessingEndEvent, m_processingState[eyeIdx].m_cuStream));
   }
@@ -871,6 +875,8 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
     assert(ps.m_roiExec->enqueueV3(ps.m_cuStream));
 
+    CUDA_CHECK(cuEventRecord(ps.m_frameROIEndEvent, ps.m_cuStream));
+
     // Wait for ROI to finish processing
     CUDA_CHECK(cuStreamSynchronize(ps.m_cuStream));
 
@@ -957,6 +963,8 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
     }
 
     // Launch TRT processing
+    CUDA_CHECK(cuEventRecord(ps.m_frameSegmentationStartEvent, ps.m_cuStream));
+
     assert(ps.m_segmentationExec->enqueueV3(ps.m_cuStream));
 
     CUDA_CHECK(cuEventRecord(ps.m_framePostProcessingStartEvent, ps.m_cuStream));
@@ -1022,7 +1030,10 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
     CUDA_CHECK(cuStreamSynchronize(ps.m_cuStream));
 
     // Update stats
-    cuEventElapsedTime(&ps.m_lastFrameProcessingTimeMs, ps.m_frameProcessingStartEvent, ps.m_framePostProcessingStartEvent);
+    cuEventElapsedTime(&ps.m_lastFrameROITimeMs, ps.m_frameProcessingStartEvent, ps.m_frameROIEndEvent);
+    cuEventElapsedTime(&ps.m_lastFrameSegmentationTimeMs, ps.m_frameSegmentationStartEvent, ps.m_framePostProcessingStartEvent);
+
+    cuEventElapsedTime(&ps.m_lastFrameTotalInferenceLatencyMs, ps.m_frameProcessingStartEvent, ps.m_framePostProcessingStartEvent);
     cuEventElapsedTime(&ps.m_lastFramePostProcessingTimeMs, ps.m_framePostProcessingStartEvent, ps.m_frameProcessingEndEvent);
 
     uint64_t postStartTimeNs = currentTimeNs();
