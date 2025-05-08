@@ -214,8 +214,16 @@ int main(int argc, char* argv[]) {
 
       // Eyetracking
       if (eyeTrackingService->processFrame()) {
-        if ((frameCounter & 127) == 0)
-          printf("Frame %zu processing time: %.3fms inference, %.3fms post\n", frameCounter, eyeTrackingService->m_lastFrameProcessingTimeMs, eyeTrackingService->m_lastFramePostProcessingTimeMs);
+        if ((frameCounter & 127) == 0) {
+          for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+            if (eyeTrackingService->m_processingState[eyeIdx].m_processingThreadAlive) {
+              printf("Frame %zu eye %zu processing time: %.3fms inference, %.3fms post\n",
+                frameCounter, eyeIdx,
+                eyeTrackingService->m_processingState[eyeIdx].m_lastFrameProcessingTimeMs,
+                eyeTrackingService->m_processingState[eyeIdx].m_lastFramePostProcessingTimeMs);
+            }
+          }
+        }
       }
 
 

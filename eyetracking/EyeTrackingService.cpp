@@ -219,16 +219,16 @@ EyeTrackingService::EyeTrackingService() {
     int leastPriority = 0, greatestPriority = 0;
     CUDA_CHECK(cuCtxGetStreamPriorityRange(&leastPriority, &greatestPriority));
     printf("CUDA stream priority range: %d least -> %d greatest\n", leastPriority, greatestPriority);
-    CUDA_CHECK(cuStreamCreateWithPriority(&m_cuStream, CU_STREAM_NON_BLOCKING, leastPriority));
 
-    // Create NPP stream context for our stream
-    CUstream prevNppStream = nppGetStream();
-    NPP_CHECK(nppSetStream(m_cuStream));
-    NPP_CHECK(nppGetStreamContext(&m_nppContext));
-    nppSetStream(prevNppStream);
+    PER_EYE {
+      CUDA_CHECK(cuStreamCreateWithPriority(&m_processingState[eyeIdx].m_cuStream, CU_STREAM_NON_BLOCKING, leastPriority));
 
-    // Wrap stream object for OpenCV funcs
-    m_cvStream = cv::cuda::wrapStream((size_t) m_cuStream);
+      // Create NPP stream context for our stream
+      CUstream prevNppStream = nppGetStream();
+      NPP_CHECK(nppSetStream(m_processingState[eyeIdx].m_cuStream));
+      NPP_CHECK(nppGetStreamContext(&m_processingState[eyeIdx].m_nppContext));
+      nppSetStream(prevNppStream);
+    }
   }
 
   // Detect unified addressing support
@@ -241,15 +241,17 @@ EyeTrackingService::EyeTrackingService() {
     printf("unifiedAddressingSupport = %d\n", unifiedAddressingSupport);
   }
 
-  // Profiling events
-  CUDA_CHECK(cuEventCreate(&m_frameProcessingStartEvent, CU_EVENT_DEFAULT));
-  CUDA_CHECK(cuEventCreate(&m_framePostProcessingStartEvent, CU_EVENT_DEFAULT));
-  CUDA_CHECK(cuEventCreate(&m_frameProcessingEndEvent, CU_EVENT_BLOCKING_SYNC));
+  PER_EYE {
+    // Profiling events
+    CUDA_CHECK(cuEventCreate(&m_processingState[eyeIdx].m_frameProcessingStartEvent, CU_EVENT_DEFAULT));
+    CUDA_CHECK(cuEventCreate(&m_processingState[eyeIdx].m_framePostProcessingStartEvent, CU_EVENT_DEFAULT));
+    CUDA_CHECK(cuEventCreate(&m_processingState[eyeIdx].m_frameProcessingEndEvent, CU_EVENT_BLOCKING_SYNC));
 
-  // Record good initial state for events
-  CUDA_CHECK(cuEventRecord(m_frameProcessingStartEvent, m_cuStream));
-  CUDA_CHECK(cuEventRecord(m_framePostProcessingStartEvent, m_cuStream));
-  CUDA_CHECK(cuEventRecord(m_frameProcessingEndEvent, m_cuStream));
+    // Record good initial state for events
+    CUDA_CHECK(cuEventRecord(m_processingState[eyeIdx].m_frameProcessingStartEvent, m_processingState[eyeIdx].m_cuStream));
+    CUDA_CHECK(cuEventRecord(m_processingState[eyeIdx].m_framePostProcessingStartEvent, m_processingState[eyeIdx].m_cuStream));
+    CUDA_CHECK(cuEventRecord(m_processingState[eyeIdx].m_frameProcessingEndEvent, m_processingState[eyeIdx].m_cuStream));
+  }
 
 
   m_logger.reset(new InferLogger());
@@ -380,7 +382,7 @@ EyeTrackingService::EyeTrackingService() {
       // Enqueue one run to initialize internal data structures -- required before the graph recording
       // The inital run takes longer than subsequent ones, so we should pay that startup cost now
       // instead of during the frame loop.
-      assert(ps.m_roiExec->enqueueV3(m_cuStream));
+      assert(ps.m_roiExec->enqueueV3(ps.m_cuStream));
     }
 
     {
@@ -416,22 +418,21 @@ EyeTrackingService::EyeTrackingService() {
       // Enqueue one run to initialize internal data structures
       // The inital run takes longer than subsequent ones, so we should pay that startup cost now
       // instead of during the frame loop.
-      assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
+      assert(ps.m_segmentationExec->enqueueV3(ps.m_cuStream));
     }
   } // PER_EYE
 }
 
 EyeTrackingService::~EyeTrackingService() {
-  cuStreamSynchronize(m_cuStream);
-
   PER_EYE {
-    m_processingState[eyeIdx].releaseResources();
-  }
+    // Shut down processing threads
+    m_processingState[eyeIdx].m_processingThread.interrupt();
+    m_processingState[eyeIdx].m_processingThread.join();
 
-  cuStreamDestroy(m_cuStream);
-  cuEventDestroy(m_frameProcessingStartEvent);
-  cuEventDestroy(m_framePostProcessingStartEvent);
-  cuEventDestroy(m_frameProcessingEndEvent);
+    // Ensure that the nvinfer1::IExecutionContext objects are destroyed before the nvinfer1::ICudaEngines that they're based on
+    m_processingState[eyeIdx].m_segmentationExec.reset();
+    m_processingState[eyeIdx].m_roiExec.reset();
+  }
 }
 
 bool EyeTrackingService::loadCalibrationData() {
@@ -775,377 +776,6 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 }
 
 
-bool EyeTrackingService::processFrame() {
-  FRAME_DEBUG_LOG("\x1b[2J\x1b[H"); // Clear terminal per frame
-
-  // Capture thread maintenance:
-  // Start captures if they're not running, clean up after exited threads
-
-  PER_EYE {
-    CaptureState& cs = m_captureState[eyeIdx];
-    ProcessingState& ps = m_processingState[eyeIdx];
-
-    if (cs.m_captureThreadAlive) {
-      // Update buffer from the capture thread
-      size_t bufIdx = ps.olderCaptureBufferIdx();
-      ps.m_captureBuffers[bufIdx].reset(cs.m_captureBufferMailbox.exchange(ps.m_captureBuffers[bufIdx].release()));
-      //FRAME_DEBUG_LOG("captureThreadAlive(%zu) buf %zu => %p\n", eyeIdx, bufIdx, ps.m_captureBuffers[bufIdx]);
-    } else {
-      if (!cs.m_inputFilename.empty()) {
-        // Try re-opening capture, ratelimited to once a second
-        if (deltaTimeMs(cs.m_lastCaptureOpenAttemptTimeNs, currentTimeNs()) > 1000.0f) {
-          cs.m_lastCaptureOpenAttemptTimeNs = currentTimeNs();
-          if (cs.m_capture.open(cs.m_inputFilename)) {
-            // Capture is open, restart the capture thread
-            cs.m_captureThread = boost::thread(boost::bind(&EyeTrackingService::CaptureState::captureWorkerThread, &cs));
-            printf("EyeTrackingService: Successfully opened capture of \"%s\" for eye %zu. Backend: %s\n", cs.m_inputFilename.c_str(), eyeIdx, cs.m_capture.getBackendName().c_str());
-          }
-        }
-      }
-    }
-  }
-
-  if (!(m_captureState[0].m_captureThreadAlive || m_captureState[1].m_captureThreadAlive)) {
-    // printf("EyeTrackingService: no capture threads alive\n");
-    return false;
-  }
-
-
-  // Check if previous processing has finished
-  {
-    CUresult res = cuEventQuery(m_frameProcessingEndEvent);
-    if (res == CUDA_ERROR_NOT_READY)
-      return false;
-  }
-
-  // Update stats
-  cuEventElapsedTime(&m_lastFrameProcessingTimeMs, m_frameProcessingStartEvent, m_framePostProcessingStartEvent);
-  cuEventElapsedTime(&m_lastFramePostProcessingTimeMs, m_framePostProcessingStartEvent, m_frameProcessingEndEvent);
-
-  // Do postprocessing on whichever eye needed it
-  PER_EYE {
-    ProcessingState& ps = m_processingState[eyeIdx];
-    if (!ps.m_requiresPostProcessing)
-      continue;
-
-    ps.m_requiresPostProcessing = false;
-    uint64_t startTimeNs = currentTimeNs();
-
-    postprocessOneEye(eyeIdx);
-
-    float postTimeMs = deltaTimeMs(startTimeNs, currentTimeNs());
-    if (postTimeMs > 0.25f) {
-      FRAME_DEBUG_LOG("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, postTimeMs);
-    }
-
-  } // PER_EYE postprocessing
-
-  // Pick which eye we're working on:
-  // Use the eye with the oldest processing timestamp, but only if the capture is newer than that processing timestamp.
-  size_t currentlyProcessingEyeIdx = 0;
-  if (m_processingState[1].m_lastProcessingTimeNs < m_processingState[0].m_lastProcessingTimeNs) {
-    // Eye 1 is older, make sure that we have a valid buffer
-    if (m_processingState[1].newerCaptureBufferTimestamp() > m_processingState[1].m_lastProcessingTimeNs) {
-      // Eye 1 was processed less recently and has a new enough buffer on deck.
-      currentlyProcessingEyeIdx = 1;
-    }
-  }
-
-  ProcessingState& ps = m_processingState[currentlyProcessingEyeIdx];
-  CaptureBuffer* capture = ps.m_captureBuffers[ps.newerCaptureBufferIdx()].get();
-
-  if (capture == nullptr) {
-    // sanity check
-    FRAME_DEBUG_LOG("EyeTrackingService::processFrame(): buffer for eye %zu is null!\n", currentlyProcessingEyeIdx);
-    return false;
-  }
-  ps.m_lastProcessingTimeNs = capture->timestamp;
-
-  // Update the capture center offset, now that we know the frame dimensions.
-  ps.m_captureCenterOffset = cv::Point2f(
-    static_cast<float>(capture->mat.cols) / 2.0f,
-    static_cast<float>(capture->mat.rows) / 2.0f);
-
-  // Start working on the next eye's image
-
-  // Copy capture mat for debug view
-  capture->mat.copyTo(ps.m_debugViewGrey);
-
-  // Scale from capture mat to the input size for the ROI prediction network
-  cv::resize(capture->mat, ps.m_roiScaleMat, cv::Size(m_roiInputWidth, m_roiInputHeight));
-
-  // Convert CV_U8 from the scale output to int8 or half for the ROI network input
-
-  assert(ps.m_roiScaleMat.isContinuous()); // Conversion assumes continuous input and output mats
-  if (m_roiIOIsInt8) {
-    convertUnorm8ToDLAInt8(ps.m_roiScaleMat.ptr<uint8_t>(0), ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight);
-  } else {
-    convertUnorm8ToSnormFp16(ps.m_roiScaleMat.ptr<uint8_t>(0), ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight);
-  }
-
-  // Run ROI network
-  CUDA_CHECK(cuEventRecord(m_frameProcessingStartEvent, m_cuStream));
-
-  assert(ps.m_roiExec->enqueueV3(m_cuStream));
-
-  // Wait for ROI to finish processing
-  cuStreamSynchronize(m_cuStream);
-
-
-  // Compute center of ROI heatmap
-  float roiOutput[2]; // 0...1 coordinate range
-
-  if (m_roiIOIsInt8) {
-    assert(false && "TODO: ROI heatmap center computation for int8 i/o");
-  } else {
-    _Float16* roiBasePtr = reinterpret_cast<_Float16*>(ps.m_roiOutputTensorPtr);
-
-#if 0
-    // Simple argmax variant
-    _Float16 maxValue = 0.0f;
-    uint32_t maxValueX = m_roiOutputWidth / 2, maxValueY = m_roiOutputHeight / 2;
-
-    for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
-      _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
-      for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
-        if (roiRowPtr[x] > maxValue) {
-          maxValue = roiRowPtr[x];
-          maxValueX = x;
-          maxValueY = y;
-        }
-      }
-    }
-
-    roiOutput[0] = static_cast<float>(maxValueX) / static_cast<float>(m_roiOutputWidth);
-    roiOutput[1] = static_cast<float>(maxValueY) / static_cast<float>(m_roiOutputHeight);
-#else
-    // Weighted sampling variant
-
-    // Find the max value. TODO: This can be vectorized
-    _Float16 maxValue = 0.0f;
-    for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
-      _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
-      for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
-        maxValue = std::max<_Float16>(roiRowPtr[x], maxValue);
-      }
-    }
-
-    // Gather all sample points >= 0.85x max value and compute their average position.
-    _Float16 threshold = maxValue * 0.85f16;
-
-    uint32_t sampleCount = 0;
-    uint32_t xAccum = 0;
-    uint32_t yAccum = 0;
-
-    for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
-      _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
-      for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
-        if (roiRowPtr[x] >= threshold) {
-          sampleCount += 1;
-          xAccum += x;
-          yAccum += y;
-        }
-      }
-    }
-
-    if (sampleCount > 0) {
-      roiOutput[0] = (static_cast<float>(xAccum) / static_cast<float>(sampleCount)) / static_cast<float>(m_roiOutputWidth);
-      roiOutput[1] = (static_cast<float>(yAccum) / static_cast<float>(sampleCount)) / static_cast<float>(m_roiOutputHeight);
-    } else {
-      // No samples? Default to center of image.
-      roiOutput[0] = 0.5f;
-      roiOutput[1] = 0.5f;
-    }
-
-
-#endif
-  }
-
-  // Use center coordinates computed from the ROI network to compute the ROI aligned inside the original capture mat
-  // ROI Rect needs to be fixed size of the segmentation network input (no edge clipping allowed)
-
-  FRAME_DEBUG_LOG("ROI computed center (0...1): (%f, %f)\n", roiOutput[0], roiOutput[1]);
-
-  // Rescale to 0...1f and multiply by the actual source w/h
-  cv::Point2i roiCenter_captureRelative = cv::Point2i(
-    clamp<int32_t>(roiOutput[0] * static_cast<float>(capture->mat.cols - 1), 0, capture->mat.cols - 1),
-    clamp<int32_t>(roiOutput[1] * static_cast<float>(capture->mat.rows - 1), 0, capture->mat.rows - 1)
-  );
-  ps.m_debugLastPredictedROICenter = roiCenter_captureRelative; // Save for debug view.
-
-  // Clip the capture-relative ROI center to the capture dimensions inset by half of the segmentation network input size. This should ensure that the
-  // segmentation ROI rect fits entirely within the capture region.
-
-  roiCenter_captureRelative.x = clamp<int32_t>(roiCenter_captureRelative.x, (m_segInputWidth / 2), (capture->mat.cols - 1) - (m_segInputWidth / 2));
-  roiCenter_captureRelative.y = clamp<int32_t>(roiCenter_captureRelative.y, (m_segInputHeight / 2), (capture->mat.rows - 1) - (m_segInputHeight / 2));
-
-  // Build segmentation input crop rect in capture mat coordinates
-  cv::Point2i segROIRect_tl = (roiCenter_captureRelative - cv::Point2i(m_segInputWidth / 2, m_segInputHeight / 2));
-  // Just in case, clamp the top left corner so it doesn't go negative
-  segROIRect_tl.x = std::max<int32_t>(segROIRect_tl.x, 0);
-  segROIRect_tl.y = std::max<int32_t>(segROIRect_tl.y, 0);
-
-  cv::Rect segROIRect = cv::Rect(segROIRect_tl, cv::Size(m_segInputWidth, m_segInputHeight));
-  ps.m_debugLastSegmentationROI = segROIRect;
-  ps.m_lastSegROIToCaptureMatOffset = segROIRect_tl; // save for eyefitter processing
-
-  cv::Mat segROIMat = cv::Mat(capture->mat, segROIRect);
-
-  // Convert ROI window to fp16 to populate ps.m_segInputTensor
-  // The ROI input is known not to be contiguous, so we do it row-by-row.
-  for (size_t y = 0; y < m_segInputHeight; ++y) {
-    convertUnorm8ToSnormFp16(segROIMat.ptr<uint8_t>(y, 0), ps.m_segInputTensorPtr + (y * ps.m_segInputTensorStrideElements), m_segInputWidth);
-  }
-
-  // Launch TRT processing
-  assert(ps.m_segmentationExec->enqueueV3(m_cuStream));
-
-  CUDA_CHECK(cuEventRecord(m_framePostProcessingStartEvent, m_cuStream));
-
-  // Run CUDA postprocessing operations:
-  {
-    NppiSize sz;
-    sz.width = m_segInputWidth;
-    sz.height = m_segInputHeight;
-
-    NppiPoint zero;
-    zero.x = 0;
-    zero.y = 0;
-
-
-    // Run threshold over the return from the segmentation network to find the pupil mask
-    union {
-      _Float16 fval;
-      int16_t ival;
-    } a;
-    a.fval = 0.5f;
-
-    int16_t threshold = a.ival;
-
-    // NppStatus nppiCompareC_8u_C1R_Ctx(
-    //   const Npp8u *pSrc, int nSrcStep,
-    //   const Npp8u nConstant,
-    //   Npp8u *pDst, int nDstStep,
-    //   NppiSize oSizeROI,
-    //   NppCmpOp eComparisonOperation, NppStreamContext nppStreamCtx)
-    NPP_CHECK(nppiCompareC_16s_C1R_Ctx(
-      reinterpret_cast<const Npp16s*>(ps.m_segOutputTensorPtr), m_segInputWidth * sizeof(uint16_t),
-      threshold,
-      ps.m_pupilMask1, m_segInputWidth,
-      sz,
-      NPP_CMP_GREATER_EQ, m_nppContext));
-#if 1
-    // Run closure operation to fill holes in the mask -- 3x3 dilation followed by 3x3 erosion
-
-    // NppStatus nppiDilate3x3Border_8u_C1R_Ctx(
-    //   const Npp8u *pSrc, Npp32s nSrcStep, NppiSize oSrcSize, NppiPoint oSrcOffset,
-    //         Npp8u *pDst, Npp32s nDstStep, NppiSize oSizeROI,
-    //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
-    //
-    NPP_CHECK(nppiDilate3x3Border_8u_C1R_Ctx(
-      ps.m_pupilMask1, m_segInputWidth, sz, zero,
-      ps.m_pupilMask2, m_segInputWidth, sz,
-      NPP_BORDER_REPLICATE, m_nppContext));
-
-    // NppStatus nppiErode3x3Border_8u_C1R_Ctx(
-    //   const Npp8u *pSrc, Npp32s nSrcStep, NppiSize oSrcSize, NppiPoint oSrcOffset,
-    //         Npp8u *pDst, Npp32s nDstStep, NppiSize oSizeROI,
-    //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
-    NPP_CHECK(nppiErode3x3Border_8u_C1R_Ctx(
-      ps.m_pupilMask2, m_segInputWidth, sz, zero,
-      ps.m_pupilMask1, m_segInputWidth, sz,
-      NPP_BORDER_REPLICATE, m_nppContext));
-#else
-
-    // Try double erode operation to clean up edges and tiny bridges on the pupil mask
-
-    // NppStatus nppiErode3x3Border_8u_C1R_Ctx(
-    //   const Npp8u *pSrc, Npp32s nSrcStep, NppiSize oSrcSize, NppiPoint oSrcOffset,
-    //         Npp8u *pDst, Npp32s nDstStep, NppiSize oSizeROI,
-    //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
-    NPP_CHECK(nppiErode3x3Border_8u_C1R_Ctx(
-      ps.m_pupilMask1, m_segInputWidth, sz, zero,
-      ps.m_pupilMask2, m_segInputWidth, sz,
-      NPP_BORDER_REPLICATE, m_nppContext));
-
-
-    // NppStatus nppiErode3x3Border_8u_C1R_Ctx(
-    //   const Npp8u *pSrc, Npp32s nSrcStep, NppiSize oSrcSize, NppiPoint oSrcOffset,
-    //         Npp8u *pDst, Npp32s nDstStep, NppiSize oSizeROI,
-    //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
-    NPP_CHECK(nppiErode3x3Border_8u_C1R_Ctx(
-      ps.m_pupilMask2, m_segInputWidth, sz, zero,
-      ps.m_pupilMask1, m_segInputWidth, sz,
-      NPP_BORDER_REPLICATE, m_nppContext));
-
-
-#endif
-  }
-
-  ps.m_requiresPostProcessing = true;
-
-  CUDA_CHECK(cuEventRecord(m_frameProcessingEndEvent, m_cuStream));
-
-  return true;
-}
-
-void EyeTrackingService::CaptureState::captureWorkerThread() {
-  m_captureThreadAlive = true;
-
-  CaptureBuffer* nextBuf = nullptr;
-
-  cv::Mat capRgbMat;
-
-  bool doFramePacing = ((int) m_capture.get(cv::CAP_PROP_BACKEND)) == cv::CAP_FFMPEG;
-  double fps = m_capture.get(cv::CAP_PROP_FPS);
-  uint64_t frameTimeNs = 1'000'000'000.0 / fps;
-
-  if (doFramePacing) {
-      printf("EyeTrackingService::CaptureState(%p): Frame pacing enabled, FPS = %.3f, target frametime is %luns\n", this, fps, frameTimeNs);
-  }
-
-  uint64_t decodeStartTimeNs = currentTimeNs();
-  uint64_t frameCount = 0;
-
-  while (true) {
-    // Ensure we have a buffer to capture into
-    if (!nextBuf)
-      nextBuf = new CaptureBuffer();
-
-    // Capture frame
-    if (!m_capture.read(capRgbMat)) {
-      printf("EyeTrackingService::CaptureState(%p)::captureWorkerThread: read() returned false, terminating\n", this);
-      break;
-    }
-    if (capRgbMat.empty()) {
-      printf("EyeTrackingService::CaptureState(%p)::captureWorkerThread: mat is empty, terminating\n", this);
-      break;
-    }
-    cv::cvtColor(/*src=*/ capRgbMat, /*dst=*/ nextBuf->mat, cv::COLOR_BGR2GRAY);
-    uint64_t now = currentTimeNs();
-    nextBuf->timestamp = now;
-
-    // Hand off to main thread
-    nextBuf = m_captureBufferMailbox.exchange(nextBuf);
-
-    ++frameCount;
-    if (doFramePacing) {
-      uint64_t targetTimeNs = (frameTimeNs * frameCount) + decodeStartTimeNs;
-      if (now < targetTimeNs) {
-        delayNs(targetTimeNs - now);
-      }
-    }
-  }
-
-  // Cleanup
-  if (nextBuf)
-    delete nextBuf;
-
-  m_capture.release();
-  m_captureThreadAlive = false;
-
-}
-
 void polyline(cv::Mat& img, const cv::Point2f* points, size_t startIdx, size_t endIdx, const cv::Scalar& color, bool loop = false) {
   for (size_t i = startIdx; i < endIdx; ++i) {
     cv::line(img, points[i], points[i + 1], color);
@@ -1168,155 +798,379 @@ cv::RotatedRect toImgCoord(const cv::RotatedRect& rect, const cv::Point2f& cente
         cv::Size2f(rect.size.width, rect.size.height), rect.angle);
 }
 
-cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx, bool withDebugOverlay) {
-  assert(eyeIdx < 2);
+
+void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
   ProcessingState& ps = m_processingState[eyeIdx];
 
-  if (ps.m_debugViewGrey.empty()) {
-    // No data yet
-    return ps.m_debugViewRGB;
+  ps.m_processingThreadAlive = true;
+
+  bool doFramePacing = ((int) ps.m_capture.get(cv::CAP_PROP_BACKEND)) == cv::CAP_FFMPEG;
+  double fps = ps.m_capture.get(cv::CAP_PROP_FPS);
+  uint64_t frameTimeNs = 1'000'000'000.0 / fps;
+
+  if (doFramePacing) {
+      printf("EyeTrackingService::eyeProcessingThreadFn(%zu): Frame pacing enabled, FPS = %.3f, target frametime is %luns\n", eyeIdx, fps, frameTimeNs);
   }
 
-  // Promote full capture buffer to RGB
-  cv::cvtColor(/*src=*/ ps.m_debugViewGrey, /*dst=*/ ps.m_debugViewRGB, cv::COLOR_GRAY2BGR);
+  uint64_t captureStartTimeNs = currentTimeNs();
+  uint64_t frameCount = 0;
 
-  if (!withDebugOverlay) {
-    // No drawing
-    return ps.m_debugViewRGB;
-  }
+  cv::Mat capRgbMat;
+  cv::Mat captureMat;
 
-  if (ps.m_debugLastSegmentationROI.empty()) {
-    // No segmentation ROI means nothing to draw, just return now.
-    return ps.m_debugViewRGB;
-  }
+  cv::Mat rgbDebugMat;
 
-  // Segmentation ROI view of the RGB debug mat
-  cv::Mat debugROIViewRGB = cv::Mat(ps.m_debugViewRGB, ps.m_debugLastSegmentationROI);
+  while (true) {
+    if (boost::this_thread::interruption_requested())
+      break;
+
+    // Wait for next frame start time, if applicable
+    if (doFramePacing) {
+      uint64_t targetTimeNs = (frameTimeNs * frameCount) + captureStartTimeNs;
+      uint64_t now = currentTimeNs();
+      if (now < targetTimeNs) {
+        delayNs(targetTimeNs - now);
+      }
+    }
+
+    // Capture frame
+    if (!ps.m_capture.read(capRgbMat)) {
+      printf("EyeTrackingService::eyeProcessingThreadFn(%zu)::captureWorkerThread: read() returned false, terminating\n", eyeIdx);
+      break;
+    }
+    if (capRgbMat.empty()) {
+      printf("EyeTrackingService::eyeProcessingThreadFn(%zu)::captureWorkerThread: mat is empty, terminating\n", eyeIdx);
+      break;
+    }
+
+    ++frameCount;
+
+    // Convert capture to greyscale.
+    cv::cvtColor(/*src=*/ capRgbMat, /*dst=*/ captureMat, cv::COLOR_BGR2GRAY);
+    ps.m_lastCaptureTimestampNs = currentTimeNs();
+
+    // Update the capture center offset, now that we know the frame dimensions.
+    ps.m_captureCenterOffset = cv::Point2f(
+      static_cast<float>(captureMat.cols) / 2.0f,
+      static_cast<float>(captureMat.rows) / 2.0f);
+
+    // Scale from capture mat to the input size for the ROI prediction network
+    cv::resize(captureMat, ps.m_roiScaleMat, cv::Size(m_roiInputWidth, m_roiInputHeight));
+
+    // Convert CV_U8 from the scale output to int8 or half for the ROI network input
+
+    assert(ps.m_roiScaleMat.isContinuous()); // Conversion assumes continuous input and output mats
+    if (m_roiIOIsInt8) {
+      convertUnorm8ToDLAInt8(ps.m_roiScaleMat.ptr<uint8_t>(0), ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight);
+    } else {
+      convertUnorm8ToSnormFp16(ps.m_roiScaleMat.ptr<uint8_t>(0), ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight);
+    }
+
+    // Run ROI network
+    CUDA_CHECK(cuEventRecord(ps.m_frameProcessingStartEvent, ps.m_cuStream));
+
+    assert(ps.m_roiExec->enqueueV3(ps.m_cuStream));
+
+    // Wait for ROI to finish processing
+    CUDA_CHECK(cuStreamSynchronize(ps.m_cuStream));
+
+
+    // Compute center of ROI heatmap
+    float roiOutput[2]; // 0...1 coordinate range
+
+    if (m_roiIOIsInt8) {
+      assert(false && "TODO: ROI heatmap center computation for int8 i/o");
+    } else {
+      _Float16* roiBasePtr = reinterpret_cast<_Float16*>(ps.m_roiOutputTensorPtr);
+
+      // Weighted sampling:
+
+      // Find the max value. TODO: This can be vectorized
+      _Float16 maxValue = 0.0f;
+      for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
+        _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
+        for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
+          maxValue = std::max<_Float16>(roiRowPtr[x], maxValue);
+        }
+      }
+
+      // Gather all sample points >= 0.85x max value and compute their average position.
+      _Float16 threshold = maxValue * 0.85f16;
+
+      uint32_t sampleCount = 0;
+      uint32_t xAccum = 0;
+      uint32_t yAccum = 0;
+
+      for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
+        _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
+        for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
+          if (roiRowPtr[x] >= threshold) {
+            sampleCount += 1;
+            xAccum += x;
+            yAccum += y;
+          }
+        }
+      }
+
+      if (sampleCount > 0) {
+        roiOutput[0] = (static_cast<float>(xAccum) / static_cast<float>(sampleCount)) / static_cast<float>(m_roiOutputWidth);
+        roiOutput[1] = (static_cast<float>(yAccum) / static_cast<float>(sampleCount)) / static_cast<float>(m_roiOutputHeight);
+      } else {
+        // No samples? Default to center of image.
+        roiOutput[0] = 0.5f;
+        roiOutput[1] = 0.5f;
+      }
+    }
+
+    // Use center coordinates computed from the ROI network to compute the ROI aligned inside the original capture mat
+    // ROI Rect needs to be fixed size of the segmentation network input (no edge clipping allowed)
+
+    FRAME_DEBUG_LOG("ROI computed center (0...1): (%f, %f)\n", roiOutput[0], roiOutput[1]);
+
+    // Rescale to 0...1f and multiply by the actual source w/h
+    cv::Point2i roiCenter_captureRelative = cv::Point2i(
+      clamp<int32_t>(roiOutput[0] * static_cast<float>(captureMat.cols - 1), 0, captureMat.cols - 1),
+      clamp<int32_t>(roiOutput[1] * static_cast<float>(captureMat.rows - 1), 0, captureMat.rows - 1)
+    );
+
+    // Clip the capture-relative ROI center to the capture dimensions inset by half of the segmentation network input size. This should ensure that the
+    // segmentation ROI rect fits entirely within the capture region.
+
+    roiCenter_captureRelative.x = clamp<int32_t>(roiCenter_captureRelative.x, (m_segInputWidth / 2), (captureMat.cols - 1) - (m_segInputWidth / 2));
+    roiCenter_captureRelative.y = clamp<int32_t>(roiCenter_captureRelative.y, (m_segInputHeight / 2), (captureMat.rows - 1) - (m_segInputHeight / 2));
+
+    // Build segmentation input crop rect in capture mat coordinates
+    cv::Point2i segROIRect_tl = (roiCenter_captureRelative - cv::Point2i(m_segInputWidth / 2, m_segInputHeight / 2));
+    // Just in case, clamp the top left corner so it doesn't go negative
+    segROIRect_tl.x = std::max<int32_t>(segROIRect_tl.x, 0);
+    segROIRect_tl.y = std::max<int32_t>(segROIRect_tl.y, 0);
+
+    cv::Rect segROIRect = cv::Rect(segROIRect_tl, cv::Size(m_segInputWidth, m_segInputHeight));
+    ps.m_lastSegROIToCaptureMatOffset = segROIRect_tl; // save for eyefitter processing
+
+    cv::Mat segROIMat = cv::Mat(captureMat, segROIRect);
+
+    // Convert ROI window to fp16 to populate ps.m_segInputTensor
+    // The ROI input is known not to be contiguous, so we do it row-by-row.
+    for (size_t y = 0; y < m_segInputHeight; ++y) {
+      convertUnorm8ToSnormFp16(segROIMat.ptr<uint8_t>(y, 0), ps.m_segInputTensorPtr + (y * ps.m_segInputTensorStrideElements), m_segInputWidth);
+    }
+
+    // Launch TRT processing
+    assert(ps.m_segmentationExec->enqueueV3(ps.m_cuStream));
+
+    CUDA_CHECK(cuEventRecord(ps.m_framePostProcessingStartEvent, ps.m_cuStream));
+
+    // Run CUDA postprocessing operations:
+    {
+      NppiSize sz;
+      sz.width = m_segInputWidth;
+      sz.height = m_segInputHeight;
+
+      NppiPoint zero;
+      zero.x = 0;
+      zero.y = 0;
+
+      // Run threshold over the return from the segmentation network to find the pupil mask
+      union {
+        _Float16 fval;
+        int16_t ival;
+      } a;
+      a.fval = 0.5f;
+
+      int16_t threshold = a.ival;
+
+      // NppStatus nppiCompareC_8u_C1R_Ctx(
+      //   const Npp8u *pSrc, int nSrcStep,
+      //   const Npp8u nConstant,
+      //   Npp8u *pDst, int nDstStep,
+      //   NppiSize oSizeROI,
+      //   NppCmpOp eComparisonOperation, NppStreamContext nppStreamCtx)
+      NPP_CHECK(nppiCompareC_16s_C1R_Ctx(
+        reinterpret_cast<const Npp16s*>(ps.m_segOutputTensorPtr), m_segInputWidth * sizeof(uint16_t),
+        threshold,
+        ps.m_pupilMask1, m_segInputWidth,
+        sz,
+        NPP_CMP_GREATER_EQ, ps.m_nppContext));
+
+      // Run closure operation to fill holes in the mask -- 3x3 dilation followed by 3x3 erosion
+
+      // NppStatus nppiDilate3x3Border_8u_C1R_Ctx(
+      //   const Npp8u *pSrc, Npp32s nSrcStep, NppiSize oSrcSize, NppiPoint oSrcOffset,
+      //         Npp8u *pDst, Npp32s nDstStep, NppiSize oSizeROI,
+      //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
+      //
+      NPP_CHECK(nppiDilate3x3Border_8u_C1R_Ctx(
+        ps.m_pupilMask1, m_segInputWidth, sz, zero,
+        ps.m_pupilMask2, m_segInputWidth, sz,
+        NPP_BORDER_REPLICATE, ps.m_nppContext));
+
+      // NppStatus nppiErode3x3Border_8u_C1R_Ctx(
+      //   const Npp8u *pSrc, Npp32s nSrcStep, NppiSize oSrcSize, NppiPoint oSrcOffset,
+      //         Npp8u *pDst, Npp32s nDstStep, NppiSize oSizeROI,
+      //         NppiBorderType eBorderType, NppStreamContext nppStreamCtx)
+      NPP_CHECK(nppiErode3x3Border_8u_C1R_Ctx(
+        ps.m_pupilMask2, m_segInputWidth, sz, zero,
+        ps.m_pupilMask1, m_segInputWidth, sz,
+        NPP_BORDER_REPLICATE, ps.m_nppContext));
+    }
+
+    CUDA_CHECK(cuEventRecord(ps.m_frameProcessingEndEvent, ps.m_cuStream));
+
+
+    // Wait for processing to finish
+    CUDA_CHECK(cuStreamSynchronize(ps.m_cuStream));
+
+    // Update stats
+    cuEventElapsedTime(&ps.m_lastFrameProcessingTimeMs, ps.m_frameProcessingStartEvent, ps.m_framePostProcessingStartEvent);
+    cuEventElapsedTime(&ps.m_lastFramePostProcessingTimeMs, ps.m_framePostProcessingStartEvent, ps.m_frameProcessingEndEvent);
+
+    uint64_t postStartTimeNs = currentTimeNs();
+
+    postprocessOneEye(eyeIdx);
+
+    float postTimeMs = deltaTimeMs(postStartTimeNs, currentTimeNs());
+    if (postTimeMs > 0.25f) {
+      FRAME_DEBUG_LOG("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, postTimeMs);
+    }
+
+
+    // Update debug view
+
+    // Promote full capture buffer to RGB
+    cv::cvtColor(/*src=*/ captureMat, /*dst=*/ rgbDebugMat, cv::COLOR_GRAY2BGR);
+    if (m_debugDrawOverlays) {
+
+      // Segmentation ROI view of the RGB debug mat
+      cv::Mat debugROIViewRGB = cv::Mat(rgbDebugMat, segROIRect);
 
 #if 0
-  // Draw segmentation mask colors
-  for (size_t row = 0; row < debugROIViewRGB.rows; ++row) {
-    uint8_t* pupilRowPtr = ps.m_pupilMask1 + (row * m_segInputWidth);
-    for (size_t col = 0; col < debugROIViewRGB.cols; ++col) {
-      if (pupilRowPtr[col])
-        debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/2] = 0xcc;
+      // Draw segmentation mask colors
+      for (size_t row = 0; row < debugROIViewRGB.rows; ++row) {
+        uint8_t* pupilRowPtr = ps.m_pupilMask1 + (row * m_segInputWidth);
+        for (size_t col = 0; col < debugROIViewRGB.cols; ++col) {
+          if (pupilRowPtr[col])
+            debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/2] = 0xcc;
+        }
+      }
+#endif
+
+      // Now operating on the full view; coordinates that are relative to the ROI will need to be translated.
+
+#if 0
+      // Draw eye-fitter sample ellipses
+      for (const auto& el : ps.m_eyeFitterSamples) {
+        cv::ellipse(rgbDebugMat, el, cv::Scalar(0x3f, 0, 0x3f), /*thickness=*/ 2);
+      }
+#endif
+
+      // Draw pupil ellipse, if present
+      if (!ps.m_pupilEllipse.size.empty()) {
+        cv::ellipse(rgbDebugMat, ps.m_pupilEllipse, cv::Scalar(0xff, 0, 0xff), /*thickness=*/ 2);
+      }
+
+      if (ps.m_eyeFitterOutputsValid) {
+        // Try-catch block avoids cv drawing functions crashing the app if we pass NaNs or something
+        try {
+          singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(ps.m_fitPupilCircle, ps.m_eyeModelFitter.focal_length);
+          singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
+
+          cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), ps.m_captureCenterOffset);
+          // pupil ellipse was already drawn above
+          //cv::ellipse(rgbDebugMat, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
+
+          cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), ps.m_captureCenterOffset);
+          cv::ellipse(rgbDebugMat, eyeEllipseImg, cv::Scalar(0, 60, 60), /*thickness=*/ 2);
+
+          // order is _bottomLeft_, _topLeft_, topRight, bottomRight
+          cv::Point2f rectPoints[4];
+          eyeEllipseImg.points(rectPoints);
+
+          // Draw crosshairs through the eye-ellipse
+          cv::line(rgbDebugMat,
+            (rectPoints[0] + rectPoints[1]) * 0.5f,
+            (rectPoints[2] + rectPoints[3]) * 0.5f,
+            cv::Scalar(0, 60, 60), /*thickness=*/2);
+
+          cv::line(rgbDebugMat,
+            (rectPoints[1] + rectPoints[2]) * 0.5f,
+            (rectPoints[0] + rectPoints[3]) * 0.5f,
+            cv::Scalar(0, 60, 60), /*thickness=*/2);
+
+          // Draw a small marker on the eye center point
+          cv::circle(rgbDebugMat, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(255, 0, 0), /*thickness=*/ -1);
+
+          // Line from the eye center through the pupil center
+          cv::line(rgbDebugMat, eyeEllipseImg.center, pupilEllipseImg.center, cv::Scalar(0, 255, 0), /*thickness=*/ 1);
+
+        } catch (...) {}
+
+        char buf[64];
+        snprintf(buf, 64, "n=%.3f %.3f %.3f", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
+
+        cv::putText(rgbDebugMat, buf, cv::Point2f(/*x=*/ 5, /*y=*/ rgbDebugMat.rows - 16), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
+
+        //FRAME_DEBUG_LOG("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
+        //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
+        //    ps.m_pupilEllipse.size.width, ps.m_pupilEllipse.size.height);
+
+      }
+
+      // Draw the ROI centroid
+      cv::circle(rgbDebugMat, roiCenter_captureRelative, /*r=*/ 3, cv::Scalar(192, 0, 192));
+
+      // Draw the ROI rectangle
+      cv::rectangle(rgbDebugMat, segROIRect.tl(), segROIRect.br(), cv::Scalar(0, 255, 0));
+
+    } // Debug overlay drawing
+
+    // Swap debug mat with the one in processing state
+    // (tries to avoid the main thread getting a partially-drawn debug mat)
+    cv::swap(ps.m_debugViewRGB, rgbDebugMat);
+
+  } // Frame loop
+
+  ps.m_capture.release();
+  ps.m_processingThreadAlive = false;
+}
+
+
+bool EyeTrackingService::processFrame() {
+  FRAME_DEBUG_LOG("\x1b[2J\x1b[H"); // Clear terminal per frame
+
+  // Processing thread maintenance:
+  // Start threads if they're not running, clean up after exited threads
+
+  PER_EYE {
+    ProcessingState& ps = m_processingState[eyeIdx];
+
+    if (!ps.m_processingThreadAlive) {
+      if (!ps.m_inputFilename.empty()) {
+        // Try re-starting processing, ratelimited to once a second
+        if (deltaTimeMs(ps.m_lastCaptureOpenAttemptTimeNs, currentTimeNs()) > 1000.0f) {
+          ps.m_lastCaptureOpenAttemptTimeNs = currentTimeNs();
+          if (ps.m_capture.open(ps.m_inputFilename)) {
+            // Capture is open, restart the processing thread
+            ps.m_processingThread = boost::thread(boost::bind(&EyeTrackingService::eyeProcessingThreadFn, this, eyeIdx));
+            printf("EyeTrackingService: Successfully opened capture of \"%s\" for eye %zu. Backend: %s\n", ps.m_inputFilename.c_str(), eyeIdx, ps.m_capture.getBackendName().c_str());
+          }
+        }
+      }
     }
   }
-#endif
 
-  // Now operating on the full view; coordinates that are relative to the ROI will need to be translated.
-
-#if 0
-  // Draw eye-fitter sample ellipses
-  for (const auto& el : ps.m_eyeFitterSamples) {
-    cv::ellipse(ps.m_debugViewRGB, el, cv::Scalar(0x3f, 0, 0x3f), /*thickness=*/ 2);
-  }
-#endif
-
-  // Draw pupil ellipse, if present
-  if (!ps.m_pupilEllipse.size.empty()) {
-    cv::ellipse(ps.m_debugViewRGB, ps.m_pupilEllipse, cv::Scalar(0xff, 0, 0xff), /*thickness=*/ 2);
+  if (!(m_processingState[0].m_processingThreadAlive || m_processingState[1].m_processingThreadAlive)) {
+    // printf("EyeTrackingService: no processing threads alive\n");
+    return false;
   }
 
-  if (ps.m_eyeFitterOutputsValid) {
-    // Try-catch block avoids cv drawing functions crashing the app if we pass NaNs or something
-    try {
-      singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(ps.m_fitPupilCircle, ps.m_eyeModelFitter.focal_length);
-      singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
 
-      cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), ps.m_captureCenterOffset);
-      // pupil ellipse was already drawn above
-      //cv::ellipse(ps.m_debugViewRGB, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
+  return true;
+}
 
-      cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), ps.m_captureCenterOffset);
-      cv::ellipse(ps.m_debugViewRGB, eyeEllipseImg, cv::Scalar(0, 60, 60), /*thickness=*/ 2);
-
-      // order is _bottomLeft_, _topLeft_, topRight, bottomRight
-      cv::Point2f rectPoints[4];
-      eyeEllipseImg.points(rectPoints);
-
-      // Draw crosshairs through the eye-ellipse
-      cv::line(ps.m_debugViewRGB,
-        (rectPoints[0] + rectPoints[1]) * 0.5f,
-        (rectPoints[2] + rectPoints[3]) * 0.5f,
-        cv::Scalar(0, 60, 60), /*thickness=*/2);
-
-      cv::line(ps.m_debugViewRGB,
-        (rectPoints[1] + rectPoints[2]) * 0.5f,
-        (rectPoints[0] + rectPoints[3]) * 0.5f,
-        cv::Scalar(0, 60, 60), /*thickness=*/2);
-
-      // Draw a small marker on the eye center point
-      cv::circle(ps.m_debugViewRGB, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(255, 0, 0), /*thickness=*/ -1);
-
-      // Line from the eye center through the pupil center
-      cv::line(ps.m_debugViewRGB, eyeEllipseImg.center, pupilEllipseImg.center, cv::Scalar(0, 255, 0), /*thickness=*/ 1);
-
-    } catch (...) {}
-
-    char buf[64];
-    snprintf(buf, 64, "n=%.3f %.3f %.3f", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
-
-    cv::putText(ps.m_debugViewRGB, buf, cv::Point2f(/*x=*/ 5, /*y=*/ ps.m_debugViewRGB.rows - 16), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
-
-    //FRAME_DEBUG_LOG("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
-    //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
-    //    ps.m_pupilEllipse.size.width, ps.m_pupilEllipse.size.height);
-
-  }
-
-  // Draw the ROI centroid
-  cv::circle(ps.m_debugViewRGB, ps.m_debugLastPredictedROICenter, /*r=*/ 3, cv::Scalar(192, 0, 192));
-
-  // Draw the ROI rectangle
-  cv::rectangle(ps.m_debugViewRGB, ps.m_debugLastSegmentationROI.tl(), ps.m_debugLastSegmentationROI.br(), cv::Scalar(0, 255, 0));
-
-
-  // Convert markers to pixel coordinates
-  //for (size_t markerIdx = 0; markerIdx < m_trtOutputKeypointCount; ++markerIdx) {
-  //  markers[markerIdx] = cv::Point2f(
-  //    ps.m_segOutputTensorPtr[(markerIdx * 2) + 0] * static_cast<float>(ps.m_debugViewRGB.cols),
-  //    ps.m_segOutputTensorPtr[(markerIdx * 2) + 1] * static_cast<float>(ps.m_debugViewRGB.rows));
-  //}
-
-  // Draw dots on all  markers
-  //for (size_t markerIdx = 0; markerIdx < m_trtOutputKeypointCount; ++markerIdx) {
-  //  cv::circle(ps.m_debugViewRGB, markers[markerIdx], /*radius=*/ 3, cv::Scalar(255, 255,   0), /*thickness=*/ -1);
-  //}
-
-  // Draw lines to surround the upper and lower eyelids
-  // markers 0-16, 33 are the top eyelid
-  // markers 0, 17-33 are the bottom eyelid
-  // 34-41 are the pupil surround
-  // 42 is the pupil center
-
-  //const cv::Scalar red = cv::Scalar(0, 0, 255);
-  //const cv::Scalar green = cv::Scalar(0, 255, 0);
-  //const cv::Scalar blue = cv::Scalar(255, 0, 0);
-
-  // upper
-  //polyline(ps.m_debugViewRGB, markers, 0, 16, green);
-  //cv::line(ps.m_debugViewRGB, markers[16], markers[1], green);
-
-  // lower
-  //cv::line(ps.m_debugViewRGB, markers[0], markers[17], green);
-  //polyline(ps.m_debugViewRGB, markers, 17, 33, green);
-
-  // pupil surround
-  //polyline(ps.m_debugViewRGB, markers, 34, 41, blue, /*loop=*/ true);
-
-  // pupil center
-  //cv::circle(ps.m_debugViewRGB, markers[42], /*radius=*/ 3, red, /*thickness=*/ 1);
-/*
-  for (size_t markerIdx = 0; markerIdx < 7; ++markerIdx) {
-    char textBuf[16];
-    textBuf[0] = 'a' + markerIdx; // a, b, c, d, e, f, g
-    textBuf[1] = '\0';
-    cv::putText(ps.m_debugViewRGB, textBuf, marker + cv::Point2f(5, -5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
-  }
-*/
-
-  return ps.m_debugViewRGB;
+cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx, bool withDebugOverlay) {
+  assert(eyeIdx < 2);
+  return m_processingState[eyeIdx].m_debugViewRGB;
 }
 
 void EyeTrackingService::applyCalibrationData() {
@@ -1383,5 +1237,4 @@ glm::vec2 EyeTrackingService::getPitchYawAnglesForEye(size_t eyeIdx) {
   vectorToAngles<float>(glm::value_ptr(rollCorrectionVector), angles[0], angles[1], /*toDegrees=*/ true);
   return angles;
 }
-
 

@@ -36,49 +36,14 @@ public:
 
   void setInputFilename(size_t eyeIdx, const std::string& s) {
     assert(eyeIdx < 2);
-    m_captureState[eyeIdx].m_inputFilename = s;
+    m_processingState[eyeIdx].m_inputFilename = s;
   }
 
-  bool processFrame();
-
-  float m_lastFrameProcessingTimeMs = 0.0f;
-  float m_lastFramePostProcessingTimeMs = 0.0f;
-
+  bool processFrame(); // Called from main thread
 
   glm::vec2 getPitchYawAnglesForEye(size_t eyeIdx);
 
   cv::Mat& getDebugViewForEye(size_t eyeIdx, bool withOverlayDrawing);
-
-  struct CaptureBuffer {
-    cv::Mat mat;
-    uint64_t timestamp; // currentTimeNs
-  };
-
-  struct CaptureState {
-    std::string m_inputFilename;
-
-
-    // Worker thread entrypoint
-    void captureWorkerThread();
-
-    // Thread that is reading/decoding frames from the cv::VideoCapture object
-    boost::thread m_captureThread;
-
-    bool m_captureThreadAlive = false;
-
-    // Ratelimiting for capture-open attempts
-    uint64_t m_lastCaptureOpenAttemptTimeNs = 0; // currentTimeNs
-
-    // OpenCV video capture object
-    cv::VideoCapture m_capture;
-
-    // Latest buffer filled by the capture worker will be in here.
-    // Main thread will swap it with its previous buffer (or NULL if it didn't have one)
-    // Capture thread will swap its just-filled buffer with whatever's in here, and allocate a new one if it gets back NULL
-    // We should end up with 3 buffers in-flight between the capture thread, main thread, and mailbox.
-    boost::atomic<CaptureBuffer*> m_captureBufferMailbox { nullptr };
-
-  };
 
   enum CalibrationState {
     kWaitingForValidFrames,
@@ -87,7 +52,29 @@ public:
   };
 
   struct ProcessingState {
-    uint64_t m_lastProcessingTimeNs = 0;
+    boost::thread m_processingThread;
+
+    bool m_processingThreadAlive = false;
+    uint64_t m_lastCaptureTimestampNs = 0; // currentTimeNs
+
+    std::string m_inputFilename;
+    // Ratelimiting for capture-open attempts
+    uint64_t m_lastCaptureOpenAttemptTimeNs = 0; // currentTimeNs
+
+    // OpenCV video capture object
+    cv::VideoCapture m_capture;
+
+    // Low-priority CUDA stream and associated NPP context
+    CUstream m_cuStream;
+    NppStreamContext m_nppContext;
+
+    // Sync/profiling events
+    CUevent m_frameProcessingStartEvent;
+    CUevent m_framePostProcessingStartEvent;
+    CUevent m_frameProcessingEndEvent;
+
+    float m_lastFrameProcessingTimeMs = 0.0f;
+    float m_lastFramePostProcessingTimeMs = 0.0f;
 
     // Calibration state machine data
 
@@ -108,15 +95,9 @@ public:
 
     CalibrationState m_calibrationState = kWaitingForValidFrames;
 
-
-
-    bool m_requiresPostProcessing = false; // True when we have launched CUDA ops that will update m_trtOutputHostPtr with new data
-
     ~ProcessingState() {
-      releaseResources();
-    }
+      cuStreamSynchronize(m_cuStream);
 
-    void releaseResources() {
       m_segmentationExec.reset(nullptr);
       m_roiExec.reset(nullptr);
 
@@ -126,9 +107,10 @@ public:
       CUDA_SAFE_FREE_HOST(m_pupilMask1);
       CUDA_SAFE_FREE_HOST(m_pupilMask2);
 
-      for (size_t bufIdx = 0; bufIdx < 2; ++bufIdx) {
-        m_captureBuffers[bufIdx].reset(nullptr);
-      }
+      cuStreamDestroy(m_cuStream);
+      cuEventDestroy(m_frameProcessingStartEvent);
+      cuEventDestroy(m_framePostProcessingStartEvent);
+      cuEventDestroy(m_frameProcessingEndEvent);
     }
 
     // Center offset of the camera capture, used for translating between the eye-fitter
@@ -187,33 +169,24 @@ public:
     std::unique_ptr<nvinfer1::IExecutionContext> m_segmentationExec;
     std::unique_ptr<nvinfer1::IExecutionContext> m_roiExec;
 
-
-    // We store two capture buffers to ensure that we don't lose the most recent buffer when swapping with the capture thread.
-    // The capture thread's buffer is not guaranteed to be newer than what we're currently holding.
-    std::unique_ptr<CaptureBuffer> m_captureBuffers[2];
-
-    uint64_t captureBufferTimestamp(size_t idx) const { return m_captureBuffers[idx] ? m_captureBuffers[idx]->timestamp : 0; }
-    size_t olderCaptureBufferIdx() { return (captureBufferTimestamp(0) < captureBufferTimestamp(1)) ? 0 : 1; }
-    size_t newerCaptureBufferIdx() { return (captureBufferTimestamp(0) < captureBufferTimestamp(1)) ? 1 : 0; }
-    uint64_t newerCaptureBufferTimestamp() { return std::max<uint64_t>(captureBufferTimestamp(0), captureBufferTimestamp(1)); }
-
     // Debug view support
-    cv::Point2i m_debugLastPredictedROICenter; // in m_debugView coordinates
-    cv::Rect m_debugLastSegmentationROI; // in m_debugView coordinates
-    cv::Mat m_debugViewGrey; // Full copy of the capture mat, not circle-cropped
-    cv::Mat m_debugViewRGB; // Cached allocation for RGB version of m_debugViewGrey
+    cv::Mat m_debugViewRGB; // RGB debug view, optionally with debug overlays drawn on it
   };
 
 
   // per-eye state
-  CaptureState m_captureState[2];
   ProcessingState m_processingState[2];
+
+  // Debug settings
+  bool m_debugDrawOverlays = true;
 
 protected:
 
+
+  void eyeProcessingThreadFn(size_t eyeIdx);
+
   void postprocessOneEye(size_t eyeIdx);
   bool postprocessOneEye_fitEllipse(size_t eyeIdx);
-
 
 
   // Calibration data and settings
@@ -236,11 +209,6 @@ protected:
   const double sefFocalLength() const { return m_focalLength / pixelPitchMM(); }
 
 
-  // Low-priority CUDA stream
-  CUstream m_cuStream;
-  cv::cuda::Stream m_cvStream = cv::cuda::Stream::Null(); // filled in during constructor
-  NppStreamContext m_nppContext;
-
   // Segmentation model I/O sizes
   uint32_t m_segInputWidth = 0, m_segInputHeight = 0;
 
@@ -254,11 +222,6 @@ protected:
   uint32_t m_roiInputWidth = 0, m_roiInputHeight = 0;
   uint32_t m_roiOutputWidth = 0, m_roiOutputHeight = 0;
   size_t m_roiOutputSizeBytes = 0;
-
-  // Sync/profiling events
-  CUevent m_frameProcessingStartEvent;
-  CUevent m_framePostProcessingStartEvent;
-  CUevent m_frameProcessingEndEvent;
 
   // Shared data
   std::unique_ptr<InferLogger> m_logger;
