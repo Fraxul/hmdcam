@@ -32,6 +32,12 @@
 
 const char* calibrationFilename = "eyetracking-calibration.yml";
 
+static inline glm::vec2 toGlm(const cv::Point2f& p) { return glm::vec2(p.x, p.y); }
+static inline cv::Point2f toCv(const glm::vec2& p) { return cv::Point2f(p[0], p[1]); }
+
+static inline glm::vec2 vec2AtAngleDeg(float deg) { return glm::vec2(cosf(glm::radians(deg)), sinf(glm::radians(deg))); }
+static inline glm::vec2 vec2AtAngle(float rad) { return glm::vec2(cosf(rad), sinf(rad)); }
+
 template <typename T> void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
   // Mathematica: evaluated EulerMatrix[{roll, pitch, yaw}, {3, 1, 2}] . {0, 0, 1}
   // result: {Cos[yaw] Sin[pitch] Sin[roll] + Cos[roll] Sin[yaw], -Cos[roll] Cos[yaw] Sin[pitch] + Sin[roll] Sin[yaw], Cos[pitch] Cos[yaw]}
@@ -656,20 +662,54 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 
     // Tests passed
 
+
+    // Find center of points for sector angle filtering
+    glm::vec2 boundsCenter;
+    {
+      glm::vec2 boundsMin = toGlm(contour.points[0]);
+      glm::vec2 boundsMax = toGlm(contour.points[0]);
+      for (size_t i = 1; i < contour.points.size(); ++i) {
+        const cv::Point2f& p = contour.points[i];
+        boundsMin = glm::min(toGlm(p), boundsMin);
+        boundsMax = glm::max(toGlm(p), boundsMax);
+      }
+      boundsCenter = (boundsMin + boundsMax) * 0.5f;
+    }
+
+    // Save bounds center for sector cutoff gizmo drawing
+    ps.m_debugBoundsCenter = boundsCenter + glm::vec2(ps.m_lastSegROIToCaptureMatOffset.x, ps.m_lastSegROIToCaptureMatOffset.y);
+
+    // Vertical vector and cutoff angle
+    glm::vec2 verticalVec = vec2AtAngleDeg(m_rollOffsetDeg[eyeIdx] + 90.0f);
+    float cosAngleCutoff = cosf(glm::radians(m_sectorCutoffAngleDeg));
+
     // Transform contour points from ROI into full image space prior to ellipse fitting.
     // (easier to transform points than the ellipse equation, given that the scale can be nonuniform)
 
-    transformedContour.resize(contour.points.size());
+    transformedContour.reserve(contour.points.size());
     for (size_t i = 0; i < contour.points.size(); ++i) {
       cv::Point2f np = contour.points[i];
+
+      // Sector-angle cutoff filter
+      float cosAngle = glm::abs(glm::dot(glm::normalize(toGlm(np) - boundsCenter), verticalVec));
+      if (cosAngle > cosAngleCutoff)
+        continue; // Skip point -- failed sector cutoff check
+
       // Add ROI offset
       np.x += static_cast<float>(ps.m_lastSegROIToCaptureMatOffset.x);
       np.y += static_cast<float>(ps.m_lastSegROIToCaptureMatOffset.y);
 
-      transformedContour[i] = np;
+      transformedContour.push_back(np);
+    }
+
+    // Minimum of 6 points is required to fit an ellipse. Ensure that we have enough points after cutoff filtering
+    if (transformedContour.size() < 6) {
+      transformedContour.clear(); // discard failed points for next attempt
+      continue;
     }
 
     ps.m_pupilEllipse = cv::fitEllipse(transformedContour);
+    ps.m_debugTransformedContour = transformedContour;
     didFitEllipse = true;
     // Only need to fit one ellipse.
     break;
@@ -788,6 +828,11 @@ void polyline(cv::Mat& img, const cv::Point2f* points, size_t startIdx, size_t e
     cv::line(img, points[endIdx], points[startIdx], color);
 }
 
+void lineCenterDirectionLength(cv::Mat& img, const glm::vec2& center, const glm::vec2& direction, float length, const cv::Scalar& color, bool bidirectional = true) {
+  glm::vec2 v1 = center + (direction * length);
+  glm::vec2 v2 = bidirectional ? (center - (direction * length)) : center;
+  cv::line(img, cv::Point(v1.x, v1.y), cv::Point(v2.x, v2.y), color);
+}
 
 cv::Point2f toImgCoord(const cv::Point2f& point, const cv::Point2f& centerOffset) {
   return point + centerOffset;
@@ -1078,6 +1123,15 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       // Draw pupil ellipse, if present
       if (!ps.m_pupilEllipse.size.empty()) {
         cv::ellipse(rgbDebugMat, ps.m_pupilEllipse, cv::Scalar(0xff, 0, 0xff), /*thickness=*/ 2);
+
+        // Draw sector gizmo
+        glm::vec2 verticalVec = vec2AtAngleDeg(m_rollOffsetDeg[eyeIdx] + 90.0f);
+        glm::vec2 sector1Vec = vec2AtAngleDeg((m_rollOffsetDeg[eyeIdx] + 90.0f) + m_sectorCutoffAngleDeg);
+        glm::vec2 sector2Vec = vec2AtAngleDeg((m_rollOffsetDeg[eyeIdx] + 90.0f) - m_sectorCutoffAngleDeg);
+
+        lineCenterDirectionLength(rgbDebugMat, ps.m_debugBoundsCenter, verticalVec, 80.0f, cv::Scalar(255, 0, 0), /*bidirectional=*/ true);
+        lineCenterDirectionLength(rgbDebugMat, ps.m_debugBoundsCenter, sector1Vec,  80.0f, cv::Scalar(0, 0, 255), /*bidirectional=*/ true);
+        lineCenterDirectionLength(rgbDebugMat, ps.m_debugBoundsCenter, sector2Vec,  80.0f, cv::Scalar(0, 0, 255), /*bidirectional=*/ true);
       }
 
       if (ps.m_eyeFitterOutputsValid) {
@@ -1210,6 +1264,9 @@ void EyeTrackingService::renderIMGUI() {
   // Roll angles don't require recalibrating
   ImGui::DragFloat("L Roll angle (deg)", &m_rollOffsetDeg[0], /*speed=*/ 0.1f, /*min=*/ -30.0f, /*max=*/ 30.0f, "%.1f");
   ImGui::DragFloat("R Roll angle (deg)", &m_rollOffsetDeg[1], /*speed=*/ 0.1f, /*min=*/ -30.0f, /*max=*/ 30.0f, "%.1f");
+
+  ImGui::Separator();
+  ImGui::DragFloat("Sector cutoff angle (deg)", &m_sectorCutoffAngleDeg, /*speed=*/ 1.0f, /*min=*/ 0.0f, /*max=*/ 90.0f, "%.1f");
 
   // Filter settings also apply immediately, but still require calling applyCalibrationData
   ImGui::Separator();

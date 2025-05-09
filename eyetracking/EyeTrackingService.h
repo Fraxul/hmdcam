@@ -178,6 +178,8 @@ public:
 
     // Debug view support
     cv::Mat m_debugViewRGB; // RGB debug view, optionally with debug overlays drawn on it
+    glm::vec2 m_debugBoundsCenter; // for rendering sector cutoff gizmo
+    std::vector<cv::Point2f> m_debugTransformedContour;
   };
 
 
@@ -201,6 +203,8 @@ protected:
   float m_pixelPitchMicrons = 3.0; // Pixel size/pitch of the camera sensor, micrometers
   float m_eyeZ = 15.0; // millimeters
   float m_rollOffsetDeg[2] = {0.0, 0.0}; // per-eye roll correction angle, degrees
+
+  float m_sectorCutoffAngleDeg = 45.0; // Cutoff angle for filtering top/bottom sectors of pupil contour
 
   float m_filterMinCutoff = 0.2;
   float m_filterDCutoff = 0.2;
