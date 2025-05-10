@@ -1,0 +1,23 @@
+Import('env')
+
+etEnv = env.Clone()
+etEnv.CompilationDatabase()
+etEnv.Append(
+  CPPPATH=[
+    'eyetracking',
+    '/usr/include/eigen3',
+    'nvsci_headers',
+    'nvmedia',
+  ]
+)
+etEnv.Program(
+  target = '../bin/dla-standalone-test',
+  source = [
+    'eyetracking/test/dla-standalone-test.cpp',
+    'common/tegra/NvSciUtil.cpp',
+    'eyetracking/CuDLAStandaloneRunner.cpp',
+  ],
+  LIBS=['cuda', 'cudla', 'nvscibuf', 'nvscisync', 'nvscicommon'],
+)
+
+

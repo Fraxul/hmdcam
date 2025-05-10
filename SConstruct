@@ -177,6 +177,7 @@ else:
 
 # Eyetracking test harness
 if (have_tensorrt):
+  SConscript('SConscript-dla-standalone-test', variant_dir = 'build/dla-standalone-test', duplicate = 0)
   SConscript('SConscript-eyetracking-test', variant_dir = 'build/eyetracking-test', duplicate = 0)
   SConscript('SConscript-eyetracking-hmd-test', variant_dir = 'build/eyetracking-hmd-test', duplicate = 0)
 
