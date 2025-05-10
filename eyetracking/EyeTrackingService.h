@@ -76,6 +76,7 @@ public:
     CUevent m_frameProcessingEndEvent;
 
     float m_lastFrameROITimeMs = 0.0f;
+    float m_lastFrameROIToSegmentationLatencyMs = 0.0f;
     float m_lastFrameSegmentationTimeMs = 0.0f;
     float m_lastFrameTotalInferenceLatencyMs = 0.0f;
     float m_lastFramePostProcessingTimeMs = 0.0f;

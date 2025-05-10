@@ -269,7 +269,7 @@ EyeTrackingService::EyeTrackingService() {
 
   // Load segmentation engine
   {
-    mmfile fp("eyetracking/models/segmentation-dla.engine");
+    mmfile fp("eyetracking/models/segmentation.engine");
     m_segmentationEngine.reset(m_inferRuntime->deserializeCudaEngine(fp.data(), fp.size()));
     m_segInputTensorName = getSingleInputTensorName(m_segmentationEngine.get());
     m_segOutputTensorName = getSingleOutputTensorName(m_segmentationEngine.get());
@@ -277,7 +277,7 @@ EyeTrackingService::EyeTrackingService() {
 
   // Load ROI engine
   {
-    mmfile fp("eyetracking/models/roi-gpu.engine");
+    mmfile fp("eyetracking/models/roi.engine");
     m_roiEngine.reset(m_inferRuntime->deserializeCudaEngine(fp.data(), fp.size()));
     m_roiInputTensorName = getSingleInputTensorName(m_roiEngine.get());
     m_roiOutputTensorName = getSingleOutputTensorName(m_roiEngine.get());
@@ -1077,6 +1077,7 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
     // Update stats
     cuEventElapsedTime(&ps.m_lastFrameROITimeMs, ps.m_frameProcessingStartEvent, ps.m_frameROIEndEvent);
     cuEventElapsedTime(&ps.m_lastFrameSegmentationTimeMs, ps.m_frameSegmentationStartEvent, ps.m_framePostProcessingStartEvent);
+    cuEventElapsedTime(&ps.m_lastFrameROIToSegmentationLatencyMs, ps.m_frameROIEndEvent, ps.m_frameSegmentationStartEvent);
 
     cuEventElapsedTime(&ps.m_lastFrameTotalInferenceLatencyMs, ps.m_frameProcessingStartEvent, ps.m_framePostProcessingStartEvent);
     cuEventElapsedTime(&ps.m_lastFramePostProcessingTimeMs, ps.m_framePostProcessingStartEvent, ps.m_frameProcessingEndEvent);
