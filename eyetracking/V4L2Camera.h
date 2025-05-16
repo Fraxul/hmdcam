@@ -3,8 +3,11 @@
 #include <vector>
 #include <epoxy/egl.h>
 #include <linux/videodev2.h>
-// #include <opencv2/core.hpp>
+#include <opencv2/core.hpp>
 #include <boost/noncopyable.hpp>
+#include "nvscibuf.h"
+#include "nvscisync.h"
+#include "nvmedia_ijpd.h"
 
 class V4L2Camera : boost::noncopyable {
 public:
@@ -25,6 +28,7 @@ public:
     struct v4l2_buffer vbuf = {0};
     void* mmap_ptr = nullptr;
     size_t mmap_length = 0;
+    NvMediaBitstreamBuffer bitstream;
 
     // cv::Mat cvMat;
   };
@@ -34,7 +38,6 @@ public:
 
 protected:
   uint64_t m_tscToMonotonicRawOffset = 0;
-
 
   std::string m_deviceFn;
   int m_fd = -1;
@@ -50,5 +53,26 @@ protected:
   uint64_t m_sensorTimestamp = 0;
 
   void queueBufferAtIndex(size_t bufferIdx);
+
+  NvMediaIJPD* m_ijpd = nullptr;
+  NvSciSyncModule m_syncModule = nullptr;
+  NvSciBufModule m_bufModule = nullptr;
+
+  uint32_t m_jpMaxWidth = 0;
+  uint32_t m_jpMaxHeight = 0;
+  uint32_t m_jpMaxBitstreamBytes = 0;
+
+  NvSciBufAttrList populateOutputImageBufAttrList(uint32_t width, uint32_t height);
+  NvSciBufAttrList m_outputImageAttrList = nullptr;
+
+  NvSciBufObj m_outputBufObj = nullptr;
+  NvSciSyncObj m_signaler = nullptr;
+  NvSciSyncObj m_waiter = nullptr;
+  NvSciSyncCpuWaitContext m_cpuWaitCtx = nullptr;
+  NvSciSyncFence m_preFence = NvSciSyncFenceInitializer;
+  NvSciSyncFence m_eofFence = NvSciSyncFenceInitializer;
+
+  cv::Mat m_lumaPlane;
+
 };
 

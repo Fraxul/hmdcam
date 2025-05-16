@@ -17,7 +17,7 @@ etEnv.Program(
     'common/tegra/NvSciUtil.cpp',
     'eyetracking/V4L2Camera.cpp',
   ],
-  LIBS=['v4l2', 'nvscibuf', 'nvscisync', 'nvscicommon'],
+  LIBS=['v4l2', 'nvscibuf', 'nvscisync', 'nvscicommon', 'nvmedia_ijpd_sci', 'opencv_core'],
 )
 
 

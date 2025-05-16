@@ -1,5 +1,16 @@
 #include "V4L2Camera.h"
 #include "common/Timing.h"
+#include <signal.h>
+
+bool want_quit = false;
+static void signal_handler(int) {
+  want_quit = true;
+
+  // Restore signal handlers so the program is still interruptable if clean shutdown gets stuck
+  signal(SIGINT,  SIG_DFL);
+  signal(SIGTERM, SIG_DFL);
+  signal(SIGQUIT, SIG_DFL);
+}
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
@@ -15,9 +26,12 @@ int main(int argc, char* argv[]) {
   }
   
 
+  signal(SIGINT,  signal_handler);
+  signal(SIGTERM, signal_handler);
+  signal(SIGQUIT, signal_handler);
 
   uint64_t prevTimestamp = 0;
-  for (size_t frameIdx = 0; frameIdx < 30; ++frameIdx) {
+  while(!want_quit) {
     if (!cam->readFrame()) {
       printf("readFrame() returned false\n");
       delayNs(1'000'000'000ULL);

@@ -139,39 +139,6 @@ void createAndSetAttrList(NvSciBufModule module, uint64_t bufSize, NvSciBufAttrL
   NVSCI_CHECK(NvSciBufAttrListSetAttrs(*attrList, setAttrs, length));
 }
 
-void fillCpuSignalerAttrList(NvSciSyncAttrList list)
-{
-  bool                      cpuSignaler = true;
-  NvSciSyncAttrKeyValuePair keyValue[2];
-  memset(keyValue, 0, sizeof(keyValue));
-  keyValue[0].attrKey = NvSciSyncAttrKey_NeedCpuAccess;
-  keyValue[0].value   = (void *)&cpuSignaler;
-  keyValue[0].len     = sizeof(cpuSignaler);
-
-  NvSciSyncAccessPerm cpuPerm = NvSciSyncAccessPerm_SignalOnly;
-  keyValue[1].attrKey         = NvSciSyncAttrKey_RequiredPerm;
-  keyValue[1].value           = (void *)&cpuPerm;
-  keyValue[1].len             = sizeof(cpuPerm);
-
-  NVSCI_CHECK(NvSciSyncAttrListSetAttrs(list, keyValue, 2));
-}
-
-void fillCpuWaiterAttrList(NvSciSyncAttrList list) {
-  bool                      cpuWaiter = true;
-  NvSciSyncAttrKeyValuePair keyValue[2];
-  memset(keyValue, 0, sizeof(keyValue));
-  keyValue[0].attrKey = NvSciSyncAttrKey_NeedCpuAccess;
-  keyValue[0].value   = (void *)&cpuWaiter;
-  keyValue[0].len     = sizeof(cpuWaiter);
-
-  NvSciSyncAccessPerm cpuPerm = NvSciSyncAccessPerm_WaitOnly;
-  keyValue[1].attrKey         = NvSciSyncAttrKey_RequiredPerm;
-  keyValue[1].value           = (void *)&cpuPerm;
-  keyValue[1].len             = sizeof(cpuPerm);
-
-  NVSCI_CHECK(NvSciSyncAttrListSetAttrs(list, keyValue, 2));
-}
-
 CuDLAStandaloneRunner::CuDLAStandaloneRunner(uint64_t deviceIdx, const char* engineFile) {
   mmfile fp(engineFile);
 
@@ -240,10 +207,9 @@ CuDLAStandaloneRunner::CuDLAStandaloneRunner(uint64_t deviceIdx, const char* eng
   NVSCI_CHECK(NvSciBufObjGetCpuPtr(m_outputBufObj, &m_outputBufObjBuffer));
 
   NVSCI_CHECK(NvSciSyncModuleOpen(&m_syncModule));
-  NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &m_signalerAttrListObj1));
   NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &m_waiterAttrListObj1));
   CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(m_waiterAttrListObj1), CUDLA_NVSCISYNC_ATTR_WAIT));
-  fillCpuSignalerAttrList(m_signalerAttrListObj1);
+  m_signalerAttrListObj1 = CreateNvSciSyncCpuSignalerAttrList(m_syncModule);
 
   {
     NvSciSyncAttrList  syncAttrListObj1[2];
@@ -258,11 +224,9 @@ CuDLAStandaloneRunner::CuDLAStandaloneRunner(uint64_t deviceIdx, const char* eng
 
   NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &m_signalerAttrListObj2));
 
-  NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &m_waiterAttrListObj2));
-
   CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(m_signalerAttrListObj2), CUDLA_NVSCISYNC_ATTR_SIGNAL));
 
-  fillCpuWaiterAttrList(m_waiterAttrListObj2);
+  m_waiterAttrListObj2 = CreateNvSciSyncCpuWaiterAttrList(m_syncModule);
 
   {
     NvSciSyncAttrList syncAttrListObj2[2];
