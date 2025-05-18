@@ -18,13 +18,13 @@ int main(int argc, char* argv[]) {
     return -1;
   }
 
-  V4L2Camera* cam = new V4L2Camera(argv[1]);
+  V4L2Camera* cam = new V4L2Camera();
   printf("Opening camera %s\n", argv[1]);
-  if (!cam->tryOpenSensor()) {
+
+  if (!cam->tryOpenSensor(argv[1])) {
     printf("Couldn't open sensor\n");
     return -1;
   }
-  
 
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
@@ -33,8 +33,20 @@ int main(int argc, char* argv[]) {
   uint64_t prevTimestamp = 0;
   while(!want_quit) {
     if (!cam->readFrame()) {
+
+      if (want_quit)
+        break; // readFrame() probably failed due to EINTR from ctrl-c
+
       printf("readFrame() returned false\n");
       delayNs(1'000'000'000ULL);
+
+      while (!cam->tryOpenSensor(argv[1])) {
+        if (want_quit)
+          break;
+
+        printf("Couldn't open sensor\n");
+        delayNs(1'000'000'000ULL);
+      }
       continue;
     }
 

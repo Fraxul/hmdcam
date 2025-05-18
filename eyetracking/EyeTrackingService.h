@@ -6,7 +6,7 @@
 #include <boost/atomic.hpp>
 #include <boost/thread.hpp>
 #include <opencv2/core.hpp>
-#include <opencv2/videoio.hpp>
+#include "V4L2Camera.h"
 
 #include "rhi/cuda/CudaUtil.h"
 #include <cuda.h>
@@ -61,8 +61,8 @@ public:
     // Ratelimiting for capture-open attempts
     uint64_t m_lastCaptureOpenAttemptTimeNs = 0; // currentTimeNs
 
-    // OpenCV video capture object
-    cv::VideoCapture m_capture;
+    // Video capture object
+    V4L2Camera m_capture;
 
     // Low-priority CUDA stream and associated NPP context
     CUstream m_cuStream;

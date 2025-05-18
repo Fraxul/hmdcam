@@ -853,18 +853,6 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
   ps.m_processingThreadAlive = true;
 
-  bool doFramePacing = ((int) ps.m_capture.get(cv::CAP_PROP_BACKEND)) == cv::CAP_FFMPEG;
-  double fps = ps.m_capture.get(cv::CAP_PROP_FPS);
-  uint64_t frameTimeNs = 1'000'000'000.0 / fps;
-
-  if (doFramePacing) {
-      printf("EyeTrackingService::eyeProcessingThreadFn(%zu): Frame pacing enabled, FPS = %.3f, target frametime is %luns\n", eyeIdx, fps, frameTimeNs);
-  }
-
-  uint64_t captureStartTimeNs = currentTimeNs();
-  uint64_t frameCount = 0;
-
-  cv::Mat capRgbMat;
   cv::Mat captureMat;
 
   cv::Mat rgbDebugMat;
@@ -873,29 +861,19 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
     if (boost::this_thread::interruption_requested())
       break;
 
-    // Wait for next frame start time, if applicable
-    if (doFramePacing) {
-      uint64_t targetTimeNs = (frameTimeNs * frameCount) + captureStartTimeNs;
-      uint64_t now = currentTimeNs();
-      if (now < targetTimeNs) {
-        delayNs(targetTimeNs - now);
-      }
-    }
-
     // Capture frame
-    if (!ps.m_capture.read(capRgbMat)) {
-      printf("EyeTrackingService::eyeProcessingThreadFn(%zu)::captureWorkerThread: read() returned false, terminating\n", eyeIdx);
+    if (!ps.m_capture.readFrame()) {
+      printf("EyeTrackingService::eyeProcessingThreadFn(%zu)::captureWorkerThread: readFrame() returned false, terminating\n", eyeIdx);
       break;
     }
-    if (capRgbMat.empty()) {
+
+    ps.m_capture.lumaPlane().copyTo(captureMat);
+
+    if (captureMat.empty()) {
       printf("EyeTrackingService::eyeProcessingThreadFn(%zu)::captureWorkerThread: mat is empty, terminating\n", eyeIdx);
       break;
     }
 
-    ++frameCount;
-
-    // Convert capture to greyscale.
-    cv::cvtColor(/*src=*/ capRgbMat, /*dst=*/ captureMat, cv::COLOR_BGR2GRAY);
     ps.m_lastCaptureTimestampNs = currentTimeNs();
 
     // Update the capture center offset, now that we know the frame dimensions.
@@ -1196,7 +1174,6 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
   } // Frame loop
 
-  ps.m_capture.release();
   ps.m_processingThreadAlive = false;
 }
 
@@ -1215,10 +1192,10 @@ bool EyeTrackingService::processFrame() {
         // Try re-starting processing, ratelimited to once a second
         if (deltaTimeMs(ps.m_lastCaptureOpenAttemptTimeNs, currentTimeNs()) > 1000.0f) {
           ps.m_lastCaptureOpenAttemptTimeNs = currentTimeNs();
-          if (ps.m_capture.open(ps.m_inputFilename)) {
+          if (ps.m_capture.tryOpenSensor(ps.m_inputFilename.c_str())) {
             // Capture is open, restart the processing thread
             ps.m_processingThread = boost::thread(boost::bind(&EyeTrackingService::eyeProcessingThreadFn, this, eyeIdx));
-            printf("EyeTrackingService: Successfully opened capture of \"%s\" for eye %zu. Backend: %s\n", ps.m_inputFilename.c_str(), eyeIdx, ps.m_capture.getBackendName().c_str());
+            printf("EyeTrackingService: Successfully opened capture of \"%s\" for eye %zu\n", ps.m_inputFilename.c_str(), eyeIdx);
           }
         }
       }

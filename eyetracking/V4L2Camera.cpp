@@ -11,7 +11,7 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <glob.h>
+#include <poll.h>
 #include <string.h>
 #include "rhi/cuda/CudaUtil.h"
 #include "rhi/RHI.h"
@@ -22,6 +22,8 @@
 #define CHECK_NOT_NULL(x) if ((x) == NULL) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
 #define CHECK_PTR(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed (returned NULL)\n", __FILE__, __LINE__, #x); abort(); }
 #define CleanupPtr(Fn, Obj, ... ) if (Obj != nullptr) { Fn(Obj  ,## __VA_ARGS__); Obj = nullptr; }
+
+#define tryIoctl(req, param) tryIoctl_(req, #req, param)
 
 static const size_t kBufferCount = 4;
 
@@ -79,7 +81,7 @@ NvSciBufAttrList V4L2Camera::populateOutputImageBufAttrList(uint32_t width, uint
 }
 
 
-V4L2Camera::V4L2Camera(const std::string& deviceFn) : m_deviceFn(deviceFn) {
+V4L2Camera::V4L2Camera() {
 #if 0
   // Read offset between TSC (used for V4L2 timestamps) and CLOCK_MONOTONIC_RAW.
   // This shouldn't change unless the system gets suspended and resumed.
@@ -119,65 +121,92 @@ V4L2Camera::V4L2Camera(const std::string& deviceFn) : m_deviceFn(deviceFn) {
 
   NVSCI_CHECK(NvSciSyncModuleOpen(&m_syncModule));
   NVSCI_CHECK(NvSciBufModuleOpen(&m_bufModule));
+}
 
+bool V4L2Camera::tryIoctl_(unsigned long request, const char* requestStr, void *param) {
+  int attempts = 3;
+  const int timeout_ms = 1000;
+
+  while (true) {
+    int result = ioctl(m_fd, request, param);
+
+    if (result != -1)
+      return true; // success
+
+    if (errno != EAGAIN) {
+      // failure
+      fprintf(stderr, "V4L2Camera::tryIoctl(%s): %s\n", requestStr, strerror(errno));
+      return false;
+    }
+
+    // EAGAIN, see if we can retry
+    if (--attempts == 0) {
+      return false;
+    }
+
+    // Wait for up to timeout_ms for the device to become ready
+    struct pollfd pfd = { m_fd, POLLIN, 0 };
+    result = poll(&pfd, 1, timeout_ms);
+    if (result == 0) {
+      // Device didn't become ready in time
+      fprintf(stderr, "V4L2Camera::tryIoctl(%s): timed out\n", requestStr);
+      return false;
+    } else if (result < 0) {
+      // Poll failure (caught signal?)
+      fprintf(stderr, "V4L2Camera::tryIoctl(%s): poll failed: %s\n", requestStr, strerror(errno));
+      return false;
+    }
+  }
+  return true;
 }
 
 
-bool V4L2Camera::tryOpenSensor() {
+bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
   {
     if (m_fd >= 0)
       return true; // Sensor is already open
 
-    m_fd = ::open(m_deviceFn.c_str(), O_RDWR);
+    m_fd = ::open(deviceFn, O_RDWR | O_NONBLOCK);
     if (m_fd < 0) {
-      fprintf(stderr, "open(%s): %s\n", m_deviceFn.c_str(), strerror(errno));
+      fprintf(stderr, "open(%s): %s\n", deviceFn, strerror(errno));
       return false;
     }
 
     struct v4l2_capability vcap;
-    int err = ioctl(m_fd, VIDIOC_QUERYCAP, &vcap);
-    if (err < 0) {
-      fprintf(stderr, "ioctl(%s, VIDIOC_QUERYCAP): %s\n", m_deviceFn.c_str(), strerror(errno));
+    if (!tryIoctl(VIDIOC_QUERYCAP, &vcap))
       goto err;
-    }
 
-    printf("device %s:\n", m_deviceFn.c_str());
+    printf("device %s:\n", deviceFn);
     printf("  driver: %s\n", reinterpret_cast<const char*>(vcap.driver));
     printf("  card: %s\n", reinterpret_cast<const char*>(vcap.card));
     printf("  bus_info: %s\n", reinterpret_cast<const char*>(vcap.bus_info));
 
     // Get pixel format
     m_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if (ioctl(m_fd, VIDIOC_G_FMT, &m_fmt) < 0) {
-      fprintf(stderr, "Failed to get camera output format: %s (%d)\n", strerror(errno), errno);
+    if (!tryIoctl(VIDIOC_G_FMT, &m_fmt))
       goto err;
-    }
 
-    printf("Camera ouput format (before modeset): (%d x %d) pixfmt: %.4s stride: %d, imagesize: %d\n",
+#if 0
+    printf("Camera output format (before modeset): (%d x %d) pixfmt: %.4s stride: %d, imagesize: %d\n",
             m_fmt.fmt.pix.width,
             m_fmt.fmt.pix.height,
             (const char*) (&m_fmt.fmt.pix.pixelformat),
             m_fmt.fmt.pix.bytesperline,
             m_fmt.fmt.pix.sizeimage);
+#endif
 
     // Adjust format
     m_fmt.fmt.pix.width = 1280;
-    m_fmt.fmt.pix.height = 800;
+    m_fmt.fmt.pix.height = 720;
     m_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;
     m_fmt.fmt.pix.bytesperline = 0; // Meaningless for MJPEG
     m_fmt.fmt.pix.sizeimage = 0; // Get the value from the driver
 
-    if (ioctl(m_fd, VIDIOC_S_FMT, &m_fmt) < 0) {
-      fprintf(stderr, "Failed to issue VIDIOC_S_FMT: %s", strerror(errno));
+    // VIDIOC_S_FMT will update the m_fmt struct with the actual selected format.
+    if (!tryIoctl(VIDIOC_S_FMT, &m_fmt))
       goto err;
-    }
 
-    if (ioctl(m_fd, VIDIOC_G_FMT, &m_fmt) < 0) {
-      fprintf(stderr, "Failed to get camera output format: %s (%d)\n", strerror(errno), errno);
-      goto err;
-    }
-
-    printf("Camera ouput format (after modeset): (%d x %d) pixfmt: %.4s stride: %d, imagesize: %d\n",
+    printf("Camera output format (after modeset): (%d x %d) pixfmt: %.4s stride: %d, imagesize: %d\n",
             m_fmt.fmt.pix.width,
             m_fmt.fmt.pix.height,
             (const char*) (&m_fmt.fmt.pix.pixelformat),
@@ -298,10 +327,8 @@ bool V4L2Camera::tryOpenSensor() {
     sp.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
 
-    if (ioctl(m_fd, VIDIOC_G_PARM, &sp) < 0) {
-      fprintf(stderr, "Failed to get stream params: %s (%d)\n", strerror(errno), errno);
+    if (!tryIoctl(VIDIOC_G_PARM, &sp))
       goto err;
-    }
 
     printf("Capture params: caps 0x%x, interval %u/%u, extmode = 0x%x, readbuffers = %u\n",
       sp.parm.capture.capability,
@@ -313,10 +340,8 @@ bool V4L2Camera::tryOpenSensor() {
     sp.parm.capture.timeperframe.numerator = 1;
     sp.parm.capture.timeperframe.denominator = 30;
 
-    if (ioctl(m_fd, VIDIOC_S_PARM, &sp) < 0) {
-      fprintf(stderr, "Failed to set stream params: %s (%d)\n", strerror(errno), errno);
+    if (!tryIoctl(VIDIOC_S_PARM, &sp))
       goto err;
-    }
 
     // Stream params will be updated by the VIDIOC_S_PARM ioctl
     printf("Capture params: caps 0x%x, interval %u/%u, extmode = 0x%x, readbuffers = %u\n",
@@ -333,10 +358,8 @@ bool V4L2Camera::tryOpenSensor() {
     reqbuf.memory = V4L2_MEMORY_MMAP;
     reqbuf.count = kBufferCount;
 
-    if (ioctl(m_fd, VIDIOC_REQBUFS, &reqbuf) < 0) {
-      fprintf(stderr, "VIDIOC_REQBUFS failed: %s\n", strerror(errno));
+    if (!tryIoctl(VIDIOC_REQBUFS, &reqbuf))
       goto err;
-    }
 
     assert(reqbuf.count == kBufferCount);
 
@@ -355,11 +378,10 @@ bool V4L2Camera::tryOpenSensor() {
       b.vbuf.index = bufIdx;
       b.vbuf.type = reqbuf.type;
       b.vbuf.memory = reqbuf.memory;
-      if (ioctl(m_fd, VIDIOC_QUERYBUF, &b.vbuf) < 0) {
-        fprintf(stderr, "VIDIOC_QUERYBUF failed: %s\n", strerror(errno));
+      if (!tryIoctl(VIDIOC_QUERYBUF, &b.vbuf))
         goto err;
-      }
-      printf("buf[%zu].length = %u\n", bufIdx, b.vbuf.length);
+
+      // printf("buf[%zu].length = %u\n", bufIdx, b.vbuf.length);
 
       b.mmap_length = b.vbuf.length;
       b.mmap_ptr = mmap(nullptr, b.mmap_length, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, b.vbuf.m.offset);
@@ -373,58 +395,36 @@ bool V4L2Camera::tryOpenSensor() {
 
     // Queue all buffers
     for (size_t bufferIdx = 0; bufferIdx < m_buffers.size(); ++bufferIdx) {
-      queueBufferAtIndex(bufferIdx);
+      if (!tryIoctl(VIDIOC_QBUF, &m_buffers[bufferIdx].vbuf))
+        goto err;
     }
-
-    // Reset return-buffer index, since we start without any buffers to return
-    m_returnBufferIdx = -1;
 
     // STREAMON
     int streamType = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if (ioctl(m_fd, VIDIOC_STREAMON, &streamType) < 0) {
-      fprintf(stderr, "VIDIOC_STREAMON failed: %s\n", strerror(errno));
+    if (!tryIoctl(VIDIOC_STREAMON, &streamType))
       goto err;
-    }
 
     return true;
   }
 
 err:
-  close(m_fd);
-  m_fd = -1;
+  closeDevice();
   return false;
 }
 
-void V4L2Camera::queueBufferAtIndex(size_t bufferIdx) {
-  auto& buffer = m_buffers[bufferIdx];
-  //buffer.vbuf.index = bufferIdx;
-  //buffer.vbuf.m.offset = 0;
-  //buffer.vbuf.m.userptr = (unsigned long) buffer.bayerCudaPtr;
-  //buffer.vbuf.length = buffer.bayerCudaBufferSize;
-  if (ioctl(m_fd, VIDIOC_QBUF, &buffer.vbuf) < 0) {
-    die("VIDIOC_QBUF failed: %s", strerror(errno));
-  }
-}
-
 bool V4L2Camera::readFrame() {
-  // If there's a buffer to return, do it now
-  if (m_returnBufferIdx >= 0) {
-    queueBufferAtIndex(m_returnBufferIdx);
-    m_returnBufferIdx = -1;
-  }
-
   struct v4l2_buffer dqbuf = {0};
   dqbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   dqbuf.memory = V4L2_MEMORY_MMAP;
-  if (ioctl(m_fd, VIDIOC_DQBUF, &dqbuf) < 0) {
-    fprintf(stderr, "readFrame: %s\n", strerror(errno));
+
+  if (!tryIoctl(VIDIOC_DQBUF, &dqbuf)) {
+    closeDevice();
     return false;
   }
 
   // printf("dqbuf index=%d bytesused=%d\n", dqbuf.index, dqbuf.bytesused);
 
   m_currentBufferIdx = dqbuf.index;
-  m_returnBufferIdx = m_currentBufferIdx; // don't forget to return the buffer!
 
   // Fill out metadata
   m_sensorTimestamp = static_cast<uint64_t>((dqbuf.timestamp.tv_sec * 1'000'000'000ULL) + (dqbuf.timestamp.tv_usec * 1'000ULL)) - m_tscToMonotonicRawOffset;
@@ -446,6 +446,13 @@ bool V4L2Camera::readFrame() {
   // Signal wait events
   NvSciSyncObjSignal(m_signaler);
 
+
+  // We can now return the buffer, since NvMediaIJPDRenderYUV copies the bitstream internally before it returns.
+  if (!tryIoctl(VIDIOC_QBUF, &b.vbuf)) {
+    closeDevice();
+    return false;
+  }
+
   // Wait for operations to finish and bring output buffer to CPU.
   NVMEDIA_CHECK(NvMediaIJPDGetEOFNvSciSyncFence(m_ijpd, m_waiter, &m_eofFence));
   NVSCI_CHECK(NvSciSyncFenceWait(&m_eofFence, m_cpuWaitCtx, -1));
@@ -465,14 +472,30 @@ bool V4L2Camera::readFrame() {
   return true;
 }
 
+void V4L2Camera::closeDevice() {
+  // MMAP buffers must be unmapped for the device handle to close cleanly
+  for (size_t bufferIdx = 0; bufferIdx < m_buffers.size(); ++bufferIdx) {
+    Buffer& b = m_buffers[bufferIdx];
+    if (b.mmap_ptr) {
+      munmap(b.mmap_ptr, b.mmap_length);
+      b.mmap_ptr = nullptr;
+    }
+  }
+  m_buffers.clear();
+
+  if (m_fd >= 0) {
+    ::close(m_fd);
+    m_fd = -1;
+  }
+}
+
 V4L2Camera::~V4L2Camera() {
-  int streamType = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (ioctl(m_fd, VIDIOC_STREAMOFF, &streamType) < 0) {
-    fprintf(stderr, "VIDIOC_STREAMOFF failed: %s", strerror(errno));
+  if (m_fd >= 0) {
+    int streamType = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    tryIoctl(VIDIOC_STREAMOFF, &streamType);
   }
 
-  if (m_fd >= 0)
-    ::close(m_fd);
+  closeDevice();
 
   if (m_signaler)
     NvMediaIJPDUnregisterNvSciSyncObj(m_ijpd, m_signaler);
