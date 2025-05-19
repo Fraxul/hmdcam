@@ -114,7 +114,8 @@ std::pair<Eigen::Matrix<Scalar, 3, 1>, Eigen::Matrix<Scalar, 3, 1>> intersect(co
 
     typedef typename Eigen::ParametrizedLine<Scalar, 3>::VectorType Vector;
 
-    assert(std::abs(line.direction().norm() - 1) < 0.0001);
+    if (std::abs(line.direction().norm() - 1) > 0.0001)
+      throw no_intersection_exception(line, sphere); // Invalid line def, can't intersect
 
     Vector v = line.direction();
     // Put p at origin
