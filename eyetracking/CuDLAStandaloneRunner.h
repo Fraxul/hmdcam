@@ -2,12 +2,11 @@
 
 #include <boost/noncopyable.hpp>
 #include <vector>
+#include <cassert>
 #include "cudla.h"
 #include "nvscibuf.h"
 #include "nvscierror.h"
 #include "nvscisync.h"
-
-
 
 class CuDLAStandaloneRunner : boost::noncopyable {
 public:
@@ -16,32 +15,43 @@ public:
 
   void runInference();
 
+/*
+typedef struct cudlaModuleTensorDescriptor_t {
+    char name[CUDLA_RUNTIME_TENSOR_DESC_NAME_MAX_LEN + 1];
+    uint64_t size;
+    uint64_t n;
+    uint64_t c;
+    uint64_t h;
+    uint64_t w;
+    uint8_t dataFormat;
+    uint8_t dataType;
+    uint8_t dataCategory;
+    uint8_t pixelFormat;
+    uint8_t pixelMapping;
+    uint32_t stride[CUDLA_LOADABLE_TENSOR_DESC_NUM_STRIDES];
+} cudlaModuleTensorDescriptor;
+*/
+
+  size_t inputTensorCount() const { return m_inputTensorDesc.size(); }
+  const cudlaModuleTensorDescriptor& inputTensorDescriptor(size_t idx) const { return m_inputTensorDesc[idx]; }
+  template <typename T = void> T* inputTensorPtr(size_t idx) const { assert(idx == 0); return reinterpret_cast<T*>(m_inputBufObjBuffer); }
+
+  size_t outputTensorCount() const { return m_outputTensorDesc.size(); }
+  const cudlaModuleTensorDescriptor& outputTensorDescriptor(size_t idx) const { return m_inputTensorDesc[idx]; }
+  template <typename T = void> T* outputTensorPtr(size_t idx) const { assert(idx == 0); return reinterpret_cast<T*>(m_outputBufObjBuffer); }
+
 protected:
   cudlaDevHandle               m_devHandle = nullptr;
   cudlaModule                  m_moduleHandle = nullptr;
   NvSciBufObj                  m_inputBufObj = nullptr;
   NvSciBufObj                  m_outputBufObj = nullptr;
   NvSciBufModule               m_bufModule = nullptr;
-  NvSciBufAttrList             m_inputAttrList = nullptr;
-  NvSciBufAttrList             m_reconciledInputAttrList = nullptr;
-  NvSciBufAttrList             m_inputConflictList = nullptr;
-  NvSciBufAttrList             m_outputAttrList = nullptr;
-  NvSciBufAttrList             m_reconciledOutputAttrList = nullptr;
-  NvSciBufAttrList             m_outputConflictList = nullptr;
   NvSciSyncObj                 m_syncObj1 = nullptr;
   NvSciSyncObj                 m_syncObj2 = nullptr;
   NvSciSyncModule              m_syncModule = nullptr;
   NvSciSyncFence               m_preFence = NvSciSyncFenceInitializer;
   NvSciSyncFence               m_eofFence = NvSciSyncFenceInitializer;
-  NvSciSyncCpuWaitContext      m_nvSciCtx = nullptr;
-  NvSciSyncAttrList            m_waiterAttrListObj1 = nullptr;
-  NvSciSyncAttrList            m_signalerAttrListObj1 = nullptr;
-  NvSciSyncAttrList            m_waiterAttrListObj2 = nullptr;
-  NvSciSyncAttrList            m_signalerAttrListObj2 = nullptr;
-  NvSciSyncAttrList            m_nvSciSyncConflictListObj1 = nullptr;
-  NvSciSyncAttrList            m_nvSciSyncReconciledListObj1 = nullptr;
-  NvSciSyncAttrList            m_nvSciSyncConflictListObj2 = nullptr;
-  NvSciSyncAttrList            m_nvSciSyncReconciledListObj2 = nullptr;
+  NvSciSyncCpuWaitContext      m_cpuWaitCtx = nullptr;
   std::vector<cudlaModuleTensorDescriptor> m_inputTensorDesc;
   std::vector<cudlaModuleTensorDescriptor> m_outputTensorDesc;
 

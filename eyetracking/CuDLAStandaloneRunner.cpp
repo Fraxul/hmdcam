@@ -55,17 +55,17 @@ static void printTensorDesc(const std::vector<cudlaModuleTensorDescriptor>& tens
     printf("\tTENSOR %zu NAME : %s\n", idx, desc.name);
     printf("\tsize: %lu\n", desc.size);
 
-    printf("\tdims: [%lu, %lu, %lu, %lu]\n", desc.n, desc.c, desc.h, desc.w);
+    printf("\tdims [n,c,h,w]: [%lu, %lu, %lu, %lu]\n", desc.n, desc.c, desc.h, desc.w);
 
     printf("\tdata fmt: %d\n", desc.dataFormat);
     printf("\tdata type: %d\n", desc.dataType);
     printf("\tdata category: %d\n", desc.dataCategory);
     printf("\tpixel fmt: %d\n", desc.pixelFormat);
     printf("\tpixel mapping: %d\n", desc.pixelMapping);
-    printf("\tstride[0]: %d\n", desc.stride[0]);
-    printf("\tstride[1]: %d\n", desc.stride[1]);
-    printf("\tstride[2]: %d\n", desc.stride[2]);
-    printf("\tstride[3]: %d\n", desc.stride[3]);
+    printf("\tstride[0] (w): %d\n", desc.stride[0]);
+    printf("\tstride[1] (h): %d\n", desc.stride[1]);
+    printf("\tstride[2] (c): %d\n", desc.stride[2]);
+    printf("\tstride[3] (n): %d\n", desc.stride[3]);
   }
 }
 
@@ -78,43 +78,31 @@ CuDLAStandaloneRunner::~CuDLAStandaloneRunner() {
 
   CleanupPtr(NvSciBufObjFree, m_inputBufObj);
   CleanupPtr(NvSciBufObjFree, m_outputBufObj);
-  CleanupPtr(NvSciBufAttrListFree, m_reconciledInputAttrList);
-  CleanupPtr(NvSciBufAttrListFree, m_inputConflictList);
-  CleanupPtr(NvSciBufAttrListFree, m_inputAttrList);
-  CleanupPtr(NvSciBufAttrListFree, m_reconciledOutputAttrList);
-  CleanupPtr(NvSciBufAttrListFree, m_outputConflictList);
-  CleanupPtr(NvSciBufAttrListFree, m_outputAttrList);
-  CleanupPtr(NvSciBufModuleClose, m_bufModule);
 
-  NvSciSyncFenceClear(&(m_preFence));
-  NvSciSyncFenceClear(&(m_eofFence));
+  NvSciSyncFenceClear(&m_preFence);
+  NvSciSyncFenceClear(&m_eofFence);
+
+  if (m_nvSciSyncObjRegPtr1)
+    CUDLA_CHECK_NONFATAL(cudlaMemUnregister(m_devHandle, m_nvSciSyncObjRegPtr1));
+
+  if (m_nvSciSyncObjRegPtr2)
+    CUDLA_CHECK_NONFATAL(cudlaMemUnregister(m_devHandle, m_nvSciSyncObjRegPtr2));
 
   CleanupPtr(NvSciSyncObjFree, m_syncObj1);
   CleanupPtr(NvSciSyncObjFree, m_syncObj2);
-  CleanupPtr(NvSciSyncAttrListFree, m_nvSciSyncConflictListObj1);
-  CleanupPtr(NvSciSyncAttrListFree, m_nvSciSyncReconciledListObj1);
-  CleanupPtr(NvSciSyncAttrListFree, m_nvSciSyncConflictListObj2);
-  CleanupPtr(NvSciSyncAttrListFree, m_nvSciSyncReconciledListObj2);
-  CleanupPtr(NvSciSyncAttrListFree, m_signalerAttrListObj1);
-  CleanupPtr(NvSciSyncAttrListFree, m_waiterAttrListObj1);
-  CleanupPtr(NvSciSyncAttrListFree, m_signalerAttrListObj2);
-  CleanupPtr(NvSciSyncAttrListFree, m_waiterAttrListObj2);
-  CleanupPtr(NvSciSyncCpuWaitContextFree, m_nvSciCtx);
-  CleanupPtr(NvSciSyncModuleClose, m_syncModule);
-
-  if (m_nvSciSyncObjRegPtr1)
-    cudlaMemUnregister(m_devHandle, m_nvSciSyncObjRegPtr1);
-
-  if (m_nvSciSyncObjRegPtr2)
-    cudlaMemUnregister(m_devHandle, m_nvSciSyncObjRegPtr2);
+  CleanupPtr(NvSciSyncCpuWaitContextFree, m_cpuWaitCtx);
 
   CleanupPtr(cudlaModuleUnload, m_moduleHandle, 0);
   CleanupPtr(cudlaDestroyDevice, m_devHandle);
+
+  CleanupPtr(NvSciBufModuleClose, m_bufModule);
+  CleanupPtr(NvSciSyncModuleClose, m_syncModule);
 }
 
-void createAndSetAttrList(NvSciBufModule module, uint64_t bufSize, NvSciBufAttrList *attrList)
+NvSciBufAttrList createTensorBufAttrList(NvSciBufModule module, uint64_t bufSize)
 {
-  NVSCI_CHECK(NvSciBufAttrListCreate(module, attrList));
+  NvSciBufAttrList attrList = nullptr;
+  NVSCI_CHECK(NvSciBufAttrListCreate(module, &attrList));
 
   bool                      needCpuAccess = true;
   NvSciBufAttrValAccessPerm perm          = NvSciBufAccessPerm_ReadWrite;
@@ -136,145 +124,147 @@ void createAndSetAttrList(NvSciBufModule module, uint64_t bufSize, NvSciBufAttrL
       {.key = NvSciBufGeneralAttrKey_NeedCpuAccess, .value = &needCpuAccess, .len = sizeof(needCpuAccess)}};
   size_t length = sizeof(setAttrs) / sizeof(NvSciBufAttrKeyValuePair);
 
-  NVSCI_CHECK(NvSciBufAttrListSetAttrs(*attrList, setAttrs, length));
+  NVSCI_CHECK(NvSciBufAttrListSetAttrs(attrList, setAttrs, length));
+  return attrList;
 }
 
 CuDLAStandaloneRunner::CuDLAStandaloneRunner(uint64_t deviceIdx, const char* engineFile) {
   mmfile fp(engineFile);
 
+  NVSCI_CHECK(NvSciBufModuleOpen(&m_bufModule));
+  NVSCI_CHECK(NvSciSyncModuleOpen(&m_syncModule));
+
   CUDLA_CHECK(cudlaCreateDevice(deviceIdx, &m_devHandle, CUDLA_STANDALONE));
   CUDLA_CHECK(cudlaModuleLoadFromMemory(m_devHandle, reinterpret_cast<const uint8_t*>(fp.data()), fp.size(), &m_moduleHandle, 0));
 
   // Get tensor attributes.
-  cudlaModuleAttribute attribute;
-
-  CUDLA_CHECK(cudlaModuleGetAttributes(m_moduleHandle, CUDLA_NUM_INPUT_TENSORS, &attribute));
-
-  uint32_t numInputTensors = attribute.numInputTensors;
-  printf("numInputTensors = %d\n", numInputTensors);
-
-  CUDLA_CHECK(cudlaModuleGetAttributes(m_moduleHandle, CUDLA_NUM_OUTPUT_TENSORS, &attribute));
-  uint32_t numOutputTensors = attribute.numOutputTensors;
-  printf("numOutputTensors = %d\n", numOutputTensors);
-
-  m_inputTensorDesc.resize(numInputTensors);
-  m_outputTensorDesc.resize(numOutputTensors);
-
-  attribute.inputTensorDesc = m_inputTensorDesc.data();
-  CUDLA_CHECK(cudlaModuleGetAttributes(m_moduleHandle, CUDLA_INPUT_TENSOR_DESCRIPTORS, &attribute));
-
-  printf("Printing input tensor descriptor\n");
-  printTensorDesc(m_inputTensorDesc);
-
-  attribute.outputTensorDesc = m_outputTensorDesc.data();
-  CUDLA_CHECK(cudlaModuleGetAttributes(m_moduleHandle, CUDLA_OUTPUT_TENSOR_DESCRIPTORS, &attribute));
-
-  printf("Printing output tensor descriptor\n");
-  printTensorDesc(m_outputTensorDesc);
-
-  NVSCI_CHECK(NvSciBufModuleOpen(&m_bufModule));
-
-  // creating and setting input attribute list
-  createAndSetAttrList(m_bufModule, m_inputTensorDesc[0].size, &m_inputAttrList);
-
-
-  NVSCI_CHECK(NvSciBufAttrListReconcile(&m_inputAttrList, 1, &m_reconciledInputAttrList, &m_inputConflictList));
-
-  // creating and setting output attribute list
-  createAndSetAttrList(m_bufModule, m_outputTensorDesc[0].size, &m_outputAttrList);
-
-
-  NVSCI_CHECK(NvSciBufAttrListReconcile(&m_outputAttrList, 1, &m_reconciledOutputAttrList, &m_outputConflictList));
-
-  NVSCI_CHECK(NvSciBufObjAlloc(m_reconciledInputAttrList, &m_inputBufObj));
-
-  NVSCI_CHECK(NvSciBufObjAlloc(m_reconciledOutputAttrList, &m_outputBufObj));
-
-  // importing external memory
-  cudlaExternalMemoryHandleDesc memDesc = {0};
-  memset(&memDesc, 0, sizeof(memDesc));
-  memDesc.extBufObject = (void *)m_inputBufObj;
-  memDesc.size         = m_inputTensorDesc[0].size;
-  CUDLA_CHECK(cudlaImportExternalMemory(m_devHandle, &memDesc, &m_inputBufObjRegPtr, 0));
-
-  NVSCI_CHECK(NvSciBufObjGetCpuPtr(m_inputBufObj, &m_inputBufObjBuffer));
-
-  memset(&memDesc, 0, sizeof(memDesc));
-  memDesc.extBufObject = (void *)m_outputBufObj;
-  memDesc.size         = m_outputTensorDesc[0].size;
-  CUDLA_CHECK(cudlaImportExternalMemory(m_devHandle, &memDesc, &m_outputBufObjRegPtr, 0));
-
-  NVSCI_CHECK(NvSciBufObjGetCpuPtr(m_outputBufObj, &m_outputBufObjBuffer));
-
-  NVSCI_CHECK(NvSciSyncModuleOpen(&m_syncModule));
-  NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &m_waiterAttrListObj1));
-  CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(m_waiterAttrListObj1), CUDLA_NVSCISYNC_ATTR_WAIT));
-  m_signalerAttrListObj1 = CreateNvSciSyncCpuSignalerAttrList(m_syncModule);
-
   {
-    NvSciSyncAttrList  syncAttrListObj1[2];
-    syncAttrListObj1[0] = m_signalerAttrListObj1;
-    syncAttrListObj1[1] = m_waiterAttrListObj1;
-    NVSCI_CHECK(NvSciSyncAttrListReconcile(syncAttrListObj1, 2, &m_nvSciSyncReconciledListObj1, &m_nvSciSyncConflictListObj1));
+    cudlaModuleAttribute attribute;
+
+    CUDLA_CHECK(cudlaModuleGetAttributes(m_moduleHandle, CUDLA_NUM_INPUT_TENSORS, &attribute));
+
+    uint32_t numInputTensors = attribute.numInputTensors;
+    printf("numInputTensors = %d\n", numInputTensors);
+
+    CUDLA_CHECK(cudlaModuleGetAttributes(m_moduleHandle, CUDLA_NUM_OUTPUT_TENSORS, &attribute));
+    uint32_t numOutputTensors = attribute.numOutputTensors;
+    printf("numOutputTensors = %d\n", numOutputTensors);
+
+    m_inputTensorDesc.resize(numInputTensors);
+    m_outputTensorDesc.resize(numOutputTensors);
+
+    attribute.inputTensorDesc = m_inputTensorDesc.data();
+    CUDLA_CHECK(cudlaModuleGetAttributes(m_moduleHandle, CUDLA_INPUT_TENSOR_DESCRIPTORS, &attribute));
+
+    printf("Input tensor descriptor:\n");
+    printTensorDesc(m_inputTensorDesc);
+
+    attribute.outputTensorDesc = m_outputTensorDesc.data();
+    CUDLA_CHECK(cudlaModuleGetAttributes(m_moduleHandle, CUDLA_OUTPUT_TENSOR_DESCRIPTORS, &attribute));
+
+    printf("Output tensor descriptor:\n");
+    printTensorDesc(m_outputTensorDesc);
   }
 
-  NVSCI_CHECK(NvSciSyncObjAlloc(m_nvSciSyncReconciledListObj1, &m_syncObj1));
-
-  NVSCI_CHECK(NvSciSyncCpuWaitContextAlloc(m_syncModule, &m_nvSciCtx));
-
-  NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &m_signalerAttrListObj2));
-
-  CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(m_signalerAttrListObj2), CUDLA_NVSCISYNC_ATTR_SIGNAL));
-
-  m_waiterAttrListObj2 = CreateNvSciSyncCpuWaiterAttrList(m_syncModule);
-
+  // Create NvSci I/O buffers
   {
-    NvSciSyncAttrList syncAttrListObj2[2];
-    syncAttrListObj2[0] = m_signalerAttrListObj2;
-    syncAttrListObj2[1] = m_waiterAttrListObj2;
-    NVSCI_CHECK(NvSciSyncAttrListReconcile(syncAttrListObj2, 2, &m_nvSciSyncReconciledListObj2, &m_nvSciSyncConflictListObj2));
+    NvSciBufAttrList reconciledInputAttrList = ReconcileNvSciBufAttrLists(createTensorBufAttrList(m_bufModule, m_inputTensorDesc[0].size));
+    NvSciBufAttrList reconciledOutputAttrList = ReconcileNvSciBufAttrLists(createTensorBufAttrList(m_bufModule, m_outputTensorDesc[0].size));
+
+    NVSCI_CHECK(NvSciBufObjAlloc(reconciledInputAttrList, &m_inputBufObj));
+    NVSCI_CHECK(NvSciBufObjAlloc(reconciledOutputAttrList, &m_outputBufObj));
+
+    NvSciBufAttrListFree(reconciledInputAttrList);
+    NvSciBufAttrListFree(reconciledOutputAttrList);
   }
 
-  NVSCI_CHECK(NvSciSyncObjAlloc(m_nvSciSyncReconciledListObj2, &m_syncObj2));
+  // Import NvSci I/O buffers as external memory
+  {
+    cudlaExternalMemoryHandleDesc memDesc = {0};
+    memset(&memDesc, 0, sizeof(memDesc));
+    memDesc.extBufObject = (void *)m_inputBufObj;
+    memDesc.size         = m_inputTensorDesc[0].size;
+    CUDLA_CHECK(cudlaImportExternalMemory(m_devHandle, &memDesc, &m_inputBufObjRegPtr, 0));
 
-  // importing external semaphore
-  cudlaExternalSemaphoreHandleDesc semaMemDesc         = {0};
-  memset(&semaMemDesc, 0, sizeof(semaMemDesc));
-  semaMemDesc.extSyncObject = m_syncObj1;
-  CUDLA_CHECK(cudlaImportExternalSemaphore(m_devHandle, &semaMemDesc, &m_nvSciSyncObjRegPtr1, 0));
+    NVSCI_CHECK(NvSciBufObjGetCpuPtr(m_inputBufObj, &m_inputBufObjBuffer));
 
-  memset(&semaMemDesc, 0, sizeof(semaMemDesc));
-  semaMemDesc.extSyncObject = m_syncObj2;
-  CUDLA_CHECK(cudlaImportExternalSemaphore(m_devHandle, &semaMemDesc, &m_nvSciSyncObjRegPtr2, 0));
+    memset(&memDesc, 0, sizeof(memDesc));
+    memDesc.extBufObject = (void *)m_outputBufObj;
+    memDesc.size         = m_outputTensorDesc[0].size;
+    CUDLA_CHECK(cudlaImportExternalMemory(m_devHandle, &memDesc, &m_outputBufObjRegPtr, 0));
+
+    NVSCI_CHECK(NvSciBufObjGetCpuPtr(m_outputBufObj, &m_outputBufObjBuffer));
+  }
+
+  // Create NvSci Sync objects
+  {
+    NvSciSyncAttrList waiterAttrList = nullptr;
+    NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &waiterAttrList));
+    CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(waiterAttrList), CUDLA_NVSCISYNC_ATTR_WAIT));
+    NvSciSyncAttrList cudlaWaiterSyncAttrList = ReconcileNvSciSyncAttrLists(waiterAttrList, CreateNvSciSyncCpuSignalerAttrList(m_syncModule));
+
+    NVSCI_CHECK(NvSciSyncObjAlloc(cudlaWaiterSyncAttrList, &m_syncObj1));
+    NVSCI_CHECK(NvSciSyncCpuWaitContextAlloc(m_syncModule, &m_cpuWaitCtx));
+
+    NvSciSyncAttrListFree(cudlaWaiterSyncAttrList);
+
+  }
+
+  {
+    NvSciSyncAttrList signalerAttrList = nullptr;
+    NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &signalerAttrList));
+    CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(signalerAttrList), CUDLA_NVSCISYNC_ATTR_SIGNAL));
+
+    NvSciSyncAttrList cudlaSignalerSyncAttrList = ReconcileNvSciSyncAttrLists(signalerAttrList, CreateNvSciSyncCpuWaiterAttrList(m_syncModule));
+
+    NVSCI_CHECK(NvSciSyncObjAlloc(cudlaSignalerSyncAttrList, &m_syncObj2));
+
+    NvSciSyncAttrListFree(cudlaSignalerSyncAttrList);
+  }
+
+  // Import NvSci Sync objects as external semaphores
+  {
+    cudlaExternalSemaphoreHandleDesc semaMemDesc         = {0};
+    memset(&semaMemDesc, 0, sizeof(semaMemDesc));
+    semaMemDesc.extSyncObject = m_syncObj1;
+    CUDLA_CHECK(cudlaImportExternalSemaphore(m_devHandle, &semaMemDesc, &m_nvSciSyncObjRegPtr1, 0));
+
+    memset(&semaMemDesc, 0, sizeof(semaMemDesc));
+    semaMemDesc.extSyncObject = m_syncObj2;
+    CUDLA_CHECK(cudlaImportExternalSemaphore(m_devHandle, &semaMemDesc, &m_nvSciSyncObjRegPtr2, 0));
+  }
 
   // Wait events
-  m_preFence = NvSciSyncFenceInitializer;
-  NVSCI_CHECK(NvSciSyncObjGenerateFence(m_syncObj1, &m_preFence));
+  {
+    m_preFence = NvSciSyncFenceInitializer;
+    NVSCI_CHECK(NvSciSyncObjGenerateFence(m_syncObj1, &m_preFence));
 
-  memset(&m_waitEvents, 0, sizeof(m_waitEvents));
-  m_waitEvents.numEvents = 1;
+    memset(&m_waitEvents, 0, sizeof(m_waitEvents));
+    m_waitEvents.numEvents = 1;
 
-  memset(m_preFences, 0, sizeof(m_preFences));
+    memset(m_preFences, 0, sizeof(m_preFences));
 
-  m_preFences[0].fence      = &m_preFence;
-  m_preFences[0].type       = CUDLA_NVSCISYNC_FENCE;
+    m_preFences[0].fence      = &m_preFence;
+    m_preFences[0].type       = CUDLA_NVSCISYNC_FENCE;
 
-  m_waitEvents.preFences = m_preFences;
+    m_waitEvents.preFences = m_preFences;
+  }
 
   // Signal Events
-  memset(m_signalEventDevPtrs, 0, sizeof(m_signalEventDevPtrs));
+  {
+    memset(m_signalEventDevPtrs, 0, sizeof(m_signalEventDevPtrs));
 
-  m_signalEventDevPtrs[0]            = m_nvSciSyncObjRegPtr2;
+    m_signalEventDevPtrs[0]            = m_nvSciSyncObjRegPtr2;
 
-  memset(&m_signalEvents, 0, sizeof(m_signalEvents));
-  m_signalEvents.numEvents = 1;
-  m_signalEvents.devPtrs = m_signalEventDevPtrs;
-  m_signalEvents.eofFences = m_eofFences;
+    memset(&m_signalEvents, 0, sizeof(m_signalEvents));
+    m_signalEvents.numEvents = 1;
+    m_signalEvents.devPtrs = m_signalEventDevPtrs;
+    m_signalEvents.eofFences = m_eofFences;
 
-  m_eofFence = NvSciSyncFenceInitializer;
-  m_eofFences[0].fence = &m_eofFence;
-  m_eofFences[0].type  = CUDLA_NVSCISYNC_FENCE;
-
+    m_eofFence = NvSciSyncFenceInitializer;
+    m_eofFences[0].fence = &m_eofFence;
+    m_eofFences[0].type  = CUDLA_NVSCISYNC_FENCE;
+  }
 
   // Setup task struct, since it'll always be the same
   m_task.moduleHandle     = m_moduleHandle;
@@ -288,18 +278,18 @@ CuDLAStandaloneRunner::CuDLAStandaloneRunner(uint64_t deviceIdx, const char* eng
 
 
 void CuDLAStandaloneRunner::runInference() {
-    // Enqueue a cuDLA task.
-    CUDLA_CHECK(cudlaSubmitTask(m_devHandle, &m_task, 1, NULL, 0));
+  // Enqueue a cuDLA task.
+  CUDLA_CHECK(cudlaSubmitTask(m_devHandle, &m_task, 1, NULL, 0));
 
-    // XXX copy input data to inputBufObjBuffer
-    // memcpy(inputBufObjBuffer, inputBuffer, inputTensorDesc[0].size);
+  // XXX copy input data to inputBufObjBuffer
+  // memcpy(inputBufObjBuffer, inputBuffer, inputTensorDesc[0].size);
 
-    // Signal wait events
-    NvSciSyncObjSignal(m_syncObj1);
+  // Signal wait events
+  NvSciSyncObjSignal(m_syncObj1);
 
-    // Wait for operations to finish and bring output buffer to CPU.
-    NVSCI_CHECK(NvSciSyncFenceWait(reinterpret_cast<NvSciSyncFence *>(m_signalEvents.eofFences[0].fence), m_nvSciCtx, -1));
+  // Wait for operations to finish and bring output buffer to CPU.
+  NVSCI_CHECK(NvSciSyncFenceWait(reinterpret_cast<NvSciSyncFence *>(m_signalEvents.eofFences[0].fence), m_cpuWaitCtx, -1));
 
-    // Output is available in outputBufObjBuffer.
+  // Output is available in outputBufObjBuffer.
 }
 

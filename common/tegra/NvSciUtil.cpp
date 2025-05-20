@@ -66,6 +66,26 @@ NvSciSyncAttrList CreateNvSciSyncCpuWaiterAttrList(NvSciSyncModule syncModule) {
   return list;
 }
 
+
+void DumpNvSciBufAttrList(NvSciBufAttrList list) {
+#if 0
+  for (uint32_t key = NvSciBufAttrKey_LowerBound; key < NvSciBufAttrKey_UpperBound; ++key) {
+    const void* buf = nullptr;
+    size_t len = 0;
+    if (NvSciBufAttrListGetAttr(list, (NvSciBufAttrKey) key, &buf, &len) == NvSciError_Success && buf != nullptr && len != 0) {
+      // TODO: Implement NvSciBufAttrKey_toString
+      fprintf(stderr, "  %08x: ", key);
+      for (size_t i = 0; i < len; ++i) {
+        fprintf(stderr, "%02x ", reinterpret_cast<const char*>(buf)[i]);
+      }
+      fprintf(stderr, "\n");
+    }
+  }
+#else
+  fprintf(stderr, "DumpNvSciBufAttrList(%p): TODO: Not implemented\n", list);
+#endif
+}
+
 const char* NvSciSyncAttrKey_toString(NvSciSyncAttrKey k) {
   static char defaultBuf[32];
   switch (k) {
@@ -130,3 +150,37 @@ NvSciSyncAttrList ReconcileNvSciSyncAttrLists(NvSciSyncAttrList list1, NvSciSync
 
   return reconciledList;
 }
+
+NvSciBufAttrList ReconcileNvSciBufAttrLists(NvSciBufAttrList list1, NvSciBufAttrList list2) {
+  NvSciBufAttrList reconciledList = nullptr, conflictList = nullptr;
+  NvSciBufAttrList lists[2];
+  lists[0] = list1;
+  lists[1] = list2;
+
+  NvSciError err = NvSciBufAttrListReconcile(lists, (list2 == nullptr) ? 1 : 2, &reconciledList, &conflictList);
+
+  if (err == NvSciError_ReconciliationFailed) {
+    fprintf(stderr, "ReconcileNvSciBufAttrLists reconciliation failed.\n");
+    fprintf(stderr, "list1:\n");
+    DumpNvSciBufAttrList(list1);
+
+    if (list2 != nullptr) {
+      fprintf(stderr, "list2:\n");
+      DumpNvSciBufAttrList(list2);
+    }
+
+    fprintf(stderr, "Conflicting attributes:\n");
+    DumpNvSciBufAttrList(conflictList);
+
+    abort();
+  } else if (err != NvSciError_Success) {
+    fprintf(stderr, "ReconcileNvSciBufAttrLists reconciliation failed with NvSciError 0x%x\n", err);
+    abort();
+  }
+  NvSciBufAttrListFree(list1);
+  if (list2 != nullptr)
+    NvSciBufAttrListFree(list2);
+
+  return reconciledList;
+}
+
