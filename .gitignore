@@ -10,4 +10,5 @@ bin
 build
 *.pyc
 imgui.ini
+captures
 

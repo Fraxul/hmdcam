@@ -41,6 +41,8 @@ public:
 
   bool processFrame(); // Called from main thread
 
+  void requestCapture();
+
   glm::vec2 getPitchYawAnglesForEye(size_t eyeIdx);
 
   cv::Mat& getDebugViewForEye(size_t eyeIdx, bool withOverlayDrawing);
@@ -56,6 +58,8 @@ public:
 
     bool m_processingThreadAlive = false;
     uint64_t m_lastCaptureTimestampNs = 0; // currentTimeNs
+
+    uint32_t m_captureFileIndex = 0; // Set to non-zero to one-shot capture to a file
 
     std::string m_inputFilename;
     // Ratelimiting for capture-open attempts
@@ -247,5 +251,7 @@ protected:
   // names are owned by m_roiEngine, don't delete
   const char* m_roiInputTensorName = nullptr;
   const char* m_roiOutputTensorName = nullptr;
+
+  uint32_t m_nextCaptureIndex = 0;
 };
 

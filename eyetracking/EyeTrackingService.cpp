@@ -4,6 +4,7 @@
 #include "common/mmfile.h"
 #include "imgui.h"
 #include "SingleEyeFitter/projection.h"
+#include "stb/stb_image_write.h"
 #include <cuda.h>
 #include <npp.h>
 #include <opencv2/core.hpp>
@@ -23,6 +24,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <math.h>
+#include <dirent.h>
 
 #if 0
 #define FRAME_DEBUG_LOG printf
@@ -31,6 +33,12 @@
 #endif
 
 const char* calibrationFilename = "eyetracking-calibration.yml";
+
+const char* kCaptureDirName = "captures";
+
+const char* kCaptureFilePattern = "%s/%06d.png";
+const size_t kCaptureFilePatternLen = /*field length from kCaptureFilePattern=*/ 6 + /*strlen(".png")=*/ 4;
+
 
 static inline glm::vec2 toGlm(const cv::Point2f& p) { return glm::vec2(p.x, p.y); }
 static inline cv::Point2f toCv(const glm::vec2& p) { return cv::Point2f(p[0], p[1]); }
@@ -869,6 +877,22 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
     ps.m_capture.lumaPlane().copyTo(captureMat);
 
+    // Save capture to disk if requested
+    if (ps.m_captureFileIndex) {
+      char fnbuf[256];
+      snprintf(fnbuf, 255, kCaptureFilePattern, kCaptureDirName, ps.m_captureFileIndex);
+      fnbuf[255] = '\0';
+
+      if (stbi_write_png(fnbuf, captureMat.cols, captureMat.rows, /*components=*/ captureMat.channels(), captureMat.ptr(), /*rowBytes=*/ captureMat.step)) {
+        printf("EyeTrackingService::eyeProcessingThreadFn(%zu): wrote capture to file %s\n", eyeIdx, fnbuf);
+      } else {
+        printf("EyeTrackingService::eyeProcessingThreadFn(%zu): failed to write capture to file %s\n", eyeIdx, fnbuf);
+      }
+
+      // Reset capture index after writing one-shot
+      ps.m_captureFileIndex = 0;
+    }
+
     if (captureMat.empty()) {
       printf("EyeTrackingService::eyeProcessingThreadFn(%zu)::captureWorkerThread: mat is empty, terminating\n", eyeIdx);
       break;
@@ -1282,5 +1306,56 @@ glm::vec2 EyeTrackingService::getPitchYawAnglesForEye(size_t eyeIdx) {
   anglesToVector<float>(glm::radians(m_rollOffsetDeg[eyeIdx]), glm::radians(angles[0]), glm::radians(angles[1]), glm::value_ptr(rollCorrectionVector));
   vectorToAngles<float>(glm::value_ptr(rollCorrectionVector), angles[0], angles[1], /*toDegrees=*/ true);
   return angles;
+}
+
+
+void EyeTrackingService::requestCapture() {
+  if (m_nextCaptureIndex == 0) {
+
+    // First request of a capture.
+
+    // Make sure the target directory exists
+    if (mkdir(kCaptureDirName, 0777) < 0) {
+      // EEXIST is ok, anything else is fatal
+      if (errno != EEXIST) {
+        printf("EyeTrackingService::requestCapture(): can't create capture directory \"%s\": %s\n", kCaptureDirName, strerror(errno));
+        return;
+      }
+    }
+
+    // find the last file ID that was written there to avoid overwriting anything.
+    DIR* dir = opendir(kCaptureDirName);
+    if (!dir) {
+      printf("EyeTrackingService::requestCapture(): can't open capture directory \"%s\": %s\n", kCaptureDirName, strerror(errno));
+      return;
+    }
+
+    // We were at least able to open the directory. m_nextCaptureIndex starts at 1 so we don't do it twice on an empty directory.
+    m_nextCaptureIndex = 1;
+
+    struct dirent* de = nullptr;
+    while ((de = readdir(dir)) != nullptr) {
+      // string in de->d_name (guaranteed null-terminated), length in _D_EXACT_NAMLEN(de)
+      if (_D_EXACT_NAMLEN(de) == kCaptureFilePatternLen) {
+        char* endptr = nullptr;
+        unsigned long l = strtoul(de->d_name, &endptr, 10);
+        if (strcmp(endptr, ".png") != 0)
+          continue; // doesn't match the pattern
+
+        // Update capture index to be higher than the highest filename encountered
+        m_nextCaptureIndex = std::max<uint32_t>(m_nextCaptureIndex, l + 1);
+      }
+    }
+    closedir(dir);
+  }
+
+  // Trigger capture in any active sessions
+  PER_EYE {
+    ProcessingState& ps = m_processingState[eyeIdx];
+    if (ps.m_processingThreadAlive) {
+      ps.m_captureFileIndex = m_nextCaptureIndex++;
+    }
+  }
+
 }
 

@@ -69,6 +69,7 @@ etEnv.Program(
     + Glob('eyetracking/SingleEyeFitter/*.cpp')
     + ['eyetracking/test/eyetracking-hmd-test.cpp']
     + Glob('common/Fx*.cpp')
+    + ['common/stb_impl.cpp']
     + ['common/tegra/NvSciUtil.cpp']
     + Glob('hmdcam/RenderBackend*.cpp')
     + ['hmdcam/Render.cpp', 'hmdcam/imgui_backend.cpp', 'hmdcam/InputListener.cpp']

@@ -194,6 +194,7 @@ int main(int argc, char* argv[]) {
 
     bool drawUI = false;
     bool drawETDebugOverlay = true;
+    bool eyeTrackingCaptureMode = false;
 
     // Perf queries
     RHITimerQuery::ptr viewRenderQuery = rhi()->newTimerQuery();
@@ -272,6 +273,10 @@ int main(int argc, char* argv[]) {
               eyeTrackingCalibrationPointIdx = -1;
           }
         }
+
+        if (eyeTrackingCaptureMode && ImGui::IsKeyPressed(ImGuiKey_Space)) {
+          eyeTrackingService->requestCapture();
+        }
       }
 
       ImGui_ImplFxRHI_NewFrame();
@@ -281,6 +286,9 @@ int main(int argc, char* argv[]) {
       ++frameCounter;
 
       if (drawUI) {
+        // Exit capture mode when re-entering UI
+        eyeTrackingCaptureMode = false;
+
         // GUI support
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents, since we don't provide a way to resize the UI
@@ -292,6 +300,11 @@ int main(int argc, char* argv[]) {
         if (ImGui::Button("ET calibration points")) {
           eyeTrackingCalibrationPointIdx = 0;
           drawUI = false; // exit UI when selecting calibration points mode
+        }
+
+        if (ImGui::Button("ET capture mode")) {
+          eyeTrackingCaptureMode = true;
+          drawUI = false; // exit UI when selecting capture mode.
         }
 
         if (ImGui::CollapsingHeader("Eyetracking Config")) {
@@ -320,6 +333,7 @@ int main(int argc, char* argv[]) {
 
       } else {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, 0), 0, /*pivot=*/ImVec2(0.5f, 0.0f)); // top-center aligned
+        ImGui::SetNextWindowSize(ImVec2(0, -1), ImGuiCond_Always); // grow-only auto-size to X, frame auto-size to Y
         ImGui::Begin("StatusBar", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
         char timebuf[64];
@@ -328,6 +342,10 @@ int main(int argc, char* argv[]) {
         ImGui::TextUnformatted(timebuf);
         ImGui::SameLine(); ImGui::Separator(); ImGui::SameLine();
         ImGui::Text("%.1fFPS", io.Framerate);
+
+        if (eyeTrackingCaptureMode) {
+          ImGui::Text("Eyetracking capture mode active");
+        }
 
         ImGui::End();
       }
