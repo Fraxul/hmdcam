@@ -39,7 +39,7 @@ tegraEnv.Append(
     'wayland-client', 'wayland-egl', 'xkbcommon',
     'hidapi-libusb', 'usb-1.0', 'udev',
     'cuda', 'cudart',
-    'nppc', 'nppidei', 'nppitc', 'nppif', 'nppim',
+    'nppc', 'nppidei', 'nppitc', 'nppif',
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect', 'opencv_videoio',
     'nvToolsExt',
     'socketcan',
@@ -62,7 +62,7 @@ monadoStatics = \
 
 if tegraEnv['IS_TEGRA']:
   # Building natively on Tegra enables Argus camera library and nvenc support
-  # Pull in nvargus, nvbuf, nvmedia_iofa_sci, nvsci, v4l2, and live555
+  # Pull in nvargus, nvbuf, nvmedia, nvsci, v4l2, and live555
   tegraEnv.Append(
     CPPPATH=[
       '#hmdcam/tegra',
@@ -78,8 +78,9 @@ if tegraEnv['IS_TEGRA']:
     LIBS=[
       'nvargus',
       'nvbufsurface', 'nvbufsurftransform',
-      'nvmedia_iofa_sci',
+      'nvmedia_iofa_sci', 'nvmedia_ijpd_sci',
       'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync',
+      'cudla', 'ceres', 'glog',
       'v4l2'
     ],
     CPPDEFINES=[
@@ -91,7 +92,11 @@ if tegraEnv['IS_TEGRA']:
   if (tegraEnv['TEGRA_RELEASE'] < 35):
     tegraEnv.Append(LIBS=['nvbuf_utils'], CPPDEFINES=['USE_NVBUF_UTILS'])
 
-  tegra_src = Glob('hmdcam/tegra/*.cpp') + Glob('common/tegra/*.cpp')
+  tegra_src = \
+    Glob('hmdcam/tegra/*.cpp') + \
+    Glob('common/tegra/*.cpp') + \
+    Glob('eyetracking/*.cpp') + \
+    Glob('eyetracking/SingleEyeFitter/*.cpp')
 
 else:
   tegra_src = []
@@ -134,10 +139,6 @@ else:
 
 if (env['HAVE_OPENCV_CUDA']):
   tegraEnv.Append(LIBS=['opencv_cudafilters'])
-if (env['HAVE_TENSORRT']):
-  tegraEnv.Append(LIBS=['nvinfer', 'ceres', 'glog'])
-  tegra_src += Glob('eyetracking/*.cpp') + Glob('eyetracking/*.cu') + Glob('eyetracking/SingleEyeFitter/*.cpp')
-
 
 tegraEnv.CompilationDatabase()
 tegraEnv.Program(

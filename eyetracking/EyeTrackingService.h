@@ -6,18 +6,12 @@
 #include <boost/atomic.hpp>
 #include <boost/thread.hpp>
 #include <opencv2/core.hpp>
+#include "CuDLAStandaloneRunner.h"
 #include "V4L2Camera.h"
 
-#include "rhi/cuda/CudaUtil.h"
-#include <cuda.h>
-#include <nppcore.h>
-#include <nppdefs.h>
-#include <NvInfer.h>
 #include <algorithm>
 #include <memory>
 #include <vector>
-
-class InferLogger;
 
 #define PER_EYE for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
 
@@ -68,10 +62,6 @@ public:
     // Video capture object
     V4L2Camera m_capture;
 
-    // Low-priority CUDA stream and associated NPP context
-    CUstream m_cuStream;
-    NppStreamContext m_nppContext;
-
     // Sync/profiling events
     CUevent m_frameProcessingStartEvent;
     CUevent m_frameROIEndEvent;
@@ -104,27 +94,6 @@ public:
 
     CalibrationState m_calibrationState = kWaitingForValidFrames;
 
-    ~ProcessingState() {
-      cuStreamSynchronize(m_cuStream);
-
-      m_segmentationExec.reset(nullptr);
-      m_roiExec.reset(nullptr);
-
-      CUDA_SAFE_FREE_HOST(m_segInputTensorPtr);
-      CUDA_SAFE_FREE_HOST(m_segOutputTensorPtr);
-
-      CUDA_SAFE_FREE_HOST(m_pupilMask1);
-      CUDA_SAFE_FREE_HOST(m_pupilMask2);
-
-      cuStreamDestroy(m_cuStream);
-
-      cuEventDestroy(m_frameProcessingStartEvent);
-      cuEventDestroy(m_frameROIEndEvent);
-      cuEventDestroy(m_frameSegmentationStartEvent);
-      cuEventDestroy(m_framePostProcessingStartEvent);
-      cuEventDestroy(m_frameProcessingEndEvent);
-    }
-
     // Center offset of the camera capture, used for translating between the eye-fitter
     // coordinate system (zero at center) and the capture/image coordinate system (zero at left-top)
     cv::Point2f m_captureCenterOffset;
@@ -135,22 +104,8 @@ public:
     // Offset from segmentation ROI coordinates to capture mat coordinates. Always positive.
     cv::Point2i m_lastSegROIToCaptureMatOffset;
 
-    // Host/device shared allocation for ROI prediction input. Can be fp16 or int8.
-    void* m_roiInputTensorPtr = nullptr;
-
-    // Host/device shared allocation for ROI prediction output. Can be fp16 or int8.
-    void* m_roiOutputTensorPtr = nullptr;
-
-    // Host/device shared input to segmentation network -- fp16, -1...1 range.
-    _Float16* m_segInputTensorPtr = nullptr;
-    size_t m_segInputTensorStrideElements = 0;
-
-    // Host/device shared allocation for TRT output
-    _Float16* m_segOutputTensorPtr = nullptr;
-
-    // Host/device shared allocations for pupil mask processing
-    uint8_t* m_pupilMask1 = nullptr;
-    uint8_t* m_pupilMask2 = nullptr;
+    // Pupil mask, filled by postprocessing the segmentation network output
+    cv::Mat m_pupilMask;
 
     // Postprocessing output
     cv::RotatedRect m_pupilEllipse;
@@ -178,8 +133,8 @@ public:
     singleeyefitter::EyeModelFitter m_eyeModelFitter;
 
     // Execution context for running the tracking model
-    std::unique_ptr<nvinfer1::IExecutionContext> m_segmentationExec;
-    std::unique_ptr<nvinfer1::IExecutionContext> m_roiExec;
+    std::unique_ptr<CuDLAStandaloneRunner> m_segmentationExec;
+    std::unique_ptr<CuDLAStandaloneRunner> m_roiExec;
 
     // Debug view support
     cv::Mat m_debugViewRGB; // RGB debug view, optionally with debug overlays drawn on it
@@ -227,10 +182,10 @@ protected:
 
   // Segmentation model I/O sizes
   uint32_t m_segInputWidth = 0, m_segInputHeight = 0;
+  uint32_t m_segInputRowStrideElements = 0;
 
-  size_t m_segOutputSizeBytes = 0;
-  size_t m_segOutputRowPitchElements = 0;
-  size_t m_segOutputPlanePitchElements = 0;
+  uint32_t m_segOutputRowPitchElements = 0;
+  uint32_t m_segOutputPlanePitchElements = 0;
 
   // ROI model I/O sizes
   bool m_roiIOIsInt8 = false;
@@ -241,18 +196,6 @@ protected:
   uint32_t m_roiOutputWidth = 0, m_roiOutputHeight = 0;
   uint32_t m_roiOutputRowStrideElements = 0;
 
-  // Shared data
-  std::unique_ptr<InferLogger> m_logger;
-  std::unique_ptr<nvinfer1::IRuntime> m_inferRuntime;
-  std::unique_ptr<nvinfer1::ICudaEngine> m_segmentationEngine;
-  // names are owned by m_segmentationEngine, don't delete
-  const char* m_segInputTensorName = nullptr;
-  const char* m_segOutputTensorName = nullptr;
-
-  std::unique_ptr<nvinfer1::ICudaEngine> m_roiEngine;
-  // names are owned by m_roiEngine, don't delete
-  const char* m_roiInputTensorName = nullptr;
-  const char* m_roiOutputTensorName = nullptr;
 
   uint32_t m_nextCaptureIndex = 0;
 };

@@ -38,10 +38,8 @@ etEnv.Append(
     'wayland-client', 'wayland-egl', 'xkbcommon',
     'hidapi-libusb', 'usb-1.0', 'udev',
     'cuda', 'cudart', 'cudla',
-    'nppc', 'nppidei', 'nppitc', 'nppif', 'nppim',
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
     'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync', 'nvmedia_ijpd_sci',
-    'nvinfer',
     'nvToolsExt',
     'ceres', 'glog',
   ]
@@ -65,7 +63,6 @@ monadoStatics = \
 etEnv.Program(
   target = '../bin/eyetracking-hmd-test',
   source = Glob('eyetracking/*.cpp')
-    + Glob('eyetracking/*.cu')
     + Glob('eyetracking/SingleEyeFitter/*.cpp')
     + ['eyetracking/test/eyetracking-hmd-test.cpp']
     + Glob('common/Fx*.cpp')

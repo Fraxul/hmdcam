@@ -12,7 +12,7 @@ etEnv.Append(
 etEnv.Program(
   target = '../bin/eyetracking-test',
   source = Glob('eyetracking/*.cpp') + Glob('eyetracking/*.cu') + Glob('eyetracking/SingleEyeFitter/*.cpp') + ['eyetracking/test/eyetracking-test.cpp'],
-  LIBS=['stdc++', 'pthread', 'rt', 'opencv_core', 'opencv_imgproc', 'opencv_videoio', 'opencv_highgui', 'nppc', 'nppig', 'nppim', 'nppitc', 'nvinfer', 'cuda', 'cudart', 'boost_thread', 'ceres', 'glog'],
+  LIBS=['stdc++', 'pthread', 'rt', 'opencv_core', 'opencv_imgproc', 'opencv_videoio', 'opencv_highgui', 'cuda', 'cudla', 'cudart', 'boost_thread', 'ceres', 'glog'],
 )
 
 

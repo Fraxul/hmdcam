@@ -130,12 +130,20 @@ NvSciBufAttrList createTensorBufAttrList(NvSciBufModule module, uint64_t bufSize
 
 CuDLAStandaloneRunner::CuDLAStandaloneRunner(uint64_t deviceIdx, const char* engineFile) {
   mmfile fp(engineFile);
+  initWithModuleData(deviceIdx, reinterpret_cast<const uint8_t*>(fp.data()), fp.size());
+}
+
+CuDLAStandaloneRunner::CuDLAStandaloneRunner(uint64_t deviceIdx, const uint8_t* moduleData, size_t moduleLen) {
+  initWithModuleData(deviceIdx, moduleData, moduleLen);
+}
+
+void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t* moduleData, size_t moduleLen) {
 
   NVSCI_CHECK(NvSciBufModuleOpen(&m_bufModule));
   NVSCI_CHECK(NvSciSyncModuleOpen(&m_syncModule));
 
   CUDLA_CHECK(cudlaCreateDevice(deviceIdx, &m_devHandle, CUDLA_STANDALONE));
-  CUDLA_CHECK(cudlaModuleLoadFromMemory(m_devHandle, reinterpret_cast<const uint8_t*>(fp.data()), fp.size(), &m_moduleHandle, 0));
+  CUDLA_CHECK(cudlaModuleLoadFromMemory(m_devHandle, moduleData, moduleLen, &m_moduleHandle, /*flags=*/ 0));
 
   // Get tensor attributes.
   {
@@ -198,19 +206,6 @@ CuDLAStandaloneRunner::CuDLAStandaloneRunner(uint64_t deviceIdx, const char* eng
 
   // Create NvSci Sync objects
   {
-    NvSciSyncAttrList waiterAttrList = nullptr;
-    NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &waiterAttrList));
-    CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(waiterAttrList), CUDLA_NVSCISYNC_ATTR_WAIT));
-    NvSciSyncAttrList cudlaWaiterSyncAttrList = ReconcileNvSciSyncAttrLists(waiterAttrList, CreateNvSciSyncCpuSignalerAttrList(m_syncModule));
-
-    NVSCI_CHECK(NvSciSyncObjAlloc(cudlaWaiterSyncAttrList, &m_syncObj1));
-    NVSCI_CHECK(NvSciSyncCpuWaitContextAlloc(m_syncModule, &m_cpuWaitCtx));
-
-    NvSciSyncAttrListFree(cudlaWaiterSyncAttrList);
-
-  }
-
-  {
     NvSciSyncAttrList signalerAttrList = nullptr;
     NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &signalerAttrList));
     CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(signalerAttrList), CUDLA_NVSCISYNC_ATTR_SIGNAL));
@@ -220,6 +215,18 @@ CuDLAStandaloneRunner::CuDLAStandaloneRunner(uint64_t deviceIdx, const char* eng
     NVSCI_CHECK(NvSciSyncObjAlloc(cudlaSignalerSyncAttrList, &m_syncObj2));
 
     NvSciSyncAttrListFree(cudlaSignalerSyncAttrList);
+  }
+
+  {
+    NvSciSyncAttrList waiterAttrList = nullptr;
+    NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &waiterAttrList));
+    CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(waiterAttrList), CUDLA_NVSCISYNC_ATTR_WAIT));
+    NvSciSyncAttrList cudlaWaiterSyncAttrList = ReconcileNvSciSyncAttrLists(waiterAttrList, CreateNvSciSyncCpuSignalerAttrList(m_syncModule));
+
+    NVSCI_CHECK(NvSciSyncObjAlloc(cudlaWaiterSyncAttrList, &m_syncObj1));
+    NVSCI_CHECK(NvSciSyncCpuWaitContextAlloc(m_syncModule, &m_cpuWaitCtx));
+
+    NvSciSyncAttrListFree(cudlaWaiterSyncAttrList);
   }
 
   // Import NvSci Sync objects as external semaphores

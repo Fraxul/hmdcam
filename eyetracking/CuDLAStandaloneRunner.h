@@ -11,6 +11,8 @@
 class CuDLAStandaloneRunner : boost::noncopyable {
 public:
   CuDLAStandaloneRunner(uint64_t deviceIdx, const char* engineFile);
+  CuDLAStandaloneRunner(uint64_t deviceIdx, const uint8_t* moduleData, size_t moduleLen);
+
   ~CuDLAStandaloneRunner();
 
   void runInference();
@@ -18,17 +20,17 @@ public:
 /*
 typedef struct cudlaModuleTensorDescriptor_t {
     char name[CUDLA_RUNTIME_TENSOR_DESC_NAME_MAX_LEN + 1];
-    uint64_t size;
+    uint64_t size; // full size in bytes
     uint64_t n;
     uint64_t c;
     uint64_t h;
     uint64_t w;
-    uint8_t dataFormat;
-    uint8_t dataType;
-    uint8_t dataCategory;
-    uint8_t pixelFormat;
-    uint8_t pixelMapping;
-    uint32_t stride[CUDLA_LOADABLE_TENSOR_DESC_NUM_STRIDES];
+    uint8_t dataFormat;   // CUDLA_DATA_FORMAT_*
+    uint8_t dataType;     // CUDLA_DATA_TYPE_*
+    uint8_t dataCategory; // CUDLA_DATA_CATEGORY_*
+    uint8_t pixelFormat;  // CUDLA_PIXEL_FORMAT_*
+    uint8_t pixelMapping; // CUDLA_PIXEL_MAPPING_{PITCH|BLOCK}_LINEAR
+    uint32_t stride[CUDLA_LOADABLE_TENSOR_DESC_NUM_STRIDES]; // w, h, c, n -- stride in bytes
 } cudlaModuleTensorDescriptor;
 */
 
@@ -37,10 +39,12 @@ typedef struct cudlaModuleTensorDescriptor_t {
   template <typename T = void> T* inputTensorPtr(size_t idx) const { assert(idx == 0); return reinterpret_cast<T*>(m_inputBufObjBuffer); }
 
   size_t outputTensorCount() const { return m_outputTensorDesc.size(); }
-  const cudlaModuleTensorDescriptor& outputTensorDescriptor(size_t idx) const { return m_inputTensorDesc[idx]; }
+  const cudlaModuleTensorDescriptor& outputTensorDescriptor(size_t idx) const { return m_outputTensorDesc[idx]; }
   template <typename T = void> T* outputTensorPtr(size_t idx) const { assert(idx == 0); return reinterpret_cast<T*>(m_outputBufObjBuffer); }
 
 protected:
+  void initWithModuleData(uint64_t deviceIdx, const uint8_t* moduleData, size_t moduleLen);
+
   cudlaDevHandle               m_devHandle = nullptr;
   cudlaModule                  m_moduleHandle = nullptr;
   NvSciBufObj                  m_inputBufObj = nullptr;
