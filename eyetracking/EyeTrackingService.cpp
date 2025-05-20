@@ -41,10 +41,10 @@ const size_t kCaptureFilePatternLen = /*field length from kCaptureFilePattern=*/
 
 
 static inline glm::vec2 toGlm(const cv::Point2f& p) { return glm::vec2(p.x, p.y); }
-static inline cv::Point2f toCv(const glm::vec2& p) { return cv::Point2f(p[0], p[1]); }
+// static inline cv::Point2f toCv(const glm::vec2& p) { return cv::Point2f(p[0], p[1]); }
 
 static inline glm::vec2 vec2AtAngleDeg(float deg) { return glm::vec2(cosf(glm::radians(deg)), sinf(glm::radians(deg))); }
-static inline glm::vec2 vec2AtAngle(float rad) { return glm::vec2(cosf(rad), sinf(rad)); }
+// static inline glm::vec2 vec2AtAngle(float rad) { return glm::vec2(cosf(rad), sinf(rad)); }
 
 template <typename T> void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
   // Mathematica: evaluated EulerMatrix[{roll, pitch, yaw}, {3, 1, 2}] . {0, 0, 1}
@@ -321,8 +321,13 @@ EyeTrackingService::EyeTrackingService() {
     assert(inSize.nbDims >= 2);
     m_roiInputWidth = inSize.d[inSize.nbDims - 1];
     m_roiInputHeight = inSize.d[inSize.nbDims - 2];
+
+    nvinfer1::Dims strides = m_processingState[0].m_roiExec->getTensorStrides(m_roiInputTensorName);
+    m_roiInputRowStrideElements = strides.d[strides.nbDims - 2];
+
     assert(m_roiInputWidth > 1 && m_roiInputHeight > 1);
-    printf("ROI image dimensions: %ux%u\n", m_roiInputWidth, m_roiInputHeight);
+    printf("ROI image dimensions: %ux%u. Row stride is %u elements\n", m_roiInputWidth, m_roiInputHeight, m_roiInputRowStrideElements);
+    assert((m_roiInputRowStrideElements * m_roiInputHeight) == strides.d[0]);
   }
 
   // Get the output size
@@ -372,10 +377,10 @@ EyeTrackingService::EyeTrackingService() {
     assert(1 == outSize.d[outSize.nbDims - 3]);
 
     nvinfer1::Dims strides = m_processingState[0].m_roiExec->getTensorStrides(m_roiOutputTensorName);
-    size_t roiOutputSizeElements = strides.d[0];
+    m_roiOutputRowStrideElements = strides.d[strides.nbDims - 2];
 
-    m_roiOutputSizeBytes = roiOutputSizeElements * roiElementSize();
-    printf("ROI Output is %ux%u, %zu bytes\n", m_roiOutputWidth, m_roiOutputHeight, m_roiOutputSizeBytes);
+    printf("ROI Output is %ux%u. Row pitch is %u elements\n", m_roiOutputWidth, m_roiOutputHeight, m_roiOutputRowStrideElements);
+    assert((m_roiOutputRowStrideElements * m_roiOutputHeight) == strides.d[0]);
   }
 
 
@@ -390,8 +395,8 @@ EyeTrackingService::EyeTrackingService() {
 
     {
       // ROI network setup
-      CUDA_CHECK(cuMemHostAlloc(&ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight * roiElementSize(), /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
-      CUDA_CHECK(cuMemHostAlloc(&ps.m_roiOutputTensorPtr, m_roiOutputSizeBytes, /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
+      CUDA_CHECK(cuMemHostAlloc(&ps.m_roiInputTensorPtr, m_roiInputRowStrideElements * m_roiInputHeight * roiElementSize(), /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
+      CUDA_CHECK(cuMemHostAlloc(&ps.m_roiOutputTensorPtr, m_roiOutputRowStrideElements * m_roiOutputHeight * roiElementSize(), /*flags=*/ CU_MEMHOSTALLOC_DEVICEMAP));
 
       // Wire tensor I/O buffers into execution context
       assert(ps.m_roiExec->setTensorAddress(m_roiInputTensorName, (void*) ps.m_roiInputTensorPtr));
@@ -862,8 +867,26 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
   ps.m_processingThreadAlive = true;
 
   cv::Mat captureMat;
-
   cv::Mat rgbDebugMat;
+
+  // Compute capture mat crop rect based on the ROI network input size
+  cv::Rect captureCropRect;
+  {
+    uint32_t targetStreamWidth = (ps.m_capture.streamWidth() / m_roiInputWidth) * m_roiInputWidth;
+    uint32_t targetStreamHeight = (ps.m_capture.streamHeight() / m_roiInputHeight) * m_roiInputHeight;
+    uint32_t cropOffsetX = (ps.m_capture.streamWidth() - targetStreamWidth) / 2;
+    uint32_t cropOffsetY = (ps.m_capture.streamHeight() - targetStreamHeight) / 2;
+    captureCropRect = cv::Rect(cropOffsetX, cropOffsetY, targetStreamWidth, targetStreamHeight);
+    printf("EyeTrackingService::eyeProcessingThreadFn(%zu): Capture dimensions are %ux%u, crop is (%ux%u @ %u,%u)\n", eyeIdx,
+      ps.m_capture.streamWidth(), ps.m_capture.streamHeight(),
+      targetStreamWidth, targetStreamHeight,
+      cropOffsetX, cropOffsetY);
+  }
+
+  // Update the capture center offset, now that we know the frame dimensions.
+  ps.m_captureCenterOffset = cv::Point2f(
+    static_cast<float>(captureCropRect.width) / 2.0f,
+    static_cast<float>(captureCropRect.height) / 2.0f);
 
   while (true) {
     if (boost::this_thread::interruption_requested())
@@ -875,7 +898,7 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       break;
     }
 
-    ps.m_capture.lumaPlane().copyTo(captureMat);
+    ps.m_lastCaptureTimestampNs = currentTimeNs();
 
     // Save capture to disk if requested
     if (ps.m_captureFileIndex) {
@@ -883,7 +906,9 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       snprintf(fnbuf, 255, kCaptureFilePattern, kCaptureDirName, ps.m_captureFileIndex);
       fnbuf[255] = '\0';
 
-      if (stbi_write_png(fnbuf, captureMat.cols, captureMat.rows, /*components=*/ captureMat.channels(), captureMat.ptr(), /*rowBytes=*/ captureMat.step)) {
+      // Save without cropping
+      const cv::Mat& fullCap = ps.m_capture.lumaPlane();
+      if (stbi_write_png(fnbuf, fullCap.cols, fullCap.rows, /*components=*/ fullCap.channels(), fullCap.ptr(), /*rowBytes=*/ fullCap.step)) {
         printf("EyeTrackingService::eyeProcessingThreadFn(%zu): wrote capture to file %s\n", eyeIdx, fnbuf);
       } else {
         printf("EyeTrackingService::eyeProcessingThreadFn(%zu): failed to write capture to file %s\n", eyeIdx, fnbuf);
@@ -893,28 +918,24 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       ps.m_captureFileIndex = 0;
     }
 
-    if (captureMat.empty()) {
-      printf("EyeTrackingService::eyeProcessingThreadFn(%zu)::captureWorkerThread: mat is empty, terminating\n", eyeIdx);
-      break;
-    }
-
-    ps.m_lastCaptureTimestampNs = currentTimeNs();
-
-    // Update the capture center offset, now that we know the frame dimensions.
-    ps.m_captureCenterOffset = cv::Point2f(
-      static_cast<float>(captureMat.cols) / 2.0f,
-      static_cast<float>(captureMat.rows) / 2.0f);
+    // Extract crop region from the luma plane
+    captureMat = cv::Mat(ps.m_capture.lumaPlane(), captureCropRect);
 
     // Scale from capture mat to the input size for the ROI prediction network
-    cv::resize(captureMat, ps.m_roiScaleMat, cv::Size(m_roiInputWidth, m_roiInputHeight));
+
+    // TODO: This cv::resize call should probably be vectorized
+    // INTER_NEAREST: ~0.6ms, INTER_LINEAR: ~0.75ms, INTER_AREA: 19ms (!)
+    cv::resize(captureMat, ps.m_roiScaleMat, cv::Size(m_roiInputWidth, m_roiInputHeight), 0, 0, cv::INTER_LINEAR);
 
     // Convert CV_U8 from the scale output to int8 or half for the ROI network input
-
-    assert(ps.m_roiScaleMat.isContinuous()); // Conversion assumes continuous input and output mats
     if (m_roiIOIsInt8) {
-      convertUnorm8ToDLAInt8(ps.m_roiScaleMat.ptr<uint8_t>(0), ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight);
+      for (size_t row = 0; row < m_roiInputHeight; ++row) {
+        convertUnorm8ToDLAInt8(ps.m_roiScaleMat.ptr<uint8_t>(row), reinterpret_cast<int8_t*>(ps.m_roiInputTensorPtr) + (m_roiInputRowStrideElements * row), m_roiInputWidth);
+      }
     } else {
-      convertUnorm8ToSnormFp16(ps.m_roiScaleMat.ptr<uint8_t>(0), ps.m_roiInputTensorPtr, m_roiInputWidth * m_roiInputHeight);
+      for (size_t row = 0; row < m_roiInputHeight; ++row) {
+        convertUnorm8ToSnormFp16(ps.m_roiScaleMat.ptr<uint8_t>(row), reinterpret_cast<_Float16*>(ps.m_roiInputTensorPtr) + (m_roiInputRowStrideElements * row), m_roiInputWidth);
+      }
     }
 
     // Run ROI network
@@ -941,7 +962,7 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       // Find the max value. TODO: This can be vectorized
       _Float16 maxValue = 0.0f;
       for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
-        _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
+        _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputRowStrideElements);
         for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
           maxValue = std::max<_Float16>(roiRowPtr[x], maxValue);
         }
@@ -955,7 +976,7 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       uint32_t yAccum = 0;
 
       for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
-        _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputWidth);
+        _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputRowStrideElements);
         for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
           if (roiRowPtr[x] >= threshold) {
             sampleCount += 1;
@@ -1099,6 +1120,53 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
     // Promote full capture buffer to RGB
     cv::cvtColor(/*src=*/ captureMat, /*dst=*/ rgbDebugMat, cv::COLOR_GRAY2BGR);
     if (m_debugDrawOverlays) {
+#if 1
+
+      {
+        // Draw ROI scale view
+        const int inset = 128; // Inset into the dest mat so it's easier to see
+
+        cv::rectangle(rgbDebugMat, cv::Point(inset - 1, inset - 1), cv::Point(inset + 1 + ps.m_roiScaleMat.cols, inset + 1 + ps.m_roiScaleMat.rows), cv::Scalar(0, 255, 0));
+        for (size_t row = 0; row < ps.m_roiScaleMat.rows; ++row) {
+          for (size_t col = 0; col < ps.m_roiScaleMat.cols; ++col) {
+            uint8_t roiVal = ps.m_roiScaleMat.at<uint8_t>(row, col);
+
+            uint8_t* dp = rgbDebugMat.ptr<uint8_t>(row + inset, col + inset);
+            dp[0] = roiVal;
+            dp[1] = roiVal;
+            dp[2] = roiVal;
+          }
+        }
+
+        // Draw ROI output
+        if (!m_roiIOIsInt8) {
+          _Float16* roiBasePtr = reinterpret_cast<_Float16*>(ps.m_roiOutputTensorPtr);
+          const int scale = 4;
+
+          const int xOff = inset;
+          const int yOff = inset + 8 + ps.m_roiScaleMat.rows;
+
+          cv::rectangle(rgbDebugMat, cv::Point(xOff - 1, yOff - 1), cv::Point(xOff + 1 + (m_roiOutputWidth * scale), yOff + 1 + (m_roiOutputHeight * scale)), cv::Scalar(255, 255, 0));
+          for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
+            _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputRowStrideElements);
+            for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
+              uint8_t roiVal = static_cast<uint8_t>(static_cast<float>(roiRowPtr[x]) * 255.0f);
+
+              for (size_t r = 0; r < scale; ++r) {
+                for (size_t c = 0; c < scale; ++c) {
+                  uint8_t* dp = rgbDebugMat.ptr<uint8_t>(yOff + (y * scale) + r, xOff + (x * scale) + c);
+                  dp[0] = 0; // B
+                  dp[1] = 0; // G
+                  dp[2] = roiVal; // R
+                }
+              }
+            }
+          }
+        }
+
+      }
+
+#endif
 
       // Segmentation ROI view of the RGB debug mat
       cv::Mat debugROIViewRGB = cv::Mat(rgbDebugMat, segROIRect);

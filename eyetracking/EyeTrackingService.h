@@ -236,8 +236,10 @@ protected:
   bool m_roiIOIsInt8 = false;
   size_t roiElementSize() const { return m_roiIOIsInt8 ? 1 : 2; }
   uint32_t m_roiInputWidth = 0, m_roiInputHeight = 0;
+  uint32_t m_roiInputRowStrideElements = 0;
+
   uint32_t m_roiOutputWidth = 0, m_roiOutputHeight = 0;
-  size_t m_roiOutputSizeBytes = 0;
+  uint32_t m_roiOutputRowStrideElements = 0;
 
   // Shared data
   std::unique_ptr<InferLogger> m_logger;
