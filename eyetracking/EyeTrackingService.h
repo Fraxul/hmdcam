@@ -39,7 +39,8 @@ public:
 
   glm::vec2 getPitchYawAnglesForEye(size_t eyeIdx);
 
-  cv::Mat& getDebugViewForEye(size_t eyeIdx, bool withOverlayDrawing);
+  cv::Mat& getDebugViewForEye(size_t eyeIdx);
+  bool m_debugDrawOverlays = true; // Affects content returned by getDebugViewForEye
 
   enum CalibrationState {
     kWaitingForValidFrames,
@@ -138,9 +139,6 @@ public:
 
   // per-eye state
   ProcessingState m_processingState[2];
-
-  // Debug settings
-  bool m_debugDrawOverlays = true;
 
 protected:
 

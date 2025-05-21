@@ -992,10 +992,11 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
         } catch (...) {}
 
+#if 0
         char buf[64];
         snprintf(buf, 64, "n=%.3f %.3f %.3f", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
-
         cv::putText(rgbDebugMat, buf, cv::Point2f(/*x=*/ 5, /*y=*/ rgbDebugMat.rows - 16), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
+#endif
 
         //FRAME_DEBUG_LOG("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
         //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
@@ -1054,7 +1055,7 @@ bool EyeTrackingService::processFrame() {
   return true;
 }
 
-cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx, bool withDebugOverlay) {
+cv::Mat& EyeTrackingService::getDebugViewForEye(size_t eyeIdx) {
   assert(eyeIdx < 2);
   return m_processingState[eyeIdx].m_debugViewRGB;
 }

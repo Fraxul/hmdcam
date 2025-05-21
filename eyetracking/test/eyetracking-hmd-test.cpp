@@ -193,7 +193,6 @@ int main(int argc, char* argv[]) {
     guiRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ guiTex }));
 
     bool drawUI = false;
-    bool drawETDebugOverlay = true;
     bool eyeTrackingCaptureMode = false;
 
     // Perf queries
@@ -310,7 +309,7 @@ int main(int argc, char* argv[]) {
           eyeTrackingService->renderIMGUI();
         }
 
-        ImGui::Checkbox("ET debug overlay", &drawETDebugOverlay);
+        ImGui::Checkbox("ET debug overlay", &eyeTrackingService->m_debugDrawOverlays);
 
         if (ImGui::CollapsingHeader("Performance")) {
           int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
@@ -396,7 +395,7 @@ int main(int argc, char* argv[]) {
 
       // Render eyetracking debug view
       {
-        const cv::Mat& debugView = eyeTrackingService->getDebugViewForEye(0, drawETDebugOverlay);
+        const cv::Mat& debugView = eyeTrackingService->getDebugViewForEye(0);
         if (debugView.cols && debugView.rows) {
 
           if (!eyeTrackingDebugTexture || (eyeTrackingDebugTexture->width() != debugView.cols) || (eyeTrackingDebugTexture->height() != debugView.rows)) {
