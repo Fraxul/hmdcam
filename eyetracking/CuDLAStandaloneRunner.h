@@ -50,11 +50,11 @@ protected:
   NvSciBufObj                  m_inputBufObj = nullptr;
   NvSciBufObj                  m_outputBufObj = nullptr;
   NvSciBufModule               m_bufModule = nullptr;
-  NvSciSyncObj                 m_syncObj1 = nullptr;
-  NvSciSyncObj                 m_syncObj2 = nullptr;
+  NvSciSyncObj                 m_syncWaitObj = nullptr;
+  NvSciSyncObj                 m_syncSignalObj = nullptr;
   NvSciSyncModule              m_syncModule = nullptr;
-  NvSciSyncFence               m_preFence = NvSciSyncFenceInitializer;
-  NvSciSyncFence               m_eofFence = NvSciSyncFenceInitializer;
+  NvSciSyncFence               m_preFence = NvSciSyncFenceInitializer; // Associated with m_syncWaitObj
+  NvSciSyncFence               m_eofFence = NvSciSyncFenceInitializer; // Associated with m_syncSignalObj
   NvSciSyncCpuWaitContext      m_cpuWaitCtx = nullptr;
   std::vector<cudlaModuleTensorDescriptor> m_inputTensorDesc;
   std::vector<cudlaModuleTensorDescriptor> m_outputTensorDesc;
@@ -63,11 +63,18 @@ protected:
   cudlaSignalEvents           m_signalEvents;
   CudlaFence                  m_preFences[1];
   CudlaFence                  m_eofFences[1];
+
+  // Deterministic fence support
+  uint64_t m_signalerID = 0;
+  uint64_t m_signalerValue = 0;
+  uint64_t m_waiterID = 0;
+  uint64_t m_waiterValue = 0;
+
   uint64_t* m_signalEventDevPtrs[1];
   uint64_t* m_inputBufObjRegPtr = nullptr;
   uint64_t* m_outputBufObjRegPtr = nullptr;
-  uint64_t* m_nvSciSyncObjRegPtr1 = nullptr;
-  uint64_t* m_nvSciSyncObjRegPtr2 = nullptr;
+  uint64_t* m_syncWaitObjRegPtr = nullptr;
+  uint64_t* m_syncSignalObjRegPtr = nullptr;
 
   // CPU-accessible I/O buffer pointers
   void* m_inputBufObjBuffer = nullptr;
