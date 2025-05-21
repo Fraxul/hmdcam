@@ -33,3 +33,4 @@
 [submodule "nvsci_headers"]
 	path = nvsci_headers
 	url = https://nv-tegra.nvidia.com/r/tegra/nv-sci-src/nvsci_headers.git
+	ignore = untracked
