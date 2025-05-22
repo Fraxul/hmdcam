@@ -214,8 +214,25 @@ public:
     return *this;
   }
 
+  SerializationBuffer& put_i8(int8_t i8) {
+    payload->append((char*)&i8, 1);
+    return *this;
+  }
+
   SerializationBuffer& put_u8(uint8_t i8) {
     payload->append((char*)&i8, 1);
+    return *this;
+  }
+
+  SerializationBuffer& put_i16(int16_t i16) {
+    int16_t res = boost::endian::native_to_big(i16);
+    payload->append((char*)&res, 2);
+    return *this;
+  }
+
+  SerializationBuffer& put_i16_le(int16_t i16) {
+    int16_t res = boost::endian::native_to_little(i16);
+    payload->append((char*)&res, 2);
     return *this;
   }
 
@@ -225,14 +242,44 @@ public:
     return *this;
   }
 
+  SerializationBuffer& put_u16_le(uint16_t i16) {
+    uint16_t res = boost::endian::native_to_little(i16);
+    payload->append((char*)&res, 2);
+    return *this;
+  }
+
+  SerializationBuffer& put_i32(int32_t i32) {
+    int32_t res = boost::endian::native_to_big(i32);
+    payload->append((char*)&res, 4);
+    return *this;
+  }
+
+  SerializationBuffer& put_i32_le(int32_t i32) {
+    int32_t res = boost::endian::native_to_little(i32);
+    payload->append((char*)&res, 4);
+    return *this;
+  }
+
   SerializationBuffer& put_u32(uint32_t i32) {
     uint32_t res = boost::endian::native_to_big(i32);
     payload->append((char*)&res, 4);
     return *this;
   }
 
+  SerializationBuffer& put_u32_le(uint32_t i32) {
+    uint32_t res = boost::endian::native_to_little(i32);
+    payload->append((char*)&res, 4);
+    return *this;
+  }
+
   SerializationBuffer& put_u64(uint64_t i64) {
     uint64_t res = boost::endian::native_to_big(i64);
+    payload->append((char*)&res, 8);
+    return *this;
+  }
+
+  SerializationBuffer& put_u64_le(uint64_t i64) {
+    uint64_t res = boost::endian::native_to_little(i64);
     payload->append((char*)&res, 8);
     return *this;
   }

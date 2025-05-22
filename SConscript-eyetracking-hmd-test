@@ -19,6 +19,9 @@ etEnv.Append(
   CPPPATH=[
     'hmdcam',
     'eyetracking',
+    'canbus',
+    'canbus/libcanard/libcanard',
+    'canbus/socketcan',
     'wayland',
     MONADO_BUILD + '/src/xrt/include', # Contains generated config headers
     MONADO_BASE + '/src/xrt/include',
@@ -70,6 +73,7 @@ etEnv.Program(
     + ['common/tegra/NvSciUtil.cpp']
     + Glob('hmdcam/RenderBackend*.cpp')
     + ['hmdcam/Render.cpp', 'hmdcam/imgui_backend.cpp', 'hmdcam/InputListener.cpp']
+    + ['canbus/common/CANBus.cpp', 'canbus/libcanard/libcanard/canard.c', 'canbus/socketcan/socketcan.c']
     + Glob('rhi/*.cpp')
     + Glob('rhi/cuda/*.cpp')
     + Glob('rhi/gl/*.cpp')

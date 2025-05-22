@@ -1,10 +1,11 @@
 #pragma once
-#include "common/DepthMapGenerator.h"
+#include "common/CANBus.h"
 #include "common/ScrollingBuffer.h"
 #include "SingleEyeFitter/SingleEyeFitter.h"
 #include "one_euro_filter.h"
 #include <boost/atomic.hpp>
 #include <boost/thread.hpp>
+#include <glm/glm.hpp>
 #include <opencv2/core.hpp>
 #include "CuDLAStandaloneRunner.h"
 #include "V4L2Camera.h"
@@ -34,6 +35,8 @@ public:
   }
 
   bool processFrame(); // Called from main thread
+
+  void CANTransmitEyeAngles();
 
   void requestCapture();
 

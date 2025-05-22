@@ -252,7 +252,7 @@ namespace singleeyefitter {
             if (l == 0) {
                 // Discontinuity of sgn(l), have to handle explicitly
                 assert(n == 1);
-                std::cout << "Warning: l == 0" << std::endl;
+                printf("Warning: l == 0\n");
                 T3 << 0, -1, 0,
                     1, 0, 0,
                     0, 0, 1;
