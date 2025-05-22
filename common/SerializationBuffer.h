@@ -71,6 +71,21 @@ protected:
     std::string str;
   };
 
+  // Immutable string ref -- no copying
+  struct string_ref_payload : public payload_base {
+    string_ref_payload(const char* data_, size_t size_) : m_data(data_), m_size(size_) {}
+    const char* data() const { return m_data; }
+    char* data() { return const_cast<char*>(m_data); }
+    size_t size() { return m_size; }
+    void append(const char* data, size_t size) { assert(0 && "attempted write to immutable Buffer::string_ref_payload"); }
+    void clear() { assert(0 && "attempted clear() of immutable Buffer::string_ref_payload"); }
+    void reserve(size_t new_size) { assert(0 && "attempted reserve() on immutable Buffer::string_ref_payload"); }
+    payload_base* clone() const { return new string_ref_payload(m_data, m_size); }
+  protected:
+    const char* m_data;
+    size_t m_size;
+  };
+
   struct payload_window : public payload_base {
     payload_window(payload_base* _base, size_t _offset, size_t _length) : base(_base), window_offset(_offset), window_length(_length) {
       if ((window_offset + window_length) > base->size()) throw end_of_buffer(window_offset + window_length, base->size());
@@ -129,6 +144,7 @@ public:
   static SerializationBuffer withFile(const std::string& filename) { return SerializationBuffer(new immutable_file_payload(filename.c_str())); }
 #endif
 
+  static SerializationBuffer withStringRef(const char* str, size_t len) { return SerializationBuffer(new string_ref_payload(str, len)); }
 
   void writeFile(const char* filename) {
     std::filebuf fbuf;

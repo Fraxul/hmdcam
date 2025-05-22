@@ -1,5 +1,6 @@
 #!/bin/sh
 ctags -R \
+  canbus \
   common \
   debug-client \
   depthai-worker \

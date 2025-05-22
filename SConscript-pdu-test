@@ -21,7 +21,7 @@ pduEnv.Program(
     Glob('canbus/libcanard/libcanard/*.c'),
 
   
-  LIBS = ['socketcan', 'pthread', 'rt']
+  LIBS = ['socketcan', 'boost_thread']
 )
 
 
