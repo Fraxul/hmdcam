@@ -767,6 +767,7 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
     // Compute center of ROI heatmap
     float roiOutput[2]; // 0...1 coordinate range
+    float roiSampleThreshold;
 
     if (m_roiIOIsInt8) {
       assert(false && "TODO: ROI heatmap center computation for int8 i/o");
@@ -784,27 +785,28 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
         }
       }
 
-      // Gather all sample points >= 0.85x max value and compute their average position.
-      _Float16 threshold = maxValue * 0.85f16;
+      // Gather all sample points >= 0.9x max value and compute their weighted average position.
+      roiSampleThreshold = maxValue * 0.9f;
 
-      uint32_t sampleCount = 0;
-      uint32_t xAccum = 0;
-      uint32_t yAccum = 0;
+      float sampleWeightAccum = 0;
+      float xAccum = 0;
+      float yAccum = 0;
 
       for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
         _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputRowStrideElements);
         for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
-          if (roiRowPtr[x] >= threshold) {
-            sampleCount += 1;
-            xAccum += x;
-            yAccum += y;
+          float w = roiRowPtr[x];
+          if (w >= roiSampleThreshold) {
+            sampleWeightAccum += w;
+            xAccum += static_cast<float>(x) * w;
+            yAccum += static_cast<float>(y) * w;
           }
         }
       }
 
-      if (sampleCount > 0) {
-        roiOutput[0] = (static_cast<float>(xAccum) / static_cast<float>(sampleCount)) / static_cast<float>(m_roiOutputWidth);
-        roiOutput[1] = (static_cast<float>(yAccum) / static_cast<float>(sampleCount)) / static_cast<float>(m_roiOutputHeight);
+      if (sampleWeightAccum > 0.0f) {
+        roiOutput[0] = (xAccum / sampleWeightAccum) / static_cast<float>(m_roiOutputWidth);
+        roiOutput[1] = (yAccum / sampleWeightAccum) / static_cast<float>(m_roiOutputHeight);
       } else {
         // No samples? Default to center of image.
         roiOutput[0] = 0.5f;
@@ -905,14 +907,23 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
           for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
             _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputRowStrideElements);
             for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
-              uint8_t roiVal = static_cast<uint8_t>(static_cast<float>(roiRowPtr[x]) * 255.0f);
+              float fRoiVal = static_cast<float>(roiRowPtr[x]);
+              uint8_t roiVal = static_cast<uint8_t>(fRoiVal * 255.0f);
 
               for (size_t r = 0; r < scale; ++r) {
                 for (size_t c = 0; c < scale; ++c) {
                   uint8_t* dp = rgbDebugMat.ptr<uint8_t>(yOff + (y * scale) + r, xOff + (x * scale) + c);
-                  dp[0] = 0; // B
-                  dp[1] = 0; // G
-                  dp[2] = roiVal; // R
+                  if (fRoiVal > roiSampleThreshold) {
+                    // ROI sample that was included in the center computation
+                    dp[0] = 0; // B
+                    dp[1] = roiVal; // G
+                    dp[2] = 0; // R
+                  } else {
+                    // ROI sample that failed threshold test and was excluded
+                    dp[0] = 0; // B
+                    dp[1] = 0; // G
+                    dp[2] = roiVal; // R
+                  }
                 }
               }
             }
