@@ -5,12 +5,16 @@
 #include "imgui.h"
 #include "SingleEyeFitter/projection.h"
 #include "stb/stb_image_write.h"
+#include "rhi/RHIResources.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
+#include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/transform.hpp>
+#include <glm/gtx/euler_angles.hpp>
 
 #include <cstdio>
 #include <cstring>
@@ -1080,6 +1084,8 @@ void EyeTrackingService::applyCalibrationData() {
 void EyeTrackingService::renderIMGUI() {
   ImGui::PushID(this);
 
+  ImGui::Checkbox("Draw debug overlays", &m_debugDrawOverlays);
+
   bool dirty = false;
 
 
@@ -1199,5 +1205,63 @@ void EyeTrackingService::CANTransmitEyeAngles() {
   buf.put_i16_le(serializeAngle(angles[1])); // yaw
 
   canbus()->transmitMessage(kPortID, buf);
+}
+
+void EyeTrackingService::renderSceneGizmos(FxRenderView* renderViews) {
+  // TODO needs to support dual eye!
+
+  // TODO parameterize? or pull from external config
+  const float uiDepth = 0.4f;
+
+  // Eye crosshair
+  if (m_processingState[0].m_calibrationState == kCalibrated) {
+    CrosshairUniformBlock ub;
+
+    glm::vec2 measuredPoint = getPitchYawAnglesForEye(0);
+
+    glm::mat4 modelMatrix =
+        glm::eulerAngleXY(
+          glm::radians(measuredPoint.x),
+          glm::radians(measuredPoint.y))
+      * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
+      * glm::scale(glm::vec3(0.005f));
+
+    ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
+    ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
+    ub.color = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    ub.thickness = 0.5f;
+
+    rhi()->bindRenderPipeline(crosshairPipeline);
+    rhi()->bindDepthStencilState(disabledDepthStencilState);
+
+    rhi()->loadUniformBlockImmediate(ksCrosshairUniformBlock, &ub, sizeof(ub));
+    // rhi()->setViewports(eyeViewports, 2); // should already be set
+
+    rhi()->bindStreamBuffer(0, ndcQuadVBO);
+    rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
+  }
+
+  // Center crosshair
+  if (m_processingState[0].m_calibrationState <= kCentering) {
+    CrosshairUniformBlock ub;
+
+    glm::mat4 modelMatrix =
+        glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
+      * glm::scale(glm::vec3(0.00375f));
+
+    ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
+    ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
+    ub.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    ub.thickness = 0.75f;
+
+    rhi()->bindRenderPipeline(crosshairPipeline);
+    rhi()->bindDepthStencilState(disabledDepthStencilState);
+
+    rhi()->loadUniformBlockImmediate(ksCrosshairUniformBlock, &ub, sizeof(ub));
+    // rhi()->setViewports(eyeViewports, 2); // should already be set
+
+    rhi()->bindStreamBuffer(0, ndcQuadVBO);
+    rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
+  }
 }
 

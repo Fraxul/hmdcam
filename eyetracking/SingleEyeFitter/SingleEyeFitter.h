@@ -1,6 +1,7 @@
 #ifndef SingleEyeFitter_h__
 #define SingleEyeFitter_h__
 
+#undef Success // Defined by X11/X.h, conflicts with Eigen defs
 #include <mutex>
 #include <Eigen/Core>
 #include <opencv2/core/core.hpp>

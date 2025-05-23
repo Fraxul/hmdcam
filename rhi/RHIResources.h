@@ -57,6 +57,16 @@ struct LineGizmoUniformBlock {
   glm::vec4 color;
 };
 
+extern FxAtomicString ksCrosshairUniformBlock;
+struct CrosshairUniformBlock {
+  glm::mat4 modelViewProjection[2];
+  glm::vec4 color;
+  float thickness;
+  float pad2, pad3, pad4;
+};
+extern RHIRenderPipeline::ptr crosshairPipeline;
+
+
 // pointBuf is vec4[]
 void drawTriadGizmosForPoints(RHIBuffer::ptr pointBuf, size_t count, const glm::mat4& viewProjection, float scale = 1.0f);
 

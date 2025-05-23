@@ -34,6 +34,7 @@
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
 #include "DebugServer.h"
+#include "EyeTrackingService.h"
 #include "FocusAssistDebugOverlay.h"
 #include "IDebugOverlay.h"
 #include "InputListener.h"
@@ -71,6 +72,7 @@ uint64_t settingsAutosaveIntervalFrames = 1000; // will be recomputed when we kn
 IArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
 DebugServer* debugServer = nullptr;
+EyeTrackingService* eyeTrackingService = nullptr;
 
 #define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
 static const char* hmdcamSettingsFilename = "hmdcamSettings.yml";
@@ -233,6 +235,7 @@ int main(int argc, char* argv[]) {
   DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
   ERenderBackend renderBackendType = kRenderBackendVKDirect;
   bool enablePDU = true;
+  bool enableEyetracking = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
   bool debugNoRepeatingCapture = false;
@@ -258,6 +261,8 @@ int main(int argc, char* argv[]) {
       renderBackendType = renderBackendStringToEnum(argv[++i]);
     } else if (!strcmp(argv[i], "--disable-pdu")) {
       enablePDU = false;
+    } else if (!strcmp(argv[i], "--disable-eyetracking")) {
+      enableEyetracking = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
       debugInitOnly = true;
     } else if (!strcmp(argv[i], "--debug-no-repeating-capture")) {
@@ -432,6 +437,14 @@ int main(int argc, char* argv[]) {
     depthMapGenerator->initWithCameraSystem(cameraSystem);
     depthMapGenerator->loadSettings();
   }
+
+  if (enableEyetracking) {
+    eyeTrackingService = new EyeTrackingService();
+    // TODO configurable camera paths!
+    eyeTrackingService->setInputFilename(0, "/dev/video4");
+  }
+  RHISurface::ptr eyeTrackingDebugTexture;
+  cv::Mat eyeTrackingDebugViewRGBA;
 
 
   signal(SIGINT,  signal_handler);
@@ -681,6 +694,24 @@ int main(int argc, char* argv[]) {
       }
 
 
+      if (eyeTrackingService && eyeTrackingService->processFrame()) {
+        if (debugPrintLatency && ((frameCounter & 127) == 0)) {
+          for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+            if (eyeTrackingService->m_processingState[eyeIdx].m_processingThreadAlive) {
+              printf("Frame %zu eye %zu processing time: %.3fms pre, %.3fms ROI, %.3fms segmentation, %.3fms post\n",
+                frameCounter, eyeIdx,
+                eyeTrackingService->m_processingState[eyeIdx].m_lastFramePreProcessingTimeMs,
+                eyeTrackingService->m_processingState[eyeIdx].m_lastFrameROITimeMs,
+                eyeTrackingService->m_processingState[eyeIdx].m_lastFrameSegmentationTimeMs,
+                eyeTrackingService->m_processingState[eyeIdx].m_lastFramePostProcessingTimeMs);
+            }
+          }
+        }
+
+        eyeTrackingService->CANTransmitEyeAngles();
+      }
+
+
       if (calibrationContext || drawUI) {
         // GUI support
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
@@ -808,6 +839,10 @@ int main(int argc, char* argv[]) {
             if (ImGui::Button("Save Depth Backend Settings")) {
               depthMapGenerator->saveSettings();
             }
+          }
+
+          if (eyeTrackingService && ImGui::CollapsingHeader("Eyetracking Config")) {
+            eyeTrackingService->renderIMGUI();
           }
 
           if (enablePDU && ImGui::CollapsingHeader("PDU Control")) {
@@ -1192,6 +1227,13 @@ int main(int argc, char* argv[]) {
         rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
         rhi()->drawNDCQuad();
       }
+
+      // Eyetracking gizmos
+      if (eyeTrackingService) {
+        eyeTrackingService->renderSceneGizmos(renderViews);
+      }
+
+
 
       rhi()->endRenderPass(eyeRT);
 

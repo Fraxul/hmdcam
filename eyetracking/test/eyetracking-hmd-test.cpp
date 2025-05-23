@@ -70,15 +70,6 @@ template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, 
   }
 }
 
-FxAtomicString ksCrosshairUniformBlock("CrosshairUniformBlock");
-struct CrosshairUniformBlock {
-  glm::mat4 modelViewProjection[2];
-  glm::vec4 color;
-  float thickness;
-  float pad2, pad3, pad4;
-};
-RHIRenderPipeline::ptr crosshairPipeline;
-
 FxAtomicString ksImageTex("imageTex");
 float uiScale = 0.2f;
 float uiDepth = 0.4f;
@@ -133,8 +124,6 @@ int main(int argc, char* argv[]) {
 
   io.DisplaySize = ImVec2(512.0f, 512.0f); // Not the full size, but the size of our overlay RT
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f); // Use HiDPI rendering
-
-  crosshairPipeline = rhi()->compileRenderPipeline("shaders/crosshair.vtx.glsl", "shaders/crosshair.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
 
   signal(SIGINT,  signal_handler);
   signal(SIGTERM, signal_handler);
@@ -310,8 +299,6 @@ int main(int argc, char* argv[]) {
           eyeTrackingService->renderIMGUI();
         }
 
-        ImGui::Checkbox("ET debug overlay", &eyeTrackingService->m_debugDrawOverlays);
-
         if (ImGui::CollapsingHeader("Performance")) {
           int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
 
@@ -454,60 +441,8 @@ int main(int argc, char* argv[]) {
         rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
       }
 
-
-      // Eye crosshair
-      if (eyeTrackingService->m_processingState[0].m_calibrationState == EyeTrackingService::kCalibrated) {
-        CrosshairUniformBlock ub;
-
-        glm::vec2 measuredPoint = eyeTrackingService->getPitchYawAnglesForEye(0);
-
-
-        // TODO wire up rotation angles
-        glm::mat4 modelMatrix =
-            glm::eulerAngleXY(
-              glm::radians(measuredPoint.x),
-              glm::radians(measuredPoint.y))
-          * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
-          * glm::scale(glm::vec3(0.005f));
-
-        ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
-        ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
-        ub.color = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-        ub.thickness = 0.5f;
-
-        rhi()->bindRenderPipeline(crosshairPipeline);
-        rhi()->bindDepthStencilState(disabledDepthStencilState);
-
-        rhi()->loadUniformBlockImmediate(ksCrosshairUniformBlock, &ub, sizeof(ub));
-        // rhi()->setViewports(eyeViewports, 2); // should already be set
-
-        rhi()->bindStreamBuffer(0, ndcQuadVBO);
-        rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
-      }
-
-      // Center crosshair
-      if (eyeTrackingService->m_processingState[0].m_calibrationState <= EyeTrackingService::kCentering) {
-        CrosshairUniformBlock ub;
-
-        glm::mat4 modelMatrix =
-            glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
-          * glm::scale(glm::vec3(0.00375f));
-
-        ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
-        ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
-        ub.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
-        ub.thickness = 0.75f;
-
-        rhi()->bindRenderPipeline(crosshairPipeline);
-        rhi()->bindDepthStencilState(disabledDepthStencilState);
-
-        rhi()->loadUniformBlockImmediate(ksCrosshairUniformBlock, &ub, sizeof(ub));
-        // rhi()->setViewports(eyeViewports, 2); // should already be set
-
-        rhi()->bindStreamBuffer(0, ndcQuadVBO);
-        rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
-      }
-
+      // Cursors and any other EyeTrackingService-provided gizmos
+      eyeTrackingService->renderSceneGizmos(renderViews);
 
       if (debugRenderTiming)
         rhi()->endTimerQuery(viewRenderQuery);

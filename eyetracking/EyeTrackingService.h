@@ -1,5 +1,6 @@
 #pragma once
 #include "common/CANBus.h"
+#include "common/FxRenderView.h"
 #include "common/ScrollingBuffer.h"
 #include "SingleEyeFitter/SingleEyeFitter.h"
 #include "one_euro_filter.h"
@@ -28,6 +29,7 @@ public:
   void saveCalibrationData(cv::FileStorage&);
 
   void renderIMGUI();
+  void renderSceneGizmos(FxRenderView* renderViews);
 
   void setInputFilename(size_t eyeIdx, const std::string& s) {
     assert(eyeIdx < 2);

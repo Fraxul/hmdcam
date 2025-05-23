@@ -39,6 +39,7 @@ RHISampler::ptr linearMipWrapAnisoSampler;
 RHIVertexLayout fullscreenPassVertexLayout;
 RHIVertexLayout ndcQuadVertexLayout;
 RHIRenderPipelineDescriptor tristripPipelineDescriptor;
+RHIRenderPipeline::ptr crosshairPipeline;
 
 FxAtomicString ksShadowAtlasVisualizeUniformBlock("ShadowAtlasVisualizeUniformBlock");
 FxAtomicString ksHBAOUniformBlock("HBAOUniformBlock");
@@ -47,6 +48,7 @@ FxAtomicString ksFrustumVisualizeUniformBlock("FrustumVisualizeUniformBlock");
 FxAtomicString ksLineGizmoUniformBlock("LineGizmoUniformBlock");
 FxAtomicString ksUILayerUniformBlock("UILayerUniformBlock");
 FxAtomicString ksUILayerStereoUniformBlock("UILayerStereoUniformBlock");
+FxAtomicString ksCrosshairUniformBlock("CrosshairUniformBlock");
 
 RHIVertexLayout positionOnlyVertexLayout;
 
@@ -273,11 +275,16 @@ void initRHIResources() {
     uiLayerStereoPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 
-  RHIShaderDescriptor overlayCompositeShaderDescriptor;
-  overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kVertexShader, "shaders/lightPass.vtx.glsl");
-  overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kFragmentShader, "shaders/overlayCompositeShader.frag.glsl");
-  overlayCompositeShaderDescriptor.setVertexLayout(ndcQuadVertexLayout);
-  overlayCompositePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(overlayCompositeShaderDescriptor), tristripPipelineDescriptor);
+  {
+    RHIShaderDescriptor overlayCompositeShaderDescriptor;
+    overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kVertexShader, "shaders/lightPass.vtx.glsl");
+    overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kFragmentShader, "shaders/overlayCompositeShader.frag.glsl");
+    overlayCompositeShaderDescriptor.setVertexLayout(ndcQuadVertexLayout);
+    overlayCompositePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(overlayCompositeShaderDescriptor), tristripPipelineDescriptor);
+  }
+
+  crosshairPipeline = rhi()->compileRenderPipeline("shaders/crosshair.vtx.glsl", "shaders/crosshair.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
+
 }
 
 FxAtomicString ksTriadGizmoUniformBuffer("TriadGizmoUniformBuffer");
