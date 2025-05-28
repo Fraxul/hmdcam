@@ -338,7 +338,7 @@ bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
 
     // Adjust framerate. TODO: this should be configurable
     sp.parm.capture.timeperframe.numerator = 1;
-    sp.parm.capture.timeperframe.denominator = 30;
+    sp.parm.capture.timeperframe.denominator = 120;
 
     if (!tryIoctl(VIDIOC_S_PARM, &sp))
       goto err;

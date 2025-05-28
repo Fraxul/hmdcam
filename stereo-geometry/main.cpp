@@ -41,7 +41,6 @@ RHIBuffer::ptr meshQuadVBO;
 RHIBuffer::ptr frustumVisualizeVBO;
 
 FxAtomicString ksMeshTransformUniformBlock("MeshTransformUniformBlock");
-static FxAtomicString ksImageTex("imageTex");
 struct MeshTransformUniformBlock {
   glm::mat4 modelViewProjection;
 };

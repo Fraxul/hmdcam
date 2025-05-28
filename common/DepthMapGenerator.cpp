@@ -74,7 +74,6 @@ DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend backend) {
 
 FxAtomicString ksMeshDisparityDepthMapUniformBlock("MeshDisparityDepthMapUniformBlock");
 static FxAtomicString ksDisparityTex("disparityTex");
-static FxAtomicString ksImageTex("imageTex");
 
 static FxAtomicString ksSrcImage("srcImage");
 static FxAtomicString ksDstMip1("dstMip1");

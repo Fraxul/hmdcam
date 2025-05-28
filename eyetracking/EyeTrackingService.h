@@ -29,7 +29,9 @@ public:
   void saveCalibrationData(cv::FileStorage&);
 
   void renderIMGUI();
-  void renderSceneGizmos(FxRenderView* renderViews);
+
+  void renderSceneGizmos_preUI(FxRenderView* renderViews);
+  void renderSceneGizmos_postUI(FxRenderView* renderViews);
 
   void setInputFilename(size_t eyeIdx, const std::string& s) {
     assert(eyeIdx < 2);
@@ -47,6 +49,8 @@ public:
   const char* getDebugPerfStatsForEye(size_t eyeIdx);
   cv::Mat& getDebugViewForEye(size_t eyeIdx);
   bool m_debugDrawOverlays = true; // Affects content returned by getDebugViewForEye
+
+  bool m_debugShowFeedbackView = false; // Draw eye camera(s) over the scene in renderSceneGizmos()
 
   enum CalibrationState {
     kWaitingForValidFrames,
@@ -84,7 +88,7 @@ public:
     uint32_t m_contiguousValidFrameCounter = 0;
     uint32_t m_contiguousInvalidFrameCounter = 0;
 
-    ScrollingBuffer<cv::RotatedRect> m_calibrationSamples {24};
+    ScrollingBuffer<cv::RotatedRect> m_calibrationSamples {60};
     singleeyefitter::Circle3D<double> m_centerPupilCircle;
 
     glm::vec3 centerPupilNormal() const {
@@ -144,6 +148,7 @@ public:
     cv::Mat m_debugViewRGB; // RGB debug view, optionally with debug overlays drawn on it
     glm::vec2 m_debugBoundsCenter; // for rendering sector cutoff gizmo
     std::vector<cv::Point2f> m_debugTransformedContour;
+    RHISurface::ptr m_eyeTrackingDebugTexture;
 
     char m_debugPerfStatsBuffer[256];
   };

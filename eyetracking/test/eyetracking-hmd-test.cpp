@@ -70,7 +70,6 @@ template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, 
   }
 }
 
-FxAtomicString ksImageTex("imageTex");
 float uiScale = 0.2f;
 float uiDepth = 0.4f;
 
@@ -132,7 +131,7 @@ int main(int argc, char* argv[]) {
 
   // Eyetracking service init
   EyeTrackingService* eyeTrackingService = new EyeTrackingService();
-  RHISurface::ptr eyeTrackingDebugTexture;
+  eyeTrackingService->m_debugShowFeedbackView = true; // Default to feedback view enabled
 
   int eyeTrackingCalibrationPointIdx = -1;
   const glm::vec2 eyeTrackingCalibrationPoints[] = {
@@ -376,36 +375,6 @@ int main(int argc, char* argv[]) {
 
 
 
-      // Render eyetracking debug view
-      {
-        const cv::Mat& debugView = eyeTrackingService->getDebugViewForEye(0);
-        if (debugView.cols && debugView.rows) {
-
-          if (!eyeTrackingDebugTexture || (eyeTrackingDebugTexture->width() != debugView.cols) || (eyeTrackingDebugTexture->height() != debugView.rows)) {
-            eyeTrackingDebugTexture = rhi()->newTexture2D(debugView.cols, debugView.rows, kSurfaceFormat_RGBA8);
-          }
-
-          // Eyetracking debug view is drawn in RGBA, so we just have to upload it.
-          rhi()->loadTextureData(eyeTrackingDebugTexture, kVertexElementTypeUByte4N, debugView.ptr());
-
-
-          rhi()->bindBlendState(disabledBlendState);
-          rhi()->bindDepthStencilState(disabledDepthStencilState);
-          rhi()->bindRenderPipeline(uiLayerStereoPipeline);
-          rhi()->loadTexture(ksImageTex, eyeTrackingDebugTexture, linearClampSampler);
-          // rhi()->setViewports(eyeViewports, 2); // should already be set
-
-          UILayerStereoUniformBlock ub;
-          glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth)) * glm::scale(glm::vec3(uiScale * (static_cast<float>(eyeTrackingDebugTexture->width()) / static_cast<float>(eyeTrackingDebugTexture->height())), -uiScale, uiScale));
-          ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
-          ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
-
-          rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
-          rhi()->drawNDCQuad();
-
-        }
-      }
-
       // Render eyetracking gizmos
 
       // Eyetracking calibration point
@@ -435,12 +404,8 @@ int main(int argc, char* argv[]) {
         rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
       }
 
-      // Cursors and any other EyeTrackingService-provided gizmos
-      eyeTrackingService->renderSceneGizmos(renderViews);
-
-      if (debugRenderTiming)
-        rhi()->endTimerQuery(viewRenderQuery);
-
+      // Eyetracking overlays that draw behind the UI
+      eyeTrackingService->renderSceneGizmos_preUI(renderViews);
 
       // UI overlay
       {
@@ -459,7 +424,13 @@ int main(int argc, char* argv[]) {
         rhi()->drawNDCQuad();
       }
 
+      // Cursors and any other EyeTrackingService-provided gizmos
+      eyeTrackingService->renderSceneGizmos_postUI(renderViews);
+
       rhi()->endRenderPass(eyeRT);
+
+      if (debugRenderTiming)
+        rhi()->endTimerQuery(viewRenderQuery);
 
 
       timingData.submitTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());

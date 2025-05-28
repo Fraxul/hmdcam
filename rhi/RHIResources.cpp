@@ -46,6 +46,7 @@ FxAtomicString ksHBAOUniformBlock("HBAOUniformBlock");
 FxAtomicString ksBloomThresholdUniformBlock("BloomThresholdUniformBlock");
 FxAtomicString ksFrustumVisualizeUniformBlock("FrustumVisualizeUniformBlock");
 FxAtomicString ksLineGizmoUniformBlock("LineGizmoUniformBlock");
+FxAtomicString ksImageTex("imageTex");
 FxAtomicString ksUILayerUniformBlock("UILayerUniformBlock");
 FxAtomicString ksUILayerStereoUniformBlock("UILayerStereoUniformBlock");
 FxAtomicString ksCrosshairUniformBlock("CrosshairUniformBlock");

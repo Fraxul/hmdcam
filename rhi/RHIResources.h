@@ -46,6 +46,7 @@ struct UILayerUniformBlock {
   glm::mat4 modelViewProjection;
 };
 
+extern FxAtomicString ksImageTex;
 extern FxAtomicString ksUILayerStereoUniformBlock;
 struct UILayerStereoUniformBlock {
   glm::mat4 modelViewProjection[2];

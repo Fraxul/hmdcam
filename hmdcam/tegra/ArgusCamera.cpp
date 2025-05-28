@@ -36,7 +36,6 @@ static const uint32_t kFailedWaitForIdleThreshold = 2;
 
 extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
 extern FxAtomicString ksNDCQuadUniformBlock;
-extern FxAtomicString ksImageTex;
 
 static const char* argusStatusStr(Argus::Status status) {
   switch (status) {

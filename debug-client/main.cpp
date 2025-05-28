@@ -53,8 +53,6 @@ extern FxAtomicString ksDistortionMap;
 extern cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_64FC1);
 
-static FxAtomicString ksImageTex("imageTex");
-
 RHIRenderPipeline::ptr camTexturedQuadPipeline;
 
 #if 0

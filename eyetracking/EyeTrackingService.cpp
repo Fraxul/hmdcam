@@ -329,6 +329,9 @@ void EyeTrackingService::saveCalibrationData(cv::FileStorage& fs) {
 
 
 void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
+  const uint32_t kContiguousValidFrameCountThreshold = 100;
+  const uint32_t kInvalidFrameCountThreshold = 150; // Number of invalid frames in a row to throw away the calibration and start over
+
   ProcessingState& ps = m_processingState[eyeIdx];
 
   bool fitEllipse = postprocessOneEye_fitEllipse(eyeIdx);
@@ -344,7 +347,7 @@ void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
 
   switch (ps.m_calibrationState) {
     case kWaitingForValidFrames: {
-      if (ps.m_contiguousValidFrameCounter > 25) {
+      if (ps.m_contiguousValidFrameCounter > kContiguousValidFrameCountThreshold) {
         printf("EyeTrackingService::postprocessOneEye(%zu): waiting -> centering\n", eyeIdx);
         ps.m_calibrationSamples.clear();
         ps.m_calibrationState = kCentering;
@@ -405,7 +408,7 @@ void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
     } break;
 
     case kCalibrated: {
-      if (ps.m_contiguousInvalidFrameCounter > 50) {
+      if (ps.m_contiguousInvalidFrameCounter > kInvalidFrameCountThreshold) {
         printf("EyeTrackingService::postprocessOneEye(%zu): Could not fit pupil for %u frames, resetting calibration.\n", eyeIdx, ps.m_contiguousInvalidFrameCounter);
         ps.m_calibrationState = kWaitingForValidFrames;
       }
@@ -1101,10 +1104,12 @@ void EyeTrackingService::applyCalibrationData() {
 void EyeTrackingService::renderIMGUI() {
   ImGui::PushID(this);
 
-  ImGui::Checkbox("Draw debug overlays", &m_debugDrawOverlays);
+  ImGui::Checkbox("ET camera feedback view", &m_debugShowFeedbackView);
+  if (m_debugShowFeedbackView) {
+    ImGui::Checkbox("Draw debug overlays", &m_debugDrawOverlays);
+  }
 
   bool dirty = false;
-
 
   // Roll angles don't require recalibrating
   ImGui::DragFloat("L Roll angle (deg)", &m_rollOffsetDeg[0], /*speed=*/ 0.1f, /*min=*/ -30.0f, /*max=*/ 30.0f, "%.1f");
@@ -1224,11 +1229,49 @@ void EyeTrackingService::CANTransmitEyeAngles() {
   canbus()->transmitMessage(kPortID, buf);
 }
 
-void EyeTrackingService::renderSceneGizmos(FxRenderView* renderViews) {
+void EyeTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
+  // TODO needs to support dual eye!
+  // TODO parameterize? or pull from external config
+  const float feedbackViewDepth = 0.5f;
+
+  // Render eyetracking debug view
+  if (m_debugShowFeedbackView) {
+    const float feedbackViewScale = 0.175f;
+
+    ProcessingState& ps = m_processingState[0];
+    const cv::Mat& debugView = getDebugViewForEye(0);
+
+    if (debugView.cols && debugView.rows) {
+
+      if (!ps.m_eyeTrackingDebugTexture || (ps.m_eyeTrackingDebugTexture->width() != debugView.cols) || (ps.m_eyeTrackingDebugTexture->height() != debugView.rows)) {
+        ps.m_eyeTrackingDebugTexture = rhi()->newTexture2D(debugView.cols, debugView.rows, kSurfaceFormat_RGBA8);
+      }
+
+      // Eyetracking debug view is drawn in RGBA, so we just have to upload it.
+      rhi()->loadTextureData(ps.m_eyeTrackingDebugTexture, kVertexElementTypeUByte4N, debugView.ptr());
+
+
+      rhi()->bindBlendState(disabledBlendState);
+      rhi()->bindDepthStencilState(disabledDepthStencilState);
+      rhi()->bindRenderPipeline(uiLayerStereoPipeline);
+      rhi()->loadTexture(ksImageTex, ps.m_eyeTrackingDebugTexture, linearClampSampler);
+      // rhi()->setViewports(eyeViewports, 2); // should already be set
+
+      UILayerStereoUniformBlock ub;
+      glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -feedbackViewDepth)) * glm::scale(glm::vec3(feedbackViewScale * (static_cast<float>(ps.m_eyeTrackingDebugTexture->width()) / static_cast<float>(ps.m_eyeTrackingDebugTexture->height())), -feedbackViewScale, feedbackViewScale));
+      ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
+      ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
+
+      rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
+      rhi()->drawNDCQuad();
+    }
+  }
+}
+
+void EyeTrackingService::renderSceneGizmos_postUI(FxRenderView* renderViews) {
   // TODO needs to support dual eye!
 
-  // TODO parameterize? or pull from external config
-  const float uiDepth = 0.4f;
+  const float crosshairDepth = 0.4f;
 
   // Eye crosshair
   if (m_processingState[0].m_calibrationState == kCalibrated) {
@@ -1240,7 +1283,7 @@ void EyeTrackingService::renderSceneGizmos(FxRenderView* renderViews) {
         glm::eulerAngleXY(
           glm::radians(measuredPoint.x),
           glm::radians(measuredPoint.y))
-      * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
+      * glm::translate(glm::vec3(0.0f, 0.0f, -crosshairDepth))
       * glm::scale(glm::vec3(0.005f));
 
     ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
@@ -1263,7 +1306,7 @@ void EyeTrackingService::renderSceneGizmos(FxRenderView* renderViews) {
     CrosshairUniformBlock ub;
 
     glm::mat4 modelMatrix =
-        glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
+        glm::translate(glm::vec3(0.0f, 0.0f, -crosshairDepth))
       * glm::scale(glm::vec3(0.00375f));
 
     ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;

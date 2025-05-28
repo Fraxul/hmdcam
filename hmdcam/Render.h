@@ -45,7 +45,6 @@ struct SolidQuadUniformBlock {
 };
 extern FxAtomicString ksSolidQuadUniformBlock;
 
-extern FxAtomicString ksImageTex;
 extern FxAtomicString ksOverlayTex;
 extern FxAtomicString ksMaskTex;
 extern FxAtomicString ksDistortionMap;

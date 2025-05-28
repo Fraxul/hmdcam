@@ -1206,6 +1206,11 @@ int main(int argc, char* argv[]) {
       }
 */
 
+      // Eyetracking gizmos, pre-UI
+      if (eyeTrackingService) {
+        eyeTrackingService->renderSceneGizmos_preUI(renderViews);
+      }
+
       // UI overlay
       {
         nvtxMarkA("UI overlay");
@@ -1224,9 +1229,9 @@ int main(int argc, char* argv[]) {
         rhi()->drawNDCQuad();
       }
 
-      // Eyetracking gizmos
+      // Eyetracking gizmos, post-UI
       if (eyeTrackingService) {
-        eyeTrackingService->renderSceneGizmos(renderViews);
+        eyeTrackingService->renderSceneGizmos_postUI(renderViews);
       }
 
 

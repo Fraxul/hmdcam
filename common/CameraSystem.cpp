@@ -74,7 +74,6 @@ static void internal_drawDetectedCornersCharuco(cv::InputOutputArray _image, cv:
 
 // TODO move this
 FxAtomicString ksDistortionMap("distortionMap");
-FxAtomicString ksImageTex("imageTex");
 
 
 CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibration.yml"), m_cameraProvider(cam), m_calibrationDataRevision(0) {
