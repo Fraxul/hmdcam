@@ -133,7 +133,6 @@ int main(int argc, char* argv[]) {
   // Eyetracking service init
   EyeTrackingService* eyeTrackingService = new EyeTrackingService();
   RHISurface::ptr eyeTrackingDebugTexture;
-  cv::Mat eyeTrackingDebugViewRGBA;
 
   int eyeTrackingCalibrationPointIdx = -1;
   const glm::vec2 eyeTrackingCalibrationPoints[] = {
@@ -386,9 +385,8 @@ int main(int argc, char* argv[]) {
             eyeTrackingDebugTexture = rhi()->newTexture2D(debugView.cols, debugView.rows, kSurfaceFormat_RGBA8);
           }
 
-          // TODO this is probably inefficient
-          cv::cvtColor(/*src=*/ debugView, /*dst=*/ eyeTrackingDebugViewRGBA, cv::COLOR_BGR2RGBA);
-          rhi()->loadTextureData(eyeTrackingDebugTexture, kVertexElementTypeUByte4N, eyeTrackingDebugViewRGBA.ptr());
+          // Eyetracking debug view is drawn in RGBA, so we just have to upload it.
+          rhi()->loadTextureData(eyeTrackingDebugTexture, kVertexElementTypeUByte4N, debugView.ptr());
 
 
           rhi()->bindBlendState(disabledBlendState);
