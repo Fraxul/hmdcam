@@ -627,7 +627,8 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
   }
 
   // Apply model to ellipse to generate 3d fit
-  if (ps.m_eyeModelFitter.hasEyeModel()) {
+  // Skip a few frames after an invalid one to avoid jitter during blinking
+  if (ps.m_eyeModelFitter.hasEyeModel() && ps.m_contiguousValidFrameCounter > 4) {
     ps.m_eyeFitterOutputsValid = ps.m_eyeModelFitter.unproject_single_observation(ps.m_fitPupilCircle, singleeyefitter::toEllipseWithOffset<double>(ps.m_pupilEllipse, ps.m_captureCenterOffset), pupilRadius());
     if (ps.m_eyeFitterOutputsValid) {
       // Original coordinate system:
