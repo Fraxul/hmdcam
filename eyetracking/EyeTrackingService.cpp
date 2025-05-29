@@ -21,6 +21,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#include <iterator>
 #include <math.h>
 #include <dirent.h>
 
@@ -425,6 +426,19 @@ void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
 }
 
 
+// std::sort support
+namespace cv {
+  bool operator<(const Point& left, const Point& right) {
+    if (left.x < right.x)
+      return true;
+    else if (left.x > right.x)
+      return false;
+    else /*(left.x == right.x)*/
+      return left.y < right.y;
+  }
+};
+
+
 // Returns true if an ellipse was fit this frame, even if the full eye model fit/unproject wasn't successful.
 bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 
@@ -498,6 +512,27 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
 
     // Tests passed
 
+    // Fit only to contour points that exist in the convex hull
+    // Avoids jitter with edge cutouts for glints, but hopefully without skewing the fit
+    // to try and include the straight edges generated during the convex hull operation.
+
+    // Sort contour and hull points
+    std::sort(hull.begin(), hull.end());
+    std::sort(contour.points.begin(), contour.points.end());
+
+    // Apply filtering
+    std::vector<cv::Point> filteredPoints;
+    filteredPoints.reserve(contour.points.size());
+
+    std::set_intersection(contour.points.begin(), contour.points.end(), hull.begin(), hull.end(), std::back_inserter(filteredPoints));
+
+    if (filteredPoints.size() < 10) {
+      FRAME_DEBUG_LOG("  -- Insufficient points (%zu) after convex hull filtering\n", filteredPoints.size());
+      continue; // Not enough points
+    }
+
+    // Replace contour points with filtered points
+    filteredPoints.swap(contour.points);
 
     // Find center of points for sector angle filtering
     glm::vec2 boundsCenter;
