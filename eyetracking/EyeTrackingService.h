@@ -151,6 +151,15 @@ public:
     RHISurface::ptr m_eyeTrackingDebugTexture;
 
     char m_debugPerfStatsBuffer[256];
+
+    // Additional debugging data
+    struct GraphData {
+      float deltaSize = 0.0f;
+      float deltaCenter = 0.0f;
+      float deltaAngle = 0.0f;
+    };
+    bool m_freezeGraphData = false;
+    ScrollingBuffer<GraphData> m_graphData { 120 /*samples*/ };
   };
 
 

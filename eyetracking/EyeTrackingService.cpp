@@ -3,6 +3,7 @@
 #include "common/Timing.h"
 #include "common/mmfile.h"
 #include "imgui.h"
+#include "implot/implot.h"
 #include "SingleEyeFitter/projection.h"
 #include "stb/stb_image_write.h"
 #include "rhi/RHIResources.h"
@@ -543,9 +544,23 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
       continue;
     }
 
-    ps.m_pupilEllipse = cv::fitEllipse(transformedContour);
+    cv::RotatedRect ell = cv::fitEllipse(transformedContour);
+
+    // Update debug deltas if there was a previous ellipse fit
+    if (!ps.m_pupilEllipse.size.empty() && !ps.m_freezeGraphData) {
+      ProcessingState::GraphData gd;
+
+      gd.deltaSize = (ell.size.area() / ps.m_pupilEllipse.size.area()) * 100.0f; // percentage
+      gd.deltaCenter = glm::length(toGlm(ell.center) - toGlm(ps.m_pupilEllipse.center));
+      gd.deltaAngle = ell.angle - ps.m_pupilEllipse.angle;
+
+      ps.m_graphData.push_back(gd);
+    }
+
+    ps.m_pupilEllipse = ell;
     ps.m_debugTransformedContour = transformedContour;
     didFitEllipse = true;
+
     // Only need to fit one ellipse.
     break;
   }
@@ -1109,6 +1124,56 @@ void EyeTrackingService::renderIMGUI() {
   if (m_debugShowFeedbackView) {
     ImGui::Checkbox("Draw debug overlays", &m_debugDrawOverlays);
   }
+
+  if (ImGui::CollapsingHeader("Data graphs")) {
+    int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
+
+    PER_EYE {
+      ProcessingState& ps = m_processingState[eyeIdx];
+      if (!ps.m_processingThreadAlive)
+        continue;
+
+      ImGui::PushID(eyeIdx);
+      ImGui::Text("Eye %zu", eyeIdx);
+      ImGui::Checkbox("Freeze graph", &ps.m_freezeGraphData);
+
+      if (ImPlot::BeginPlot("##EllipseData1", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+        ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+        ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0, ps.m_graphData.size(), ImPlotCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, -10.0f, 10.0f, ImPlotCond_Always);
+        ImPlot::SetupFinish();
+
+        ImPlot::PlotLine("Delta Center", &ps.m_graphData.data()[0].deltaCenter, ps.m_graphData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, ps.m_graphData.offset(), sizeof(ProcessingState::GraphData));
+        ImPlot::EndPlot();
+      }
+
+      if (ImPlot::BeginPlot("##EllipseData2", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+        ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+        ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0, ps.m_graphData.size(), ImPlotCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 90.0f, 110.0f, ImPlotCond_Once);
+        ImPlot::SetupFinish();
+
+        ImPlot::PlotLine("Delta Size", &ps.m_graphData.data()[0].deltaSize, ps.m_graphData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, ps.m_graphData.offset(), sizeof(ProcessingState::GraphData));
+        ImPlot::EndPlot();
+      }
+
+      if (ImPlot::BeginPlot("##EllipseData3", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+        ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+        ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0, ps.m_graphData.size(), ImPlotCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, -45.0f, 45.0f, ImPlotCond_Always);
+        ImPlot::SetupFinish();
+
+        ImPlot::PlotLine("Delta Angle", &ps.m_graphData.data()[0].deltaAngle, ps.m_graphData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, ps.m_graphData.offset(), sizeof(ProcessingState::GraphData));
+        ImPlot::EndPlot();
+      }
+
+      ImGui::PopID();
+    }
+  }
+
 
   bool dirty = false;
 
