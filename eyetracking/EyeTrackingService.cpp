@@ -1228,6 +1228,7 @@ void EyeTrackingService::renderIMGUI() {
 
   ImGui::Checkbox("ET camera feedback view", &m_debugShowFeedbackView);
   if (m_debugShowFeedbackView) {
+    ImGui::DragFloat("FB brightness", &m_debugFeedbackBrightness, /*speed=*/ 0.05f, /*min=*/ 0.0f, /*max=*/ 1.0f, "%.2f");
     ImGui::Checkbox("Draw debug overlays", &m_debugDrawOverlays);
   }
 
@@ -1433,6 +1434,7 @@ void EyeTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
       glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -feedbackViewDepth)) * glm::scale(glm::vec3(feedbackViewScale * (static_cast<float>(ps.m_eyeTrackingDebugTexture->width()) / static_cast<float>(ps.m_eyeTrackingDebugTexture->height())), -feedbackViewScale, feedbackViewScale));
       ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
       ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
+      ub.tint = glm::vec4(m_debugFeedbackBrightness, m_debugFeedbackBrightness, m_debugFeedbackBrightness, 1.0f);
 
       rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
       rhi()->drawNDCQuad();

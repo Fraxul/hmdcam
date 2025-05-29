@@ -51,6 +51,7 @@ public:
   bool m_debugDrawOverlays = true; // Affects content returned by getDebugViewForEye
 
   bool m_debugShowFeedbackView = false; // Draw eye camera(s) over the scene in renderSceneGizmos()
+  float m_debugFeedbackBrightness = 1.0f;
 
   enum CalibrationState {
     kWaitingForValidFrames,

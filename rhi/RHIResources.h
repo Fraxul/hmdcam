@@ -50,6 +50,7 @@ extern FxAtomicString ksImageTex;
 extern FxAtomicString ksUILayerStereoUniformBlock;
 struct UILayerStereoUniformBlock {
   glm::mat4 modelViewProjection[2];
+  glm::vec4 tint = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
 };
 
 extern FxAtomicString ksLineGizmoUniformBlock;

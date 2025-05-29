@@ -1,10 +1,8 @@
 #version 310 es
+#include "UILayerStereoUniformBlock.h"
+
 layout(triangles) in;
 layout(triangle_strip, max_vertices=6) out;
-
-layout(std140) uniform UILayerStereoUniformBlock {
-  mat4 modelViewProjection[2];
-};
 
 in V2G {
   vec4 P;
