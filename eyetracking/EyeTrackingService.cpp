@@ -39,6 +39,7 @@ const char* kCaptureFilePattern = "%s/%06d.png";
 const size_t kCaptureFilePatternLen = /*field length from kCaptureFilePattern=*/ 6 + /*strlen(".png")=*/ 4;
 
 
+static inline glm::vec2 toGlm(const cv::Point& p) { return glm::vec2(p.x, p.y); }
 static inline glm::vec2 toGlm(const cv::Point2f& p) { return glm::vec2(p.x, p.y); }
 // static inline cv::Point2f toCv(const glm::vec2& p) { return cv::Point2f(p[0], p[1]); }
 
@@ -74,6 +75,19 @@ template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, 
 template <typename T> T clamp(T value, T min_, T max_) {
   return std::min<T>(max_, std::max<T>(min_, value));
 }
+
+
+template <typename T> glm::vec2 boundsCenterFromPoints(const std::vector<cv::Point_<T> >& points) {
+  glm::vec2 boundsMin = toGlm(points[0]);
+  glm::vec2 boundsMax = toGlm(points[0]);
+  for (size_t i = 1; i < points.size(); ++i) {
+    const cv::Point2f& p = points[i];
+    boundsMin = glm::min(toGlm(p), boundsMin);
+    boundsMax = glm::max(toGlm(p), boundsMax);
+  }
+  return (boundsMin + boundsMax) * 0.5f;
+}
+
 
 // Fast conversion of 0....255 range uint8 values to -1...1 range fp16 values
 // Has a tiny precision loss around input 127 / output zero:
@@ -506,7 +520,7 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
       c.perimeter = cv::arcLength(points, /*is_closed=*/ true);
 
       c.points = std::move(points);
-      filteredContours.push_back(c);
+      filteredContours.push_back(std::move(c));
     }
 
     // Sort filtered contours by area descending
@@ -569,17 +583,7 @@ bool EyeTrackingService::postprocessOneEye_fitEllipse(size_t eyeIdx) {
     filteredPoints.swap(contour.points);
 
     // Find center of points for sector angle filtering
-    glm::vec2 boundsCenter;
-    {
-      glm::vec2 boundsMin = toGlm(contour.points[0]);
-      glm::vec2 boundsMax = toGlm(contour.points[0]);
-      for (size_t i = 1; i < contour.points.size(); ++i) {
-        const cv::Point2f& p = contour.points[i];
-        boundsMin = glm::min(toGlm(p), boundsMin);
-        boundsMax = glm::max(toGlm(p), boundsMax);
-      }
-      boundsCenter = (boundsMin + boundsMax) * 0.5f;
-    }
+    glm::vec2 boundsCenter = boundsCenterFromPoints(contour.points);
 
     // Save bounds center for sector cutoff gizmo drawing
     ps.m_debugBoundsCenter = boundsCenter + glm::vec2(ps.m_lastSegROIToCaptureMatOffset.x, ps.m_lastSegROIToCaptureMatOffset.y);
@@ -776,6 +780,12 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
   cv::Mat captureMat;
   cv::Mat rgbDebugMat;
 
+  cv::Mat roiMaskMat;
+  roiMaskMat.create(m_roiOutputHeight, m_roiOutputWidth, CV_8UC1);
+
+  cv::Mat roiErodedMaskMat;
+  roiErodedMaskMat.create(m_roiOutputHeight, m_roiOutputWidth, CV_8UC1);
+
   // Compute capture mat crop rect based on the ROI network input size
   cv::Rect captureCropRect;
   {
@@ -855,12 +865,12 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
     ps.m_lastFrameROITimeMs = perfTimer.checkpoint();
 
-    // Compute center of ROI heatmap
+    // Process ROI network output into binary mask
     float roiOutput[2]; // 0...1 coordinate range
     float roiSampleThreshold;
 
     if (m_roiIOIsInt8) {
-      assert(false && "TODO: ROI heatmap center computation for int8 i/o");
+      assert(false && "TODO: ROI mask processing for int8 i/o");
     } else {
       _Float16* roiBasePtr = ps.m_roiExec->outputTensorPtr<_Float16>(0);
 
@@ -874,34 +884,62 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
         maxValue = std::max<_Float16>(maxValue, rowMax);
       }
 
-      // Gather all sample points >= 0.9x max value and compute their weighted average position.
-      roiSampleThreshold = maxValue * 0.9f;
+      // Convert sample points >= 0.9x max value into a binary mask
 
-      float sampleWeightAccum = 0;
-      float xAccum = 0;
-      float yAccum = 0;
+      _Float16 roiSampleThreshold_fp16 = maxValue * 0.9f16;
+      roiSampleThreshold = roiSampleThreshold_fp16;
 
       for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
         _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputRowStrideElements);
-        for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
-          float w = roiRowPtr[x];
-          if (w >= roiSampleThreshold) {
-            sampleWeightAccum += w;
-            xAccum += static_cast<float>(x) * w;
-            yAccum += static_cast<float>(y) * w;
-          }
-        }
+        fp16ThresholdToU8Mask(roiRowPtr, roiSampleThreshold_fp16, roiMaskMat.ptr<uint8_t>(y), m_roiOutputWidth);
+      }
+    }
+
+    // Cleanup roiMaskMat, generate contours, find the best match
+    {
+      // Run erode operation to clean up speckles
+      cv::erode(/*src=*/ roiMaskMat, /*dst=*/ roiErodedMaskMat, /*kernel (default)=*/ cv::Mat());
+
+      // Collect and filter contours
+      std::vector<std::vector<cv::Point> > contours;
+      cv::findContoursLinkRuns(roiErodedMaskMat, contours);
+
+      struct Contour {
+        std::vector<cv::Point> points;
+        glm::vec2 normalizedBoundsCenter;
+        float distanceToCenter;
+      };
+      std::vector<Contour> filteredContours;
+      filteredContours.reserve(contours.size());
+
+      for (size_t contourIdx = 0; contourIdx < contours.size(); ++contourIdx) {
+        auto& points = contours[contourIdx];
+
+        Contour c;
+
+        c.points = std::move(points);
+        c.normalizedBoundsCenter = boundsCenterFromPoints(c.points) / glm::vec2(m_roiOutputWidth, m_roiOutputHeight);
+        c.distanceToCenter = glm::length(c.normalizedBoundsCenter - glm::vec2(0.5f, 0.5f));
+
+        filteredContours.push_back(std::move(c));
       }
 
-      if (sampleWeightAccum > 0.0f) {
-        roiOutput[0] = (xAccum / sampleWeightAccum) / static_cast<float>(m_roiOutputWidth);
-        roiOutput[1] = (yAccum / sampleWeightAccum) / static_cast<float>(m_roiOutputHeight);
+      if (filteredContours.size() > 1) {
+        // Sort filtered contours by distance to center ascending
+        std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.distanceToCenter < right.distanceToCenter; } );
+      }
+
+      if (!filteredContours.empty()) {
+        // Use the bounds-center of the highest-ranked contour
+
+        roiOutput[0] = filteredContours[0].normalizedBoundsCenter[0];
+        roiOutput[1] = filteredContours[0].normalizedBoundsCenter[1];
       } else {
         // No samples? Default to center of image.
         roiOutput[0] = 0.5f;
         roiOutput[1] = 0.5f;
       }
-    }
+    } // ROI center computation
 
     // Use center coordinates computed from the ROI network to compute the ROI aligned inside the original capture mat
     // ROI Rect needs to be fixed size of the segmentation network input (no edge clipping allowed)
