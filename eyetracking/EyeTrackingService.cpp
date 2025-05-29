@@ -172,6 +172,40 @@ void fp16ThresholdToU8Mask(const _Float16* inFP16, _Float16 thresholdValue, uint
   }
 }
 
+// Returns largest element value
+_Float16 fp16VectorMax(const _Float16* inFP16, size_t elementCount) {
+  // Require at least one vector chunk.
+  assert(elementCount >= 8);
+
+  // Chunk size is 8 elements
+  size_t chunks = elementCount / 8;
+  size_t remainingElements = elementCount & 7;
+
+  // Load initial value
+  float16x8_t workVec = vld1q_f16(reinterpret_cast<const __fp16*>(inFP16));
+
+  // Load and max subsequent values
+  for (size_t chunkIdx = 1; chunkIdx < chunks; ++chunkIdx) {
+    // Load 8x fp16 values
+    float16x8_t x = vld1q_f16(reinterpret_cast<const __fp16*>(inFP16 + (chunkIdx * 8)));
+
+    // Element-wise max
+    workVec = vmaxq_f16(x, workVec);
+  }
+
+  // Pair-wise reducing max
+  _Float16 result = vmaxnmvq_f16(workVec);
+
+  // Process any remaining single elements at the end of the vector run
+  if (remainingElements) {
+    const _Float16* remainder = inFP16 + (chunks * 8);
+    for (size_t p = 0; p < remainingElements; ++p) {
+      result = std::max<_Float16>(result, remainder[p]);
+    }
+  }
+
+  return result;
+}
 
 EyeTrackingService::EyeTrackingService() {
 
@@ -832,13 +866,12 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
       // Weighted sampling:
 
-      // Find the max value. TODO: This can be vectorized
+      // Find the max value
       _Float16 maxValue = 0.0f;
       for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
         _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputRowStrideElements);
-        for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
-          maxValue = std::max<_Float16>(roiRowPtr[x], maxValue);
-        }
+        _Float16 rowMax = fp16VectorMax(roiRowPtr, m_roiOutputWidth);
+        maxValue = std::max<_Float16>(maxValue, rowMax);
       }
 
       // Gather all sample points >= 0.9x max value and compute their weighted average position.
