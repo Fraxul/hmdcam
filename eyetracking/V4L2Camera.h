@@ -66,10 +66,8 @@ protected:
   NvSciBufAttrList m_outputImageAttrList = nullptr;
 
   NvSciBufObj m_outputBufObj = nullptr;
-  NvSciSyncObj m_signaler = nullptr;
   NvSciSyncObj m_waiter = nullptr;
   NvSciSyncCpuWaitContext m_cpuWaitCtx = nullptr;
-  NvSciSyncFence m_preFence = NvSciSyncFenceInitializer;
   NvSciSyncFence m_eofFence = NvSciSyncFenceInitializer;
 
   cv::Mat m_lumaPlane;

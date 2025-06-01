@@ -221,21 +221,7 @@ bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
       CHECK_PTR(m_ijpd = NvMediaIJPDCreate(m_streamWidth, m_streamHeight, m_fmt.fmt.pix.sizeimage, /*supportPartialAccel=*/ false, NVMEDIA_JPEG_INSTANCE_0));
 
 
-      // Create sync objs on first ijpd alloc
-
-      // CPU Signaler / IJPD Waiter
-      {
-        NvSciSyncAttrList attrList = nullptr;
-        NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &attrList));
-        NVMEDIA_CHECK(NvMediaIJPDFillNvSciSyncAttrList(m_ijpd, attrList, NVMEDIA_WAITER));
-
-        NvSciSyncAttrList reconciledList = ReconcileNvSciSyncAttrLists(attrList, CreateNvSciSyncCpuSignalerAttrList(m_syncModule)); // frees attrList
-
-        NVSCI_CHECK(NvSciSyncObjAlloc(reconciledList, &m_signaler));
-        NVMEDIA_CHECK(NvMediaIJPDRegisterNvSciSyncObj(m_ijpd, NVMEDIA_PRESYNCOBJ, m_signaler));
-
-        NvSciSyncAttrListFree(reconciledList);
-      }
+      // Create sync obj on first ijpd alloc
 
       // CPU Waiter (with CPU waiter context) / IJPD Signaler
       {
@@ -436,16 +422,11 @@ bool V4L2Camera::readFrame() {
 
   // uint64_t startTime = currentTimeNs();
 
-  NVMEDIA_CHECK(NvMediaIJPDInsertPreNvSciSyncFence(m_ijpd, &m_preFence));
   NVMEDIA_CHECK(NvMediaIJPDRenderYUV(m_ijpd, m_outputBufObj,
     /*downscaleLog2=*/ 0,
     /*numBitstreamBuffers=*/ 1, &b.bitstream,
     /*flags=*/ 0,
     NVMEDIA_JPEG_INSTANCE_0));
-
-  // Signal wait events
-  NvSciSyncObjSignal(m_signaler);
-
 
   // We can now return the buffer, since NvMediaIJPDRenderYUV copies the bitstream internally before it returns.
   if (!tryIoctl(VIDIOC_QBUF, &b.vbuf)) {
@@ -497,15 +478,12 @@ V4L2Camera::~V4L2Camera() {
 
   closeDevice();
 
-  if (m_signaler)
-    NvMediaIJPDUnregisterNvSciSyncObj(m_ijpd, m_signaler);
   if (m_waiter)
     NvMediaIJPDUnregisterNvSciSyncObj(m_ijpd, m_waiter);
   if (m_outputBufObj)
     NvMediaIJPDUnregisterNvSciBufObj(m_ijpd, m_outputBufObj);
 
   CleanupPtr(NvSciBufAttrListFree, m_outputImageAttrList);
-  CleanupPtr(NvSciSyncObjFree, m_signaler);
   CleanupPtr(NvSciSyncObjFree, m_waiter);
   CleanupPtr(NvSciSyncCpuWaitContextFree, m_cpuWaitCtx);
 
