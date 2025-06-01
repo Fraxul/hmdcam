@@ -6,13 +6,29 @@ etEnv.CompilationDatabase()
 etEnv.Append(
   CPPPATH=[
     'eyetracking',
+    'canbus',
+    'canbus/libcanard/libcanard',
+    'canbus/socketcan',
+    '#nvsci_headers',
+    '#nvmedia',
     '/usr/include/eigen3',
   ]
 )
 etEnv.Program(
   target = '../bin/eyetracking-test',
-  source = Glob('eyetracking/*.cpp') + Glob('eyetracking/*.cu') + Glob('eyetracking/SingleEyeFitter/*.cpp') + ['eyetracking/test/eyetracking-test.cpp'],
-  LIBS=['stdc++', 'pthread', 'rt', 'opencv_core', 'opencv_imgproc', 'opencv_videoio', 'opencv_highgui', 'cuda', 'cudla', 'cudart', 'boost_thread', 'ceres', 'glog'],
+  source = Glob('eyetracking/*.cpp')
+    + Glob('eyetracking/*.cu')
+    + Glob('eyetracking/SingleEyeFitter/*.cpp')
+    + ['common/tegra/NvSciUtil.cpp']
+    + ['eyetracking/test/eyetracking-test.cpp'],
+  LIBS=[
+    'pthread', 'rt',
+    'opencv_core', 'opencv_imgproc', 'opencv_videoio', 'opencv_highgui',
+    'cuda', 'cudla', 'cudart',
+    'boost_thread',
+    'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync', 'nvmedia_ijpd_sci',
+    'ceres', 'glog'
+  ],
 )
 
 

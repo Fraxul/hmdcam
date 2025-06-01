@@ -80,6 +80,7 @@ int main(int argc, char* argv[]) {
   cv::String hWindow = "Eyetracking-Test";
   cv::namedWindow(hWindow);
 
+#if 0
   int mm2px_int = static_cast<int>(svc->m_processingState[0].m_mm2px_scaling);
   auto mm2px_callback = [](int newValue, void* svc_) {
     EyeTrackingService* svc = reinterpret_cast<EyeTrackingService*>(svc_);
@@ -90,6 +91,8 @@ int main(int argc, char* argv[]) {
   };
 
   cv::createTrackbar("mm2px", hWindow, &mm2px_int, 500, mm2px_callback, svc);
+#endif
+
   //cv::createTrackbar("Circular crop X", hWindow, &svc->m_processingState[0].m_cropCenter.x, 639, nullptr, nullptr);
   //cv::createTrackbar("Circular crop Y", hWindow, &svc->m_processingState[0].m_cropCenter.y, 479, nullptr, nullptr);
   //cv::createTrackbar("Circular crop Radius", hWindow, (int*) &svc->m_processingState[0].m_cropRadius, 240, nullptr, nullptr);
@@ -99,8 +102,9 @@ int main(int argc, char* argv[]) {
     uint64_t frameStartNs = currentTimeNs();
 
     if (svc->processFrame()) {
-      if ((frameIdx & 127) == 0)
-        printf("Frame %zu processing time: %.3fms inference, %.3fms post\n", frameIdx, svc->m_lastFrameProcessingTimeMs, svc->m_lastFramePostProcessingTimeMs);
+      if ((frameIdx & 127) == 0) {
+        printf("Frame %zu: %s\n", frameIdx, svc->getDebugPerfStatsForEye(0));
+      }
 
       cv::Mat& dbgView = svc->getDebugViewForEye(0);
       if (!dbgView.empty()) {

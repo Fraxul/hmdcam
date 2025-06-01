@@ -168,7 +168,7 @@ else:
 # Eyetracking test harness
 if (is_tegra):
   SConscript('SConscript-dla-standalone-test', variant_dir = 'build/dla-standalone-test', duplicate = 0)
-  SConscript('SConscript-eyetracking-test', variant_dir = 'build/eyetracking-test', duplicate = 0)
+  # SConscript('SConscript-eyetracking-test', variant_dir = 'build/eyetracking-test', duplicate = 0)
   SConscript('SConscript-eyetracking-hmd-test', variant_dir = 'build/eyetracking-hmd-test', duplicate = 0)
 
 SConscript('SConscript-v4l2-capture-test', variant_dir = 'build/v4l2-capture-test', duplicate = 0)
