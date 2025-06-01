@@ -15,7 +15,13 @@ public:
 
   ~CuDLAStandaloneRunner();
 
-  void runInference();
+  void runInference() {
+    asyncStartInference();
+    asyncFinishInference();
+  }
+
+  void asyncStartInference();
+  void asyncFinishInference();
 
 /*
 typedef struct cudlaModuleTensorDescriptor_t {

@@ -977,8 +977,14 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       convertUnorm8ToSnormFp16(segROIMat.ptr<uint8_t>(y, 0), ps.m_segmentationExec->inputTensorPtr<_Float16>(0) + (y * m_segInputRowStrideElements), m_segInputWidth);
     }
 
-    // Run segmentation network
-    ps.m_segmentationExec->runInference();
+    // Launch segmentation network.
+    ps.m_segmentationExec->asyncStartInference();
+
+    // While the DLA is running the segmentation network (~4+ ms), convert the capture buffer to RGBA in preparation for debug drawing (~0.8ms)
+    cv::cvtColor(/*src=*/ captureMat, /*dst=*/ rgbDebugMat, cv::COLOR_GRAY2RGBA);
+
+    // Wait for segmentation network to finish
+    ps.m_segmentationExec->asyncFinishInference();
 
     // Postprocess network results: run threshold operation to create binary mask
     for (size_t y = 0; y < m_segInputHeight; ++y) {
@@ -1000,9 +1006,6 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
 
     // Update debug view
-
-    // Promote full capture buffer to RGBA
-    cv::cvtColor(/*src=*/ captureMat, /*dst=*/ rgbDebugMat, cv::COLOR_GRAY2RGBA);
     if (m_debugDrawOverlays) {
 #if 1
 

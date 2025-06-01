@@ -301,7 +301,7 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
 }
 
 
-void CuDLAStandaloneRunner::runInference() {
+void CuDLAStandaloneRunner::asyncStartInference() {
   // Flush input buffer
   NVSCI_CHECK(NvSciBufObjFlushCpuCacheRange(m_inputBufObj, 0, m_inputTensorDesc[0].size));
 
@@ -310,7 +310,10 @@ void CuDLAStandaloneRunner::runInference() {
 
   // Enqueue a cuDLA task.
   CUDLA_CHECK(cudlaSubmitTask(m_devHandle, &m_task, 1, NULL, 0));
+}
 
+
+void CuDLAStandaloneRunner::asyncFinishInference() {
   // Wait for operations to finish and bring output buffer to CPU.
   NVSCI_CHECK(NvSciSyncFenceWait(reinterpret_cast<NvSciSyncFence *>(m_signalEvents.eofFences[0].fence), m_cpuWaitCtx, -1));
 
