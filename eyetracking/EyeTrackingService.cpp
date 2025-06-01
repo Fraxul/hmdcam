@@ -227,7 +227,7 @@ EyeTrackingService::EyeTrackingService() {
 
   // Load segmentation engine
   {
-    mmfile fp("eyetracking/models/segmentation.engine");
+    mmfile fp("eyetracking/models/eyeseg-dla-standalone.engine");
     PER_EYE {
       m_processingState[eyeIdx].m_segmentationExec.reset(new CuDLAStandaloneRunner(0, reinterpret_cast<const uint8_t*>(fp.data()), fp.size()));
     }
@@ -235,7 +235,7 @@ EyeTrackingService::EyeTrackingService() {
 
   // Load ROI engine
   {
-    mmfile fp("eyetracking/models/roi.engine");
+    mmfile fp("eyetracking/models/roi-dla-standalone.engine");
     PER_EYE {
       m_processingState[eyeIdx].m_roiExec.reset(new CuDLAStandaloneRunner(0, reinterpret_cast<const uint8_t*>(fp.data()), fp.size()));
     }
