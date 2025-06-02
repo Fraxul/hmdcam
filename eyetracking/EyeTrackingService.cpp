@@ -1320,10 +1320,16 @@ void EyeTrackingService::renderIMGUI() {
 
 glm::vec2 EyeTrackingService::getPitchYawAnglesForEye(size_t eyeIdx) {
   assert(eyeIdx == 0 || eyeIdx == 1);
+  ProcessingState& ps = m_processingState[eyeIdx];
+
+  if (ps.m_calibrationState != kCalibrated) {
+    // Not calibrated, so we don't have valid angles to return.
+    return glm::vec2(0.0f);
+  }
 
   glm::vec2 angles = glm::vec2(
-    m_processingState[eyeIdx].m_pupilFilteredPitchDeg - m_processingState[eyeIdx].m_centerPitchDeg,
-    m_processingState[eyeIdx].m_pupilFilteredYawDeg - m_processingState[eyeIdx].m_centerYawDeg);
+    ps.m_pupilFilteredPitchDeg - ps.m_centerPitchDeg,
+    ps.m_pupilFilteredYawDeg - ps.m_centerYawDeg);
 
   // Apply roll correction
   glm::vec3 rollCorrectionVector;
