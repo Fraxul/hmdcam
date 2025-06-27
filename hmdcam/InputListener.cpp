@@ -47,14 +47,18 @@ void udevProcessDevice(struct udev_device* dev) {
       goto cleanup;
     }
 
-    {
+    if (udev_device_get_property_value(dev, "ID_INPUT_KEY")) {
+      // For "keyboard" devices, require ID_TYPE to be "hid". This filters
+      // out weird non-keyboard devices that can also send key events, like
+      // UVC cameras for some reason?
       const char* deviceType = udev_device_get_property_value(dev, "ID_TYPE");
       if ((!deviceType) || strcmp(deviceType, "hid") != 0) {
         goto cleanup;
       }
-    }
-
-    if (!udev_device_get_property_value(dev, "ID_INPUT_KEY")) {
+    } else if (udev_device_get_property_value(dev, "ID_INPUT_JOYSTICK")) {
+      // ID_INPUT_JOYSTICK is OK, no further filtering.
+    } else {
+      // Some other kind of ID_INPUT_*, we don't handle those.
       goto cleanup;
     }
 
@@ -148,12 +152,10 @@ void* inputListenerThread(void*) {
     }
   }
 
-  // Initial device scan
+  // Initial device scan of everything in the "input" subsystem
   struct udev_enumerate* enumerate = udev_enumerate_new(udev);
 
   udev_enumerate_add_match_subsystem(enumerate, "input");
-  udev_enumerate_add_match_property(enumerate, "ID_TYPE", "hid");
-  udev_enumerate_add_match_property(enumerate, "ID_INPUT_KEY", "1");
 
   udev_enumerate_scan_devices(enumerate);
 
@@ -232,29 +234,36 @@ void* inputListenerThread(void*) {
         // Right => "Next Slide" (Page Down)
 
         // Now using keycodes for a media remote. More direct mapping.
+        // Additional BTN_* keycodes for an 8BitDo Zero 2 controller connected via bluetooth in "MacOS" mode and held sideways (d-pad at bottom)
+
         switch (ev.code) {
           case KEY_DOWN:
           //case KEY_ESC:
           //case KEY_F5:
+          case BTN_A: // 8BitDo Zero 2: Y
             buttonState[kButtonDown].store(true);
             break;
 
           case KEY_LEFT:
           //case KEY_PAGEUP:
+          case BTN_X: // 8BitDo Zero 2: X
             buttonState[kButtonLeft].store(true);
             break;
 
           case KEY_RIGHT:
           //case KEY_PAGEDOWN:
+          case BTN_B: // 8BitDo Zero 2: B
             buttonState[kButtonRight].store(true);
             break;
 
           case KEY_UP:
           //case KEY_B:
+          case BTN_C: // 8BitDo Zero 2: A
             buttonState[kButtonUp].store(true);
             break;
 
           case KEY_POWER:
+          case BTN_TL2: // 8BitDo Zero 2: Select
             buttonState[kButtonPower].store(true);
             break;
 
@@ -268,15 +277,18 @@ void* inputListenerThread(void*) {
 
           case KEY_ESC:
           case KEY_BACK:
+          case BTN_Y: // 8BitDo Zero 2: Left bumper
             buttonState[kButtonBack].store(true);
             break;
 
           case KEY_ENTER:
           case BTN_LEFT: // for kbd/mouse combo remote mode-switching
+          case BTN_Z: // 8BitDo Zero 2: Right bumper
             buttonState[kButtonOK].store(true);
             break;
 
           default:
+          // case BTN_TR2: // 8BitDo Zero 2: Start -- Unused.
             break;
         };
       } // keyboard event processing
