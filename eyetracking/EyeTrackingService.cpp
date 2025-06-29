@@ -435,12 +435,13 @@ void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
             }
           }
 
-          printf("Center calibration: %zu samples, mean = {%.3f, %.3f}, deviation range = [%.3f, %.3f]\n",
-            ps.m_calibrationSamples.size(), mean.x, mean.y, minDeviation, maxDeviation);
+          //printf("Center calibration: %zu samples, mean = {%.3f, %.3f}, deviation range = [%.3f, %.3f]\n",
+          //  ps.m_calibrationSamples.size(), mean.x, mean.y, minDeviation, maxDeviation);
 
           // TODO adjust threshold
           if (maxDeviation < 3.0f) {
-            printf("Deviation below threshold, accepting calibration\n");
+            printf("Center calibration: deviation below threshold, accepting calibration. %zu samples, mean = {%.3f, %.3f}, deviation range = [%.3f, %.3f]\n",
+              ps.m_calibrationSamples.size(), mean.x, mean.y, minDeviation, maxDeviation);
             ps.m_centerCalibrationSample = ps.m_calibrationSamples[minDeviationIdx];
 
 
