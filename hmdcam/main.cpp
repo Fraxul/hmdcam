@@ -892,7 +892,8 @@ int main(int argc, char* argv[]) {
 
           settingsDirty |= argusCamera->renderPerformanceTuningIMGUI();
 
-          if (ImGui::Button("Restart Capture (BREAKS DEPTH!)")) {
+          // TODO: Check if capture restart still breaks depth on other backends
+          if (ImGui::Button((depthBackend == kDepthBackendOFA) ? "Restart Capture" : "Restart Capture (BREAKS DEPTH!)")) {
             argusCamera->stop(); // will automatically restart on next frame when we call setRepeatCapture again
             restartSkipFrameCounter = 3; // skip a few frames before restarting to smooth out the timing glitch we just caused
           }
