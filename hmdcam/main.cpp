@@ -558,6 +558,7 @@ int main(int argc, char* argv[]) {
     double currentCaptureIntervalMs = 0.0;
 
     bool drawUI = false;
+    bool debugEnableFastDebugToggles = false;
     bool debugEnableDepthMapGenerator = true;
     int restartSkipFrameCounter = 0;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
@@ -631,24 +632,33 @@ int main(int argc, char* argv[]) {
       // Force UI on if we're calibrating.
       drawUI |= (!!calibrationContext);
 
-      // Allow up/down arrows to toggle debug states while we're not curently drawing the UI
-      if ((drawUI == false && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) ||
-        ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
-        if (depthMapGenerator) {
-          depthMapGenerator->setDebugUseFixedDisparity(!depthMapGenerator->debugUseFixedDisparity());
+      // Debug toggles
+      if (debugEnableFastDebugToggles) {
+        // Allow up/down arrows to toggle debug states while we're not curently drawing the UI
+        if ((drawUI == false && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) ||
+          ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+          if (depthMapGenerator) {
+            depthMapGenerator->setDebugUseFixedDisparity(!depthMapGenerator->debugUseFixedDisparity());
 
-          // disable other debug modes
-          debugEnableDepthMapGenerator = true;
+            // disable other debug modes
+            debugEnableDepthMapGenerator = true;
+          }
         }
-      }
-      if ((drawUI == false && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) ||
-        ImGui::IsKeyPressed(ImGuiKey_F3, false)) {
-        if (depthMapGenerator) {
-          debugEnableDepthMapGenerator = !debugEnableDepthMapGenerator;
+        if ((drawUI == false && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) ||
+          ImGui::IsKeyPressed(ImGuiKey_F3, false)) {
+          if (depthMapGenerator) {
+            debugEnableDepthMapGenerator = !debugEnableDepthMapGenerator;
 
-          // disable other debug modes
+            // disable other debug modes
+            depthMapGenerator->setDebugUseFixedDisparity(false);
+          }
+        }
+      } else {
+        // If debug toggles are disabled, force-disable their effects
+        if (depthMapGenerator)
           depthMapGenerator->setDebugUseFixedDisparity(false);
-        }
+
+        debugEnableDepthMapGenerator = true;
       }
 
       ImGui_ImplFxRHI_NewFrame();
@@ -831,6 +841,8 @@ int main(int argc, char* argv[]) {
           } // Calibration header
 
           if (debugEnableDepthMapGenerator && depthMapGenerator && ImGui::CollapsingHeader("Depth Backend")) {
+            ImGui::Checkbox("Enable fast debug toggles", &debugEnableFastDebugToggles);
+
             depthMapGenerator->renderIMGUI();
             if (ImGui::Button("Save Depth Backend Settings")) {
               depthMapGenerator->saveSettings();
