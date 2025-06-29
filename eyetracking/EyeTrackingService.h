@@ -50,7 +50,7 @@ public:
   cv::Mat& getDebugViewForEye(size_t eyeIdx);
   bool m_debugDrawOverlays = true; // Affects content returned by getDebugViewForEye
 
-  bool m_debugShowFeedbackView = false; // Draw eye camera(s) over the scene in renderSceneGizmos()
+  bool m_debugShowFeedbackView = false; // Draw eye camera(s) over the scene in renderSceneGizmos(). Required for getDebugViewForEye() to return anything.
   float m_debugFeedbackBrightness = 1.0f;
 
   enum CalibrationState {

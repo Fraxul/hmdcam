@@ -981,8 +981,14 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
     // Launch segmentation network.
     ps.m_segmentationExec->asyncStartInference();
 
-    // While the DLA is running the segmentation network (~4+ ms), convert the capture buffer to RGBA in preparation for debug drawing (~0.8ms)
-    cv::cvtColor(/*src=*/ captureMat, /*dst=*/ rgbDebugMat, cv::COLOR_GRAY2RGBA);
+
+    // Cache this flag since it may be written async on the main thread.
+    bool populateDebugView = m_debugShowFeedbackView;
+
+    if (populateDebugView) {
+      // While the DLA is running the segmentation network (~4+ ms), convert the capture buffer to RGBA in preparation for debug drawing (~0.8ms)
+      cv::cvtColor(/*src=*/ captureMat, /*dst=*/ rgbDebugMat, cv::COLOR_GRAY2RGBA);
+    }
 
     // Wait for segmentation network to finish
     ps.m_segmentationExec->asyncFinishInference();
@@ -1007,160 +1013,162 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
 
     // Update debug view
-    if (m_debugDrawOverlays) {
+    if (populateDebugView) {
+      if (m_debugDrawOverlays) {
 #if 1
+        {
+          // Draw ROI scale view
+          const int inset = 128; // Inset into the dest mat so it's easier to see
 
-      {
-        // Draw ROI scale view
-        const int inset = 128; // Inset into the dest mat so it's easier to see
+          cv::rectangle(rgbDebugMat, cv::Point(inset - 1, inset - 1), cv::Point(inset + 1 + ps.m_roiScaleMat.cols, inset + 1 + ps.m_roiScaleMat.rows), cv::Scalar(0, 255, 0));
+          for (size_t row = 0; row < ps.m_roiScaleMat.rows; ++row) {
+            for (size_t col = 0; col < ps.m_roiScaleMat.cols; ++col) {
+              uint8_t roiVal = ps.m_roiScaleMat.at<uint8_t>(row, col);
 
-        cv::rectangle(rgbDebugMat, cv::Point(inset - 1, inset - 1), cv::Point(inset + 1 + ps.m_roiScaleMat.cols, inset + 1 + ps.m_roiScaleMat.rows), cv::Scalar(0, 255, 0));
-        for (size_t row = 0; row < ps.m_roiScaleMat.rows; ++row) {
-          for (size_t col = 0; col < ps.m_roiScaleMat.cols; ++col) {
-            uint8_t roiVal = ps.m_roiScaleMat.at<uint8_t>(row, col);
-
-            uint8_t* dp = rgbDebugMat.ptr<uint8_t>(row + inset, col + inset);
-            dp[0] = roiVal;
-            dp[1] = roiVal;
-            dp[2] = roiVal;
+              uint8_t* dp = rgbDebugMat.ptr<uint8_t>(row + inset, col + inset);
+              dp[0] = roiVal;
+              dp[1] = roiVal;
+              dp[2] = roiVal;
+            }
           }
-        }
 
-        // Draw ROI output
-        if (!m_roiIOIsInt8) {
-          _Float16* roiBasePtr = ps.m_roiExec->outputTensorPtr<_Float16>(0);
-          const int scale = 4;
+          // Draw ROI output
+          if (!m_roiIOIsInt8) {
+            _Float16* roiBasePtr = ps.m_roiExec->outputTensorPtr<_Float16>(0);
+            const int scale = 4;
 
-          const int xOff = inset;
-          const int yOff = inset + 8 + ps.m_roiScaleMat.rows;
+            const int xOff = inset;
+            const int yOff = inset + 8 + ps.m_roiScaleMat.rows;
 
-          cv::rectangle(rgbDebugMat, cv::Point(xOff - 1, yOff - 1), cv::Point(xOff + 1 + (m_roiOutputWidth * scale), yOff + 1 + (m_roiOutputHeight * scale)), cv::Scalar(0, 255, 255));
-          for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
-            _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputRowStrideElements);
-            for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
-              float fRoiVal = static_cast<float>(roiRowPtr[x]);
-              uint8_t roiVal = static_cast<uint8_t>(fRoiVal * 255.0f);
+            cv::rectangle(rgbDebugMat, cv::Point(xOff - 1, yOff - 1), cv::Point(xOff + 1 + (m_roiOutputWidth * scale), yOff + 1 + (m_roiOutputHeight * scale)), cv::Scalar(0, 255, 255));
+            for (uint32_t y = 0; y < m_roiOutputHeight; ++y) {
+              _Float16* roiRowPtr = roiBasePtr + (y * m_roiOutputRowStrideElements);
+              for (uint32_t x = 0; x < m_roiOutputWidth; ++x) {
+                float fRoiVal = static_cast<float>(roiRowPtr[x]);
+                uint8_t roiVal = static_cast<uint8_t>(fRoiVal * 255.0f);
 
-              for (size_t r = 0; r < scale; ++r) {
-                for (size_t c = 0; c < scale; ++c) {
-                  uint8_t* dp = rgbDebugMat.ptr<uint8_t>(yOff + (y * scale) + r, xOff + (x * scale) + c);
-                  if (fRoiVal > roiSampleThreshold) {
-                    // ROI sample that was included in the center computation
-                    dp[0] = 0; // R
-                    dp[1] = roiVal; // G
-                    dp[2] = 0; // B
-                  } else {
-                    // ROI sample that failed threshold test and was excluded
-                    dp[0] = roiVal; // R
-                    dp[1] = 0; // G
-                    dp[2] = 0; // B
+                for (size_t r = 0; r < scale; ++r) {
+                  for (size_t c = 0; c < scale; ++c) {
+                    uint8_t* dp = rgbDebugMat.ptr<uint8_t>(yOff + (y * scale) + r, xOff + (x * scale) + c);
+                    if (fRoiVal > roiSampleThreshold) {
+                      // ROI sample that was included in the center computation
+                      dp[0] = 0; // R
+                      dp[1] = roiVal; // G
+                      dp[2] = 0; // B
+                    } else {
+                      // ROI sample that failed threshold test and was excluded
+                      dp[0] = roiVal; // R
+                      dp[1] = 0; // G
+                      dp[2] = 0; // B
+                    }
                   }
                 }
               }
             }
           }
+
         }
 
-      }
+  #endif
 
-#endif
+        // Segmentation ROI view of the RGB debug mat
+        cv::Mat debugROIViewRGB = cv::Mat(rgbDebugMat, segROIRect);
 
-      // Segmentation ROI view of the RGB debug mat
-      cv::Mat debugROIViewRGB = cv::Mat(rgbDebugMat, segROIRect);
-
-#if 1
-      // Draw segmentation mask colors
-      for (size_t row = 0; row < debugROIViewRGB.rows; ++row) {
-        uint8_t* pupilRowPtr = ps.m_pupilMask.ptr<uint8_t>(row);
-        for (size_t col = 0; col < debugROIViewRGB.cols; ++col) {
-          if (pupilRowPtr[col])
-            debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/0] = 0xcc;
+  #if 1
+        // Draw segmentation mask colors
+        for (size_t row = 0; row < debugROIViewRGB.rows; ++row) {
+          uint8_t* pupilRowPtr = ps.m_pupilMask.ptr<uint8_t>(row);
+          for (size_t col = 0; col < debugROIViewRGB.cols; ++col) {
+            if (pupilRowPtr[col])
+              debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/0] = 0xcc;
+          }
         }
-      }
-#endif
+  #endif
 
-      // Now operating on the full view; coordinates that are relative to the ROI will need to be translated.
+        // Now operating on the full view; coordinates that are relative to the ROI will need to be translated.
 
-#if 0
-      // Draw eye-fitter sample ellipses
-      for (const auto& el : ps.m_eyeFitterSamples) {
-        cv::ellipse(rgbDebugMat, el, cv::Scalar(0x3f, 0, 0x3f), /*thickness=*/ 2);
-      }
-#endif
+  #if 0
+        // Draw eye-fitter sample ellipses
+        for (const auto& el : ps.m_eyeFitterSamples) {
+          cv::ellipse(rgbDebugMat, el, cv::Scalar(0x3f, 0, 0x3f), /*thickness=*/ 2);
+        }
+  #endif
 
-      // Draw pupil ellipse, if present
-      if (!ps.m_pupilEllipse.size.empty()) {
-        cv::ellipse(rgbDebugMat, ps.m_pupilEllipse, cv::Scalar(0xff, 0, 0xff), /*thickness=*/ 2);
+        // Draw pupil ellipse, if present
+        if (!ps.m_pupilEllipse.size.empty()) {
+          cv::ellipse(rgbDebugMat, ps.m_pupilEllipse, cv::Scalar(0xff, 0, 0xff), /*thickness=*/ 2);
 
-        // Draw sector gizmo
-        glm::vec2 verticalVec = vec2AtAngleDeg(m_rollOffsetDeg[eyeIdx] + 90.0f);
-        glm::vec2 sector1Vec = vec2AtAngleDeg((m_rollOffsetDeg[eyeIdx] + 90.0f) + m_sectorCutoffAngleDeg);
-        glm::vec2 sector2Vec = vec2AtAngleDeg((m_rollOffsetDeg[eyeIdx] + 90.0f) - m_sectorCutoffAngleDeg);
+          // Draw sector gizmo
+          glm::vec2 verticalVec = vec2AtAngleDeg(m_rollOffsetDeg[eyeIdx] + 90.0f);
+          glm::vec2 sector1Vec = vec2AtAngleDeg((m_rollOffsetDeg[eyeIdx] + 90.0f) + m_sectorCutoffAngleDeg);
+          glm::vec2 sector2Vec = vec2AtAngleDeg((m_rollOffsetDeg[eyeIdx] + 90.0f) - m_sectorCutoffAngleDeg);
 
-        lineCenterDirectionLength(rgbDebugMat, ps.m_debugBoundsCenter, verticalVec, 80.0f, cv::Scalar(0, 0, 255), /*bidirectional=*/ true);
-        lineCenterDirectionLength(rgbDebugMat, ps.m_debugBoundsCenter, sector1Vec,  80.0f, cv::Scalar(255, 0, 0), /*bidirectional=*/ true);
-        lineCenterDirectionLength(rgbDebugMat, ps.m_debugBoundsCenter, sector2Vec,  80.0f, cv::Scalar(255, 0, 0), /*bidirectional=*/ true);
-      }
+          lineCenterDirectionLength(rgbDebugMat, ps.m_debugBoundsCenter, verticalVec, 80.0f, cv::Scalar(0, 0, 255), /*bidirectional=*/ true);
+          lineCenterDirectionLength(rgbDebugMat, ps.m_debugBoundsCenter, sector1Vec,  80.0f, cv::Scalar(255, 0, 0), /*bidirectional=*/ true);
+          lineCenterDirectionLength(rgbDebugMat, ps.m_debugBoundsCenter, sector2Vec,  80.0f, cv::Scalar(255, 0, 0), /*bidirectional=*/ true);
+        }
 
-      if (ps.m_eyeFitterOutputsValid) {
-        // Try-catch block avoids cv drawing functions crashing the app if we pass NaNs or something
-        try {
-          singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(ps.m_fitPupilCircle, ps.m_eyeModelFitter.focal_length);
-          singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
+        if (ps.m_eyeFitterOutputsValid) {
+          // Try-catch block avoids cv drawing functions crashing the app if we pass NaNs or something
+          try {
+            singleeyefitter::Conic<double> pupil_conic = singleeyefitter::project(ps.m_fitPupilCircle, ps.m_eyeModelFitter.focal_length);
+            singleeyefitter::Ellipse2D<double> eye_ellipse = singleeyefitter::project(ps.m_eyeModelFitter.eye, ps.m_eyeModelFitter.focal_length);
 
-          cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), ps.m_captureCenterOffset);
-          // pupil ellipse was already drawn above
-          //cv::ellipse(rgbDebugMat, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
+            cv::RotatedRect pupilEllipseImg = toImgCoord(toRotatedRect(singleeyefitter::Ellipse2D<double>(pupil_conic)), ps.m_captureCenterOffset);
+            // pupil ellipse was already drawn above
+            //cv::ellipse(rgbDebugMat, pupilEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
 
-          cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), ps.m_captureCenterOffset);
-          cv::ellipse(rgbDebugMat, eyeEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
+            cv::RotatedRect eyeEllipseImg = toImgCoord(toRotatedRect(eye_ellipse), ps.m_captureCenterOffset);
+            cv::ellipse(rgbDebugMat, eyeEllipseImg, cv::Scalar(60, 60, 0), /*thickness=*/ 2);
 
-          // order is _bottomLeft_, _topLeft_, topRight, bottomRight
-          cv::Point2f rectPoints[4];
-          eyeEllipseImg.points(rectPoints);
+            // order is _bottomLeft_, _topLeft_, topRight, bottomRight
+            cv::Point2f rectPoints[4];
+            eyeEllipseImg.points(rectPoints);
 
-          // Draw crosshairs through the eye-ellipse
-          cv::line(rgbDebugMat,
-            (rectPoints[0] + rectPoints[1]) * 0.5f,
-            (rectPoints[2] + rectPoints[3]) * 0.5f,
-            cv::Scalar(60, 60, 0), /*thickness=*/2);
+            // Draw crosshairs through the eye-ellipse
+            cv::line(rgbDebugMat,
+              (rectPoints[0] + rectPoints[1]) * 0.5f,
+              (rectPoints[2] + rectPoints[3]) * 0.5f,
+              cv::Scalar(60, 60, 0), /*thickness=*/2);
 
-          cv::line(rgbDebugMat,
-            (rectPoints[1] + rectPoints[2]) * 0.5f,
-            (rectPoints[0] + rectPoints[3]) * 0.5f,
-            cv::Scalar(60, 60, 0), /*thickness=*/2);
+            cv::line(rgbDebugMat,
+              (rectPoints[1] + rectPoints[2]) * 0.5f,
+              (rectPoints[0] + rectPoints[3]) * 0.5f,
+              cv::Scalar(60, 60, 0), /*thickness=*/2);
 
-          // Draw a small marker on the eye center point
-          cv::circle(rgbDebugMat, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(0, 0, 255), /*thickness=*/ -1);
+            // Draw a small marker on the eye center point
+            cv::circle(rgbDebugMat, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(0, 0, 255), /*thickness=*/ -1);
 
-          // Line from the eye center through the pupil center
-          cv::line(rgbDebugMat, eyeEllipseImg.center, pupilEllipseImg.center, cv::Scalar(0, 255, 0), /*thickness=*/ 1);
+            // Line from the eye center through the pupil center
+            cv::line(rgbDebugMat, eyeEllipseImg.center, pupilEllipseImg.center, cv::Scalar(0, 255, 0), /*thickness=*/ 1);
 
-        } catch (...) {}
+          } catch (...) {}
 
-#if 0
-        char buf[64];
-        snprintf(buf, 64, "n=%.3f %.3f %.3f", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
-        cv::putText(rgbDebugMat, buf, cv::Point2f(/*x=*/ 5, /*y=*/ rgbDebugMat.rows - 16), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
-#endif
+  #if 0
+          char buf[64];
+          snprintf(buf, 64, "n=%.3f %.3f %.3f", ps.m_fitPupilCircle.normal[0], ps.m_fitPupilCircle.normal[1], ps.m_fitPupilCircle.normal[2]);
+          cv::putText(rgbDebugMat, buf, cv::Point2f(/*x=*/ 5, /*y=*/ rgbDebugMat.rows - 16), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
+  #endif
 
-        //FRAME_DEBUG_LOG("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
-        //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
-        //    ps.m_pupilEllipse.size.width, ps.m_pupilEllipse.size.height);
+          //FRAME_DEBUG_LOG("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
+          //    ps.m_pupilEllipse.center.x, ps.m_pupilEllipse.center.y,
+          //    ps.m_pupilEllipse.size.width, ps.m_pupilEllipse.size.height);
 
-      }
+        }
 
-      // Draw the ROI centroid
-      cv::circle(rgbDebugMat, roiCenter_captureRelative, /*r=*/ 3, cv::Scalar(192, 0, 192));
+        // Draw the ROI centroid
+        cv::circle(rgbDebugMat, roiCenter_captureRelative, /*r=*/ 3, cv::Scalar(192, 0, 192));
 
-      // Draw the ROI rectangle
-      cv::rectangle(rgbDebugMat, segROIRect.tl(), segROIRect.br(), cv::Scalar(0, 255, 0));
+        // Draw the ROI rectangle
+        cv::rectangle(rgbDebugMat, segROIRect.tl(), segROIRect.br(), cv::Scalar(0, 255, 0));
 
-    } // Debug overlay drawing
+      } // Debug overlay drawing
 
-    // Swap debug mat with the one in processing state
-    // (tries to avoid the main thread getting a partially-drawn debug mat)
-    cv::swap(ps.m_debugViewRGB, rgbDebugMat);
+      // Swap debug mat with the one in processing state
+      // (tries to avoid the main thread getting a partially-drawn debug mat)
+      cv::swap(ps.m_debugViewRGB, rgbDebugMat);
+
+    } // Debug surface population
 
     ps.m_lastFrameDebugViewTimeMs = perfTimer.checkpoint();
 

@@ -66,6 +66,8 @@ int main(int argc, char* argv[]) {
   }
 
   EyeTrackingService* svc = new EyeTrackingService();
+  svc->m_debugShowFeedbackView = true; // Required to populate getDebugViewForEye
+
   //svc->setInputFilename(0, "/mnt/scratch/eyetracking/demo3_200x150.mp4");
   //svc->setInputFilename(0, "/mnt/scratch/eyetracking/ViveProEye_left_200x150.mp4");
   if (argc > 1) {
