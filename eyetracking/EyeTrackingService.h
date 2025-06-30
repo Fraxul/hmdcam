@@ -88,6 +88,10 @@ public:
 
     uint32_t m_contiguousValidFrameCounter = 0;
     uint32_t m_contiguousInvalidFrameCounter = 0;
+    uint32_t m_lastInvalidFrameRunLength = 0; // Updated when we start seeing valid frames again while inside a run of invalid frames
+
+    // Crosshair state tracking for runs of valid/invalid frames
+    bool m_shouldShowCrosshair = true;
 
     ScrollingBuffer<cv::RotatedRect> m_calibrationSamples {60};
     singleeyefitter::Circle3D<double> m_centerPupilCircle;
@@ -187,6 +191,9 @@ protected:
   float m_filterMinCutoff = 0.2;
   float m_filterDCutoff = 0.2;
   float m_filterBetaExponent = -0.8; // Filter beta is pow(10.0, m_filterBetaExponent)
+
+  int m_hideCrosshairAfterFrameCount = 120; // Hide UI feedback crosshair after this many valid frames in a row.
+  int m_showCrosshairAfterFrameCount = 16; // Show UI feedback crosshair after this many invalid frames in a row.
 
   void applyCalibrationData();
 

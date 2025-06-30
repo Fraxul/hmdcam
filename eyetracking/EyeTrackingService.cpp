@@ -355,6 +355,8 @@ bool EyeTrackingService::loadCalibrationData(cv::FileStorage& fs) {
     readNode(fs, filterMinCutoff);
     readNode(fs, filterBetaExponent);
     readNode(fs, filterDCutoff);
+    readNode(fs, hideCrosshairAfterFrameCount);
+    readNode(fs, showCrosshairAfterFrameCount);
 
   } catch (const std::exception& ex) {
     printf("Unable to load calibration data: %s\n", ex.what());
@@ -374,6 +376,8 @@ void EyeTrackingService::saveCalibrationData(cv::FileStorage& fs) {
   writeNode(fs, filterMinCutoff);
   writeNode(fs, filterBetaExponent);
   writeNode(fs, filterDCutoff);
+  writeNode(fs, hideCrosshairAfterFrameCount);
+  writeNode(fs, showCrosshairAfterFrameCount);
 }
 #undef writeNode
 
@@ -389,10 +393,23 @@ void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
   // Update counters for calibration state machine
   if (fitEllipse) {
     ps.m_contiguousValidFrameCounter += 1;
+    if (ps.m_contiguousInvalidFrameCounter > 0) {
+      ps.m_lastInvalidFrameRunLength = ps.m_contiguousInvalidFrameCounter;
+    }
     ps.m_contiguousInvalidFrameCounter = 0;
   } else {
     ps.m_contiguousValidFrameCounter = 0;
     ps.m_contiguousInvalidFrameCounter += 1;
+  }
+
+  if (ps.m_shouldShowCrosshair) {
+    // Currently showing, check if we should hide the crosshair
+    if (ps.m_contiguousValidFrameCounter > m_hideCrosshairAfterFrameCount)
+      ps.m_shouldShowCrosshair = false;
+  } else {
+    // Currently hidden, check if we should show the crosshair
+    if (ps.m_contiguousInvalidFrameCounter > m_showCrosshairAfterFrameCount)
+      ps.m_shouldShowCrosshair = true;
   }
 
   switch (ps.m_calibrationState) {
@@ -1254,6 +1271,9 @@ void EyeTrackingService::renderIMGUI() {
 
       ImGui::PushID(eyeIdx);
       ImGui::Text("Eye %zu", eyeIdx);
+
+      ImGui::Text("Last invalid run: %u frames", ps.m_lastInvalidFrameRunLength);
+
       ImGui::Checkbox("Freeze graph", &ps.m_freezeGraphData);
 
       if (ImPlot::BeginPlot("##EllipseData1", ImVec2(-1,150), /*flags=*/ plotFlags)) {
@@ -1314,6 +1334,11 @@ void EyeTrackingService::renderIMGUI() {
   dirty |= ImGui::DragFloat("Focal Length", &m_focalLength, /*speed=*/ 0.1, /*min=*/ 1.0f, /*max=*/ 20.0f, "%.1f");
   dirty |= ImGui::DragFloat("Distance to eye (mm)", &m_eyeZ, /*speed=*/ 0.5f, /*min=*/ 1.0f, /*max=*/ 50.0f, "%.1f");
   dirty |= ImGui::DragFloat("Sensor pixel pitch (um)", &m_pixelPitchMicrons, /*speed=*/ 0.1f, /*min=*/ 0.1f, /*max=*/ 10.0f, "%.1f");
+
+  ImGui::Separator();
+  // Misc settings
+  ImGui::DragInt("Crosshair hide after valid frames", &m_hideCrosshairAfterFrameCount, /*v_speed=*/ 10, /*v_min=*/ 0, /*v_max=*/ 1000);
+  ImGui::DragInt("Crosshair show after invalid frames", &m_showCrosshairAfterFrameCount, /*v_speed=*/ 1, /*v_min=*/ 0, /*v_max=*/ 100);
 
   if (ImGui::Button("Save Settings")) {
     saveCalibrationData();
@@ -1466,7 +1491,7 @@ void EyeTrackingService::renderSceneGizmos_postUI(FxRenderView* renderViews) {
   const float crosshairDepth = 0.4f;
 
   // Eye crosshair
-  if (m_processingState[0].m_calibrationState == kCalibrated) {
+  if (m_processingState[0].m_calibrationState == kCalibrated && m_processingState[0].m_shouldShowCrosshair) {
     CrosshairUniformBlock ub;
 
     glm::vec2 measuredPoint = getPitchYawAnglesForEye(0);
