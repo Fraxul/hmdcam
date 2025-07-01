@@ -1432,13 +1432,20 @@ inline int16_t serializeAngle(float angleDeg) {
 void EyeTrackingService::CANTransmitEyeAngles() {
   constexpr uint16_t kPortID = 201;
 
-  bool valid = m_processingState[0].m_calibrationState == kCalibrated;
+  uint8_t state = 0; // kStateInvalid
+  if (m_processingState[0].m_calibrationState == kCalibrated) {
+    if (m_processingState[0].m_eyeFitterOutputsValid) {
+      state = 2; // kStatePupilLock
+    } else {
+      state = 1; // kStateCalibrated
+    }
+  }
 
   SerializationBuffer buf;
   buf.reserve(8);
 
   glm::vec2 angles = getPitchYawAnglesForEye(0);
-  buf.put_u8(valid ? 1 : 0); // valid flag
+  buf.put_u8(state);
   buf.put_i16_le(serializeAngle(angles[0])); // pitch
   buf.put_i16_le(serializeAngle(angles[1])); // yaw
 
