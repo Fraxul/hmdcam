@@ -939,6 +939,9 @@ int main(int argc, char* argv[]) {
             RHISurface::ptr snapTex = rhi()->newTexture2D(argusCamera->streamWidth(), argusCamera->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
             RHIRenderTarget::ptr snapRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({snapTex}));
 
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+
             for (size_t streamIdx = 0; streamIdx < argusCamera->streamCount(); ++streamIdx) {
               rhi()->beginRenderPass(snapRT, kLoadInvalidate);
               rhi()->bindRenderPipeline(camCopyPipeline);
@@ -948,8 +951,8 @@ int main(int argc, char* argv[]) {
 
               uint8_t* imageData = new uint8_t[argusCamera->streamWidth() * argusCamera->streamHeight() * 4];
               rhi()->readbackTexture(snapTex, 0, kVertexElementTypeUByte4N, imageData);
-              char* filenameBuf = new char[32];
-              snprintf(filenameBuf, 32, "camera%zu.png", streamIdx);
+              char* filenameBuf = new char[64];
+              snprintf(filenameBuf, 64, "camera%zu_%lu.png", streamIdx, ts.tv_sec);
 
               // Async PNG compression since it's expensive
               FxThreading::runFunction([filenameBuf, imageData]() {
