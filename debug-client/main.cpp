@@ -7,6 +7,10 @@
 #include <opencv2/aruco/charuco.hpp>
 #include <glm/gtx/transform.hpp>
 
+#define STBI_ONLY_PNG
+#include "stb/stb_image.h"
+#include "stb/stb_image_write.h"
+
 #include "DebugCameraProvider.h"
 #include "common/CameraSystem.h"
 #include "common/CharucoMultiViewCalibration.h"
@@ -483,6 +487,26 @@ int main(int argc, char** argv) {
         ImGui::Separator();
 
         ImGui::Checkbox("Enable Surface Updates", &surfaceUpdateEnabled);
+
+
+        if (ImGui::Button("Capture frame")) {
+          struct timespec ts;
+          clock_gettime(CLOCK_REALTIME, &ts);
+
+          for (size_t streamIdx = 0; streamIdx < cameraProvider->streamCount(); ++streamIdx) {
+            char* filenameBuf = new char[64];
+            snprintf(filenameBuf, 64, "camera%zu_%lu.png", streamIdx, ts.tv_sec);
+            cv::Mat lumaCopy = cameraProvider->cvMatLuma(streamIdx).clone();
+
+            // Async PNG compression since it's expensive
+            FxThreading::runFunction([filenameBuf, lumaCopy]() {
+              stbi_write_png(filenameBuf, /*x=*/ lumaCopy.cols, /*y=*/ lumaCopy.rows, /*components=*/ lumaCopy.channels(), /*data=*/ lumaCopy.ptr(), /*rowBytes=*/ lumaCopy.step);
+              delete[] filenameBuf;
+            });
+          }
+        }
+
+
 
         ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
         ImGui::End();
