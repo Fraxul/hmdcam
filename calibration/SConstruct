@@ -1,0 +1,41 @@
+import os
+env = Environment(
+  tools = ['clang', 'clangxx', 'link'],
+  CPPPATH=[
+    '/usr/include/eigen3',
+    '/usr/local/include/opencv4',
+    '#../glm',
+    '#../',
+    '#../common',
+    '#../build/ceres/include',
+    '#industrial_calibration/core/include',
+    '#industrial_calibration/optimizations/include',
+  ],
+  LIBPATH=[
+    '#../build/ceres/lib',
+  ],
+  # CPPFLAGS=['-g', '-fstandalone-debug', '-Wall', '-Wshadow'],
+  CPPFLAGS=['-std=c++17', '-g', '-O3', '-fstandalone-debug', '-Wall', '-Wshadow'],
+  LINKFLAGS=['-g'],
+  CPPDEFINES=['GLM_ENABLE_EXPERIMENTAL'],
+)
+# Fix for clang colored diagnostics
+env['ENV']['TERM'] = os.environ['TERM']
+
+# clang++ -Wall -I/usr/include/eigen3 solver-test.cpp -o solver-test -lceres -lglog
+
+env.Program(
+  target = 'solver-test',
+  source = Glob('*.cpp') +
+    Glob('#industrial_calibration/core/src/*.cpp') +
+    Glob('#industrial_calibration/optimizations/src/*.cpp'),
+
+  LIBS = ['glog',
+    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
+    'pthread', 'rt',
+    'boost_chrono', 'boost_filesystem', 'boost_regex', 'boost_system', 'boost_thread',
+    'ceres', 'cholmod', 'lapack', 'spqr', 'glog', 'gflags'
+  ]
+
+)
+
