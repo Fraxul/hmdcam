@@ -1,0 +1,36 @@
+import os
+env = Environment(
+  tools = ['clang', 'clangxx', 'link'],
+  CPPPATH=[
+    '/usr/include/eigen3',
+    '/usr/local/include/opencv4',
+    '#../glm',
+    '#../',
+    '#../common',
+    '#industrial_calibration/core/include',
+    '#industrial_calibration/optimizations/include',
+  ],
+  # CPPFLAGS=['-g', '-fstandalone-debug', '-Wall', '-Wshadow'],
+  CPPFLAGS=['-g', '-O3', '-fstandalone-debug', '-Wall', '-Wshadow'],
+  LINKFLAGS=['-g'],
+  CPPDEFINES=['GLM_ENABLE_EXPERIMENTAL'],
+)
+# Fix for clang colored diagnostics
+env['ENV']['TERM'] = os.environ['TERM']
+
+# clang++ -Wall -I/usr/include/eigen3 solver-test.cpp -o solver-test -lceres -lglog
+
+env.Program(
+  target = 'solver-test',
+  source = Glob('*.cpp') +
+    Glob('#industrial_calibration/core/src/*.cpp') +
+    Glob('#industrial_calibration/optimizations/src/*.cpp'),
+
+  LIBS = ['ceres', 'glog',
+    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
+    'pthread', 'rt',
+    'boost_chrono', 'boost_system', 'boost_thread',
+  ]
+
+)
+
