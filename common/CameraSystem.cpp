@@ -36,7 +36,7 @@ const float s_charucoBoardSquareSideLengthMeters = 0.060f;
 const float s_charucoBoardMarkerSideLengthMeters = s_charucoBoardSquareSideLengthMeters * (7.0f / 9.0f);
 
 cv::aruco::Dictionary charucoDictionary() { return cv::aruco::getPredefinedDictionary(s_charucoDictionaryName); }
-cv::aruco::CharucoBoard* s_charucoBoard;
+cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 cv::aruco::DetectorParameters s_detectorParams;
 
 cv::aruco::CharucoDetector createCharucoDetector(cv::Mat cameraMatrix = cv::Mat(), cv::Mat distCoeffs = cv::Mat()) {
