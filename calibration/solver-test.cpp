@@ -7,7 +7,9 @@
 #include "common/Timing.h"
 
 #include <industrial_calibration/optimizations/camera_intrinsic.h>
+#include <industrial_calibration/optimizations/extrinsic_multi_static_camera.h>
 #include <ceres/ceres.h>
+#include <unsupported/Eigen/EulerAngles>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -68,16 +70,25 @@ struct Observation {
 
   std::vector<cv::Point3f> objectPoints; // Points in object space, on the calibration target
   std::vector<cv::Point2f> imagePoints; // Points in image space
+
+  Eigen::Isometry3d targetTransform = Eigen::Isometry3d::Identity(); // Extrinsic / target transform, recorded during intrinsic calibration.
 };
 
 struct ViewCalibrationData {
   cv::Size imageSize;
   std::vector<Observation> observations;
+  industrial_calibration::CameraIntrinsicResult intrinsicCalibration;
 
 };
 
 
 struct MultiViewCalibrationData {
+
+  size_t observationCount() {
+    // All views should have the same number of observations
+    return views[0].observations.size();
+  }
+
   std::vector<ViewCalibrationData> views;
 };
 
@@ -136,46 +147,46 @@ int main(int argc, char** argv) {
     "/home/dweatherford/calibrationData/20250702_1356/camera0_1751482057.png",
   };
 
-  const char* imageFilenames_camera1[] = {
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481695.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481701.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481709.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481736.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481769.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481777.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481782.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481788.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481811.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481817.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481823.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481835.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481850.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481856.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481862.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481868.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481882.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481887.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481892.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481898.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481903.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481913.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481919.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481925.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481927.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481934.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481941.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481949.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481952.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751481958.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751482024.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751482038.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751482050.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera1_1751482057.png",
+  const char* imageFilenames_camera2[] = {
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481695.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481701.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481709.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481736.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481769.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481777.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481782.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481788.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481811.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481817.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481823.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481835.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481850.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481856.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481862.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481868.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481882.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481887.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481892.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481898.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481903.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481913.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481919.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481925.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481927.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481934.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481941.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481949.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481952.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481958.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751482024.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751482038.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751482050.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751482057.png",
   };
 
 
   constexpr size_t imageCount = sizeof(imageFilenames_camera0) / sizeof(imageFilenames_camera0[0]);
-  const char** viewImageFilenames[] = {imageFilenames_camera0, imageFilenames_camera1};
+  const char** viewImageFilenames[] = {imageFilenames_camera0, imageFilenames_camera2};
 
   for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
     ViewCalibrationData& viewData = data.views[viewIdx];
@@ -243,7 +254,7 @@ int main(int argc, char** argv) {
 
   printf("Detection done in %.3f ms\n\n", perfTimer.checkpoint());
 
-
+#if 0
   printf("=== OpenCV calibration ===\n");
 
   // from CameraSystem::IntrinsicCalibrationContext::asyncUpdateIncrementalCalibration()
@@ -316,8 +327,9 @@ int main(int argc, char** argv) {
     printf("\n\n");
   } // View loop
 
+#endif // OpenCV calibration
 
-  printf("=== industrial_calibration calibration ===\n");
+  printf("=== industrial_calibration intrinsic calibration ===\n");
   perfTimer.checkpoint();
 
   for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
@@ -354,6 +366,9 @@ int main(int argc, char** argv) {
     // Use extrinsic guesses from OpenCV's solvePnP (no calibration/distortion)
     intrinsicProblem.use_extrinsic_guesses = true;
 
+
+    std::vector<size_t> targetTransformToObservationIdx;
+
     for (size_t observationIdx = 0; observationIdx < viewData.observations.size(); ++observationIdx) {
       Observation& obs = viewData.observations[observationIdx];
       if (obs.empty())
@@ -373,15 +388,91 @@ int main(int argc, char** argv) {
 
       intrinsicProblem.extrinsic_guesses.push_back(pose);
       intrinsicProblem.image_observations.push_back(obs.correspondenceSet());
+
+      targetTransformToObservationIdx.push_back(observationIdx);
     }
 
-    industrial_calibration::CameraIntrinsicResult res = industrial_calibration::optimize(intrinsicProblem);
-    std::cout << res << std::endl;
+    viewData.intrinsicCalibration = industrial_calibration::optimize(intrinsicProblem);
+    std::cout << viewData.intrinsicCalibration << std::endl;
+
+    for (size_t i = 0; i < targetTransformToObservationIdx.size(); ++i) {
+      viewData.observations[targetTransformToObservationIdx[i]].targetTransform = viewData.intrinsicCalibration.target_transforms[i];
+    }
     
     printf("Calibration complete in %.3f ms\n", perfTimer.checkpoint());
 
   } // View loop
 
+
+  // Multi-view
+  printf("=== industrial_calibration multi-view calibration ===\n");
+  {
+    industrial_calibration::ExtrinsicMultiStaticCameraOnlyProblem problem;
+
+    problem.fix_first_camera = true;
+
+    // Per-view intrinsics
+    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
+      ViewCalibrationData& viewData = data.views[viewIdx];
+      problem.intr.push_back(viewData.intrinsicCalibration.intrinsics);
+    }
+
+    // Sanity check on observation counts
+    for (size_t viewIdx = 1; viewIdx < data.views.size(); ++viewIdx) {
+      assert(data.views[viewIdx].observations.size() == data.views[0].observations.size());
+    }
+
+    // Per-observation base-to-target guesses.
+    // We initialize this with the target transforms from the intrinsic calibration process.
+    // TODO: Look at however opencv stereoCalibrate does this!
+    // We may need to rough in the calibration with opencv stereoCalibrate and then fine-tune it with this solver.
+
+    problem.base_to_target_guess.resize(data.observationCount());
+    for (size_t i = 0; i < problem.base_to_target_guess.size(); ++i) {
+      problem.base_to_target_guess[i] = data.views[0].observations[i].targetTransform;
+    }
+
+    // Per-observation base-to-camera guesses -- just use identity transforms
+    problem.base_to_camera_guess.resize(data.views.size());
+    for (size_t i = 0; i < problem.base_to_camera_guess.size(); ++i) {
+      problem.base_to_camera_guess[i] = Eigen::Isometry3d::Identity();
+    }
+
+    // Set up image observations
+    problem.image_observations.resize(data.views.size());
+    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
+      ViewCalibrationData& viewData = data.views[viewIdx];
+      std::vector<industrial_calibration::Correspondence2D3D::Set>& viewObsSets = problem.image_observations[viewIdx];
+      viewObsSets.resize(viewData.observations.size());
+
+      for (size_t obsIdx = 0; obsIdx < viewData.observations.size(); ++obsIdx) {
+        viewObsSets[obsIdx] = viewData.observations[obsIdx].correspondenceSet();
+
+      }
+    }
+
+    // Run solver
+    industrial_calibration::ExtrinsicMultiStaticCameraOnlyResult result = optimize(problem);
+
+    std::cout << "Optimization " << (result.converged ? "converged" : "did not converge") << "\n"
+           << "Initial cost per observation (pixels): " << std::sqrt(result.initial_cost_per_obs) << "\n"
+           << "Final cost per observation (pixels): " << std::sqrt(result.final_cost_per_obs) << "\n\n";
+
+    if (result.converged) {
+      for (size_t i = 0; i < result.base_to_target.size(); ++i) {
+        auto tx = result.base_to_target[i].translation();
+        auto rx = Eigen::EulerAnglesXYZd(result.base_to_target[i].rotation()).angles();
+        printf("Base-to-target %zu: [%.6f, %.6f, %.6f] rx=[%.6f, %.6f, %.6f]\n",
+          i, tx[0], tx[1], tx[2], rx[0], rx[1], rx[2]);
+      }
+      for (size_t i = 0; i < result.base_to_camera.size(); ++i) {
+        auto tx = result.base_to_camera[i].translation();
+        auto rx = Eigen::EulerAnglesXYZd(result.base_to_camera[i].rotation()).angles();
+        printf("Base-to-camera %zu: [%.6f, %.6f, %.6f] rx=[%.6f, %.6f, %.6f]\n",
+          i, tx[0], tx[1], tx[2], rx[0], rx[1], rx[2]);
+      }
+    }
+  }
 
 
 
