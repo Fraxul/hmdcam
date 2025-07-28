@@ -662,14 +662,28 @@ int main(int argc, char** argv) {
 
 
     if (result.converged) {
+#if 0
       for (size_t i = 0; i < result.base_to_target.size(); ++i) {
         printf("Base-to-target %zu: ", i);
         printIsometry(result.base_to_target[i], "\n");
       }
+#endif
       for (size_t i = 0; i < result.base_to_camera.size(); ++i) {
         printf("Base-to-camera %zu: ", i);
         printIsometry(result.base_to_camera[i], "\n");
       }
+
+      // Composed transforms
+
+      for (size_t srcIdx = 0; srcIdx < data.views.size(); ++srcIdx) {
+        for (size_t dstIdx = 0; dstIdx < data.views.size(); ++dstIdx) {
+          Eigen::Isometry3d xf = result.base_to_camera[srcIdx].inverse() * result.base_to_camera[dstIdx];
+
+          printf("Camera %zu to camera %zu: ", srcIdx, dstIdx);
+          printIsometry(xf, "\n");
+        }
+      }
+
     }
   }
 
