@@ -300,7 +300,7 @@ int main(int argc, char** argv) {
           // Save point ids
           obs.objectPointIds = std::move(currentCharucoIds);
         }
-        printf("[view %zu | %zu] found=%u cornerCount=%zu cornerIdCount=%zu\n", viewIdx, idx, found, currentCharucoCorners.total(), currentCharucoIds.size());
+        printf("[view %zu | %zu] found=%u cornerCount=%zu\n", viewIdx, idx, found, currentCharucoCorners.total());
       });
     }
   }
@@ -414,9 +414,12 @@ int main(int argc, char** argv) {
     }
 
     intrinsicProblem.intrinsics_guess.fx() = intrinsicGuess.ptr<double>(0)[0];
-    intrinsicProblem.intrinsics_guess.fy() = intrinsicGuess.ptr<double>(1)[1];
     intrinsicProblem.intrinsics_guess.cx() = intrinsicGuess.ptr<double>(0)[2];
     intrinsicProblem.intrinsics_guess.cy() = intrinsicGuess.ptr<double>(1)[2];
+
+    // Fix pixel aspect ratio to 1:1
+    intrinsicProblem.intrinsics_guess.aspect() = 1.0f;
+    intrinsicProblem.fix_aspect = true;
 
     // Use extrinsic guesses from OpenCV's solvePnP (no calibration/distortion)
     intrinsicProblem.use_extrinsic_guesses = true;
@@ -450,11 +453,13 @@ int main(int argc, char** argv) {
     viewData.intrinsicCalibration = industrial_calibration::optimize(intrinsicProblem);
     std::cout << viewData.intrinsicCalibration << std::endl;
 
+#if 0
     for (size_t i = 0; i < intrinsicProblem.extrinsic_guesses.size(); ++i) {
       printf("Extrinsics [%zu]:", i);
       printIsometry(" Guess = ", intrinsicProblem.extrinsic_guesses[i]);
       printIsometry(" Actual = ", viewData.intrinsicCalibration.target_transforms[i], "\n");
     }
+#endif
 
     for (size_t i = 0; i < targetTransformToObservationIdx.size(); ++i) {
       viewData.observations[targetTransformToObservationIdx[i]].targetTransform = viewData.intrinsicCalibration.target_transforms[i];
@@ -610,16 +615,16 @@ int main(int argc, char** argv) {
       bool isValid = !data.views[0].observations[i].empty();
       size_t pointCount = data.views[0].observations[i].pointCount();
 
-      printIsometry("Base-to-target guess from view 0: ", problem.base_to_target_guess[i], "\n");
+      // printIsometry("Base-to-target guess from view 0: ", problem.base_to_target_guess[i], "\n");
 
       for (size_t viewIdx = 1; viewIdx < data.views.size(); ++viewIdx) {
         if (data.views[viewIdx].observations[i].targetTransform.isApprox(Eigen::Isometry3d::Identity()))
           continue;
 
-        printf("  Base-to-target guess transformed from view %zu: ", viewIdx);
         Eigen::Isometry3d xf = base_to_camera_guess[viewIdx] * data.views[viewIdx].observations[i].targetTransform;
 
-        printIsometry(xf, "\n");
+        // printf("  Base-to-target guess transformed from view %zu: ", viewIdx);
+        // printIsometry(xf, "\n");
 
         if (!isValid) {
           // For observations that don't have a valid base transform, compose a guess transform from the other
