@@ -68,6 +68,7 @@ struct Observation {
     return corrSet;
   }
 
+  std::vector<int> objectPointIds; // IDs of points on the calibration target
   std::vector<cv::Point3f> objectPoints; // Points in object space, on the calibration target
   std::vector<cv::Point2f> imagePoints; // Points in image space
 
@@ -78,6 +79,29 @@ struct ViewCalibrationData {
   cv::Size imageSize;
   std::vector<Observation> observations;
   industrial_calibration::CameraIntrinsicResult intrinsicCalibration;
+
+  cv::Mat cvIntrinsicMatrix() {
+    // [fx  0 cx ]
+    // [ 0 fy cy ]
+    // [ 0  0  1 ]
+    cv::Mat res = cv::Mat::eye(3, 3, CV_64F);
+    res.ptr<double>(0)[0] = intrinsicCalibration.intrinsics.fx();
+    res.ptr<double>(1)[1] = intrinsicCalibration.intrinsics.fy();
+    res.ptr<double>(0)[2] = intrinsicCalibration.intrinsics.cx();
+    res.ptr<double>(1)[2] = intrinsicCalibration.intrinsics.cy();
+    return res;
+  }
+
+  cv::Mat cvDistCoeffs() {
+    cv::Mat res = cv::Mat::zeros(5, 1, CV_64F);
+    double* pd = res.ptr<double>();
+    pd[0] = intrinsicCalibration.distortions[0]; // k1
+    pd[1] = intrinsicCalibration.distortions[1]; // k2
+    pd[2] = intrinsicCalibration.distortions[2]; // p1
+    pd[3] = intrinsicCalibration.distortions[3]; // p2
+    pd[4] = intrinsicCalibration.distortions[4]; // k3
+    return res;
+  }
 
 };
 
@@ -106,87 +130,48 @@ int main(int argc, char** argv) {
 
   MultiViewCalibrationData data;
 
-  data.views.resize(2); // number of views
+  data.views.resize(4); // number of cameras/views
 
   PerfTimer perfTimer;
 
-  const char* imageFilenames_camera0[] = {
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481695.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481701.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481709.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481736.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481769.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481777.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481782.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481788.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481811.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481817.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481823.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481835.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481850.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481856.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481862.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481868.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481882.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481887.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481892.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481898.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481903.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481913.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481919.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481925.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481927.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481934.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481941.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481949.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481952.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751481958.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751482024.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751482038.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751482050.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera0_1751482057.png",
+  const char* imageFilenames[] = {
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481695.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481701.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481709.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481736.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481769.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481777.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481782.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481788.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481811.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481817.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481823.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481835.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481850.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481856.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481862.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481868.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481882.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481887.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481892.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481898.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481903.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481913.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481919.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481925.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481927.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481934.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481941.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481949.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481952.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481958.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751482024.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751482038.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751482050.png",
+    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751482057.png",
   };
 
-  const char* imageFilenames_camera2[] = {
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481695.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481701.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481709.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481736.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481769.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481777.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481782.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481788.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481811.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481817.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481823.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481835.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481850.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481856.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481862.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481868.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481882.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481887.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481892.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481898.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481903.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481913.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481919.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481925.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481927.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481934.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481941.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481949.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481952.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751481958.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751482024.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751482038.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751482050.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera2_1751482057.png",
-  };
-
-
-  constexpr size_t imageCount = sizeof(imageFilenames_camera0) / sizeof(imageFilenames_camera0[0]);
-  const char** viewImageFilenames[] = {imageFilenames_camera0, imageFilenames_camera2};
+  constexpr size_t imageCount = sizeof(imageFilenames) / sizeof(imageFilenames[0]);
 
   for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
     ViewCalibrationData& viewData = data.views[viewIdx];
@@ -194,7 +179,9 @@ int main(int argc, char** argv) {
     viewData.observations.resize(imageCount);
 
     FxThreading::runArrayTask(0, imageCount, [&](size_t idx) {
-      viewData.observations[idx].image = cv::imread(viewImageFilenames[viewIdx][idx], cv::IMREAD_GRAYSCALE);
+      char buf[512];
+      snprintf(buf, 512, imageFilenames[idx], (unsigned int) viewIdx);
+      viewData.observations[idx].image = cv::imread(buf, cv::IMREAD_GRAYSCALE);
     });
 
     // Validation: ensure all images are the same size
@@ -245,6 +232,9 @@ int main(int argc, char** argv) {
             const cv::Point3f& boardPoint = boardPoints[currentCharucoIds[pointIdx]];
             obs.objectPoints.push_back(boardPoint);
           }
+
+          // Save point ids
+          obs.objectPointIds = std::move(currentCharucoIds);
         }
         printf("[view %zu | %zu] found=%u cornerCount=%zu cornerIdCount=%zu\n", viewIdx, idx, found, currentCharucoCorners.total(), currentCharucoIds.size());
       });
@@ -329,6 +319,7 @@ int main(int argc, char** argv) {
 
 #endif // OpenCV calibration
 
+
   printf("=== industrial_calibration intrinsic calibration ===\n");
   perfTimer.checkpoint();
 
@@ -403,6 +394,105 @@ int main(int argc, char** argv) {
 
   } // View loop
 
+#if 1
+
+  printf("=== OpenCV stereo calibration ===\n");
+  // "Left" and "Right" here are arbitrary -- we just try to calibrate between every view-pair.
+  for (size_t leftViewIdx = 0; leftViewIdx < data.views.size(); ++leftViewIdx) {
+    ViewCalibrationData& leftViewData = data.views[leftViewIdx];
+
+    for (size_t rightViewIdx = leftViewIdx + 1; rightViewIdx < data.views.size(); ++rightViewIdx) {
+      ViewCalibrationData& rightViewData = data.views[rightViewIdx];
+
+      // Find observations that appear in both left and right views, and collect their overlapping object and image points.
+      // Object points will be identical across all same-index observations.
+      std::vector<std::vector<cv::Point3f> > objectPoints;
+      std::vector<std::vector<cv::Point2f> > leftImagePoints, rightImagePoints;
+
+      assert(leftViewData.observations.size() == rightViewData.observations.size());
+      for (size_t observationIdx = 0; observationIdx < leftViewData.observations.size(); ++observationIdx) {
+        Observation& leftObs = leftViewData.observations[observationIdx];
+        Observation& rightObs = rightViewData.observations[observationIdx];
+        if (leftObs.empty() || rightObs.empty())
+          continue; // No overlap for this observation
+
+        std::vector<cv::Point3f> obsObjectPoints;
+        std::vector<cv::Point2f> obsLeftImagePoints, obsRightImagePoints;
+
+        // For each left observed point, find the corresponding right observed point
+        // Terrible O(N^2) code
+        for (size_t pointIdx = 0; pointIdx < leftObs.pointCount(); ++pointIdx) {
+          int leftPointId = leftObs.objectPointIds[pointIdx];
+
+          for (size_t rightPointIdx = 0; rightPointIdx < rightObs.pointCount(); ++rightPointIdx) {
+            if (rightObs.objectPointIds[rightPointIdx] == leftPointId) {
+              // Match
+              obsObjectPoints.push_back(leftObs.objectPoints[pointIdx]);
+              obsLeftImagePoints.push_back(leftObs.imagePoints[pointIdx]);
+              obsRightImagePoints.push_back(rightObs.imagePoints[rightPointIdx]);
+              break;
+            }
+          }
+        }
+
+        // Need at least 6 points to line up an observation
+        if (obsObjectPoints.size() >= 6) {
+          objectPoints.push_back(std::move(obsObjectPoints));
+          leftImagePoints.push_back(std::move(obsLeftImagePoints));
+          rightImagePoints.push_back(std::move(obsRightImagePoints));
+        }
+      }
+
+
+      cv::Mat stereoRotation, stereoTranslation;
+      cv::Mat rvecs, tvecs, E, F;
+
+      printf("cv::stereoCalibrate() view %zu to %zu\n", leftViewIdx, rightViewIdx);
+      printf("  %zu observations\n", objectPoints.size());
+
+      double reprojectionError = cv::stereoCalibrate(
+        /*objectPoints =  */ objectPoints,
+        /*imagePoints1 =  */ leftImagePoints,
+        /*imagePoints2 =  */ rightImagePoints,
+        /*cameraMatrix1 = */ leftViewData.cvIntrinsicMatrix(),
+        /*distCoeffs1 =   */ leftViewData.cvDistCoeffs(),
+        /*cameraMatrix1 = */ rightViewData.cvIntrinsicMatrix(),
+        /*distCoeffs1 =   */ rightViewData.cvDistCoeffs(),
+        /*imageSize =     */ leftViewData.imageSize,
+        /*R = */ stereoRotation,
+        /*T = */ stereoTranslation,
+        /*E = */ E,
+        /*F = */ F,
+        /*rvecs = */ rvecs,
+        /*tvecs = */ tvecs,
+        /*perViewErrors = */ cv::noArray(),
+        /*flags = */ cv::CALIB_FIX_INTRINSIC
+      );
+
+      // Covert R and T to isometry
+
+
+      Eigen::Isometry3d stereoOffset;
+      {
+        cv::Mat rotation(3, 3, CV_64F);
+        cv::Rodrigues(stereoRotation, rotation);
+        stereoOffset.linear() = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>::Map(reinterpret_cast<double*>(rotation.data));
+        stereoOffset.translation() = Eigen::Vector3d::Map(stereoTranslation.ptr<double>());
+      }
+
+      {
+        auto tx = stereoOffset.translation();
+        auto rx = Eigen::EulerAnglesXYZd(stereoOffset.rotation()).angles();
+        printf("  Stereo offset: [%.6f, %.6f, %.6f] rx=[%.6f, %.6f, %.6f]\n",
+          tx[0], tx[1], tx[2], rx[0], rx[1], rx[2]);
+      }
+
+      printf("  Reprojection error: %.6f\n", reprojectionError);
+    }
+  }
+
+
+#endif // OpenCV stereo calibration
 
   // Multi-view
   printf("=== industrial_calibration multi-view calibration ===\n");
