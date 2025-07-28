@@ -521,8 +521,7 @@ int main(int argc, char** argv) {
       cv::Mat stereoRotation, stereoTranslation;
       cv::Mat rvecs, tvecs, E, F;
 
-      printf("cv::stereoCalibrate() view %zu to %zu\n", leftViewIdx, rightViewIdx);
-      printf("  %zu observations\n", objectPoints.size());
+      perfTimer.checkpoint();
 
       double reprojectionError = cv::stereoCalibrate(
         /*objectPoints =  */ objectPoints,
@@ -542,6 +541,9 @@ int main(int argc, char** argv) {
         /*perViewErrors = */ cv::noArray(),
         /*flags = */ cv::CALIB_FIX_INTRINSIC
       );
+
+      printf("cv::stereoCalibrate() view %zu to %zu\n", leftViewIdx, rightViewIdx);
+      printf("  %zu observations, %.3f ms\n", objectPoints.size(), perfTimer.checkpoint());
 
       //std::cout << stereoTranslation << std::endl << stereoRotation << std::endl;
 
@@ -644,11 +646,15 @@ int main(int argc, char** argv) {
     }
 
     // Run solver
+    perfTimer.checkpoint();
     industrial_calibration::ExtrinsicMultiStaticCameraOnlyResult result = optimize(problem);
 
-    std::cout << "Optimization " << (result.converged ? "converged" : "did not converge") << "\n"
-           << "Initial cost per observation (pixels): " << std::sqrt(result.initial_cost_per_obs) << "\n"
-           << "Final cost per observation (pixels): " << std::sqrt(result.final_cost_per_obs) << "\n\n";
+    printf("Optimization %s in %.3f ms\n", (result.converged ? "converged" : "did not converge"), perfTimer.checkpoint());
+
+    printf("Initial cost per observation (pixels): %.3f\n", std::sqrt(result.initial_cost_per_obs));
+    printf("Final cost per observation (pixels): %.3f\n", std::sqrt(result.final_cost_per_obs));
+    printf("\n");
+
 
     if (result.converged) {
       for (size_t i = 0; i < result.base_to_target.size(); ++i) {
