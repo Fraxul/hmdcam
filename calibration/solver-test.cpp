@@ -48,6 +48,15 @@ cv::aruco::CharucoDetector createCharucoDetector(cv::Mat cameraMatrix = cv::Mat(
   return cv::aruco::CharucoDetector(*s_charucoBoard, chParams, s_detectorParams);
 }
 
+void printIsometry(const char* prefix, const Eigen::Isometry3d& xf, const char* postfix = "") {
+  auto tx = xf.translation();
+  auto rx = Eigen::EulerAnglesXYZd(xf.rotation()).angles();
+  const double rad2deg = 180.0 / M_PI;
+  printf("%stx=[%.6f, %.6f, %.6f] rx=[%.6f, %.6f, %.6f]%s",
+    prefix, tx[0], tx[1], tx[2], rx[0] * rad2deg, rx[1] * rad2deg, rx[2] * rad2deg, postfix);
+}
+void printIsometry(const Eigen::Isometry3d& xf, const char* postfix = "") { printIsometry("", xf, postfix); }
+
 
 // Represents observed point correspondances between image and target/object space in a single captured image
 struct Observation {
@@ -386,6 +395,12 @@ int main(int argc, char** argv) {
     viewData.intrinsicCalibration = industrial_calibration::optimize(intrinsicProblem);
     std::cout << viewData.intrinsicCalibration << std::endl;
 
+    for (size_t i = 0; i < intrinsicProblem.extrinsic_guesses.size(); ++i) {
+      printf("Extrinsics [%zu]:", i);
+      printIsometry(" Guess = ", intrinsicProblem.extrinsic_guesses[i]);
+      printIsometry(" Actual = ", viewData.intrinsicCalibration.target_transforms[i], "\n");
+    }
+
     for (size_t i = 0; i < targetTransformToObservationIdx.size(); ++i) {
       viewData.observations[targetTransformToObservationIdx[i]].targetTransform = viewData.intrinsicCalibration.target_transforms[i];
     }
@@ -393,6 +408,10 @@ int main(int argc, char** argv) {
     printf("Calibration complete in %.3f ms\n", perfTimer.checkpoint());
 
   } // View loop
+
+
+  // Guesses for the pose between base (view 0) and other views
+  std::vector<Eigen::Isometry3d> base_to_camera_guess(4, Eigen::Isometry3d::Identity());
 
 #if 1
 
@@ -469,25 +488,28 @@ int main(int argc, char** argv) {
         /*flags = */ cv::CALIB_FIX_INTRINSIC
       );
 
-      // Covert R and T to isometry
+      //std::cout << stereoTranslation << std::endl << stereoRotation << std::endl;
 
+      // Covert R and T to isometry
 
       Eigen::Isometry3d stereoOffset;
       {
-        cv::Mat rotation(3, 3, CV_64F);
-        cv::Rodrigues(stereoRotation, rotation);
-        stereoOffset.linear() = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>::Map(reinterpret_cast<double*>(rotation.data));
+        assert(stereoTranslation.total() == 3 && stereoTranslation.type() == CV_64F);
+        // stereoCalibrate should return a 3x3 matrix in stereoRotation, not an rvec.
+        assert(stereoRotation.total() == 9 && stereoRotation.type() == CV_64F);
+
+        stereoOffset.linear() = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>::Map(stereoRotation.ptr<double>());
         stereoOffset.translation() = Eigen::Vector3d::Map(stereoTranslation.ptr<double>());
       }
 
-      {
-        auto tx = stereoOffset.translation();
-        auto rx = Eigen::EulerAnglesXYZd(stereoOffset.rotation()).angles();
-        printf("  Stereo offset: [%.6f, %.6f, %.6f] rx=[%.6f, %.6f, %.6f]\n",
-          tx[0], tx[1], tx[2], rx[0], rx[1], rx[2]);
-      }
+      printIsometry("  Stereo offset: ", stereoOffset, "\n");
 
       printf("  Reprojection error: %.6f\n", reprojectionError);
+
+      // Update base-to-camera guesses
+      if (leftViewIdx == 0) {
+        base_to_camera_guess[rightViewIdx] = stereoOffset;
+      }
     }
   }
 
@@ -512,20 +534,45 @@ int main(int argc, char** argv) {
       assert(data.views[viewIdx].observations.size() == data.views[0].observations.size());
     }
 
+    // Per-view base-to-camera guesses -- use cv::stereoCalibrate guesses
+#if 0
+    problem.base_to_camera_guess = base_to_camera_guess;
+#else
+    problem.base_to_camera_guess = std::vector(data.views.size(), Eigen::Isometry3d::Identity());
+#endif
+
     // Per-observation base-to-target guesses.
     // We initialize this with the target transforms from the intrinsic calibration process.
-    // TODO: Look at however opencv stereoCalibrate does this!
-    // We may need to rough in the calibration with opencv stereoCalibrate and then fine-tune it with this solver.
+    // Not all target transforms will be available for the base view (view 0), though, so we use other views
+    // and compose their initial base-to-camera guesses to come up with base-to-target guesses.
 
     problem.base_to_target_guess.resize(data.observationCount());
     for (size_t i = 0; i < problem.base_to_target_guess.size(); ++i) {
       problem.base_to_target_guess[i] = data.views[0].observations[i].targetTransform;
-    }
 
-    // Per-observation base-to-camera guesses -- just use identity transforms
-    problem.base_to_camera_guess.resize(data.views.size());
-    for (size_t i = 0; i < problem.base_to_camera_guess.size(); ++i) {
-      problem.base_to_camera_guess[i] = Eigen::Isometry3d::Identity();
+      bool isValid = !data.views[0].observations[i].empty();
+      size_t pointCount = data.views[0].observations[i].pointCount();
+
+      printIsometry("Base-to-target guess from view 0: ", problem.base_to_target_guess[i], "\n");
+
+      for (size_t viewIdx = 1; viewIdx < data.views.size(); ++viewIdx) {
+        if (data.views[viewIdx].observations[i].targetTransform.isApprox(Eigen::Isometry3d::Identity()))
+          continue;
+
+        printf("  Base-to-target guess transformed from view %zu: ", viewIdx);
+        Eigen::Isometry3d xf = base_to_camera_guess[viewIdx] * data.views[viewIdx].observations[i].targetTransform;
+
+        printIsometry(xf, "\n");
+
+        if (!isValid) {
+          // For observations that don't have a valid base transform, compose a guess transform from the other
+          // view that saw the most points.
+          if (data.views[viewIdx].observations[i].pointCount() > pointCount) {
+            pointCount = data.views[viewIdx].observations[i].pointCount();
+            problem.base_to_target_guess[i] = xf;
+          }
+        }
+      }
     }
 
     // Set up image observations
@@ -550,16 +597,12 @@ int main(int argc, char** argv) {
 
     if (result.converged) {
       for (size_t i = 0; i < result.base_to_target.size(); ++i) {
-        auto tx = result.base_to_target[i].translation();
-        auto rx = Eigen::EulerAnglesXYZd(result.base_to_target[i].rotation()).angles();
-        printf("Base-to-target %zu: [%.6f, %.6f, %.6f] rx=[%.6f, %.6f, %.6f]\n",
-          i, tx[0], tx[1], tx[2], rx[0], rx[1], rx[2]);
+        printf("Base-to-target %zu: ", i);
+        printIsometry(result.base_to_target[i], "\n");
       }
       for (size_t i = 0; i < result.base_to_camera.size(); ++i) {
-        auto tx = result.base_to_camera[i].translation();
-        auto rx = Eigen::EulerAnglesXYZd(result.base_to_camera[i].rotation()).angles();
-        printf("Base-to-camera %zu: [%.6f, %.6f, %.6f] rx=[%.6f, %.6f, %.6f]\n",
-          i, tx[0], tx[1], tx[2], rx[0], rx[1], rx[2]);
+        printf("Base-to-camera %zu: ", i);
+        printIsometry(result.base_to_camera[i], "\n");
       }
     }
   }
