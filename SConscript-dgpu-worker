@@ -16,7 +16,7 @@ dgpuEnv.CompilationDatabase()
 dgpuEnv.Program(
   target = '../bin/dgpu-worker', # relative to build/dgpu-worker
   source = Glob('dgpu-worker/*.cpp') + Glob('dgpu-worker/*.cu'),
-  LIBS=['stdc++', 'pthread', 'rt', 'opencv_core', 'opencv_cudastereo', 'cuda', 'cudart'],
+  LIBS=['stdc++', 'pthread', 'rt', 'opencv_core', 'opencv_cudastereo', 'opencv_cudaimgproc', 'cuda', 'cudart'],
 )
 
 

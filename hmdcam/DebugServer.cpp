@@ -194,6 +194,8 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
 }
 
 void DebugServer::frameProcessingEnded() {
+#if !IS_WSL2 // Gate this function away from WSL2 due to missing cuGraphicsResourceGetMappedEglFrame API
+
   // Turn on CPU access to disparity only if we have a client connected
   // (this can be freely enabled/disabled without reconfiguring the depth backend,
   // and will take effect next frame)
@@ -273,6 +275,7 @@ void DebugServer::frameProcessingEnded() {
   // Wake the stream thread
   pthread_cond_signal(&m_streamReadyCond);
   pthread_mutex_unlock(&m_streamReadyMutex);
+#endif // !IS_WSL2
 }
 
 bool safe_write(int fd, const void* buffer, size_t length) {
