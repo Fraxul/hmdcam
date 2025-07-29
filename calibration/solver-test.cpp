@@ -50,7 +50,7 @@ cv::aruco::CharucoDetector createCharucoDetector(cv::Mat cameraMatrix = cv::Mat(
 
 void printIsometry(const char* prefix, const Eigen::Isometry3d& xf, const char* postfix = "") {
   auto tx = xf.translation();
-  auto rx = Eigen::EulerAnglesXYZd(xf.rotation()).angles();
+  auto rx = Eigen::EulerAnglesYXZd(xf.rotation()).angles();
   const double rad2deg = 180.0 / M_PI;
   printf("%stx=[%.6f, %.6f, %.6f] rx=[%.6f, %.6f, %.6f]%s",
     prefix, tx[0], tx[1], tx[2], rx[0] * rad2deg, rx[1] * rad2deg, rx[2] * rad2deg, postfix);
@@ -683,8 +683,77 @@ int main(int argc, char** argv) {
           printIsometry(xf, "\n");
         }
       }
-
     }
+
+
+
+    // Save calibration data
+    cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+
+    fs.startWriteStruct("cameras", cv::FileNode::SEQ, cv::String());
+    for (size_t cameraIdx = 0; cameraIdx < data.views.size(); ++cameraIdx) {
+      fs.startWriteStruct(cv::String(), cv::FileNode::MAP, cv::String());
+      ViewCalibrationData& viewData = data.views[cameraIdx];
+
+      fs.write("intrinsicMatrix", viewData.cvIntrinsicMatrix());
+      fs.write("distortionCoeffs", viewData.cvDistCoeffs());
+
+      fs.endWriteStruct();
+    }
+    fs.endWriteStruct(); // cameras
+
+    fs.startWriteStruct("views", cv::FileNode::SEQ, cv::String());
+
+    // View indices (L, R): [2, 0] [1, 3]
+    // View stereo offset should be along -X axis
+    int viewIndices0[] = {2, 0};
+    int viewIndices1[] = {1, 3};
+
+    int* viewIndices[] = {viewIndices0, viewIndices1};
+
+    for (size_t viewIdx = 0; viewIdx < (sizeof(viewIndices) / sizeof(viewIndices[0])); ++viewIdx) {
+      int leftCameraIdx = viewIndices[viewIdx][0];
+      int rightCameraIdx = viewIndices[viewIdx][1];
+
+      fs.startWriteStruct(cv::String(), cv::FileNode::MAP, cv::String());
+      fs.write("isStereo", 1);
+      fs.write("isPanorama", 0);
+      fs.write("leftCameraIndex", (int) leftCameraIdx);
+      fs.write("rightCameraIndex", (int) rightCameraIdx);
+
+    
+      { 
+        // For the stereo translation and rotation, we need a composed transform from the right camera to the left camera.
+        Eigen::Isometry3d xf = result.base_to_camera[rightCameraIdx].inverse() * result.base_to_camera[leftCameraIdx];
+
+        Eigen::Vector3d tx = xf.translation();
+        Eigen::Matrix<double, 3, 3, Eigen::RowMajor> rx = xf.rotation(); // RowMajor order for interop with OpenCV
+
+        fs.write("stereoTranslation", cv::Mat(/*rows=*/ 3, /*cols=*/ 1, CV_64F, tx.data()));
+        fs.write("stereoRotation", cv::Mat(/*rows=*/ 3, /*cols=*/ 3, CV_64F, rx.data()));
+      }
+
+      // Compose a transform for the view offset, if this is not the first view.
+      if (viewIdx == 0) {
+        fs.write("viewTranslation", cv::Mat::zeros(/*rows=*/ 3, /*cols=*/ 1, CV_64F));
+        fs.write("viewRotation", cv::Mat::zeros(/*rows=*/ 3, /*cols=*/ 1, CV_64F));
+      } else {
+
+        // Transform from the view 0 left camera to the current view's left camera
+        Eigen::Isometry3d xf = result.base_to_camera[viewIndices[0][0]].inverse() * result.base_to_camera[leftCameraIdx];
+
+        Eigen::Vector3d tx = xf.translation();
+        Eigen::Vector3d rxEulerDeg = Eigen::EulerAnglesYXZd(xf.rotation()).angles() * (180.0 / M_PI);
+
+        fs.write("viewTranslation", cv::Mat(/*rows=*/ 3, /*cols=*/ 1, CV_64F, tx.data()));
+        fs.write("viewRotation", cv::Mat(/*rows=*/ 3, /*cols=*/ 1, CV_64F, rxEulerDeg.data()));
+      }
+
+      fs.endWriteStruct();
+    }
+
+    fs.endWriteStruct(); // views
+    
   }
 
 
