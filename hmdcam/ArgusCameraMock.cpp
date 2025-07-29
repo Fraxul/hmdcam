@@ -67,14 +67,27 @@ bool ArgusCameraMock::readFrame() {
 
     bool haveImageData = false;
     char filename[32];
+    cv::Mat m;
     try {
       sprintf(filename, "camera%zu.png", cameraIdx);
-      cv::Mat m = cv::imread(filename, cv::IMREAD_COLOR); // input will be in BGRA format
+      m = cv::imread(filename, cv::IMREAD_COLOR); // input will be in BGRA format
       if (m.cols == streamWidth() && m.rows == streamHeight()) {
         cv::Mat rgbaMat;
         cv::cvtColor(m, rgbaMat, cv::COLOR_BGRA2RGBA);
         rhi()->loadTextureData(srf, kVertexElementTypeUByte4N, rgbaMat.data);
+        haveImageData = true;
+      } else {
+        printf("ArgusCameraMock: loaded %s but the dimensions didn't match (expected %ux%u, got %ux%u)\n",
+          filename, streamWidth(), streamHeight(), m.cols, m.rows);
+      }
+    } catch (const std::exception& ex) {
+      printf("ArgusCameraMock: Couldn't open %s: %s\n", filename, ex.what());
+    }
 
+    if (haveImageData) {
+      // CUDA resource setup. This will fail on a (probably WSL2) machine with no CUDA devices,
+      // but we may be able to continue anyway.
+      try {
         cv::Mat lumaMat, chromaMat;
         cv::Mat yv12Mat;
         {
@@ -146,15 +159,10 @@ bool ArgusCameraMock::readFrame() {
 
           CUDA_CHECK(cuTexObjectCreate(&stream.cudaChromaTexObject, &chromaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));
         }
-
-        haveImageData = true;
-      } else {
-        printf("ArgusCameraMock: loaded %s but the dimensions didn't match (expected %ux%u, got %ux%u)\n",
-          filename, streamWidth(), streamHeight(), m.cols, m.rows);
+      } catch (const std::exception& ex) {
+        printf("ArgusCameraMock: During CUDA resource setup for camera %zu: %s\n", cameraIdx, ex.what());
       }
-    } catch (const std::exception& ex) {
-      printf("ArgusCameraMock: Couldn't open %s: %s\n", filename, ex.what());
-    }
+    } // haveImageData
 
     if (!haveImageData) {
       // If we didn't load mock data for this camera, clear the surface to a solid color.
