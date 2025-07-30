@@ -75,7 +75,7 @@ tegra_release = 0
 if is_tegra:
   try:
     with open('/etc/nv_tegra_release') as f:
-      res = re.search('R(\d+)', f.readline())
+      res = re.search(r'R(\d+)', f.readline())
       tegra_release = int(res.group(1))
   except:
     print("Error reading/parsing /etc/nv_tegra_release:", sys.exc_info()[0])
