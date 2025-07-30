@@ -24,3 +24,27 @@ static inline void delayNs(uint64_t ns) {
   } while (res == -1 && errno == EINTR);
 }
 
+class PerfTimer {
+public:
+  PerfTimer() {
+    startTimeNs = currentTimeNs();
+    lastCheckpointTimeNs = startTimeNs;
+  }
+
+  // Returns time elapsed since previous checkpoint (or construction) in milliseconds
+  float checkpoint() {
+    uint64_t now = currentTimeNs();
+    float res = deltaTimeMs(lastCheckpointTimeNs, now);
+    lastCheckpointTimeNs = now;
+    return res;
+  }
+
+  // Returns time elapsed since construction in milliseconds. Does not update the checkpoint timer.
+  float totalElapsedTime() {
+    return deltaTimeMs(startTimeNs, currentTimeNs());
+  }
+
+  uint64_t startTimeNs;
+  uint64_t lastCheckpointTimeNs;
+};
+
