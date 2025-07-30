@@ -60,19 +60,23 @@ void RenderBackendVKDirect::init() {
     }
   }
 
-  vk::InstanceCreateInfo createInfo{
-      vk::InstanceCreateFlags(),
-      /*applicationInfo=*/ nullptr,
-      /*enabledLayers=*/ 0, nullptr,
-      uint32_t(requiredInstanceExtensions.size()), requiredInstanceExtensions.data()
-  };
+  // Create instance
+  {
+    vk::InstanceCreateInfo createInfo{
+        vk::InstanceCreateFlags(),
+        /*applicationInfo=*/ nullptr,
+        /*enabledLayers=*/ 0, nullptr,
+        uint32_t(requiredInstanceExtensions.size()), requiredInstanceExtensions.data()
+    };
 
-  if (enableValidation) {
-    createInfo.enabledLayerCount = (uint32_t) validationLayers.size();
-    createInfo.ppEnabledLayerNames = validationLayers.data();
+    if (enableValidation) {
+      createInfo.enabledLayerCount = (uint32_t) validationLayers.size();
+      createInfo.ppEnabledLayerNames = validationLayers.data();
+    }
+
+    m_instance = vk::createInstanceUnique(createInfo);
   }
 
-  m_instance = vk::createInstanceUnique(createInfo);
   VULKAN_HPP_DEFAULT_DISPATCHER.init(m_instance.get());
 
   // Select GPU

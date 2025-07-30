@@ -3,7 +3,12 @@
 #include "RenderBackend.h"
 #include <epoxy/egl.h>
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
+
+// vulkan.hpp library triggers a bunch of -Wshadow warnings -- just ignore them since it's third-party code
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshadow"
 #include "vulkan/vulkan.hpp"
+#pragma clang diagnostic pop
 
 #include <vector>
 
