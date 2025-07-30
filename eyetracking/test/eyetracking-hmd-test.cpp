@@ -218,12 +218,11 @@ int main(int argc, char* argv[]) {
         if ((frameCounter & 127) == 0) {
           for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
             if (eyeTrackingService->m_processingState[eyeIdx].m_processingThreadAlive) {
-              printf("Frame %zu eye %zu processing time: %.3fms ROI, %.3fms ROI-seg latency, %.3fms segmentation, %.3fms total inference latency, %.3fms post\n",
+              printf("Frame %zu eye %zu processing time: %.3fms pre, %.3fms ROI, %.3fms segmentation, %.3fms post\n",
                 frameCounter, eyeIdx,
+                eyeTrackingService->m_processingState[eyeIdx].m_lastFramePreProcessingTimeMs,
                 eyeTrackingService->m_processingState[eyeIdx].m_lastFrameROITimeMs,
-                eyeTrackingService->m_processingState[eyeIdx].m_lastFrameROIToSegmentationLatencyMs,
                 eyeTrackingService->m_processingState[eyeIdx].m_lastFrameSegmentationTimeMs,
-                eyeTrackingService->m_processingState[eyeIdx].m_lastFrameTotalInferenceLatencyMs,
                 eyeTrackingService->m_processingState[eyeIdx].m_lastFramePostProcessingTimeMs);
             }
           }

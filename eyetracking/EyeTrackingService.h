@@ -62,17 +62,10 @@ public:
     // Video capture object
     V4L2Camera m_capture;
 
-    // Sync/profiling events
-    CUevent m_frameProcessingStartEvent;
-    CUevent m_frameROIEndEvent;
-    CUevent m_frameSegmentationStartEvent;
-    CUevent m_framePostProcessingStartEvent;
-    CUevent m_frameProcessingEndEvent;
-
+    // Profiling stats
+    float m_lastFramePreProcessingTimeMs = 0.0f;
     float m_lastFrameROITimeMs = 0.0f;
-    float m_lastFrameROIToSegmentationLatencyMs = 0.0f;
     float m_lastFrameSegmentationTimeMs = 0.0f;
-    float m_lastFrameTotalInferenceLatencyMs = 0.0f;
     float m_lastFramePostProcessingTimeMs = 0.0f;
 
     // Calibration state machine data

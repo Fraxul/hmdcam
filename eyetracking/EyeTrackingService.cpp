@@ -714,6 +714,7 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
     }
 
     ps.m_lastCaptureTimestampNs = currentTimeNs();
+    PerfTimer perfTimer;
 
     // Save capture to disk if requested
     if (ps.m_captureFileIndex) {
@@ -754,6 +755,8 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
         convertUnorm8ToSnormFp16(ps.m_roiScaleMat.ptr<uint8_t>(row), roiInputTensor + (m_roiInputRowStrideElements * row), m_roiInputWidth);
       }
     }
+
+    ps.m_lastFramePreProcessingTimeMs = perfTimer.checkpoint();
 
     // Run ROI network
     ps.m_roiExec->runInference();
@@ -833,6 +836,8 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
     cv::Mat segROIMat = cv::Mat(captureMat, segROIRect);
 
+    ps.m_lastFrameROITimeMs = perfTimer.checkpoint();
+
     // Convert u8 pixels in ROI window to snorm fp16 to populate ps.m_segInputTensor
     // The ROI input is known not to be contiguous, so we do it row-by-row.
     for (size_t y = 0; y < m_segInputHeight; ++y) {
@@ -849,24 +854,15 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
     // TODO: May still need to run closure operation to fill holes in the mask -- 3x3 dilation followed by 3x3 erosion
 
-    // Update stats
-    // TODO implement stats for CuDLAStandaloneRunner
-#if 0
-    cuEventElapsedTime(&ps.m_lastFrameROITimeMs, ps.m_frameProcessingStartEvent, ps.m_frameROIEndEvent);
-    cuEventElapsedTime(&ps.m_lastFrameSegmentationTimeMs, ps.m_frameSegmentationStartEvent, ps.m_framePostProcessingStartEvent);
-    cuEventElapsedTime(&ps.m_lastFrameROIToSegmentationLatencyMs, ps.m_frameROIEndEvent, ps.m_frameSegmentationStartEvent);
 
-    cuEventElapsedTime(&ps.m_lastFrameTotalInferenceLatencyMs, ps.m_frameProcessingStartEvent, ps.m_framePostProcessingStartEvent);
-    cuEventElapsedTime(&ps.m_lastFramePostProcessingTimeMs, ps.m_framePostProcessingStartEvent, ps.m_frameProcessingEndEvent);
-#endif
-
-    uint64_t postStartTimeNs = currentTimeNs();
+    // Eye-fitter postprocessing
+    ps.m_lastFrameSegmentationTimeMs = perfTimer.checkpoint();
 
     postprocessOneEye(eyeIdx);
 
-    float postTimeMs = deltaTimeMs(postStartTimeNs, currentTimeNs());
-    if (postTimeMs > 0.25f) {
-      FRAME_DEBUG_LOG("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, postTimeMs);
+    ps.m_lastFramePostProcessingTimeMs = perfTimer.checkpoint();
+    if (ps.m_lastFramePostProcessingTimeMs > 0.25f) {
+      FRAME_DEBUG_LOG("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, ps.m_lastFramePostProcessingTimeMs);
     }
 
 
@@ -926,10 +922,10 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       // Segmentation ROI view of the RGB debug mat
       cv::Mat debugROIViewRGB = cv::Mat(rgbDebugMat, segROIRect);
 
-#if 0
+#if 1
       // Draw segmentation mask colors
       for (size_t row = 0; row < debugROIViewRGB.rows; ++row) {
-        uint8_t* pupilRowPtr = ps.m_pupilMask1 + (row * m_segInputWidth);
+        uint8_t* pupilRowPtr = ps.m_pupilMask.ptr<uint8_t>(row);
         for (size_t col = 0; col < debugROIViewRGB.cols; ++col) {
           if (pupilRowPtr[col])
             debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/2] = 0xcc;
