@@ -44,6 +44,7 @@ public:
 
   glm::vec2 getPitchYawAnglesForEye(size_t eyeIdx);
 
+  const char* getDebugPerfStatsForEye(size_t eyeIdx);
   cv::Mat& getDebugViewForEye(size_t eyeIdx);
   bool m_debugDrawOverlays = true; // Affects content returned by getDebugViewForEye
 
@@ -69,10 +70,14 @@ public:
     V4L2Camera m_capture;
 
     // Profiling stats
+    float m_lastFrameTotalProcessingTimeMs = 0.0f;
+
     float m_lastFramePreProcessingTimeMs = 0.0f;
     float m_lastFrameROITimeMs = 0.0f;
+    float m_lastFrameROIToSegmentationTimeMs = 0.0f;
     float m_lastFrameSegmentationTimeMs = 0.0f;
     float m_lastFramePostProcessingTimeMs = 0.0f;
+    float m_lastFrameDebugViewTimeMs = 0.0f;
 
     // Calibration state machine data
 
@@ -139,6 +144,8 @@ public:
     cv::Mat m_debugViewRGB; // RGB debug view, optionally with debug overlays drawn on it
     glm::vec2 m_debugBoundsCenter; // for rendering sector cutoff gizmo
     std::vector<cv::Point2f> m_debugTransformedContour;
+
+    char m_debugPerfStatsBuffer[256];
   };
 
 

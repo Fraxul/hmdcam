@@ -765,6 +765,8 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
     // Run ROI network
     ps.m_roiExec->runInference();
 
+    ps.m_lastFrameROITimeMs = perfTimer.checkpoint();
+
     // Compute center of ROI heatmap
     float roiOutput[2]; // 0...1 coordinate range
     float roiSampleThreshold;
@@ -842,7 +844,7 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
     cv::Mat segROIMat = cv::Mat(captureMat, segROIRect);
 
-    ps.m_lastFrameROITimeMs = perfTimer.checkpoint();
+    ps.m_lastFrameROIToSegmentationTimeMs = perfTimer.checkpoint();
 
     // Convert u8 pixels in ROI window to snorm fp16 to populate ps.m_segInputTensor
     // The ROI input is known not to be contiguous, so we do it row-by-row.
@@ -1030,6 +1032,10 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
     // Swap debug mat with the one in processing state
     // (tries to avoid the main thread getting a partially-drawn debug mat)
     cv::swap(ps.m_debugViewRGB, rgbDebugMat);
+
+    ps.m_lastFrameDebugViewTimeMs = perfTimer.checkpoint();
+
+    ps.m_lastFrameTotalProcessingTimeMs = perfTimer.totalElapsedTime();
 
   } // Frame loop
 
@@ -1274,5 +1280,29 @@ void EyeTrackingService::renderSceneGizmos(FxRenderView* renderViews) {
     rhi()->bindStreamBuffer(0, ndcQuadVBO);
     rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
   }
+}
+
+const char* EyeTrackingService::getDebugPerfStatsForEye(size_t eyeIdx) {
+  assert(eyeIdx <= 1);
+
+  char* buf = m_processingState[eyeIdx].m_debugPerfStatsBuffer;
+  constexpr size_t len = sizeof(m_processingState[eyeIdx].m_debugPerfStatsBuffer);
+  if (m_processingState[eyeIdx].m_processingThreadAlive) {
+    snprintf(buf, len - 1,
+      "Processing time: %.3fms (%.3fms pre, %.3fms ROI, %.3fms ROI-seg latency, %.3fms segmentation, %.3fms post, %.3fms debug view)",
+      m_processingState[eyeIdx].m_lastFrameTotalProcessingTimeMs,
+      m_processingState[eyeIdx].m_lastFramePreProcessingTimeMs,
+      m_processingState[eyeIdx].m_lastFrameROITimeMs,
+      m_processingState[eyeIdx].m_lastFrameROIToSegmentationTimeMs,
+      m_processingState[eyeIdx].m_lastFrameSegmentationTimeMs,
+      m_processingState[eyeIdx].m_lastFramePostProcessingTimeMs,
+      m_processingState[eyeIdx].m_lastFrameDebugViewTimeMs);
+  } else {
+    snprintf(buf, len - 1,
+      "Processing thread not running");
+  }
+
+  buf[len - 1] = '\0';
+  return buf;
 }
 

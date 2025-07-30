@@ -698,12 +698,8 @@ int main(int argc, char* argv[]) {
         if (debugPrintLatency && ((frameCounter & 127) == 0)) {
           for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
             if (eyeTrackingService->m_processingState[eyeIdx].m_processingThreadAlive) {
-              printf("Frame %zu eye %zu processing time: %.3fms pre, %.3fms ROI, %.3fms segmentation, %.3fms post\n",
-                frameCounter, eyeIdx,
-                eyeTrackingService->m_processingState[eyeIdx].m_lastFramePreProcessingTimeMs,
-                eyeTrackingService->m_processingState[eyeIdx].m_lastFrameROITimeMs,
-                eyeTrackingService->m_processingState[eyeIdx].m_lastFrameSegmentationTimeMs,
-                eyeTrackingService->m_processingState[eyeIdx].m_lastFramePostProcessingTimeMs);
+              printf("Frame %zu eye %zu: %s\n",
+                frameCounter, eyeIdx, eyeTrackingService->getDebugPerfStatsForEye(eyeIdx));
             }
           }
         }
