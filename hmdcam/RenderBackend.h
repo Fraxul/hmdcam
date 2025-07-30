@@ -7,6 +7,7 @@ enum ERenderBackend {
   kRenderBackendDRM,
   kRenderBackendWayland,
   kRenderBackendVKDirect,
+  kRenderBackendSurfaceless,
 };
 
 ERenderBackend renderBackendStringToEnum(const char*);
