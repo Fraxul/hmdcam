@@ -84,9 +84,8 @@ static FxAtomicString ksDstMip3("dstMip3");
 extern FxAtomicString ksDistortionMap;
 struct MeshDisparityDepthMapUniformBlock {
   glm::mat4 modelViewProjection[2];
-  glm::mat4 R1inv;
-  float Q3, Q7, Q11;
-  float CameraDistanceMeters;
+  glm::mat4 R1;
+  glm::vec4 depthParameters;
 
   glm::vec2 mogrify;
   float disparityPrescale;
@@ -103,6 +102,9 @@ struct MeshDisparityDepthMapUniformBlock {
   glm::vec2 texCoordStep;
   float minDepthCutoff;
   float pointScale;
+
+  glm::vec2 inputImageSize;
+  float pad3, pad4;
 };
 
 FxAtomicString ksDisparityMipUniformBlock("DisparityMipUniformBlock");
@@ -328,7 +330,7 @@ DepthMapGenerator::~DepthMapGenerator() {
   m_viewData.clear();
 }
 
-void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix) {
+void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1) {
   ViewData* vd = m_viewData[viewIdx];
 
   if (m_usePointRendering) {
@@ -340,14 +342,15 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   }
 
   MeshDisparityDepthMapUniformBlock ub;
-  ub.modelViewProjection[0] = renderView0.viewProjectionMatrix * modelMatrix;
-  ub.modelViewProjection[1] = renderView1.viewProjectionMatrix * modelMatrix;
-  ub.R1inv = vd->m_R1inv;
+  const glm::mat4 viewWorldTransform = m_cameraSystem->viewWorldTransform(viewIdx);
+  // viewWorldTransform will give us a view whose depth is aligned along +Z. We need to rotate it 180 degrees for our -Z view aligment.
+  const glm::mat4 rotationCorrection = glm::scale(glm::vec3(-1.0f, 1.0f, -1.0f)); // 180 degree rotation around Y
+  ub.modelViewProjection[0] = renderView0.viewProjectionMatrix * rotationCorrection * viewWorldTransform;
+  ub.modelViewProjection[1] = renderView1.viewProjectionMatrix * rotationCorrection * viewWorldTransform;
+  ub.R1 = vd->m_R1;
 
-  ub.Q3 = vd->m_Q[0][3];
-  ub.Q7 = vd->m_Q[1][3];
-  ub.Q11 = vd->m_Q[2][3];
-  ub.CameraDistanceMeters = vd->m_CameraDistanceMeters;
+  ub.depthParameters = vd->m_depthParameters;
+
   ub.mogrify = glm::vec2(m_algoDownsampleX, m_algoDownsampleY);
   ub.disparityPrescale = disparityPrescale() * debugDisparityScale();
   if (m_debugUseFixedDisparity)
@@ -370,6 +373,8 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.minDepthCutoff = m_minDepthCutoff;
   ub.pointScale = m_pointScale;
 
+  ub.inputImageSize = glm::vec2(m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight());
+
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd->m_disparityTexture);
 
@@ -377,8 +382,8 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   rhi()->loadTexture(ksDistortionMap, m_cameraSystem->viewAtIndex(viewIdx).stereoDistortionMap[0]);
 }
 
-void DepthMapGenerator::renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView, const glm::mat4& modelMatrix) {
-  internalRenderSetup(viewIdx, /*stereo=*/ true, leftRenderView, rightRenderView, modelMatrix);
+void DepthMapGenerator::renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView) {
+  internalRenderSetup(viewIdx, /*stereo=*/ true, leftRenderView, rightRenderView);
 
   if (m_usePointRendering)
     rhi()->drawIndexedPrimitives(m_geoDepthMapPointTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapPointTristripIndexCount, /*indexOffsetElements=*/ 0, /*instanceCount=*/ 2);
@@ -386,8 +391,8 @@ void DepthMapGenerator::renderDisparityDepthMapStereo(size_t viewIdx, const FxRe
     rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
 }
 
-void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix) {
-  internalRenderSetup(viewIdx, /*stereo=*/ false, renderView, renderView, modelMatrix);
+void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView) {
+  internalRenderSetup(viewIdx, /*stereo=*/ false, renderView, renderView);
 
   if (m_usePointRendering)
     rhi()->drawIndexedPrimitives(m_geoDepthMapPointTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapPointTristripIndexCount, /*indexOffsetElements=*/ 0, /*instanceCount=*/ 1);
@@ -465,10 +470,12 @@ void DepthMapGenerator::processFrame() {
       vd->m_leftCameraIndex = v.cameraIndices[0];
       vd->m_rightCameraIndex = v.cameraIndices[1];
 
-      vd->m_R1inv = glm::inverse(glmMat4FromCVMatrix(v.stereoRectification[0]));
-      vd->m_Q = glmMat4FromCVMatrix(v.stereoDisparityToDepth);
+      vd->m_R1 = glmMat4FromCVMatrix(v.stereoRectification[0]);
 
-      vd->m_CameraDistanceMeters = glm::length(glm::vec3(v.stereoTranslation.at<double>(0), v.stereoTranslation.at<double>(1), v.stereoTranslation.at<double>(2)));
+      vd->m_depthParameters = v.depthParameters();
+
+      printf("DepthMapGenerator: View %zu stereoRectify depth parameters: [%.3f, %.3f, %.3f, %.3f]\n", viewIdx,
+        vd->m_depthParameters[0], vd->m_depthParameters[1], vd->m_depthParameters[2], vd->m_depthParameters[3]);
     }
 
     // Let the backend impl update its derived view data components
@@ -657,23 +664,19 @@ glm::vec3 DepthMapGenerator::debugPeekLocalPositionTexel(size_t viewIdx, glm::iv
   const ViewData* vd = viewDataAtIndex(viewIdx);
   float fDisp = debugPeekDisparityTexel(viewIdx, texelCoord);
 
-  float Q3 = vd->m_Q[0][3];
-  float Q7 = vd->m_Q[1][3];
-  float Q11 = vd->m_Q[2][3];
+  glm::vec3 pp = glm::vec3(
+    (texelCoord.x * m_algoDownsampleX) + vd->m_depthParameters.x,
+    (texelCoord.y * m_algoDownsampleY) + vd->m_depthParameters.y,
+    vd->m_depthParameters.z);
 
-  float lz = Q11 * vd->m_CameraDistanceMeters / (fDisp * m_algoDownsampleX);
-  float ly = ((texelCoord.y * m_algoDownsampleY) + Q7) / Q11;
-  float lx = ((texelCoord.x * m_algoDownsampleX) + Q3) / Q11;
-  lx *= lz;
-  ly *= lz;
-  glm::vec4 pP = vd->m_R1inv * glm::vec4(lx, -ly, -lz, 1.0);
-  return (glm::vec3(pP) / pP.w);
+  float lw = vd->m_depthParameters.w * (fDisp * m_algoDownsampleX);
+
+  return vd->m_R1 * (pp / lw);
 }
 
 float DepthMapGenerator::debugComputeDepthForDisparity(size_t viewIdx, float disparityPixels) const {
   const ViewData* vd = viewDataAtIndex(viewIdx);
-  float Q11 = vd->m_Q[2][3];
-  float lz = Q11 * vd->m_CameraDistanceMeters / (disparityPixels * m_algoDownsampleX);
+  float lz = vd->m_depthParameters[2] / (vd->m_depthParameters[3] * disparityPixels * m_algoDownsampleX);
   return lz;
 }
 

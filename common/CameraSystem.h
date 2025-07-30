@@ -3,6 +3,7 @@
 #include <string>
 #include "rhi/RHI.h"
 #include "common/ICameraProvider.h"
+#include "common/glmCvInterop.h"
 #include <opencv2/core.hpp>
 #include <opencv2/core/persistence.hpp>
 #include "glm/gtx/euler_angles.hpp"
@@ -91,6 +92,29 @@ public:
       stereoValidROI[0].empty() || stereoValidROI[1].empty()));
     }
     bool isVerticalStereo() const { return (!stereoTranslation.empty()) && (fabs(stereoTranslation.at<double>(0, 1)) > fabs(stereoTranslation.at<double>(0, 0))); }
+
+    glm::vec4 depthParameters() const {
+      // The stereoDisparityToDepth matrix is of the form (with rounded sample values):
+      // [1, 0,              0  , (X_offset) -1017.4;
+      //  0, 1,              0  , (Y_offset)  -543.1;
+      //  0, 0,              0  , (focal_len)  908.3;
+      //  0, 0, (1_over_Tx) 21.6,                0  ]
+
+      // We save the depthParameters vector: [X_offset, Y_offset, focal_len, 1_over_Tx]
+      // Reconstructing a point P {x, y, disp, 1} is a matrix multiplication against the stereoDisparityToDepth matrix:
+      // w = z * (1_over_Tx)
+      // x' = (x + X_offset) / w
+      // y' = (y + Y_offset) / w
+      // z' = (focal_len)  / w
+
+      glm::mat4 Q = glmMat4FromCVMatrix(stereoDisparityToDepth);
+
+      return glm::vec4(
+        Q[0][3], // X_offset
+        Q[1][3], // Y_offset
+        Q[2][3], // focal_len
+        Q[3][2]); // 1_over_Tx from stereoRectify
+    }
 
   };
 

@@ -1053,7 +1053,7 @@ int main(int argc, char* argv[]) {
 
           // Single-pass stereo
           rhi()->setViewports(eyeViewports, 2);
-          depthMapGenerator->renderDisparityDepthMapStereo(viewIdx, renderViews[0], renderViews[1], cameraSystem->viewWorldTransform(viewIdx));
+          depthMapGenerator->renderDisparityDepthMapStereo(viewIdx, renderViews[0], renderViews[1]);
 
         } else {
           // TODO logic needs work for single-pass stereo

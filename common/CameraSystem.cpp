@@ -1325,9 +1325,8 @@ std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, 
 
 #if 1
   CameraSystem::View& view = cameraSystem->viewAtIndex(viewIdx);
-  glm::mat3 R1inv = glm::inverse(glmMat3FromCVMatrix(view.stereoRectification[0]));
-  glm::mat4 Q = glmMat4FromCVMatrix(view.stereoDisparityToDepth);
-  float CameraDistanceMeters = glm::length(glm::vec3(view.stereoTranslation.at<double>(0), view.stereoTranslation.at<double>(1), view.stereoTranslation.at<double>(2)));
+  glm::mat3 R1 = glmMat3FromCVMatrix(view.stereoRectification[0]);
+  glm::vec4 depthParameters = view.depthParameters();
 
   float dispScale = 16.0f / static_cast<float>(triangulationDisparityScaleInv);
 
@@ -1343,13 +1342,10 @@ std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, 
     else
       fDisp = fabs(rp[pointIdx].x - lp[pointIdx].x) / dispScale;
 
-    float lz = (Q[2][3] * CameraDistanceMeters) / fDisp;
-    float ly = (y + Q[1][3]) / Q[2][3];
-    float lx = (x + Q[0][3]) / Q[2][3];
-    lx *= lz;
-    ly *= lz;
+    glm::vec3 pp = glm::vec3(x + depthParameters.x, y + depthParameters.y, depthParameters.z);
+    float lw = depthParameters.w * fDisp;
 
-    res[pointIdx] = R1inv * glm::vec3(lx, -ly, -lz);
+    res[pointIdx] = R1 * (pp / lw);
   }
 
 

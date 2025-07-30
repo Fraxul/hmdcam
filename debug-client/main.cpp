@@ -726,7 +726,7 @@ int main(int argc, char** argv) {
       for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
         CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
         if (v.isStereo)
-          depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView, cameraSystem->viewWorldTransform(viewIdx));
+          depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView);
       }
 
       if (enableCharucoDetection) {

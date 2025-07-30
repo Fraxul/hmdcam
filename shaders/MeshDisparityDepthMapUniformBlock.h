@@ -1,8 +1,7 @@
 layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   mat4 modelViewProjection[2];
-  mat4 R1inv;
-  float Q3, Q7, Q11;
-  float CameraDistanceMeters;
+  mat4 R1;
+  vec4 depthParameters;
   vec2 mogrify;
   float disparityPrescale;
   int debugFixedDisparity;
@@ -18,6 +17,9 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   vec2 texCoordStep; // (1/internalWidth, 1/internalHeight)
   float minDepthCutoff;
   float pointScale;
+
+  vec2 inputImageSize;
+  float pad3, pad4;
 };
 
 

@@ -37,8 +37,8 @@ public:
 
   void initWithCameraSystem(CameraSystem*);
   void processFrame();
-  void renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
-  void renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView, const glm::mat4& modelMatrix = glm::mat4(1.0f));
+  void renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView);
+  void renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView);
   void renderIMGUI();
   void renderIMGUIPerformanceGraphs();
 
@@ -118,7 +118,8 @@ protected:
     bool m_isVerticalStereo = false;
     size_t m_leftCameraIndex = 0, m_rightCameraIndex = 0;
 
-    glm::mat4 m_R1inv, m_Q, m_Qinv;
+    glm::mat3 m_R1;
+    glm::vec4 m_depthParameters; // Parameters extracted from the view's stereoDisparityToDepth matrix
 
 
     void updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat);
@@ -131,8 +132,6 @@ protected:
 
     RHISurface::ptr m_disparityTexture;
     RHISurface::ptr m_leftGray, m_rightGray;
-
-    float m_CameraDistanceMeters = 0.0f;
 
     cv::Mat m_debugCPUDisparityInput[2]; // L/R inputs to stereo matching algorithm
     cv::Mat m_debugCPUDisparity;
@@ -174,7 +173,7 @@ protected:
   bool m_debugUseFixedDisparity = false;
   int m_debugFixedDisparityValue = 1;
 
-  void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1, const glm::mat4& modelMatrix);
+  void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1);
   RHIRenderPipeline::ptr m_disparityDepthMapPipeline;
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
 

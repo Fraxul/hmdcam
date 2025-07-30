@@ -1,6 +1,7 @@
 #version 310 es
 
 #include "MeshDisparityDepthMapUniformBlock.h"
+#include "MeshDisparityDepthMapCommon.h"
 
 layout(location = 0) in uvec2 disparitySampleCoordinates; // integer texels, fixed to the left-top value
 layout(location = 1) in uvec2 quadCoordOffset; // 0...1, varies over the quad
@@ -20,16 +21,6 @@ float sampleDisparity(ivec2 mipCoords) {
 out V2F {
   vec2 texCoord;
 } v2f;
-
-vec4 TransformToLocalSpace( float x, float y, float fDisp ) {
-
-  float lz = Q11 * CameraDistanceMeters / (fDisp * mogrify.x);
-  float ly = ((y * mogrify.y) + Q7) / Q11;
-  float lx = ((x * mogrify.x) + Q3) / Q11;
-  lx *= lz;
-  ly *= lz;
-  return R1inv * vec4(lx, -ly, -lz, 1.0f);
-}
 
 void main()
 {
@@ -51,16 +42,17 @@ void main()
     disparityRaw = sampleDisparity(ivec2(disparitySampleCoordinates));
   }
 
+  vec2 textureCoordinates = vec2(disparitySampleCoordinates) * texCoordStep + (vec2(quadCoordOffset) * texCoordStep * pointScale);
+
   if (disparityRaw > float(maxValidDisparityRaw)) {
     // Invalid disparity, so we discard this point.
     gl_Position = vec4(0.0f);
   } else {
     float disparity = max(disparityRaw * disparityPrescale, (1.0f / 32.0f)); // prescale and prevent divide-by-zero
     vec2 gridCoordinates = vec2(disparitySampleCoordinates) + (vec2(quadCoordOffset) * pointScale);
-    gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(gridCoordinates.x, gridCoordinates.y, disparity);
+    gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(vec4(textureCoordinates.xy, gridCoordinates.xy), disparity);
   }
 
-  vec2 textureCoordinates = vec2(disparitySampleCoordinates) * texCoordStep;
-  v2f.texCoord = textureCoordinates + (vec2(quadCoordOffset) * texCoordStep * pointScale);
+  v2f.texCoord = textureCoordinates;
 }
 
