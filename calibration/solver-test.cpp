@@ -652,11 +652,14 @@ int main(int argc, char** argv) {
 #if 1
 
   printf("=== OpenCV stereo calibration ===\n");
-  // "Left" and "Right" here are arbitrary -- we just try to calibrate between every view-pair.
-  for (size_t leftViewIdx = 0; leftViewIdx < data.views.size(); ++leftViewIdx) {
-    ViewCalibrationData& leftViewData = data.views[leftViewIdx];
+  std::vector<boost::function<void()>> taskCompletions;
 
-    for (size_t rightViewIdx = leftViewIdx + 1; rightViewIdx < data.views.size(); ++rightViewIdx) {
+  // "Left" and "Right" here are arbitrary -- we just try to calibrate between every view-pair.
+  // Launch array tasks for stereo calibration
+  for (size_t leftViewIdx = 0; leftViewIdx < data.views.size(); ++leftViewIdx) {
+    taskCompletions.push_back(FxThreading::runArrayTaskAsync(/*startValue=*/ leftViewIdx + 1, /*endValue=*/ data.views.size(), [leftViewIdx, &data, &base_to_camera_guess](size_t rightViewIdx) {
+
+      ViewCalibrationData& leftViewData = data.views[leftViewIdx];
       ViewCalibrationData& rightViewData = data.views[rightViewIdx];
 
       // Find observations that appear in both left and right views, and collect their overlapping object and image points.
@@ -702,7 +705,7 @@ int main(int argc, char** argv) {
       cv::Mat stereoRotation, stereoTranslation;
       cv::Mat rvecs, tvecs, E, F;
 
-      perfTimer.checkpoint();
+      PerfTimer perfTimer;
 
       double reprojectionError = cv::stereoCalibrate(
         /*objectPoints =  */ objectPoints,
@@ -720,7 +723,8 @@ int main(int argc, char** argv) {
         /*rvecs = */ rvecs,
         /*tvecs = */ tvecs,
         /*perViewErrors = */ cv::noArray(),
-        /*flags = */ cv::CALIB_FIX_INTRINSIC
+        /*flags = */ cv::CALIB_FIX_INTRINSIC,
+        /*termCriteria = */ cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 8, 1e-3) // defaults are 30, 1e-6 -- we only need a rough estimate
       );
 
       printf("cv::stereoCalibrate() view %zu to %zu\n", leftViewIdx, rightViewIdx);
@@ -748,7 +752,12 @@ int main(int argc, char** argv) {
       if (leftViewIdx == 0) {
         base_to_camera_guess[rightViewIdx] = stereoOffset;
       }
-    }
+    }));
+  }
+
+  // Ensure all array tasks have completed.
+  for (const auto& taskCompletion : taskCompletions) {
+    taskCompletion();
   }
 
 
