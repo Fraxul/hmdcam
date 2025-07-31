@@ -57,6 +57,40 @@ void printIsometry(const char* prefix, const Eigen::Isometry3d& xf, const char* 
 }
 void printIsometry(const Eigen::Isometry3d& xf, const char* postfix = "") { printIsometry("", xf, postfix); }
 
+void read(const cv::FileNode& node, Eigen::Isometry3d& value, Eigen::Isometry3d ignored_default_value = Eigen::Isometry3d::Identity()) {
+  // Serialize as matrix
+  cv::Mat tmpMat;
+  read(node, tmpMat, cv::Mat());
+  assert(tmpMat.total() == 16 && tmpMat.type() == CV_64F);
+  double* dest = value.matrix().data();
+  const double* src = tmpMat.ptr<double>();
+  for (size_t i = 0; i < 16; ++i)
+    dest[i] = src[i];
+}
+
+void read(const cv::FileNode& node, std::vector<Eigen::Isometry3d>& value) {
+  assert(node.isSeq());
+  value.resize(node.size());
+  for (size_t i = 0; i < value.size(); ++i) {
+    read(node[i], value[i]);
+  }
+}
+
+
+void write(cv::FileStorage& fs, const cv::String& name, const Eigen::Isometry3d& value) {
+  // Serialize as matrix
+  cv::Matx<double, 4, 4> mat(const_cast<double*>(value.matrix().data()));
+  write(fs, name, mat);
+}
+
+void write(cv::FileStorage& fs, const cv::String& name, const std::vector<Eigen::Isometry3d>& value) {
+  fs.startWriteStruct(name, cv::FileNode::SEQ, cv::String());
+  for (size_t i = 0; i < value.size(); ++i) {
+    write(fs, cv::String(), value[i]);
+  }
+  fs.endWriteStruct();
+}
+
 
 // Represents observed point correspondances between image and target/object space in a single captured image
 struct Observation {
@@ -82,6 +116,29 @@ struct Observation {
   std::vector<cv::Point2f> imagePoints; // Points in image space
 
   Eigen::Isometry3d targetTransform = Eigen::Isometry3d::Identity(); // Extrinsic / target transform, recorded during intrinsic calibration.
+
+
+
+  void loadCalibrationData(cv::FileNode fn) {
+    if (!fn.isMap())
+      throw std::runtime_error("Unexpected type for Observation node (not Map)");
+
+    fn["objectPointIds"] >> objectPointIds;
+    fn["objectPoints"] >> objectPoints;
+    fn["imagePoints"] >> imagePoints;
+    read(fn["targetTransform"], targetTransform);
+  }
+
+  void saveCalibrationData(cv::FileStorage& fs) {
+    fs.startWriteStruct(cv::String(), cv::FileNode::MAP, cv::String());
+
+    write(fs, "objectPointIds", objectPointIds);
+    write(fs, "objectPoints", objectPoints);
+    write(fs, "imagePoints", imagePoints);
+    write(fs, "targetTransform", targetTransform);
+
+    fs.endWriteStruct();
+  }
 };
 
 struct ViewCalibrationData {
@@ -112,6 +169,63 @@ struct ViewCalibrationData {
     return res;
   }
 
+
+  void loadCalibrationData(cv::FileNode fn) {
+    if (!fn.isMap())
+      throw std::runtime_error("Unexpected type for view node (not Map)");
+
+    cv::Mat tmpMat;
+
+    fn["imageSize"] >> imageSize;
+    fn["converged"] >> intrinsicCalibration.converged;
+    fn["initial_cost_per_obs"] >> intrinsicCalibration.initial_cost_per_obs;
+    fn["final_cost_per_obs"] >> intrinsicCalibration.final_cost_per_obs;
+
+    fn["intrinsicMatrix"] >> tmpMat;
+    intrinsicCalibration.intrinsics.fx() = tmpMat.ptr<double>(0)[0];
+    intrinsicCalibration.intrinsics.aspect() = tmpMat.ptr<double>(1)[1] / tmpMat.ptr<double>(0)[0];
+    intrinsicCalibration.intrinsics.cx() = tmpMat.ptr<double>(0)[2];
+    intrinsicCalibration.intrinsics.cy() = tmpMat.ptr<double>(1)[2];
+
+    fn["distortionCoeffs"] >> tmpMat;
+    for (size_t i = 0; i < intrinsicCalibration.distortions.size(); ++i) {
+      intrinsicCalibration.distortions[i] = tmpMat.ptr<double>()[i];
+    }
+
+    read(fn["targetTransforms"], intrinsicCalibration.target_transforms);
+
+    cv::FileNode obsFn = fn["observations"];
+    if (!obsFn.isSeq())
+      throw std::runtime_error("Unexpected type for observations node (not Sequence)");
+
+    observations.resize(obsFn.size());
+    for (size_t i = 0; i < obsFn.size(); ++i) {
+      cv::FileNode obsNode = obsFn[i];
+      observations[i].loadCalibrationData(obsNode);
+    }
+  }
+
+  void saveCalibrationData(cv::FileStorage& fs) {
+    fs.startWriteStruct(cv::String(), cv::FileNode::MAP, cv::String());
+    {
+      write(fs, "imageSize", imageSize);
+      write(fs, "converged", intrinsicCalibration.converged);
+      write(fs, "initial_cost_per_obs", intrinsicCalibration.initial_cost_per_obs);
+      write(fs, "final_cost_per_obs", intrinsicCalibration.final_cost_per_obs);
+
+      fs.write("intrinsicMatrix", cvIntrinsicMatrix());
+      fs.write("distortionCoeffs", cvDistCoeffs());
+      write(fs, "targetTransforms", intrinsicCalibration.target_transforms);
+
+      fs.startWriteStruct("observations", cv::FileNode::SEQ, cv::String());
+      for (size_t i = 0; i < observations.size(); ++i) {
+        observations[i].saveCalibrationData(fs);
+      }
+      fs.endWriteStruct();
+    }
+    fs.endWriteStruct();
+  }
+
 };
 
 
@@ -123,25 +237,57 @@ struct MultiViewCalibrationData {
   }
 
   std::vector<ViewCalibrationData> views;
+
+  bool loadCalibrationData() {
+    cv::FileStorage fs("multiViewCalibrationData.yml", cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+    if (!fs.isOpened()) {
+      printf("Unable to open calibration data file\n");
+      return false;
+    }
+
+    try {
+      cv::FileNode viewsFn = fs["views"];
+      if (!viewsFn.isSeq())
+        throw std::runtime_error("Unexpected type for root views node (not Sequence)");
+      views.resize(viewsFn.size());
+      for (size_t viewIdx = 0; viewIdx < views.size(); ++viewIdx) {
+        views[viewIdx].loadCalibrationData(viewsFn[viewIdx]);
+      }
+
+    } catch (const std::exception& ex) {
+      printf("Unable to load calibration data: %s\n", ex.what());
+      return false;
+    }
+
+    return true;
+  }
+
+  bool saveCalibrationData() {
+    cv::FileStorage fs("multiViewCalibrationData.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+    if (!fs.isOpened()) {
+      printf("Unable to open calibration data file\n");
+      return false;
+    }
+
+    fs.startWriteStruct("views", cv::FileNode::SEQ, cv::String());
+    for (size_t viewIdx = 0; viewIdx < views.size(); ++viewIdx) {
+      views[viewIdx].saveCalibrationData(fs);
+    }
+    fs.endWriteStruct();
+
+    return true;
+  }
+
+
 };
 
 
-int main(int argc, char** argv) {
-  FxThreading::detail::init();
 
-  // Initialize ChAruCo data on first use
-  if (!s_charucoBoard)
-    s_charucoBoard = new cv::aruco::CharucoBoard(cv::Size(s_charucoBoardSquareCountX, s_charucoBoardSquareCountY), s_charucoBoardSquareSideLengthMeters, s_charucoBoardMarkerSideLengthMeters, charucoDictionary());
-
-  // Set some default detection parameters
-  s_detectorParams.cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX; // Enable subpixel refinement for higher precision
-
-
-  MultiViewCalibrationData data;
+void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
+  PerfTimer perfTimer;
 
   data.views.resize(4); // number of cameras/views
 
-  PerfTimer perfTimer;
 
   const char* imageFilenames[] = {
     "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481608.png",
@@ -304,7 +450,6 @@ int main(int argc, char** argv) {
       });
     }
   }
-
 
   printf("Detection done in %.3f ms\n\n", perfTimer.checkpoint());
 
@@ -469,6 +614,37 @@ int main(int argc, char** argv) {
 
   } // View loop
 
+
+
+  data.saveCalibrationData();
+}
+
+
+int main(int argc, char** argv) {
+  FxThreading::detail::init();
+
+  // Initialize ChAruCo data on first use
+  if (!s_charucoBoard)
+    s_charucoBoard = new cv::aruco::CharucoBoard(cv::Size(s_charucoBoardSquareCountX, s_charucoBoardSquareCountY), s_charucoBoardSquareSideLengthMeters, s_charucoBoardMarkerSideLengthMeters, charucoDictionary());
+
+  // Set some default detection parameters
+  s_detectorParams.cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX; // Enable subpixel refinement for higher precision
+
+
+  MultiViewCalibrationData data;
+
+  if (data.loadCalibrationData()) {
+    // Print previously-cached intrinsic calibration results
+    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
+      std::cout << data.views[viewIdx].intrinsicCalibration << std::endl;
+    }
+  } else {
+    printf("Couldn't load calibration data checkpoint, generating calibration from images\n");
+    generateMultiViewCalibrationData(data);
+  }
+
+
+  PerfTimer perfTimer;
 
   // Guesses for the pose between base (view 0) and other views
   std::vector<Eigen::Isometry3d> base_to_camera_guess(4, Eigen::Isometry3d::Identity());
