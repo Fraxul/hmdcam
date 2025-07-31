@@ -144,7 +144,7 @@ struct Observation {
   }
 };
 
-struct ViewCalibrationData {
+struct CameraCalibrationData {
   cv::Size imageSize;
   std::vector<Observation> observations;
   industrial_calibration::CameraIntrinsicResult intrinsicCalibration;
@@ -175,7 +175,7 @@ struct ViewCalibrationData {
 
   void loadCalibrationData(cv::FileNode fn) {
     if (!fn.isMap())
-      throw std::runtime_error("Unexpected type for view node (not Map)");
+      throw std::runtime_error("Unexpected type for camera node (not Map)");
 
     cv::Mat tmpMat;
 
@@ -232,29 +232,29 @@ struct ViewCalibrationData {
 };
 
 
-struct MultiViewCalibrationData {
+struct MultiCameraCalibrationData {
 
   size_t observationCount() {
-    // All views should have the same number of observations
-    return views[0].observations.size();
+    // All cameras should have the same number of observations
+    return cameras[0].observations.size();
   }
 
-  std::vector<ViewCalibrationData> views;
+  std::vector<CameraCalibrationData> cameras;
 
   bool loadCalibrationData() {
-    cv::FileStorage fs("multiViewCalibrationData.yml", cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+    cv::FileStorage fs("multiCameraCalibrationData.yml", cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
     if (!fs.isOpened()) {
       printf("Unable to open calibration data file\n");
       return false;
     }
 
     try {
-      cv::FileNode viewsFn = fs["views"];
-      if (!viewsFn.isSeq())
-        throw std::runtime_error("Unexpected type for root views node (not Sequence)");
-      views.resize(viewsFn.size());
-      for (size_t viewIdx = 0; viewIdx < views.size(); ++viewIdx) {
-        views[viewIdx].loadCalibrationData(viewsFn[viewIdx]);
+      cv::FileNode camerasFn = fs["cameras"];
+      if (!camerasFn.isSeq())
+        throw std::runtime_error("Unexpected type for root cameras node (not Sequence)");
+      cameras.resize(camerasFn.size());
+      for (size_t cameraIdx = 0; cameraIdx < cameras.size(); ++cameraIdx) {
+        cameras[cameraIdx].loadCalibrationData(camerasFn[cameraIdx]);
       }
 
     } catch (const std::exception& ex) {
@@ -266,15 +266,15 @@ struct MultiViewCalibrationData {
   }
 
   bool saveCalibrationData() {
-    cv::FileStorage fs("multiViewCalibrationData.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+    cv::FileStorage fs("multiCameraCalibrationData.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
     if (!fs.isOpened()) {
       printf("Unable to open calibration data file\n");
       return false;
     }
 
-    fs.startWriteStruct("views", cv::FileNode::SEQ, cv::String());
-    for (size_t viewIdx = 0; viewIdx < views.size(); ++viewIdx) {
-      views[viewIdx].saveCalibrationData(fs);
+    fs.startWriteStruct("cameras", cv::FileNode::SEQ, cv::String());
+    for (size_t cameraIdx = 0; cameraIdx < cameras.size(); ++cameraIdx) {
+      cameras[cameraIdx].saveCalibrationData(fs);
     }
     fs.endWriteStruct();
 
@@ -286,10 +286,10 @@ struct MultiViewCalibrationData {
 
 
 
-void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
+void generateMultiCameraCalibrationData(MultiCameraCalibrationData& data) {
   PerfTimer perfTimer;
 
-  data.views.resize(4); // number of cameras/views
+  data.cameras.resize(4); // number of cameras
 
 
   const char* imageFilenames[] = {
@@ -386,23 +386,23 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
 
   constexpr size_t imageCount = sizeof(imageFilenames) / sizeof(imageFilenames[0]);
 
-  for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
-    ViewCalibrationData& viewData = data.views[viewIdx];
+  for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+    CameraCalibrationData& cameraData = data.cameras[cameraIdx];
 
-    viewData.observations.resize(imageCount);
+    cameraData.observations.resize(imageCount);
 
     FxThreading::runArrayTask(0, imageCount, [&](size_t idx) {
       char buf[512];
-      snprintf(buf, 512, imageFilenames[idx], (unsigned int) viewIdx);
-      viewData.observations[idx].image = cv::imread(buf, cv::IMREAD_GRAYSCALE);
+      snprintf(buf, 512, imageFilenames[idx], (unsigned int) cameraIdx);
+      cameraData.observations[idx].image = cv::imread(buf, cv::IMREAD_GRAYSCALE);
     });
 
     // Validation: ensure all images are the same size
-    assert(viewData.observations.size() >= 1);
-    viewData.imageSize = cv::Size(viewData.observations[0].image.cols, viewData.observations[0].image.rows);
+    assert(cameraData.observations.size() >= 1);
+    cameraData.imageSize = cv::Size(cameraData.observations[0].image.cols, cameraData.observations[0].image.rows);
 
-    for (size_t i = 1; i < viewData.observations.size(); ++i) {
-      assert(viewData.imageSize.width == viewData.observations[i].image.cols && viewData.imageSize.height == viewData.observations[i].image.rows);
+    for (size_t i = 1; i < cameraData.observations.size(); ++i) {
+      assert(cameraData.imageSize.width == cameraData.observations[i].image.cols && cameraData.imageSize.height == cameraData.observations[i].image.rows);
     }
   }
 
@@ -415,11 +415,11 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
   {
     const size_t totalCorners = s_charucoBoard->getChessboardSize().width * s_charucoBoard->getChessboardSize().height;
 
-    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
-      ViewCalibrationData& viewData = data.views[viewIdx];
+    for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+      CameraCalibrationData& cameraData = data.cameras[cameraIdx];
 
-      FxThreading::runArrayTask(0, viewData.observations.size(), [&](size_t idx) {
-        Observation& obs = viewData.observations[idx];
+      FxThreading::runArrayTask(0, cameraData.observations.size(), [&](size_t idx) {
+        Observation& obs = cameraData.observations[idx];
 
         auto detector = createCharucoDetector();
 
@@ -449,7 +449,7 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
           // Save point ids
           obs.objectPointIds = std::move(currentCharucoIds);
         }
-        printf("[view %zu | %zu] found=%u cornerCount=%zu\n", viewIdx, idx, found, currentCharucoCorners.total());
+        printf("[Camera %zu | %zu] found=%u cornerCount=%zu\n", cameraIdx, idx, found, currentCharucoCorners.total());
       });
     }
   }
@@ -481,9 +481,9 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
   }
 #endif
 
-  for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
-    ViewCalibrationData& viewData = data.views[viewIdx];
-    printf("View %zu\n", viewIdx);
+  for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+    CameraCalibrationData& cameraData = data.cameras[cameraIdx];
+    printf("Camera %zu\n", cameraIdx);
 
     cv::Mat intrinsicMatrix = cv::Mat::eye(3, 3, CV_64F);
     cv::Mat distCoeffs = cv::Mat::zeros(distCoeffSize, 1, CV_64F);
@@ -492,14 +492,14 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
 
     std::vector<std::vector<cv::Point3f>> objectPoints;
     std::vector<std::vector<cv::Point2f>> imagePoints;
-    for (size_t i = 0; i < viewData.observations.size(); ++i) {
-      if (!viewData.observations[i].objectPoints.size())
+    for (size_t i = 0; i < cameraData.observations.size(); ++i) {
+      if (!cameraData.observations[i].objectPoints.size())
         continue; // Empty observation
-      objectPoints.push_back(viewData.observations[i].objectPoints);
-      imagePoints.push_back(viewData.observations[i].imagePoints);
+      objectPoints.push_back(cameraData.observations[i].objectPoints);
+      imagePoints.push_back(cameraData.observations[i].imagePoints);
     }
 
-    double feedbackRmsError = cv::calibrateCamera(objectPoints, imagePoints, viewData.imageSize,
+    double feedbackRmsError = cv::calibrateCamera(objectPoints, imagePoints, cameraData.imageSize,
                                    intrinsicMatrix, distCoeffs,
                                    rvecs, tvecs, stdDeviations, cv::noArray(),
                                    /*perViewErrors=*/ cv::noArray(), flags);
@@ -508,7 +508,7 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
     cv::Point2d feedbackPrincipalPoint;
 
     double focalLength, aspectRatio; // not valid without a real aperture size, which we don't bother providing
-    cv::calibrationMatrixValues(intrinsicMatrix, viewData.imageSize, 0.0, 0.0, feedbackFovX, feedbackFovY, focalLength, feedbackPrincipalPoint, aspectRatio);
+    cv::calibrationMatrixValues(intrinsicMatrix, cameraData.imageSize, 0.0, 0.0, feedbackFovX, feedbackFovY, focalLength, feedbackPrincipalPoint, aspectRatio);
 
 
     printf("Calibration complete in %.3f ms\n", perfTimer.checkpoint());
@@ -527,7 +527,7 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
       printf("%.8f ", distCoeffs.ptr<double>()[i]);
     }
     printf("\n\n");
-  } // View loop
+  } // Camera loop
 
 #endif // OpenCV calibration
 
@@ -535,23 +535,23 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
   printf("=== industrial_calibration intrinsic calibration ===\n");
   perfTimer.checkpoint();
 
-  for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
-    ViewCalibrationData& viewData = data.views[viewIdx];
-    printf("View %zu\n", viewIdx);
+  for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+    CameraCalibrationData& cameraData = data.cameras[cameraIdx];
+    printf("Camera %zu\n", cameraIdx);
 
     industrial_calibration::CameraIntrinsicProblem intrinsicProblem;
 
     // Initial intrinsics guess from OpenCV's cv::initCameraMatrix2D
     std::vector<std::vector<cv::Point3f>> objectPoints;
     std::vector<std::vector<cv::Point2f>> imagePoints;
-    for (size_t i = 0; i < viewData.observations.size(); ++i) {
-      if (!viewData.observations[i].objectPoints.size())
+    for (size_t i = 0; i < cameraData.observations.size(); ++i) {
+      if (!cameraData.observations[i].objectPoints.size())
         continue; // Empty observation
-      objectPoints.push_back(viewData.observations[i].objectPoints);
-      imagePoints.push_back(viewData.observations[i].imagePoints);
+      objectPoints.push_back(cameraData.observations[i].objectPoints);
+      imagePoints.push_back(cameraData.observations[i].imagePoints);
     }
 
-    cv::Mat intrinsicGuess = cv::initCameraMatrix2D(/*objectPoints=*/ objectPoints, /*imagePoints=*/ imagePoints, viewData.imageSize);
+    cv::Mat intrinsicGuess = cv::initCameraMatrix2D(/*objectPoints=*/ objectPoints, /*imagePoints=*/ imagePoints, cameraData.imageSize);
 
     printf("\nIntrinsic initial guess:\n");
     for (size_t i = 0; i < 3; ++i) {
@@ -575,10 +575,10 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
 
     std::vector<size_t> targetTransformToObservationIdx;
 
-    for (size_t observationIdx = 0; observationIdx < viewData.observations.size(); ++observationIdx) {
-      Observation& obs = viewData.observations[observationIdx];
+    for (size_t observationIdx = 0; observationIdx < cameraData.observations.size(); ++observationIdx) {
+      Observation& obs = cameraData.observations[observationIdx];
       if (obs.empty())
-        continue; // No data for this frame on this view
+        continue; // No data for this frame on this camera
 
       // Use OpenCV's solvePnP to populate the extrinsic guess
       cv::Mat rvec, tvec;
@@ -598,24 +598,24 @@ void generateMultiViewCalibrationData(MultiViewCalibrationData& data) {
       targetTransformToObservationIdx.push_back(observationIdx);
     }
 
-    viewData.intrinsicCalibration = industrial_calibration::optimize(intrinsicProblem);
-    std::cout << viewData.intrinsicCalibration << std::endl;
+    cameraData.intrinsicCalibration = industrial_calibration::optimize(intrinsicProblem);
+    std::cout << cameraData.intrinsicCalibration << std::endl;
 
 #if 0
     for (size_t i = 0; i < intrinsicProblem.extrinsic_guesses.size(); ++i) {
       printf("Extrinsics [%zu]:", i);
       printIsometry(" Guess = ", intrinsicProblem.extrinsic_guesses[i]);
-      printIsometry(" Actual = ", viewData.intrinsicCalibration.target_transforms[i], "\n");
+      printIsometry(" Actual = ", cameraData.intrinsicCalibration.target_transforms[i], "\n");
     }
 #endif
 
     for (size_t i = 0; i < targetTransformToObservationIdx.size(); ++i) {
-      viewData.observations[targetTransformToObservationIdx[i]].targetTransform = viewData.intrinsicCalibration.target_transforms[i];
+      cameraData.observations[targetTransformToObservationIdx[i]].targetTransform = cameraData.intrinsicCalibration.target_transforms[i];
     }
     
     printf("Calibration complete in %.3f ms\n", perfTimer.checkpoint());
 
-  } // View loop
+  } // Camera loop
 
 
 
@@ -634,22 +634,22 @@ int main(int argc, char** argv) {
   s_detectorParams.cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX; // Enable subpixel refinement for higher precision
 
 
-  MultiViewCalibrationData data;
+  MultiCameraCalibrationData data;
 
   if (data.loadCalibrationData()) {
     // Print previously-cached intrinsic calibration results
-    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
-      std::cout << data.views[viewIdx].intrinsicCalibration << std::endl;
+    for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+      std::cout << data.cameras[cameraIdx].intrinsicCalibration << std::endl;
     }
   } else {
     printf("Couldn't load calibration data checkpoint, generating calibration from images\n");
-    generateMultiViewCalibrationData(data);
+    generateMultiCameraCalibrationData(data);
   }
 
 
   PerfTimer perfTimer;
 
-  // Guesses for the pose between base (view 0) and other views
+  // Guesses for the pose between base (camera 0) and other cameras
   std::vector<Eigen::Isometry3d> base_to_camera_guess(4, Eigen::Isometry3d::Identity());
 
 #if 1
@@ -657,23 +657,23 @@ int main(int argc, char** argv) {
   printf("=== OpenCV stereo calibration ===\n");
   std::vector<boost::function<void()>> taskCompletions;
 
-  // "Left" and "Right" here are arbitrary -- we just try to calibrate between every view-pair.
+  // "Left" and "Right" here are arbitrary -- we just try to calibrate between every camera-pair.
   // Launch array tasks for stereo calibration
-  for (size_t leftViewIdx = 0; leftViewIdx < data.views.size(); ++leftViewIdx) {
-    taskCompletions.push_back(FxThreading::runArrayTaskAsync(/*startValue=*/ leftViewIdx + 1, /*endValue=*/ data.views.size(), [leftViewIdx, &data, &base_to_camera_guess](size_t rightViewIdx) {
+  for (size_t leftCameraIdx = 0; leftCameraIdx < data.cameras.size(); ++leftCameraIdx) {
+    taskCompletions.push_back(FxThreading::runArrayTaskAsync(/*startValue=*/ leftCameraIdx + 1, /*endValue=*/ data.cameras.size(), [leftCameraIdx, &data, &base_to_camera_guess](size_t rightCameraIdx) {
 
-      ViewCalibrationData& leftViewData = data.views[leftViewIdx];
-      ViewCalibrationData& rightViewData = data.views[rightViewIdx];
+      CameraCalibrationData& leftCameraData = data.cameras[leftCameraIdx];
+      CameraCalibrationData& rightCameraData = data.cameras[rightCameraIdx];
 
-      // Find observations that appear in both left and right views, and collect their overlapping object and image points.
+      // Find observations that appear in both left and right cameras, and collect their overlapping object and image points.
       // Object points will be identical across all same-index observations.
       std::vector<std::vector<cv::Point3f> > objectPoints;
       std::vector<std::vector<cv::Point2f> > leftImagePoints, rightImagePoints;
 
-      assert(leftViewData.observations.size() == rightViewData.observations.size());
-      for (size_t observationIdx = 0; observationIdx < leftViewData.observations.size(); ++observationIdx) {
-        Observation& leftObs = leftViewData.observations[observationIdx];
-        Observation& rightObs = rightViewData.observations[observationIdx];
+      assert(leftCameraData.observations.size() == rightCameraData.observations.size());
+      for (size_t observationIdx = 0; observationIdx < leftCameraData.observations.size(); ++observationIdx) {
+        Observation& leftObs = leftCameraData.observations[observationIdx];
+        Observation& rightObs = rightCameraData.observations[observationIdx];
         if (leftObs.empty() || rightObs.empty())
           continue; // No overlap for this observation
 
@@ -714,11 +714,11 @@ int main(int argc, char** argv) {
         /*objectPoints =  */ objectPoints,
         /*imagePoints1 =  */ leftImagePoints,
         /*imagePoints2 =  */ rightImagePoints,
-        /*cameraMatrix1 = */ leftViewData.cvIntrinsicMatrix(),
-        /*distCoeffs1 =   */ leftViewData.cvDistCoeffs(),
-        /*cameraMatrix1 = */ rightViewData.cvIntrinsicMatrix(),
-        /*distCoeffs1 =   */ rightViewData.cvDistCoeffs(),
-        /*imageSize =     */ leftViewData.imageSize,
+        /*cameraMatrix1 = */ leftCameraData.cvIntrinsicMatrix(),
+        /*distCoeffs1 =   */ leftCameraData.cvDistCoeffs(),
+        /*cameraMatrix1 = */ rightCameraData.cvIntrinsicMatrix(),
+        /*distCoeffs1 =   */ rightCameraData.cvDistCoeffs(),
+        /*imageSize =     */ leftCameraData.imageSize,
         /*R = */ stereoRotation,
         /*T = */ stereoTranslation,
         /*E = */ E,
@@ -730,7 +730,7 @@ int main(int argc, char** argv) {
         /*termCriteria = */ cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 8, 1e-3) // defaults are 30, 1e-6 -- we only need a rough estimate
       );
 
-      printf("cv::stereoCalibrate() view %zu to %zu\n", leftViewIdx, rightViewIdx);
+      printf("cv::stereoCalibrate() camera %zu to %zu\n", leftCameraIdx, rightCameraIdx);
       printf("  %zu observations, %.3f ms\n", objectPoints.size(), perfTimer.checkpoint());
 
       //std::cout << stereoTranslation << std::endl << stereoRotation << std::endl;
@@ -752,8 +752,8 @@ int main(int argc, char** argv) {
       printf("  Reprojection error: %.6f\n", reprojectionError);
 
       // Update base-to-camera guesses
-      if (leftViewIdx == 0) {
-        base_to_camera_guess[rightViewIdx] = stereoOffset;
+      if (leftCameraIdx == 0) {
+        base_to_camera_guess[rightCameraIdx] = stereoOffset;
       }
     }));
   }
@@ -766,59 +766,59 @@ int main(int argc, char** argv) {
 
 #endif // OpenCV stereo calibration
 
-  // Multi-view
-  printf("=== industrial_calibration multi-view calibration ===\n");
+  // Multi-camera
+  printf("=== industrial_calibration multi-camera calibration ===\n");
   {
     industrial_calibration::ExtrinsicMultiStaticCameraOnlyProblem problem;
 
     problem.fix_first_camera = true;
 
-    // Per-view intrinsics
-    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
-      ViewCalibrationData& viewData = data.views[viewIdx];
-      problem.intr.push_back(viewData.intrinsicCalibration.intrinsics);
+    // Per-camera intrinsics
+    for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+      CameraCalibrationData& cameraData = data.cameras[cameraIdx];
+      problem.intr.push_back(cameraData.intrinsicCalibration.intrinsics);
     }
 
     // Sanity check on observation counts
-    for (size_t viewIdx = 1; viewIdx < data.views.size(); ++viewIdx) {
-      assert(data.views[viewIdx].observations.size() == data.views[0].observations.size());
+    for (size_t cameraIdx = 1; cameraIdx < data.cameras.size(); ++cameraIdx) {
+      assert(data.cameras[cameraIdx].observations.size() == data.cameras[0].observations.size());
     }
 
-    // Per-view base-to-camera guesses -- use cv::stereoCalibrate guesses
+    // Per-camera base-to-camera guesses -- use cv::stereoCalibrate guesses
 #if 0
     problem.base_to_camera_guess = base_to_camera_guess;
 #else
-    problem.base_to_camera_guess = std::vector(data.views.size(), Eigen::Isometry3d::Identity());
+    problem.base_to_camera_guess = std::vector(data.cameras.size(), Eigen::Isometry3d::Identity());
 #endif
 
     // Per-observation base-to-target guesses.
     // We initialize this with the target transforms from the intrinsic calibration process.
-    // Not all target transforms will be available for the base view (view 0), though, so we use other views
+    // Not all target transforms will be available for the base camera (camera 0), though, so we use other camera
     // and compose their initial base-to-camera guesses to come up with base-to-target guesses.
 
     problem.base_to_target_guess.resize(data.observationCount());
     for (size_t i = 0; i < problem.base_to_target_guess.size(); ++i) {
-      problem.base_to_target_guess[i] = data.views[0].observations[i].targetTransform;
+      problem.base_to_target_guess[i] = data.cameras[0].observations[i].targetTransform;
 
-      bool isValid = !data.views[0].observations[i].empty();
-      size_t pointCount = data.views[0].observations[i].pointCount();
+      bool isValid = !data.cameras[0].observations[i].empty();
+      size_t pointCount = data.cameras[0].observations[i].pointCount();
 
-      // printIsometry("Base-to-target guess from view 0: ", problem.base_to_target_guess[i], "\n");
+      // printIsometry("Base-to-target guess from camera 0: ", problem.base_to_target_guess[i], "\n");
 
-      for (size_t viewIdx = 1; viewIdx < data.views.size(); ++viewIdx) {
-        if (data.views[viewIdx].observations[i].targetTransform.isApprox(Eigen::Isometry3d::Identity()))
+      for (size_t cameraIdx = 1; cameraIdx < data.cameras.size(); ++cameraIdx) {
+        if (data.cameras[cameraIdx].observations[i].targetTransform.isApprox(Eigen::Isometry3d::Identity()))
           continue;
 
-        Eigen::Isometry3d xf = base_to_camera_guess[viewIdx] * data.views[viewIdx].observations[i].targetTransform;
+        Eigen::Isometry3d xf = base_to_camera_guess[cameraIdx] * data.cameras[cameraIdx].observations[i].targetTransform;
 
-        // printf("  Base-to-target guess transformed from view %zu: ", viewIdx);
+        // printf("  Base-to-target guess transformed from camera %zu: ", cameraIdx);
         // printIsometry(xf, "\n");
 
         if (!isValid) {
           // For observations that don't have a valid base transform, compose a guess transform from the other
-          // view that saw the most points.
-          if (data.views[viewIdx].observations[i].pointCount() > pointCount) {
-            pointCount = data.views[viewIdx].observations[i].pointCount();
+          // camera that saw the most points.
+          if (data.cameras[cameraIdx].observations[i].pointCount() > pointCount) {
+            pointCount = data.cameras[cameraIdx].observations[i].pointCount();
             problem.base_to_target_guess[i] = xf;
           }
         }
@@ -826,14 +826,14 @@ int main(int argc, char** argv) {
     }
 
     // Set up image observations
-    problem.image_observations.resize(data.views.size());
-    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
-      ViewCalibrationData& viewData = data.views[viewIdx];
-      std::vector<industrial_calibration::Correspondence2D3D::Set>& viewObsSets = problem.image_observations[viewIdx];
-      viewObsSets.resize(viewData.observations.size());
+    problem.image_observations.resize(data.cameras.size());
+    for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+      CameraCalibrationData& cameraData = data.cameras[cameraIdx];
+      std::vector<industrial_calibration::Correspondence2D3D::Set>& cameraObsSets = problem.image_observations[cameraIdx];
+      cameraObsSets.resize(cameraData.observations.size());
 
-      for (size_t obsIdx = 0; obsIdx < viewData.observations.size(); ++obsIdx) {
-        viewObsSets[obsIdx] = viewData.observations[obsIdx].correspondenceSet();
+      for (size_t obsIdx = 0; obsIdx < cameraData.observations.size(); ++obsIdx) {
+        cameraObsSets[obsIdx] = cameraData.observations[obsIdx].correspondenceSet();
 
       }
     }
@@ -863,8 +863,8 @@ int main(int argc, char** argv) {
 
       // Composed transforms
 
-      for (size_t srcIdx = 0; srcIdx < data.views.size(); ++srcIdx) {
-        for (size_t dstIdx = 0; dstIdx < data.views.size(); ++dstIdx) {
+      for (size_t srcIdx = 0; srcIdx < data.cameras.size(); ++srcIdx) {
+        for (size_t dstIdx = 0; dstIdx < data.cameras.size(); ++dstIdx) {
           Eigen::Isometry3d xf = result.base_to_camera[srcIdx].inverse() * result.base_to_camera[dstIdx];
 
           printf("Camera %zu to camera %zu: ", srcIdx, dstIdx);
@@ -879,12 +879,12 @@ int main(int argc, char** argv) {
     cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
 
     fs.startWriteStruct("cameras", cv::FileNode::SEQ, cv::String());
-    for (size_t cameraIdx = 0; cameraIdx < data.views.size(); ++cameraIdx) {
+    for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
       fs.startWriteStruct(cv::String(), cv::FileNode::MAP, cv::String());
-      ViewCalibrationData& viewData = data.views[cameraIdx];
+      CameraCalibrationData& cameraData = data.cameras[cameraIdx];
 
-      fs.write("intrinsicMatrix", viewData.cvIntrinsicMatrix());
-      fs.write("distortionCoeffs", viewData.cvDistCoeffs());
+      fs.write("intrinsicMatrix", cameraData.cvIntrinsicMatrix());
+      fs.write("distortionCoeffs", cameraData.cvDistCoeffs());
 
       fs.endWriteStruct();
     }
@@ -908,9 +908,9 @@ int main(int argc, char** argv) {
     for (size_t observationIdx = 0; observationIdx < data.observationCount(); ++observationIdx) {
       // Construct sets of point IDs in all views
       std::set<int> pointIds[4];
-      for (size_t viewIdx = 0; viewIdx < 4; ++viewIdx) {
-        const auto& opVec = data.views[viewIdx].observations[observationIdx].objectPointIds;
-        pointIds[viewIdx] = std::set<int>(opVec.begin(), opVec.end());
+      for (size_t cameraIdx = 0; cameraIdx < 4; ++cameraIdx) {
+        const auto& opVec = data.cameras[cameraIdx].observations[observationIdx].objectPointIds;
+        pointIds[cameraIdx] = std::set<int>(opVec.begin(), opVec.end());
       }
 
       if (pointIds[0].empty() || pointIds[1].empty() || pointIds[2].empty() || pointIds[3].empty())
@@ -918,9 +918,9 @@ int main(int argc, char** argv) {
 
       // Intersection of all point ID sets
       std::set<int> commonPointIds = pointIds[0];
-      for (size_t viewIdx = 1; viewIdx < 4; ++viewIdx) {
+      for (size_t cameraIdx = 1; cameraIdx < 4; ++cameraIdx) {
         std::set<int> newCommonPointIds;
-        std::set_intersection(commonPointIds.begin(), commonPointIds.end(), pointIds[viewIdx].begin(), pointIds[viewIdx].end(), std::inserter(newCommonPointIds, std::end(newCommonPointIds)));
+        std::set_intersection(commonPointIds.begin(), commonPointIds.end(), pointIds[cameraIdx].begin(), pointIds[cameraIdx].end(), std::inserter(newCommonPointIds, std::end(newCommonPointIds)));
         newCommonPointIds.swap(commonPointIds);
       }
 
@@ -929,28 +929,23 @@ int main(int argc, char** argv) {
 
       // Collect points from all views.
       // (This assumes that the points are sorted by ID inside the view data)
-      for (size_t viewIdx = 0; viewIdx < 4; ++viewIdx) {
-        const auto& viewObs = data.views[viewIdx].observations[observationIdx];
-        for (size_t pointIdx = 0; pointIdx < viewObs.objectPointIds.size(); ++pointIdx) {
-          if (commonPointIds.find(viewObs.objectPointIds[pointIdx]) != commonPointIds.end()) {
+      for (size_t cameraIdx = 0; cameraIdx < 4; ++cameraIdx) {
+        const auto& cameraObs = data.cameras[cameraIdx].observations[observationIdx];
+        for (size_t pointIdx = 0; pointIdx < cameraObs.objectPointIds.size(); ++pointIdx) {
+          if (commonPointIds.find(cameraObs.objectPointIds[pointIdx]) != commonPointIds.end()) {
 
-            commonImagePoints[viewIdx].push_back(viewObs.imagePoints[pointIdx]);
+            commonImagePoints[cameraIdx].push_back(cameraObs.imagePoints[pointIdx]);
           }
         }
       }
 
       // Sanity check -- all point vectors should be the same size.
-      for (size_t viewIdx = 1; viewIdx < 4; ++viewIdx) {
-        assert(commonImagePoints[viewIdx].size() == commonImagePoints[0].size());
+      for (size_t cameraIdx = 1; cameraIdx < 4; ++cameraIdx) {
+        assert(commonImagePoints[cameraIdx].size() == commonImagePoints[0].size());
       }
     }
 
-    printf("%zu common points across all 4 views\n", commonImagePoints[0].size());
-
-
-
-
-
+    printf("%zu common points across all 4 cameras\n", commonImagePoints[0].size());
 
 
 
