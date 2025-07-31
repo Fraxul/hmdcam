@@ -231,6 +231,15 @@ struct CameraCalibrationData {
 
 };
 
+struct ViewCalibrationData {
+  unsigned int cameraIndices[2];
+
+  cv::Mat stereoRotation, stereoTranslation;
+  cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify
+  cv::Mat stereoDisparityToDepth;
+  cv::Rect stereoValidROI[2];
+};
+
 
 struct MultiCameraCalibrationData {
 
@@ -240,6 +249,8 @@ struct MultiCameraCalibrationData {
   }
 
   std::vector<CameraCalibrationData> cameras;
+  std::vector<ViewCalibrationData> views;
+
 
   bool loadCalibrationData() {
     cv::FileStorage fs("multiCameraCalibrationData.yml", cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
@@ -894,10 +905,11 @@ int main(int argc, char** argv) {
 
     // View indices (L, R): [2, 0] [1, 3]
     // View stereo offset should be along -X axis
-    int viewIndices0[] = {2, 0};
-    int viewIndices1[] = {1, 3};
-
-    int* viewIndices[] = {viewIndices0, viewIndices1};
+    data.views.resize(2);
+    data.views[0].cameraIndices[0] = 2;
+    data.views[0].cameraIndices[1] = 0;
+    data.views[1].cameraIndices[0] = 1;
+    data.views[1].cameraIndices[1] = 3;
 
 
     // View offset calculation attempt via point triangulation
@@ -906,21 +918,18 @@ int main(int argc, char** argv) {
     std::vector<cv::Point2f> commonImagePoints[4];
 
     for (size_t observationIdx = 0; observationIdx < data.observationCount(); ++observationIdx) {
-      // Construct sets of point IDs in all views
-      std::set<int> pointIds[4];
-      for (size_t cameraIdx = 0; cameraIdx < 4; ++cameraIdx) {
-        const auto& opVec = data.cameras[cameraIdx].observations[observationIdx].objectPointIds;
-        pointIds[cameraIdx] = std::set<int>(opVec.begin(), opVec.end());
-      }
-
-      if (pointIds[0].empty() || pointIds[1].empty() || pointIds[2].empty() || pointIds[3].empty())
-        continue;
-
       // Intersection of all point ID sets
-      std::set<int> commonPointIds = pointIds[0];
+      std::set<int> commonPointIds;
+
+      // Start with all points in camera 0 view
+      commonPointIds.insert(data.cameras[0].observations[observationIdx].objectPointIds.begin(), data.cameras[0].observations[observationIdx].objectPointIds.end());
+      if (commonPointIds.empty())
+        continue; // fast-path exit
+
       for (size_t cameraIdx = 1; cameraIdx < 4; ++cameraIdx) {
+        const auto& obs = data.cameras[cameraIdx].observations[observationIdx];
         std::set<int> newCommonPointIds;
-        std::set_intersection(commonPointIds.begin(), commonPointIds.end(), pointIds[cameraIdx].begin(), pointIds[cameraIdx].end(), std::inserter(newCommonPointIds, std::end(newCommonPointIds)));
+        std::set_intersection(commonPointIds.begin(), commonPointIds.end(), obs.objectPointIds.begin(), obs.objectPointIds.end(), std::inserter(newCommonPointIds, std::end(newCommonPointIds)));
         newCommonPointIds.swap(commonPointIds);
       }
 
@@ -950,36 +959,126 @@ int main(int argc, char** argv) {
 
 
 
+    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
+      // Compute view stereoRotation and stereoTranslation from the base_to_camera info
+      ViewCalibrationData& viewData = data.views[viewIdx];
+
+      int leftCameraIdx = viewData.cameraIndices[0];
+      int rightCameraIdx = viewData.cameraIndices[1];
+
+      CameraCalibrationData& leftC = data.cameras[leftCameraIdx];
+      CameraCalibrationData& rightC = data.cameras[rightCameraIdx];
+
+      // For the stereo translation and rotation, we need a composed transform from the right camera to the left camera.
+      Eigen::Isometry3d xf = result.base_to_camera[rightCameraIdx].inverse() * result.base_to_camera[leftCameraIdx];
+
+      Eigen::Vector3d tx = xf.translation();
+      Eigen::Matrix<double, 3, 3, Eigen::RowMajor> rx = xf.rotation(); // RowMajor order for interop with OpenCV
+
+      viewData.stereoTranslation = cv::Mat(/*rows=*/ 3, /*cols=*/ 1, CV_64F, tx.data()).clone();
+      viewData.stereoRotation = cv::Mat(/*rows=*/ 3, /*cols=*/ 3, CV_64F, rx.data()).clone();
 
 
+      // Stereo rectify the 2 cameras
+      cv::stereoRectify(
+        leftC.cvIntrinsicMatrix(), leftC.cvDistCoeffs(),
+        rightC.cvIntrinsicMatrix(), rightC.cvDistCoeffs(),
+        leftC.imageSize,
+        viewData.stereoRotation, viewData.stereoTranslation,
+        viewData.stereoRectification[0], viewData.stereoRectification[1],
+        viewData.stereoProjection[0], viewData.stereoProjection[1],
+        viewData.stereoDisparityToDepth,
+        /*flags=*/cv::CALIB_ZERO_DISPARITY, /*alpha=*/ -1.0f, cv::Size(),
+        &viewData.stereoValidROI[0], &viewData.stereoValidROI[1]);
+
+      printf("View %zu\n", viewIdx);
+
+      for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+        printf("\n ===== View %zu | %s Camera (%u) ===== \n", viewIdx, eyeIdx == 0 ? "Left" : "Right", viewData.cameraIndices[eyeIdx]);
+
+        std::cout << "* Stereo Rectification matrix:" << std::endl << viewData.stereoRectification[eyeIdx] << std::endl;
+        std::cout << "* Stereo Projection matrix:" << std::endl << viewData.stereoProjection[eyeIdx] << std::endl;
+        std::cout << "* Stereo Valid ROI:" << std::endl << viewData.stereoValidROI[eyeIdx] << std::endl;
+      }
+    }
+
+    // Undistort points following the same convention used in CameraSystem (same parameters passed to cv::initUndistortRectifyMap)
 
 
+    // View index -> vector<Point3f>
+    std::vector<std::vector<cv::Point3f>> triangulatedPoints;
+    triangulatedPoints.resize(data.views.size());
+
+    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
+      ViewCalibrationData& viewData = data.views[viewIdx];
+
+      cv::Mat viewUndistortedPoints[2];
+
+      for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+        int cameraIdx = viewData.cameraIndices[eyeIdx];
+        CameraCalibrationData& c = data.cameras[cameraIdx];
+
+        cv::undistortPoints(
+          /*src=*/ commonImagePoints[cameraIdx],
+          /*dst=*/ viewUndistortedPoints[eyeIdx],
+          /*cameraMatrix=*/ c.cvIntrinsicMatrix(),
+          /*distCoeffs=*/ c.cvDistCoeffs(),
+          /*R=*/ viewData.stereoRectification[eyeIdx],
+          /*P=*/ viewData.stereoProjection[eyeIdx]);
+      }
+
+      // Triangulate points
+      cv::Mat hPoints; // homogenous output points
+      cv::triangulatePoints(
+        /*projMatr1=*/ viewData.stereoProjection[0],
+        /*projMatr2=*/ viewData.stereoProjection[1],
+        /*projPoints1=*/ viewUndistortedPoints[0],
+        /*projPoints2=*/ viewUndistortedPoints[1],
+        hPoints);
+
+      assert(hPoints.rows == 4 && hPoints.type() == CV_32F);
+      for (size_t col = 0; col < hPoints.cols; ++col) {
+        // Convert from homogenous coordinates and apply coordinate system convention flip
+        float x =  hPoints.at<float>(/*row=*/ 0, col);
+        float y = -hPoints.at<float>(/*row=*/ 1, col);
+        float z = -hPoints.at<float>(/*row=*/ 2, col);
+        float w =  hPoints.at<float>(/*row=*/ 3, col);
+        triangulatedPoints[viewIdx].push_back(cv::Point3f(x / w, y / w, z / w));
+      }
+
+      printf("View %zu: triangulated %zu points\n", viewIdx, triangulatedPoints[viewIdx].size());
+    }
+
+    for (size_t viewIdx = 1; viewIdx < data.views.size(); ++viewIdx) {
+      // Find linear transform between this view's points and view 0
+      cv::Mat transform = cv::estimateAffine3D(triangulatedPoints[viewIdx], triangulatedPoints[0]);
+      assert(transform.type() == CV_64F);
+      assert(transform.rows == 3 && transform.cols == 4);
+      std::cout << transform << std::endl;
+
+      // Convert transform to an Isometry
+      Eigen::Isometry3d pose;
+      pose.translation() = Eigen::Vector3d(transform.at<double>(0, 3), transform.at<double>(1, 3), transform.at<double>(2, 3));
+      pose.linear() = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>::Map(
+        transform(cv::Range(0, 3), cv::Range(0, 3)).clone().ptr<double>());
+
+      printIsometry(pose, "\n");
+    }
 
 
-
-
-
-    for (size_t viewIdx = 0; viewIdx < (sizeof(viewIndices) / sizeof(viewIndices[0])); ++viewIdx) {
-      int leftCameraIdx = viewIndices[viewIdx][0];
-      int rightCameraIdx = viewIndices[viewIdx][1];
+    for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
+      ViewCalibrationData& viewData = data.views[viewIdx];
+      int leftCameraIdx = viewData.cameraIndices[0];
+      int rightCameraIdx = viewData.cameraIndices[1];
 
       fs.startWriteStruct(cv::String(), cv::FileNode::MAP, cv::String());
       fs.write("isStereo", 1);
       fs.write("isPanorama", 0);
       fs.write("leftCameraIndex", (int) leftCameraIdx);
       fs.write("rightCameraIndex", (int) rightCameraIdx);
+      fs.write("stereoTranslation", viewData.stereoTranslation);
+      fs.write("stereoRotation", viewData.stereoRotation);
 
-    
-      { 
-        // For the stereo translation and rotation, we need a composed transform from the right camera to the left camera.
-        Eigen::Isometry3d xf = result.base_to_camera[rightCameraIdx].inverse() * result.base_to_camera[leftCameraIdx];
-
-        Eigen::Vector3d tx = xf.translation();
-        Eigen::Matrix<double, 3, 3, Eigen::RowMajor> rx = xf.rotation(); // RowMajor order for interop with OpenCV
-
-        fs.write("stereoTranslation", cv::Mat(/*rows=*/ 3, /*cols=*/ 1, CV_64F, tx.data()));
-        fs.write("stereoRotation", cv::Mat(/*rows=*/ 3, /*cols=*/ 3, CV_64F, rx.data()));
-      }
 
       // Compose a transform for the view offset, if this is not the first view.
       if (viewIdx == 0) {
@@ -988,7 +1087,7 @@ int main(int argc, char** argv) {
       } else {
 
         // Transform from the view 0 left camera to the current view's left camera
-        Eigen::Isometry3d xf = result.base_to_camera[viewIndices[0][0]].inverse() * result.base_to_camera[leftCameraIdx];
+        Eigen::Isometry3d xf = result.base_to_camera[data.views[0].cameraIndices[0]].inverse() * result.base_to_camera[leftCameraIdx];
 
         Eigen::Vector3d tx = xf.translation();
         Eigen::Vector3d rxEulerDeg = Eigen::EulerAnglesYXZd(xf.rotation()).angles() * (180.0 / M_PI);
