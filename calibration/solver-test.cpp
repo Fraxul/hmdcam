@@ -1,8 +1,11 @@
 #include <cstdio>
 #include <cstdint>
 #include <cassert>
+#include <set>
 #include <vector>
 #include <iostream>
+#include <iterator>
+#include <algorithm>
 
 #include "common/Timing.h"
 
@@ -895,6 +898,71 @@ int main(int argc, char** argv) {
     int viewIndices1[] = {1, 3};
 
     int* viewIndices[] = {viewIndices0, viewIndices1};
+
+
+    // View offset calculation attempt via point triangulation
+    // Find common points across all views
+
+    std::vector<cv::Point2f> commonImagePoints[4];
+
+    for (size_t observationIdx = 0; observationIdx < data.observationCount(); ++observationIdx) {
+      // Construct sets of point IDs in all views
+      std::set<int> pointIds[4];
+      for (size_t viewIdx = 0; viewIdx < 4; ++viewIdx) {
+        const auto& opVec = data.views[viewIdx].observations[observationIdx].objectPointIds;
+        pointIds[viewIdx] = std::set<int>(opVec.begin(), opVec.end());
+      }
+
+      if (pointIds[0].empty() || pointIds[1].empty() || pointIds[2].empty() || pointIds[3].empty())
+        continue;
+
+      // Intersection of all point ID sets
+      std::set<int> commonPointIds = pointIds[0];
+      for (size_t viewIdx = 1; viewIdx < 4; ++viewIdx) {
+        std::set<int> newCommonPointIds;
+        std::set_intersection(commonPointIds.begin(), commonPointIds.end(), pointIds[viewIdx].begin(), pointIds[viewIdx].end(), std::inserter(newCommonPointIds, std::end(newCommonPointIds)));
+        newCommonPointIds.swap(commonPointIds);
+      }
+
+      if (commonPointIds.empty())
+        continue;
+
+      // Collect points from all views.
+      // (This assumes that the points are sorted by ID inside the view data)
+      for (size_t viewIdx = 0; viewIdx < 4; ++viewIdx) {
+        const auto& viewObs = data.views[viewIdx].observations[observationIdx];
+        for (size_t pointIdx = 0; pointIdx < viewObs.objectPointIds.size(); ++pointIdx) {
+          if (commonPointIds.find(viewObs.objectPointIds[pointIdx]) != commonPointIds.end()) {
+
+            commonImagePoints[viewIdx].push_back(viewObs.imagePoints[pointIdx]);
+          }
+        }
+      }
+
+      // Sanity check -- all point vectors should be the same size.
+      for (size_t viewIdx = 1; viewIdx < 4; ++viewIdx) {
+        assert(commonImagePoints[viewIdx].size() == commonImagePoints[0].size());
+      }
+    }
+
+    printf("%zu common points across all 4 views\n", commonImagePoints[0].size());
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     for (size_t viewIdx = 0; viewIdx < (sizeof(viewIndices) / sizeof(viewIndices[0])); ++viewIdx) {
       int leftCameraIdx = viewIndices[viewIdx][0];
