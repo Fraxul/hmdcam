@@ -1512,7 +1512,13 @@ void EyeTrackingService::renderSceneGizmos_postUI(FxRenderView* renderViews) {
 
     ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
     ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
-    ub.color = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    if (m_processingState[0].m_contiguousValidFrameCounter) {
+      // lock is currently valid
+      ub.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f); // green
+    } else {
+      // lock is currently invalid
+      ub.color = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f); // red
+    }
     ub.thickness = 0.5f;
 
     rhi()->bindRenderPipeline(crosshairPipeline);
