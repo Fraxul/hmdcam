@@ -848,6 +848,8 @@ int main(int argc, char** argv) {
 
     fs.startWriteStruct("views", cv::FileNode::SEQ, cv::String());
 
+    // TODO: Autodetect stereo pair arrangement / view indices
+
     // View indices (L, R): [2, 0] [1, 3]
     // View stereo offset should be along -X axis
     data.views.resize(2);
@@ -855,53 +857,6 @@ int main(int argc, char** argv) {
     data.views[0].cameraIndices[1] = 0;
     data.views[1].cameraIndices[0] = 1;
     data.views[1].cameraIndices[1] = 3;
-
-
-    // View offset calculation attempt via point triangulation
-    // Find common points across all views
-
-    std::vector<cv::Point2f> commonImagePoints[4];
-
-    for (size_t observationIdx = 0; observationIdx < data.observationCount(); ++observationIdx) {
-      // Intersection of all point ID sets
-      std::set<int> commonPointIds;
-
-      // Start with all points in camera 0 view
-      commonPointIds.insert(data.cameras[0].observations[observationIdx].objectPointIds.begin(), data.cameras[0].observations[observationIdx].objectPointIds.end());
-      if (commonPointIds.empty())
-        continue; // fast-path exit
-
-      for (size_t cameraIdx = 1; cameraIdx < 4; ++cameraIdx) {
-        const auto& obs = data.cameras[cameraIdx].observations[observationIdx];
-        std::set<int> newCommonPointIds;
-        std::set_intersection(commonPointIds.begin(), commonPointIds.end(), obs.objectPointIds.begin(), obs.objectPointIds.end(), std::inserter(newCommonPointIds, std::end(newCommonPointIds)));
-        newCommonPointIds.swap(commonPointIds);
-      }
-
-      if (commonPointIds.empty())
-        continue;
-
-      // Collect points from all views.
-      // (This assumes that the points are sorted by ID inside the view data)
-      for (size_t cameraIdx = 0; cameraIdx < 4; ++cameraIdx) {
-        const auto& cameraObs = data.cameras[cameraIdx].observations[observationIdx];
-        for (size_t pointIdx = 0; pointIdx < cameraObs.objectPointIds.size(); ++pointIdx) {
-          if (commonPointIds.find(cameraObs.objectPointIds[pointIdx]) != commonPointIds.end()) {
-
-            commonImagePoints[cameraIdx].push_back(cameraObs.imagePoints[pointIdx]);
-          }
-        }
-      }
-
-      // Sanity check -- all point vectors should be the same size.
-      for (size_t cameraIdx = 1; cameraIdx < 4; ++cameraIdx) {
-        assert(commonImagePoints[cameraIdx].size() == commonImagePoints[0].size());
-      }
-    }
-
-    printf("%zu common points across all 4 cameras\n", commonImagePoints[0].size());
-
-
 
 
     for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
@@ -947,6 +902,53 @@ int main(int argc, char** argv) {
       }
     }
 
+
+#if 0
+    // View offset calculation attempt via point triangulation
+    // NOTE: This triangulates points in stereoRectify space, which we no longer render in -- this code path is unused.
+
+    // Find common points across all views
+
+    std::vector<cv::Point2f> commonImagePoints[4];
+
+    for (size_t observationIdx = 0; observationIdx < data.observationCount(); ++observationIdx) {
+      // Intersection of all point ID sets
+      std::set<int> commonPointIds;
+
+      // Start with all points in camera 0 view
+      commonPointIds.insert(data.cameras[0].observations[observationIdx].objectPointIds.begin(), data.cameras[0].observations[observationIdx].objectPointIds.end());
+      if (commonPointIds.empty())
+        continue; // fast-path exit
+
+      for (size_t cameraIdx = 1; cameraIdx < 4; ++cameraIdx) {
+        const auto& obs = data.cameras[cameraIdx].observations[observationIdx];
+        std::set<int> newCommonPointIds;
+        std::set_intersection(commonPointIds.begin(), commonPointIds.end(), obs.objectPointIds.begin(), obs.objectPointIds.end(), std::inserter(newCommonPointIds, std::end(newCommonPointIds)));
+        newCommonPointIds.swap(commonPointIds);
+      }
+
+      if (commonPointIds.empty())
+        continue;
+
+      // Collect points from all views.
+      // (This assumes that the points are sorted by ID inside the view data)
+      for (size_t cameraIdx = 0; cameraIdx < 4; ++cameraIdx) {
+        const auto& cameraObs = data.cameras[cameraIdx].observations[observationIdx];
+        for (size_t pointIdx = 0; pointIdx < cameraObs.objectPointIds.size(); ++pointIdx) {
+          if (commonPointIds.find(cameraObs.objectPointIds[pointIdx]) != commonPointIds.end()) {
+
+            commonImagePoints[cameraIdx].push_back(cameraObs.imagePoints[pointIdx]);
+          }
+        }
+      }
+
+      // Sanity check -- all point vectors should be the same size.
+      for (size_t cameraIdx = 1; cameraIdx < 4; ++cameraIdx) {
+        assert(commonImagePoints[cameraIdx].size() == commonImagePoints[0].size());
+      }
+    }
+    printf("%zu common points across all 4 cameras\n", commonImagePoints[0].size());
+
     // Undistort points following the same convention used in CameraSystem (same parameters passed to cv::initUndistortRectifyMap)
 
 
@@ -983,11 +985,11 @@ int main(int argc, char** argv) {
 
       assert(hPoints.rows == 4 && hPoints.type() == CV_32F);
       for (size_t col = 0; col < hPoints.cols; ++col) {
-        // Convert from homogenous coordinates and apply coordinate system convention flip
-        float x =  hPoints.at<float>(/*row=*/ 0, col);
-        float y = -hPoints.at<float>(/*row=*/ 1, col);
-        float z = -hPoints.at<float>(/*row=*/ 2, col);
-        float w =  hPoints.at<float>(/*row=*/ 3, col);
+        // Convert from homogenous coordinates
+        float x = hPoints.at<float>(/*row=*/ 0, col);
+        float y = hPoints.at<float>(/*row=*/ 1, col);
+        float z = hPoints.at<float>(/*row=*/ 2, col);
+        float w = hPoints.at<float>(/*row=*/ 3, col);
         triangulatedPoints[viewIdx].push_back(cv::Point3f(x / w, y / w, z / w));
       }
 
@@ -1009,6 +1011,7 @@ int main(int argc, char** argv) {
 
       printIsometry(pose, "\n");
     }
+#endif
 
 
     for (size_t viewIdx = 0; viewIdx < data.views.size(); ++viewIdx) {
