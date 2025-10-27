@@ -801,8 +801,8 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
   cv::Mat roiMaskMat;
   roiMaskMat.create(m_roiOutputHeight, m_roiOutputWidth, CV_8UC1);
 
-  cv::Mat roiErodedMaskMat;
-  roiErodedMaskMat.create(m_roiOutputHeight, m_roiOutputWidth, CV_8UC1);
+  cv::Mat roiDilatedMaskMat;
+  roiDilatedMaskMat.create(m_roiOutputHeight, m_roiOutputWidth, CV_8UC1);
 
   // Compute capture mat crop rect based on the ROI network input size
   cv::Rect captureCropRect;
@@ -828,9 +828,11 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       break;
 
     // Capture frame
-    if (!ps.m_capture.readFrame()) {
-      printf("EyeTrackingService::eyeProcessingThreadFn(%zu)::captureWorkerThread: readFrame() returned false, terminating\n", eyeIdx);
-      break;
+    if (!m_debugFreezeCapture) {
+      if (!ps.m_capture.readFrame()) {
+        printf("EyeTrackingService::eyeProcessingThreadFn(%zu)::captureWorkerThread: readFrame() returned false, terminating\n", eyeIdx);
+        break;
+      }
     }
 
     ps.m_lastCaptureTimestampNs = currentTimeNs();
@@ -915,36 +917,39 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
 
     // Cleanup roiMaskMat, generate contours, find the best match
     {
-      // Run erode operation to clean up speckles
-      cv::erode(/*src=*/ roiMaskMat, /*dst=*/ roiErodedMaskMat, /*kernel (default)=*/ cv::Mat());
+      // Run dilate-erode operation to close borders
+      cv::dilate(/*src=*/ roiMaskMat, /*dst=*/ roiDilatedMaskMat, /*kernel (default)=*/ cv::Mat());
+      cv::erode(/*src=*/ roiDilatedMaskMat, /*dst=*/ roiMaskMat, /*kernel (default)=*/ cv::Mat());
 
       // Collect and filter contours
       std::vector<std::vector<cv::Point> > contours;
-      cv::findContoursLinkRuns(roiErodedMaskMat, contours);
+      cv::findContoursLinkRuns(roiMaskMat, contours);
 
       struct Contour {
         std::vector<cv::Point> points;
         glm::vec2 normalizedBoundsCenter;
         float distanceToCenter;
+        float area;
       };
       std::vector<Contour> filteredContours;
       filteredContours.reserve(contours.size());
 
       for (size_t contourIdx = 0; contourIdx < contours.size(); ++contourIdx) {
-        auto& points = contours[contourIdx];
-
         Contour c;
 
-        c.points = std::move(points);
+        c.points = std::move(contours[contourIdx]);
         c.normalizedBoundsCenter = boundsCenterFromPoints(c.points) / glm::vec2(m_roiOutputWidth, m_roiOutputHeight);
         c.distanceToCenter = glm::length(c.normalizedBoundsCenter - glm::vec2(0.5f, 0.5f));
+        c.area = fabs(cv::contourArea(c.points));
 
         filteredContours.push_back(std::move(c));
       }
 
       if (filteredContours.size() > 1) {
         // Sort filtered contours by distance to center ascending
-        std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.distanceToCenter < right.distanceToCenter; } );
+        // std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.distanceToCenter < right.distanceToCenter; } );
+        // Sort filtered contours by area descending
+        std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.area > right.area; } );
       }
 
       if (!filteredContours.empty()) {
@@ -1255,6 +1260,7 @@ void EyeTrackingService::applyCalibrationData() {
 void EyeTrackingService::renderIMGUI() {
   ImGui::PushID(this);
 
+  ImGui::Checkbox("ET capture freeze", &m_debugFreezeCapture);
   ImGui::Checkbox("ET camera feedback view", &m_debugShowFeedbackView);
   if (m_debugShowFeedbackView) {
     ImGui::DragFloat("FB brightness", &m_debugFeedbackBrightness, /*speed=*/ 0.05f, /*min=*/ 0.0f, /*max=*/ 1.0f, "%.2f");
