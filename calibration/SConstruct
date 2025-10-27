@@ -33,7 +33,7 @@ env.Program(
   LIBS = ['glog',
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
     'pthread', 'rt',
-    'boost_chrono', 'boost_filesystem', 'boost_regex', 'boost_system', 'boost_thread',
+    'boost_chrono', 'boost_filesystem', 'boost_system', 'boost_thread',
     'ceres', 'cholmod', 'lapack', 'spqr', 'glog', 'gflags'
   ]
 

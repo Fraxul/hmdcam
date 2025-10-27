@@ -27,6 +27,9 @@
 #include <glm/gtx/euler_angles.hpp>
 #include <glm/gtx/transform.hpp>
 
+#include <boost/filesystem.hpp>
+#include <boost/lexical_cast.hpp>
+
 #include "common/FxThreading.cpp" // just inlining FxThreading in here for build simplicity
 
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 14, CV_64F);
@@ -119,7 +122,6 @@ struct Observation {
   std::vector<cv::Point2f> imagePoints; // Points in image space
 
   Eigen::Isometry3d targetTransform = Eigen::Isometry3d::Identity(); // Extrinsic / target transform, recorded during intrinsic calibration.
-
 
 
   void loadCalibrationData(cv::FileNode fn) {
@@ -228,7 +230,6 @@ struct CameraCalibrationData {
     }
     fs.endWriteStruct();
   }
-
 };
 
 struct ViewCalibrationData {
@@ -251,11 +252,16 @@ struct MultiCameraCalibrationData {
   std::vector<CameraCalibrationData> cameras;
   std::vector<ViewCalibrationData> views;
 
+  std::string calibrationFilenameForPath(const std::string& calibrationDataPath) {
+    return std::string(calibrationDataPath) + "/multiCameraCalibrationData.yml";
+  }
 
-  bool loadCalibrationData() {
-    cv::FileStorage fs("multiCameraCalibrationData.yml", cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+
+  bool loadCalibrationData(const char* calibrationDataPath) {
+    std::string fn = calibrationFilenameForPath(calibrationDataPath);
+    cv::FileStorage fs(fn.c_str(), cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
     if (!fs.isOpened()) {
-      printf("Unable to open calibration data file\n");
+      printf("Unable to open calibration data file %s\n", fn.c_str());
       return false;
     }
 
@@ -276,10 +282,11 @@ struct MultiCameraCalibrationData {
     return true;
   }
 
-  bool saveCalibrationData() {
-    cv::FileStorage fs("multiCameraCalibrationData.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+  bool saveCalibrationData(const char* calibrationDataPath) {
+    std::string fn = calibrationFilenameForPath(calibrationDataPath);
+    cv::FileStorage fs(fn.c_str(), cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
     if (!fs.isOpened()) {
-      printf("Unable to open calibration data file\n");
+      printf("Unable to open calibration data file %s\n", fn.c_str());
       return false;
     }
 
@@ -291,74 +298,102 @@ struct MultiCameraCalibrationData {
 
     return true;
   }
-
-
 };
 
 
-
-void generateMultiCameraCalibrationData(MultiCameraCalibrationData& data) {
+void generateMultiCameraCalibrationData(const char* srcPath, MultiCameraCalibrationData& data) {
   PerfTimer perfTimer;
 
-  data.cameras.resize(4); // number of cameras
+  // map<filename, map<camera index, path> >
+  // Ensures grouping by individual captures (assuming that the filename is the same across the capture)
+  // while allowing a capture to exclude some cameras
+  std::map<std::string, std::map<unsigned int, boost::filesystem::path>> captureImageSets;
 
+  unsigned int numCameras = 0;
 
-  const char* imageFilenames[] = {
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481695.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481701.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481709.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481736.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481769.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481777.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481782.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481788.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481811.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481817.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481823.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481835.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481850.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481856.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481862.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481868.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481882.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481887.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481892.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481898.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481903.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481913.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481919.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481925.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481927.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481934.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481941.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481949.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481952.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751481958.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751482024.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751482038.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751482050.png",
-    "/home/dweatherford/calibrationData/20250702_1356/camera%u_1751482057.png",
-  };
+  boost::filesystem::path basePath(srcPath);
+  assert(boost::filesystem::is_directory(basePath));
 
-  constexpr size_t imageCount = sizeof(imageFilenames) / sizeof(imageFilenames[0]);
+  for (numCameras = 0;; ++numCameras) {
+    // Construct the path for this camera relative to the calibration data directory
+    char nameBuf[32];
+    snprintf(nameBuf, sizeof(nameBuf), "/camera%u", numCameras);
+    boost::filesystem::path cameraPath = basePath;
+    cameraPath += nameBuf;
+    printf("%s\n", cameraPath.string().c_str());
+
+    if (!boost::filesystem::is_directory(cameraPath))
+      break; // Camera dir doesn't exist, so we're done enumerating cameras.
+
+    // Enumerate all files in the camera directory and add them to the capture image set
+    boost::filesystem::directory_iterator dirIt(cameraPath, boost::filesystem::directory_options::follow_directory_symlink);
+    boost::filesystem::directory_iterator endDirIt;
+    for (; dirIt != endDirIt; ++dirIt) {
+      const auto& p = dirIt->path();
+      if (!boost::filesystem::is_regular_file(p))
+        continue;
+
+      // We just assume all files in the directory will be images.
+
+      std::string fn = p.filename().string();
+      if (fn.empty())
+        continue; // ?
+
+      // Add to the image-set
+      captureImageSets[fn][numCameras] = p;
+    }
+  }
+
+  data.cameras.resize(numCameras); // number of cameras
+  printf("Loaded %zu capture-sets involving %u cameras\n", captureImageSets.size(), numCameras);
 
   for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
     CameraCalibrationData& cameraData = data.cameras[cameraIdx];
+    cameraData.observations.resize(captureImageSets.size());
+  }
 
-    cameraData.observations.resize(imageCount);
+  // Flatten map into vector<vector<path>> for async loading task
+  {
+    std::vector<std::vector<boost::filesystem::path>> pathVector;
+    for (const auto& captureSetEntry : captureImageSets) {
 
-    FxThreading::runArrayTask(0, imageCount, [&](size_t idx) {
-      char buf[512];
-      snprintf(buf, 512, imageFilenames[idx], (unsigned int) cameraIdx);
-      cameraData.observations[idx].image = cv::imread(buf, cv::IMREAD_GRAYSCALE);
+      // Create vector for this capture set and fill in relevant per-camera capture paths
+      std::vector<boost::filesystem::path> perCameraPaths;
+      perCameraPaths.resize(numCameras);
+      for (const auto& captureSetCameraEntry : captureSetEntry.second) {
+        assert(captureSetCameraEntry.first < numCameras);
+        perCameraPaths[captureSetCameraEntry.first] = captureSetCameraEntry.second;
+      }
+
+      pathVector.push_back(std::move(perCameraPaths));
+    }
+
+    FxThreading::runArrayTask(0, pathVector.size(), [&](size_t pathIdx) {
+      for (unsigned int cameraIdx = 0; cameraIdx < numCameras; ++cameraIdx) {
+        CameraCalibrationData& cameraData = data.cameras[cameraIdx];
+        const auto& path = pathVector[pathIdx][cameraIdx];
+        if (!path.empty()) {
+          cameraData.observations[pathIdx].image = cv::imread(path.c_str(), cv::IMREAD_GRAYSCALE);
+        }
+      }
     });
+  }
 
-    // Validation: ensure all images are the same size
+
+  // Validation: ensure all images are the same size (or empty)
+  for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+    CameraCalibrationData& cameraData = data.cameras[cameraIdx];
+
     assert(cameraData.observations.size() >= 1);
-    cameraData.imageSize = cv::Size(cameraData.observations[0].image.cols, cameraData.observations[0].image.rows);
 
-    for (size_t i = 1; i < cameraData.observations.size(); ++i) {
-      assert(cameraData.imageSize.width == cameraData.observations[i].image.cols && cameraData.imageSize.height == cameraData.observations[i].image.rows);
+    for (size_t i = 0; i < cameraData.observations.size(); ++i) {
+      if (cameraData.imageSize.width == 0 && cameraData.imageSize.height == 0) {
+        cameraData.imageSize = cv::Size(cameraData.observations[i].image.cols, cameraData.observations[i].image.rows);
+      } else {
+        if (!cameraData.observations[i].image.empty()) {
+          assert(cameraData.imageSize.width == cameraData.observations[i].image.cols && cameraData.imageSize.height == cameraData.observations[i].image.rows);
+        }
+      }
     }
   }
 
@@ -381,12 +416,14 @@ void generateMultiCameraCalibrationData(MultiCameraCalibrationData& data) {
 
         cv::Mat currentCharucoCorners;
         std::vector<int> currentCharucoIds;
-        detector.detectBoard(obs.image, currentCharucoCorners, currentCharucoIds);
+
+        if (!obs.image.empty())
+          detector.detectBoard(obs.image, currentCharucoCorners, currentCharucoIds);
 
         bool found = (currentCharucoIds.size() >= (totalCorners / 3));
         if (found) {
-         
-          obs.objectPoints.reserve(currentCharucoIds.size()); 
+
+          obs.objectPoints.reserve(currentCharucoIds.size());
           obs.imagePoints.reserve(currentCharucoIds.size());
 
           // Convert currentCharucoCorners mat to vector<Point2f>
@@ -568,18 +605,45 @@ void generateMultiCameraCalibrationData(MultiCameraCalibrationData& data) {
     for (size_t i = 0; i < targetTransformToObservationIdx.size(); ++i) {
       cameraData.observations[targetTransformToObservationIdx[i]].targetTransform = cameraData.intrinsicCalibration.target_transforms[i];
     }
-    
+
     printf("Calibration complete in %.3f ms\n", perfTimer.checkpoint());
 
   } // Camera loop
 
 
-
-  data.saveCalibrationData();
+  data.saveCalibrationData(srcPath);
 }
 
 
 int main(int argc, char** argv) {
+
+  if (argc < 2) {
+    printf("usage: %s /path/to/calibrationData\n", argv[0]);
+    printf("\n");
+    printf("Calibration Data directory structure:\n");
+    printf("calibrationData -- root, pass this path\n");
+    printf("  |- camera0\n");
+    printf("     |- 00000001.pgm\n");
+    printf("     |- 00000002.pgm\n");
+    printf("     |- ...\n");
+    printf("  |- camera1\n");
+    printf("     |- 00000001.pgm\n");
+    printf("     |- 00000002.pgm\n");
+    printf("     |- ...\n");
+    printf("  |- camera2\n");
+    printf("     |- 00000001.pgm\n");
+    printf("     |- 00000002.pgm\n");
+    printf("     |- ...\n");
+    printf("  |- cameraN...\n");
+    printf("\n");
+    printf("Matching filenames across camera directories indicate same-moment-in-time captures.\n");
+    printf("Camera indices must start at 0 and be contiguous.\n");
+
+    return -1;
+  }
+
+  const char* calibrationDataPath = argv[1];
+
   FxThreading::detail::init();
 
   // Initialize ChAruCo data on first use
@@ -592,14 +656,14 @@ int main(int argc, char** argv) {
 
   MultiCameraCalibrationData data;
 
-  if (data.loadCalibrationData()) {
+  if (data.loadCalibrationData(calibrationDataPath)) {
     // Print previously-cached intrinsic calibration results
     for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
       std::cout << data.cameras[cameraIdx].intrinsicCalibration << std::endl;
     }
   } else {
     printf("Couldn't load calibration data checkpoint, generating calibration from images\n");
-    generateMultiCameraCalibrationData(data);
+    generateMultiCameraCalibrationData(calibrationDataPath, data);
   }
 
 
@@ -617,14 +681,13 @@ int main(int argc, char** argv) {
   // Launch array tasks for stereo calibration
   for (size_t leftCameraIdx = 0; leftCameraIdx < data.cameras.size(); ++leftCameraIdx) {
     taskCompletions.push_back(FxThreading::runArrayTaskAsync(/*startValue=*/ leftCameraIdx + 1, /*endValue=*/ data.cameras.size(), [leftCameraIdx, &data, &base_to_camera_guess](size_t rightCameraIdx) {
-
       CameraCalibrationData& leftCameraData = data.cameras[leftCameraIdx];
       CameraCalibrationData& rightCameraData = data.cameras[rightCameraIdx];
 
       // Find observations that appear in both left and right cameras, and collect their overlapping object and image points.
       // Object points will be identical across all same-index observations.
-      std::vector<std::vector<cv::Point3f> > objectPoints;
-      std::vector<std::vector<cv::Point2f> > leftImagePoints, rightImagePoints;
+      std::vector<std::vector<cv::Point3f>> objectPoints;
+      std::vector<std::vector<cv::Point2f>> leftImagePoints, rightImagePoints;
 
       assert(leftCameraData.observations.size() == rightCameraData.observations.size());
       for (size_t observationIdx = 0; observationIdx < leftCameraData.observations.size(); ++observationIdx) {
@@ -790,7 +853,6 @@ int main(int argc, char** argv) {
 
       for (size_t obsIdx = 0; obsIdx < cameraData.observations.size(); ++obsIdx) {
         cameraObsSets[obsIdx] = cameraData.observations[obsIdx].correspondenceSet();
-
       }
     }
 
@@ -828,7 +890,6 @@ int main(int argc, char** argv) {
         }
       }
     }
-
 
 
     // Save calibration data
@@ -888,7 +949,7 @@ int main(int argc, char** argv) {
         viewData.stereoRectification[0], viewData.stereoRectification[1],
         viewData.stereoProjection[0], viewData.stereoProjection[1],
         viewData.stereoDisparityToDepth,
-        /*flags=*/cv::CALIB_ZERO_DISPARITY, /*alpha=*/ -1.0f, cv::Size(),
+        /*flags=*/ cv::CALIB_ZERO_DISPARITY, /*alpha=*/ -1.0f, cv::Size(),
         &viewData.stereoValidROI[0], &viewData.stereoValidROI[1]);
 
       printf("View %zu\n", viewIdx);
@@ -896,9 +957,12 @@ int main(int argc, char** argv) {
       for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
         printf("\n ===== View %zu | %s Camera (%u) ===== \n", viewIdx, eyeIdx == 0 ? "Left" : "Right", viewData.cameraIndices[eyeIdx]);
 
-        std::cout << "* Stereo Rectification matrix:" << std::endl << viewData.stereoRectification[eyeIdx] << std::endl;
-        std::cout << "* Stereo Projection matrix:" << std::endl << viewData.stereoProjection[eyeIdx] << std::endl;
-        std::cout << "* Stereo Valid ROI:" << std::endl << viewData.stereoValidROI[eyeIdx] << std::endl;
+        std::cout << "* Stereo Rectification matrix:" << std::endl
+                  << viewData.stereoRectification[eyeIdx] << std::endl;
+        std::cout << "* Stereo Projection matrix:" << std::endl
+                  << viewData.stereoProjection[eyeIdx] << std::endl;
+        std::cout << "* Stereo Valid ROI:" << std::endl
+                  << viewData.stereoValidROI[eyeIdx] << std::endl;
       }
     }
 
@@ -1048,13 +1112,10 @@ int main(int argc, char** argv) {
     }
 
     fs.endWriteStruct(); // views
-    
   }
-
 
 
   FxThreading::detail::shutdown();
 
   return 0;
 }
-
