@@ -55,6 +55,8 @@ static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_64FC1);
 
 static FxAtomicString ksImageTex("imageTex");
 
+RHIRenderPipeline::ptr camTexturedQuadPipeline;
+
 #if 0
 RHIRenderPipeline::ptr meshVertexColorPipeline;
 RHIBuffer::ptr meshQuadVBO;
@@ -77,6 +79,11 @@ struct DisparityScaleUniformBlock {
   float pad2;
   float pad3;
   float pad4;
+};
+
+static FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
+struct NDCQuadUniformBlock {
+  glm::mat4 modelViewProjection;
 };
 
 void ImGui_Image(RHISurface::ptr img, const ImVec2& uv0 = ImVec2(0,0), const ImVec2& uv1 = ImVec2(1,1)) {
@@ -305,6 +312,38 @@ int main(int argc, char** argv) {
   depthMapGenerator->loadSettings();
   depthMapGenerator->setPopulateDebugTextures(true);
 
+  // Setup render pipelines, now that we know the sampler type required for the camera textures
+  {
+    const char* sampler_type = cameraProvider->rgbTextureGLSamplerType();
+    {
+      RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout);
+      desc.setFlag("SAMPLER_TYPE", sampler_type);
+      camTexturedQuadPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
+    }
+  }
+
+  std::vector<RHIRect> debugSurfaceCameraRects;
+  uint32_t debugSurfaceWidth, debugSurfaceHeight;
+  {
+    // Size and allocate debug surface area based on camera count
+    unsigned int debugColumns = 1, debugRows = 1;
+    if (cameraProvider->streamCount() > 1) {
+      debugColumns = 2;
+      debugRows = (cameraProvider->streamCount() + 1) / 2; // round up
+    }
+    debugSurfaceWidth = debugColumns * cameraProvider->streamWidth();
+    debugSurfaceHeight = debugRows * cameraProvider->streamHeight();
+    // printf("Debug stream: selected a %ux%u layout on a %ux%u surface for %zu cameras\n", debugColumns, debugRows, debugSurfaceWidth, debugSurfaceHeight, cameraProvider->streamCount());
+
+    for (size_t cameraIdx = 0; cameraIdx < cameraProvider->streamCount(); ++cameraIdx) {
+      unsigned int col = cameraIdx % debugColumns;
+      unsigned int row = cameraIdx / debugColumns;
+      RHIRect r = RHIRect::xywh(col * cameraProvider->streamWidth(), row * cameraProvider->streamHeight(), cameraProvider->streamWidth(), cameraProvider->streamHeight());
+      // printf("  [%zu] (%ux%u) +(%u, %u)\n", cameraIdx, r.width, r.height, r.x, r.y);
+      debugSurfaceCameraRects.push_back(r);
+    }
+  }
+
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -324,6 +363,7 @@ int main(int argc, char** argv) {
   // Our state
   ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
   bool surfaceUpdateEnabled = true;
+  bool render2dMode = false;
 
   // Main loop
   bool done = false;
@@ -385,7 +425,11 @@ int main(int argc, char** argv) {
       {
         ImGui::Begin("Debug-Client");
 
-        {
+        ImGui::Checkbox("2D Render Mode", &render2dMode);
+
+        ImGui::BeginDisabled(render2dMode);
+
+        { // Camera controls disabled in 2d mode
           glm::vec3 p = sceneCamera->position();
           glm::vec3 t = sceneCamera->targetPosition();
           if (ImGui::InputFloat3("Camera Position", &p[0]))
@@ -427,6 +471,7 @@ int main(int argc, char** argv) {
           ImGui::SliderInt("Charuco Disp Scale", &triangulationDisparityScaleInv, 1, 256); // TODO remove
 
         }
+        ImGui::EndDisabled();
 
         ImGui::Separator();
 
@@ -723,13 +768,61 @@ int main(int argc, char** argv) {
         rhi()->drawPrimitives(0, 4);
       }
 #endif
-      for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
-        CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
-        if (v.isStereo)
-          depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView);
+
+
+      if (render2dMode) {
+        // Render 2d views
+        // Figure out how to fit the debug surface into the current window size
+        float debugSurfaceAspect = static_cast<float>(debugSurfaceWidth) / static_cast<float>(debugSurfaceHeight);
+        float windowAspect = static_cast<float>(io.DisplaySize.x) / static_cast<float>(io.DisplaySize.y);
+
+        int padX = 0, padY = 0;
+        float scale = 0;
+
+        if (debugSurfaceAspect < windowAspect) {
+          // Window is wider, pad debug surface in X
+          scale = static_cast<float>(io.DisplaySize.y) / static_cast<float>(debugSurfaceHeight);
+          padX = io.DisplaySize.x - static_cast<int>(scale * static_cast<float>(debugSurfaceWidth));
+          padX = std::max<int>(padX, 0);
+        } else {
+          // Window is taller, pad debug surface in Y
+          scale = static_cast<float>(io.DisplaySize.x) / static_cast<float>(debugSurfaceWidth);
+          padY = io.DisplaySize.y - static_cast<int>(scale * static_cast<float>(debugSurfaceHeight));
+          padY = std::max<int>(padY, 0);
+        }
+
+        rhi()->bindRenderPipeline(camTexturedQuadPipeline);
+
+        for (size_t cameraIdx = 0; cameraIdx < cameraProvider->streamCount(); ++cameraIdx) {
+          RHIRect origVp = debugSurfaceCameraRects[cameraIdx];
+          RHIRect scaledVp = RHIRect::xywh(
+            static_cast<float>(origVp.x * scale) + (padX / 2),
+            static_cast<float>(origVp.y * scale) + (padY / 2),
+            static_cast<float>(origVp.width) * scale,
+            static_cast<float>(origVp.height) * scale);
+
+          rhi()->setViewport(scaledVp);
+
+          // No-distortion / direct passthrough
+          rhi()->loadTexture(ksImageTex, cameraProvider->rgbTexture(cameraIdx), linearClampSampler);
+
+          NDCQuadUniformBlock ub;
+          ub.modelViewProjection = glm::mat4(1.0f); // identity MVP
+
+          rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+          rhi()->drawNDCQuad();
+        }
+
+      } else {
+        // Render 3d views
+        for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
+          CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
+          if (v.isStereo)
+            depthMapGenerator->renderDisparityDepthMap(viewIdx, renderView);
+        }
       }
 
-      if (enableCharucoDetection) {
+      if ((render2dMode == false) && enableCharucoDetection) {
         std::vector<glm::vec4> pointsStaging;
         ImGui::Begin("ChAruCo");
 
