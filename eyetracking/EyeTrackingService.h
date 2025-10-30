@@ -54,6 +54,10 @@ public:
   float m_debugFeedbackBrightness = 1.0f;
   bool m_debugFreezeCapture = false;
 
+  bool m_debugSaveBadFitImages = false;
+  uint32_t m_debugSaveBadFitIntervalMs = 500; // Write at most one image per this many ms
+
+
   enum CalibrationState {
     kWaitingForValidFrames,
     kCentering,
@@ -67,6 +71,8 @@ public:
     uint64_t m_lastCaptureTimestampNs = 0; // currentTimeNs
 
     uint32_t m_captureFileIndex = 0; // Set to non-zero to one-shot capture to a file
+
+    uint64_t m_lastDebugBadFitCaptureTimestampMs = 0; // currentRealTimeMs
 
     std::string m_inputFilename;
     // Ratelimiting for capture-open attempts

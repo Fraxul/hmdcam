@@ -10,5 +10,6 @@ bin
 build
 *.pyc
 imgui.ini
-captures
+eyetracking-captures
+eyetracking-bad-fit-captures
 

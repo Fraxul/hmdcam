@@ -1,5 +1,6 @@
 #include "EyeTrackingService.h"
 #include "CuDLAStandaloneRunner.h"
+#include "common/FxThreading.h"
 #include "common/Timing.h"
 #include "common/mmfile.h"
 #include "imgui.h"
@@ -33,7 +34,8 @@
 
 const char* calibrationFilename = "eyetracking-calibration.yml";
 
-const char* kCaptureDirName = "captures";
+const char* kCaptureDirName = "eyetracking-captures";
+const char* kBadFitCaptureDirName = "eyetracking-bad-fit-captures";
 
 const char* kCaptureFilePattern = "%s/%06d.png";
 const size_t kCaptureFilePatternLen = /*field length from kCaptureFilePattern=*/ 6 + /*strlen(".png")=*/ 4;
@@ -1033,6 +1035,35 @@ void EyeTrackingService::eyeProcessingThreadFn(size_t eyeIdx) {
       FRAME_DEBUG_LOG("Eye %zu CPU postprocess took %.3fms\n", eyeIdx, ps.m_lastFramePostProcessingTimeMs);
     }
 
+    if (ps.m_contiguousInvalidFrameCounter && ps.m_calibrationState == kCalibrated) {
+      // Invalid fit. See if we should save this frame for later inclusion in training data.
+      if (m_debugSaveBadFitImages && (ps.m_lastDebugBadFitCaptureTimestampMs + m_debugSaveBadFitIntervalMs) < currentRealTimeMs()) {
+        uint64_t timestamp = currentRealTimeMs();
+        char fnbuf[256];
+        snprintf(fnbuf, 255, "%s/%lu_%zu.png", kBadFitCaptureDirName, timestamp, eyeIdx);
+        fnbuf[255] = '\0';
+
+        // Async save full original frame
+        FxThreading::runTaskAsync([eyeIdx, filename = std::string(fnbuf), fullCap = ps.m_capture.lumaPlane().clone()]() {
+          if (mkdir(kBadFitCaptureDirName, 0777) < 0) {
+            // EEXIST is ok, anything else is fatal
+            if (errno != EEXIST) {
+              printf("EyeTrackingService::eyeProcessingThreadFn(%zu): can't create bad-fit capture directory \"%s\": %s\n", eyeIdx, kBadFitCaptureDirName, strerror(errno));
+              return;
+            }
+          }
+
+          if (stbi_write_png(filename.c_str(), fullCap.cols, fullCap.rows, /*components=*/ fullCap.channels(), fullCap.ptr(), /*rowBytes=*/ fullCap.step)) {
+            printf("EyeTrackingService::eyeProcessingThreadFn(%zu): wrote bad-fit capture to file %s\n", eyeIdx, filename.c_str());
+          } else {
+            printf("EyeTrackingService::eyeProcessingThreadFn(%zu): failed to write bad-fit capture to file %s\n", eyeIdx, filename.c_str());
+          }
+        });
+
+        ps.m_lastDebugBadFitCaptureTimestampMs = timestamp;
+      }
+    }
+
 
     // Update debug view
     if (populateDebugView) {
@@ -1260,6 +1291,7 @@ void EyeTrackingService::applyCalibrationData() {
 void EyeTrackingService::renderIMGUI() {
   ImGui::PushID(this);
 
+  ImGui::Checkbox("Auto-save bad fit images", &m_debugSaveBadFitImages);
   ImGui::Checkbox("ET capture freeze", &m_debugFreezeCapture);
   ImGui::Checkbox("ET camera feedback view", &m_debugShowFeedbackView);
   if (m_debugShowFeedbackView) {

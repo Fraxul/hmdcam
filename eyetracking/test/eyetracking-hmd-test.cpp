@@ -132,6 +132,7 @@ int main(int argc, char* argv[]) {
   // Eyetracking service init
   EyeTrackingService* eyeTrackingService = new EyeTrackingService();
   eyeTrackingService->m_debugShowFeedbackView = true; // Default to feedback view enabled
+  eyeTrackingService->m_debugSaveBadFitImages = true; // Default to saving bad-fit images
 
   int eyeTrackingCalibrationPointIdx = -1;
   const glm::vec2 eyeTrackingCalibrationPoints[] = {
