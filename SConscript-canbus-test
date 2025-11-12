@@ -1,8 +1,8 @@
 Import('env')
 
-pduEnv = env.Clone()
+localEnv = env.Clone()
 
-pduEnv.Append(
+localEnv.Append(
   CPPPATH=[
     '#canbus',
     '#canbus/common',
@@ -11,9 +11,9 @@ pduEnv.Append(
   ]
 )
 
-pduEnv.CompilationDatabase()
-pduEnv.Program(
-  target = '../bin/pdu-test', # relative to build/pdu-test
+localEnv.CompilationDatabase()
+localEnv.Program(
+  target = '../bin/canbus-test', # relative to build/canbus-test
   source = 
     Glob('canbus/*.cpp') +
     Glob('canbus/common/*.cpp') +
