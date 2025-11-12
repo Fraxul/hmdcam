@@ -4,7 +4,6 @@ ctags -R \
   common \
   debug-client \
   depthai-worker \
-  dgpu-fans \
   dgpu-worker \
   eyetracking \
   hmdcam \
@@ -12,7 +11,6 @@ ctags -R \
   imgui/*.cpp \
   implot \
   live555/include \
-  pductl \
   rhi \
   stb \
   tegra_mmapi \
