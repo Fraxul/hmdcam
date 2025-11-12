@@ -16,6 +16,16 @@ extern RHIRenderTarget::ptr windowRenderTarget;
 
 bool RenderInit(ERenderBackend);
 void RenderShutdown();
+
+// Expected use of this is to compare against kUserPresenceState_NotPresent --
+// if the presence state is Unknown, it's usually better to assume the user is present.
+enum UserPresenceState {
+  kUserPresenceState_NotPresent,
+  kUserPresenceState_Present,
+  kUserPresenceState_Unknown
+};
+
+UserPresenceState RenderGetUserPresenceState();
 void renderHMDFrame();
 
 void recomputeHMDParameters();

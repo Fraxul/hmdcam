@@ -56,6 +56,7 @@ static FxAtomicString ksMeshDistortionUniformBlock("MeshDistortionUniformBlock")
 struct xrt_instance* xrtInstance = NULL;
 struct xrt_device* xrtHMDevice = NULL;
 struct xrt_system_devices* xrtSystemDevices = NULL;
+struct xrt_input* xrtHeadDetectInput = nullptr; // optional, can be null
 
 bool isDummyHMD = false;
 unsigned int hmd_width, hmd_height;
@@ -70,6 +71,13 @@ CUdevice cudaDevice;
 CUcontext cudaContext;
 
 // -----------
+
+UserPresenceState RenderGetUserPresenceState() {
+  if (xrtHeadDetectInput && xrtHeadDetectInput->active) {
+    return xrtHeadDetectInput->value.boolean ? kUserPresenceState_Present : kUserPresenceState_NotPresent;
+  }
+  return kUserPresenceState_Unknown;
+}
 
 bool RenderInit(ERenderBackend backendType) {
   // Monado setup -- this needs to occur before EGL initialization because we might need to send a command to turn on the HMD display.
@@ -119,6 +127,15 @@ bool RenderInit(ERenderBackend backendType) {
     printf("Viewports:\n");
     for (int viewportIdx = 0; viewportIdx < 2; ++viewportIdx) {
       printf("[%d] %u x %u pixels @ %u, %u\n", viewportIdx, hmd->views[viewportIdx].viewport.w_pixels, hmd->views[viewportIdx].viewport.h_pixels, hmd->views[viewportIdx].viewport.x_pixels, hmd->views[viewportIdx].viewport.y_pixels);
+    }
+
+    // Try to find the head presence detect input
+    for (size_t inputIdx = 0; inputIdx < xrtHMDevice->input_count; ++inputIdx) {
+      if (xrtHMDevice->inputs[inputIdx].name == XRT_INPUT_GENERIC_HEAD_DETECT) {
+        printf("XRT_INPUT_GENERIC_HEAD_DETECT supported for proximity sensor.\n");
+        xrtHeadDetectInput = &(xrtHMDevice->inputs[inputIdx]);
+        break;
+      }
     }
 
     // Setup global state
