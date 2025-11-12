@@ -1,7 +1,7 @@
 #!/bin/bash
 
 usage() {
-  echo "Usage: trt-build.sh model.onnx {gpu|dla}"
+  echo "Usage: trt-build.sh model.onnx {gpu|dla|dla-standalone}"
   exit 1
 }
 

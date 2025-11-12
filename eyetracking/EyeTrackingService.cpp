@@ -386,7 +386,7 @@ void EyeTrackingService::saveCalibrationData(cv::FileStorage& fs) {
 
 void EyeTrackingService::postprocessOneEye(size_t eyeIdx) {
   const uint32_t kContiguousValidFrameCountThreshold = 100;
-  const uint32_t kInvalidFrameCountThreshold = 150; // Number of invalid frames in a row to throw away the calibration and start over
+  const uint32_t kInvalidFrameCountThreshold = 300; // Number of invalid frames in a row to throw away the calibration and start over
 
   ProcessingState& ps = m_processingState[eyeIdx];
 
