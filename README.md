@@ -10,9 +10,9 @@ Features:
   - Both horizontal (left-right) and vertical (top-bottom) stereo pairs are supported
   - Depending on your camera configuration and platform, this may require an additional discrete GPU or VPU for processing.
   - Supports multiple depth processing backends:
-    - Luxonis DepthAI VPU modules. (Recommended -- these are currently the best perf/watt)
-    - Jetson Orin's integrated Optical Flow Accelerator hardware
-    - OpenCV+CUDA on a separate Nvidia discrete GPU
+    - Jetson Orin's integrated Optical Flow Accelerator hardware (Recommended, supports up to 2 stereo pairs, 1920x1080 at 90fps)
+    - Luxonis DepthAI VPU modules
+    - OpenCV+CUDA on a separate Nvidia discrete GPU (Not recommended for battery-powered systems)
 - Configuration menu with built-in calibration tools
 - Remote viewing via RTSP (embedded live555 server + nvenc)
 - Remote depth processing debugging (`debug-client` binary)
@@ -24,12 +24,11 @@ Important repository structure:
 | debug-client   | Remote-debugging application; streams uncompressed framebuffers from `hmdcam` over Ethernet. |
 | dgpu-worker    | Stereo disparity computation worker for CUDA discrete GPUs. Runs under `hmdcam` or `debug-client` |
 | depthai-worker | Stereo disparity computation worker for Luxonis DepthAI VPUs. Runs under `hmdcam` or `debug-client` |
-| dgpu-fans      | Simple daemon to control a dGPU fan connected to the Jetson's PWM interface |
 | rhi            | Render Hardware Interface -- wrappers over OpenGL. |
 | common         | Library functions shared between `hmdcam` and `debug-client` (mostly camera related) |
 
 Requirements:
-- A Jetson board with one or more CSI cameras
+- A Jetson Orin board with one or more CSI cameras
   - The cameras should be capable of capturing at the display rate of your HMD (90fps for the Vive or Explorer)
   - For an 8-lane Jetson SoM, 2-lane IMX662 sensors are preferred: they can capture 1920x1080 at up to 90fps.
   - If you have CSI lanes to spare, 4-lane IMX290 sensors are a good option: they can capture 1920x1080 at up to 120fps
@@ -42,11 +41,12 @@ Requirements:
   - A GTX1050 MXM3 module can handle 2 stereo pairs with 1:4 sampling (480x270 depth resolution) at 90+ FPS, but consumes ~40 watts.
 
 The reference test/development platform is:
-- Jetson Orin NX running L4T r36.4 / JetPack 6
+- Jetson Orin NX running L4T r36.4.3 / JetPack 6.2
 - 4x [Soho Enterprise](https://soho-enterprise.com) SE-SB2M-IMX662 sensors: 2-lane, 1920x1080, 90fps.
   - These sensors use a custom kernel driver that I haven't published yet
   - Lenses are [Commonlands CIL028-F2.6-M12ANIR](https://commonlands.com/products/wideangle-3mm-lens)
   - Lens holders: [M12, 7mm high](https://www.aliexpress.us/item/2255801127009273.html)
   - Arranged as two 90°-rotated horizontal stereo pairs.
 - Lenovo Explorer HMD: 2880x1440 at 90fps.
+- Depth processing using the Orin's OFA hardware.
 
