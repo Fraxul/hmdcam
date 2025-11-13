@@ -36,6 +36,7 @@
 #include "DebugServer.h"
 #include "EyeTrackingService.h"
 #include "FocusAssistDebugOverlay.h"
+#include "GloveController.h"
 #include "IDebugOverlay.h"
 #include "InputListener.h"
 #include "PDUComms.h"
@@ -234,7 +235,7 @@ int main(int argc, char* argv[]) {
 #pragma clang diagnostic ignored "-Wunused-but-set-variable"
   DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
   ERenderBackend renderBackendType = kRenderBackendVKDirect;
-  bool enablePDU = true;
+  bool enableCANBus = true;
   bool enableEyetracking = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
@@ -259,8 +260,8 @@ int main(int argc, char* argv[]) {
         return 1;
       }
       renderBackendType = renderBackendStringToEnum(argv[++i]);
-    } else if (!strcmp(argv[i], "--disable-pdu")) {
-      enablePDU = false;
+    } else if (!strcmp(argv[i], "--disable-canbus")) {
+      enableCANBus = false;
     } else if (!strcmp(argv[i], "--disable-eyetracking")) {
       enableEyetracking = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
@@ -312,10 +313,6 @@ int main(int argc, char* argv[]) {
 
   startInputListenerThread();
 
-  if (enablePDU) {
-   startPDUCommsThread();
-  }
-
   if (!RenderInit(renderBackendType)) {
     printf("RenderInit() failed\n");
     return 1;
@@ -343,6 +340,17 @@ int main(int argc, char* argv[]) {
 
   io.DisplaySize = ImVec2(512.0f, 512.0f); // Not the full size, but the size of our overlay RT
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f); // Use HiDPI rendering
+
+
+  // CANBus component init.
+  // GloveController depends on ImGui being initialized first.
+  GloveController* gloveController = nullptr;
+
+  if (enableCANBus) {
+    startPDUCommsThread();
+    gloveController = new GloveController();
+  }
+
 
   // Open the cameras
 
@@ -665,6 +673,9 @@ int main(int argc, char* argv[]) {
       ImGui_ImplInputListener_NewFrame();
       ImGui::NewFrame();
 
+      if (gloveController)
+        gloveController->processFrame();
+
       ++frameCounter;
 
       if (debugInitOnly && frameCounter >= 10) {
@@ -853,8 +864,12 @@ int main(int argc, char* argv[]) {
             eyeTrackingService->renderIMGUI();
           }
 
-          if (enablePDU && ImGui::CollapsingHeader("PDU Control")) {
+          if (enableCANBus && ImGui::CollapsingHeader("PDU Control")) {
             drawPDUCommandMenu();
+          }
+
+          if (gloveController && ImGui::CollapsingHeader("Glove Controllers")) {
+            gloveController->drawConfigIMGUI();
           }
         }
 
@@ -1004,6 +1019,7 @@ int main(int argc, char* argv[]) {
 
       } else {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, 0), 0, /*pivot=*/ImVec2(0.5f, 0.0f)); // top-center aligned
+        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents
         ImGui::Begin("StatusBar", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
         char timebuf[64];
@@ -1023,7 +1039,7 @@ int main(int argc, char* argv[]) {
           }
           ImGui::SameLine(); ImGui::Text(" %.1fC", tempSensorReading);
         }
-        if (enablePDU) {
+        if (enableCANBus) {
           drawPDUStatusLine();
         }
 
