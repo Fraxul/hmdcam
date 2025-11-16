@@ -44,7 +44,7 @@ env = Environment(tools = env_tools, toolpath=['scons-tools'],
   CPPDEFINES=['GLM_ENABLE_EXPERIMENTAL'],
   CPPFLAGS=['-g', '-Wall', '-Wshadow'],
   CXXFLAGS=['-std=c++14'],
-  LINKFLAGS=['-g'],
+  LINKFLAGS=['-g', '-fuse-ld=lld'],
   LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
   CUDA_SDK_PATH='/usr/local/cuda',
   COMPILATIONDB_USE_ABSPATH=True
