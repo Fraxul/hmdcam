@@ -65,11 +65,12 @@ CANBus::CANBus() {
   // Default heartbeat subscription
   addMessageSubscription(7509U, heartbeatMessageHandler, /*extent=*/ 12);
 
-  m_rxThread = boost::thread(boost::bind(&CANBus::canRxThread, this));
-  m_txThread = boost::thread(boost::bind(&CANBus::canTxThread, this));
-
   // Tx setup
   m_txQueue = canardTxInit(/*capacity (packets)=*/ 128, /*mtu_bytes=*/ CANARD_MTU_CAN_CLASSIC);
+
+  // Worker threads
+  m_rxThread = boost::thread(boost::bind(&CANBus::canRxThread, this));
+  m_txThread = boost::thread(boost::bind(&CANBus::canTxThread, this));
 }
 
 CANBus::~CANBus() {
@@ -99,6 +100,9 @@ CANBus::~CANBus() {
 }
 
 void CANBus::addMessageSubscription(CanardPortID port_id, std::function<void(SerializationBuffer&, const CanardTransferMetadata&, uint64_t)> handler, size_t maxMessageLength, uint64_t messageTimeoutUs) {
+  if (m_fd < 0)
+    return; // CAN service not available, just ignore subscription requests
+
   // Accessing the canard subscription data requires holding m_subscriptionLock
   boost::lock_guard<boost::mutex> l(m_subscriptionLock);
 
