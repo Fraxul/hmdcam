@@ -137,6 +137,15 @@ private:
   void keyboardModifiers(struct wl_keyboard *wl_kbd, uint32_t serial, uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked, uint32_t group);
   void keyboardRepeatInfo(struct wl_keyboard *wl_kbd, int32_t rate, int32_t delay);
 
+  // Pointer
+  wl_pointer* m_wlPointer = nullptr;
+
+  void pointerEnter(struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y);
+  void pointerLeave(struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface);
+  void pointerMotion(struct wl_pointer *wl_pointer, uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y);
+  void pointerButton(struct wl_pointer *wl_pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
+  void pointerAxis(struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis, wl_fixed_t value);
+  void pointerFrame(struct wl_pointer *wl_pointer);
 
   // Thunks -- registry
   static struct wl_registry_listener registry_listener;
@@ -183,6 +192,9 @@ private:
   static void keyboard_repeat_info(void *data, struct wl_keyboard *wl_kbd, int32_t rate, int32_t delay) {
     reinterpret_cast<RenderBackendWayland*>(data)->keyboardRepeatInfo(wl_kbd, rate, delay);
   }
+
+  // Thunks -- pointer
+  static struct wl_pointer_listener pointer_listener;
 
   // Thunks -- output
   static void outputGeometry(void* _data, struct wl_output *wl_output, int32_t x, int32_t y, int32_t physical_width, int32_t physical_height, int32_t subpixel, const char *make, const char *model, int32_t transform);

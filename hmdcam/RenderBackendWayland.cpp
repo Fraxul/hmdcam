@@ -3,6 +3,7 @@
 #include <wayland-client.h>
 #include <wayland-egl.h>
 #include <xkbcommon/xkbcommon.h>
+#include <linux/input-event-codes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,19 @@ struct wl_keyboard_listener RenderBackendWayland::keyboard_listener = {
     keyboard_key,
     keyboard_modifiers,
     keyboard_repeat_info
+};
+
+// Listeners up through version 5 of wl_pointer, which is what we request in wl_registry_bind() for the seat and its associated interfaces.
+struct wl_pointer_listener RenderBackendWayland::pointer_listener = {
+  .enter = [](void *data, struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y) { reinterpret_cast<RenderBackendWayland*>(data)->pointerEnter(wl_pointer, serial, surface, surface_x, surface_y); },
+  .leave = [](void *data, struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface) { reinterpret_cast<RenderBackendWayland*>(data)->pointerLeave(wl_pointer, serial, surface); },
+  .motion = [](void *data, struct wl_pointer *wl_pointer, uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y) { reinterpret_cast<RenderBackendWayland*>(data)->pointerMotion(wl_pointer, time, surface_x, surface_y); },
+  .button = [](void *data, struct wl_pointer *wl_pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state) { reinterpret_cast<RenderBackendWayland*>(data)->pointerButton(wl_pointer, serial, time, button, state); },
+  .axis = [](void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis, wl_fixed_t value) { reinterpret_cast<RenderBackendWayland*>(data)->pointerAxis(wl_pointer, time, axis, value); },
+  .frame = [](void *data, struct wl_pointer *wl_pointer) { reinterpret_cast<RenderBackendWayland*>(data)->pointerFrame(wl_pointer); },
+  .axis_source = [](void *data, struct wl_pointer *wl_pointer, uint32_t axis_source) {},
+  .axis_stop = [](void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis) {},
+  .axis_discrete = [](void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t discrete) {},
 };
 
 struct wl_seat_listener RenderBackendWayland::seat_listener = {
@@ -187,6 +201,7 @@ void RenderBackendWayland::registryHandleGlobalRemove( struct wl_registry *regis
     xkb_state_unref(m_xkbState); m_xkbState = nullptr;
     xkb_keymap_unref(m_xkbKeymap); m_xkbKeymap = nullptr;
     wl_keyboard_release(m_wlKeyboard); m_wlKeyboard = nullptr;
+    wl_pointer_release(m_wlPointer); m_wlPointer = nullptr;
     wl_seat_release(m_wlSeat); m_wlSeat = nullptr;
   }
 }
@@ -279,6 +294,15 @@ void RenderBackendWayland::seatCapabilities(struct wl_seat *wl_seat, uint32_t ca
     wl_keyboard_release(m_wlKeyboard); m_wlKeyboard = nullptr;
     xkb_state_unref(m_xkbState); m_xkbState = nullptr;
     xkb_keymap_unref(m_xkbKeymap); m_xkbKeymap = nullptr;
+  }
+
+  if (m_wlPointer == nullptr && (caps & WL_SEAT_CAPABILITY_POINTER)) {
+    // Add pointer
+    m_wlPointer = wl_seat_get_pointer(m_wlSeat);
+    wl_pointer_add_listener(m_wlPointer, &pointer_listener, this);
+  } else if (m_wlPointer && !(caps & WL_SEAT_CAPABILITY_POINTER)) {
+    // Remove pointer
+    wl_pointer_release(m_wlPointer); m_wlPointer = nullptr;
   }
 }
 
@@ -380,6 +404,43 @@ void RenderBackendWayland::keyboardModifiers(struct wl_keyboard *wl_kbd, uint32_
 }
 
 void RenderBackendWayland::keyboardRepeatInfo(struct wl_keyboard *wl_kbd, int32_t rate, int32_t delay) {
+
+}
+
+void RenderBackendWayland::pointerEnter(struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y) {
+  if (surface == m_wlSurface) {
+    ImGui::GetIO().MouseDrawCursor = true;
+    // Hide cursor on this surface, since we draw our own.
+    wl_pointer_set_cursor(wl_pointer, serial, /*cursor surface=*/ nullptr, /*hotspot_x=*/ 0, /*hotspot_y=*/ 0);
+  }
+}
+
+void RenderBackendWayland::pointerLeave(struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface) {
+  if (surface == m_wlSurface)
+    ImGui::GetIO().MouseDrawCursor = false;
+}
+
+void RenderBackendWayland::pointerMotion(struct wl_pointer *wl_pointer, uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y) {
+  ImGui::GetIO().AddMousePosEvent(wl_fixed_to_double(surface_x), wl_fixed_to_double(surface_y));
+
+}
+
+void RenderBackendWayland::pointerButton(struct wl_pointer *wl_pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
+  int buttonIdx = button - BTN_MOUSE;
+  if (buttonIdx < 0 || buttonIdx > 8)
+    return; // Event code out of range
+
+  ImGui::GetIO().AddMouseButtonEvent(buttonIdx, /*down=*/ state == WL_POINTER_BUTTON_STATE_PRESSED);
+}
+
+void RenderBackendWayland::pointerAxis(struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis, wl_fixed_t value) {
+  if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL)
+    ImGui::GetIO().AddMouseWheelEvent(wl_fixed_to_double(value), 0);
+  else if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
+    ImGui::GetIO().AddMouseWheelEvent(0, wl_fixed_to_double(value));
+}
+
+void RenderBackendWayland::pointerFrame(struct wl_pointer *wl_pointer) {
 
 }
 
