@@ -39,6 +39,7 @@
 #include "EyeTrackingService.h"
 #endif
 #include "FocusAssistDebugOverlay.h"
+#include "GestureMenus.h"
 #include "GloveController.h"
 #include "IDebugOverlay.h"
 #include "InputListener.h"
@@ -1056,6 +1057,10 @@ int main(int argc, char* argv[]) {
 
         ImGui::End();
       }
+
+      // Handle gesture menus
+      GestureMenuTick();
+
 
       nvtxMarkA("ImGUI::Render()");
       rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
