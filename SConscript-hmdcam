@@ -17,7 +17,6 @@ tegraEnv.Append(
   CPPDEFINES=['IMGUI_DISABLE_OBSOLETE_KEYIO', 'IMGUI_DISABLE_OBSOLETE_FUNCTIONS'],
   CPPPATH=[
     'hmdcam',
-    'eyetracking',
     'wayland',
     MONADO_BUILD + '/src/xrt/include', # Contains generated config headers
     MONADO_BASE + '/src/xrt/include',
@@ -61,11 +60,12 @@ monadoStatics = \
     ]
 
 if tegraEnv['IS_TEGRA']:
-  # Building natively on Tegra enables Argus camera library and nvenc support
-  # Pull in nvargus, nvbuf, nvmedia, nvsci, v4l2, and live555
+  # Building natively on Tegra enables Argus camera library, eyetracking, and nvenc support
+  # Pull in nvargus, nvbuf, nvmedia, nvsci, cudla, v4l2, and live555
   tegraEnv.Append(
     CPPPATH=[
       '#hmdcam/tegra',
+      '#eyetracking',
       '#common/tegra',
       '#live555/include',
       tegraEnv['TEGRA_MMAPI'],
@@ -84,7 +84,6 @@ if tegraEnv['IS_TEGRA']:
       'v4l2'
     ],
     CPPDEFINES=[
-      'USE_LIBARGUS',
       'NO_OPENSSL', # live555 config directive
     ]
   )

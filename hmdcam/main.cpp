@@ -24,7 +24,7 @@
 
 #include "IArgusCamera.h"
 #include "ArgusCameraMock.h"
-#ifdef USE_LIBARGUS
+#ifdef IS_TEGRA
 #include "tegra/ArgusCamera.h"
 #endif
 #include "common/CameraSystem.h"
@@ -34,7 +34,10 @@
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
 #include "DebugServer.h"
+#ifdef IS_TEGRA
+#define USE_EYETRACKING
 #include "EyeTrackingService.h"
+#endif
 #include "FocusAssistDebugOverlay.h"
 #include "GloveController.h"
 #include "IDebugOverlay.h"
@@ -73,7 +76,9 @@ uint64_t settingsAutosaveIntervalFrames = 1000; // will be recomputed when we kn
 IArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
 DebugServer* debugServer = nullptr;
+#ifdef USE_EYETRACKING
 EyeTrackingService* eyeTrackingService = nullptr;
+#endif
 
 #define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
 static const char* hmdcamSettingsFilename = "hmdcamSettings.yml";
@@ -354,7 +359,7 @@ int main(int argc, char* argv[]) {
 
   // Open the cameras
 
-#if USE_LIBARGUS
+#if IS_TEGRA
   if (!debugMockCameras)
     argusCamera = new ArgusCamera(renderBackend->eglDisplay(), renderBackend->eglContext(), renderBackend->refreshRateHz());
 
@@ -446,6 +451,7 @@ int main(int argc, char* argv[]) {
     depthMapGenerator->loadSettings();
   }
 
+#ifdef USE_EYETRACKING
   if (enableEyetracking) {
     eyeTrackingService = new EyeTrackingService();
     // TODO configurable camera paths!
@@ -453,6 +459,7 @@ int main(int argc, char* argv[]) {
   }
   RHISurface::ptr eyeTrackingDebugTexture;
   cv::Mat eyeTrackingDebugViewRGBA;
+#endif
 
 
   signal(SIGINT,  signal_handler);
@@ -715,6 +722,7 @@ int main(int argc, char* argv[]) {
       }
 
 
+#ifdef USE_EYETRACKING
       if (eyeTrackingService && eyeTrackingService->processFrame()) {
         if (debugPrintLatency && ((frameCounter & 127) == 0)) {
           for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
@@ -727,6 +735,7 @@ int main(int argc, char* argv[]) {
 
         eyeTrackingService->CANTransmitEyeAngles();
       }
+#endif
 
 
       if (calibrationContext || drawUI) {
@@ -860,9 +869,11 @@ int main(int argc, char* argv[]) {
             }
           }
 
+#ifdef USE_EYETRACKING
           if (eyeTrackingService && ImGui::CollapsingHeader("Eyetracking Config")) {
             eyeTrackingService->renderIMGUI();
           }
+#endif
 
           if (enableCANBus && ImGui::CollapsingHeader("PDU Control")) {
             drawPDUCommandMenu();
@@ -1238,10 +1249,12 @@ int main(int argc, char* argv[]) {
       }
 */
 
+#ifdef USE_EYETRACKING
       // Eyetracking gizmos, pre-UI
       if (eyeTrackingService) {
         eyeTrackingService->renderSceneGizmos_preUI(renderViews);
       }
+#endif
 
       // UI overlay
       {
@@ -1261,11 +1274,12 @@ int main(int argc, char* argv[]) {
         rhi()->drawNDCQuad();
       }
 
+#ifdef USE_EYETRACKING
       // Eyetracking gizmos, post-UI
       if (eyeTrackingService) {
         eyeTrackingService->renderSceneGizmos_postUI(renderViews);
       }
-
+#endif
 
 
       rhi()->endRenderPass(eyeRT);

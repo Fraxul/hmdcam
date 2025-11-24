@@ -104,7 +104,7 @@ if is_tegra:
   env['IS_TEGRA'] = True
   env['TEGRA_RELEASE'] = tegra_release
   env.Append(
-    CPPDEFINES=[('L4T_RELEASE_MAJOR', tegra_release)],
+    CPPDEFINES=[('L4T_RELEASE_MAJOR', tegra_release), 'IS_TEGRA'],
     CXXFLAGS=['-march=armv8.2-a+fp16'],
   )
 
@@ -167,5 +167,5 @@ if (is_tegra):
   SConscript('SConscript-dla-standalone-test', variant_dir = 'build/dla-standalone-test', duplicate = 0)
   # SConscript('SConscript-eyetracking-test', variant_dir = 'build/eyetracking-test', duplicate = 0)
   SConscript('SConscript-eyetracking-hmd-test', variant_dir = 'build/eyetracking-hmd-test', duplicate = 0)
+  SConscript('SConscript-v4l2-capture-test', variant_dir = 'build/v4l2-capture-test', duplicate = 0)
 
-SConscript('SConscript-v4l2-capture-test', variant_dir = 'build/v4l2-capture-test', duplicate = 0)
