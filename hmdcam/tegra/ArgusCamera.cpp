@@ -555,6 +555,9 @@ bool ArgusCamera::readFrame() {
     previousCaptureCompletionTimestamp = 0;
   }
 
+  SensorTimingData timingData;
+  uint64_t timingRefPoint = currentTimeNs(); // CLOCK_MONOTONIC ref for the timingData
+
   bool captureOK = true;
   for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
     Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(m_outputStreams[cameraIdx]);
@@ -594,7 +597,10 @@ bool ArgusCamera::readFrame() {
     m_frameMetadata[cameraIdx].sensorSensitivityISO = iMetadata->getSensorSensitivity();
     m_frameMetadata[cameraIdx].ispDigitalGain = iMetadata->getIspDigitalGain();
     m_frameMetadata[cameraIdx].sensorAnalogGain = iMetadata->getSensorAnalogGain();
+
+    timingData.frameAge[cameraIdx] = deltaTimeMs(m_frameMetadata[cameraIdx].sensorTimestamp, timingRefPoint);
   }
+  m_sensorTimingData.push_back(timingData);
 
   // Compute session timestamp deltas using the first stream from each session.
   // (sensor timestamps inside of a session should be identical)
@@ -866,9 +872,24 @@ bool ArgusCamera::renderSettingsIMGUI() {
 bool ArgusCamera::renderPerformanceTuningIMGUI() {
   bool settingsDirty = false;
 
-  // Inter-session timing skew graph
   const int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
 
+  // Per-camera frame age graph
+  if (ImPlot::BeginPlot("Frame Age", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+    ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+    ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit);
+    ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_sensorTimingData.size(), ImPlotCond_Always);
+    ImPlot::SetupFinish();
+
+    for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
+      char idbuf[64];
+      sprintf(idbuf, "Camera %zu", cameraIdx);
+      ImPlot::PlotLine(idbuf, &m_sensorTimingData.data()[0].frameAge[cameraIdx], m_sensorTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_sensorTimingData.offset(), sizeof(SensorTimingData));
+    }
+    ImPlot::EndPlot();
+  }
+
+  // Inter-session timing skew graph
   if ((sessionCount() > 1) && ImPlot::BeginPlot("###InterSessionTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
     ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
     ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit);

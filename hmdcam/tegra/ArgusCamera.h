@@ -147,11 +147,15 @@ private:
 
   // Inter-session timing data
   struct SessionTimingData {
-    SessionTimingData() { memset(timestampDelta, 0, sizeof(float) * 4); }
-
-    float timestampDelta[4]; // in milliseconds; relative to session 0. no data for session 0 (would always be 0): timestampDelta[0] is for session 1, etc.
+    float timestampDelta[4] = {0}; // in milliseconds; relative to session 0. no data for session 0 (would always be 0): timestampDelta[0] is for session 1, etc.
   };
   ScrollingBuffer<SessionTimingData> m_sessionTimingData = ScrollingBuffer<SessionTimingData>(512);
+
+  // Per-sensor timing data
+  struct SensorTimingData {
+    float frameAge[8] = {0}; // in milliseconds; age of frame at time of capture (diff between current time and sensor timestamp)
+  };
+  ScrollingBuffer<SensorTimingData> m_sensorTimingData = ScrollingBuffer<SensorTimingData>(512);
 
 
   bool m_adjustSessionSkew = true;
