@@ -129,6 +129,9 @@ private:
 
     // Which buffers need to be released to the stream next readFrame
     Argus::Buffer* m_releaseBuffer = nullptr;
+
+    unsigned int m_captureFailureCount = 0;
+    bool hasCaptureFailed() const { return m_captureFailureCount >= 3; }
   };
 
 
@@ -139,6 +142,7 @@ private:
 
   // Sessions and per-session objects
   struct SessionData {
+    bool m_sessionCaptureFailed = false;
     Argus::CaptureSession* m_captureSession = nullptr;
     Argus::Request* m_captureRequest = nullptr;
     Argus::EventQueue* m_completionEventQueue = nullptr; // for EVENT_TYPE_CAPTURE_COMPLETE
