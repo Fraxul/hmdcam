@@ -293,7 +293,7 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
   for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
 
-    if (!vd->m_isStereoView)
+    if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
     auto leftLumaTexObj = m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]);

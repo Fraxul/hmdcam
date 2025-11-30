@@ -329,8 +329,11 @@ DepthMapGenerator::~DepthMapGenerator() {
   m_viewData.clear();
 }
 
-void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1) {
+bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1) {
   ViewData* vd = m_viewData[viewIdx];
+
+  if (vd->m_leftCameraStreamFailed && vd->m_rightCameraStreamFailed)
+    return false; // Nothing to render for this view!
 
   if (m_usePointRendering) {
     rhi()->bindRenderPipeline(m_disparityDepthMapPointsPipeline);
@@ -352,7 +355,9 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
 
   ub.mogrify = glm::vec2(m_algoDownsampleX, m_algoDownsampleY);
   ub.disparityPrescale = disparityPrescale() * debugDisparityScale();
-  if (m_debugUseFixedDisparity)
+
+  // If a camera stream fails, we won't have a valid disparity map -- fall back to fixed-dispairty mode instead.
+  if (vd->anyCameraStreamFailed() || m_debugUseFixedDisparity)
     ub.debugFixedDisparity = m_debugFixedDisparityValue;
   else
     ub.debugFixedDisparity = -1;
@@ -377,12 +382,20 @@ void DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd->m_disparityTexture);
 
-  rhi()->loadTexture(ksImageTex, m_cameraSystem->cameraProvider()->rgbTexture(vd->m_leftCameraIndex), linearClampSampler);
+  if (vd->m_leftCameraStreamFailed) {
+    // Fallback: If the left camera stream has failed, use fixed-disparity mode and the right camera's image instead.
+    rhi()->loadTexture(ksImageTex, m_cameraSystem->cameraProvider()->rgbTexture(vd->m_rightCameraIndex), linearClampSampler);
+  } else {
+    rhi()->loadTexture(ksImageTex, m_cameraSystem->cameraProvider()->rgbTexture(vd->m_leftCameraIndex), linearClampSampler);
+  }
   rhi()->loadTexture(ksDistortionMap, m_cameraSystem->viewAtIndex(viewIdx).stereoDistortionMap[0]);
+
+  return true;
 }
 
 void DepthMapGenerator::renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView) {
-  internalRenderSetup(viewIdx, /*stereo=*/ true, leftRenderView, rightRenderView);
+  if (!internalRenderSetup(viewIdx, /*stereo=*/ true, leftRenderView, rightRenderView))
+    return;
 
   if (m_usePointRendering)
     rhi()->drawIndexedPrimitives(m_geoDepthMapPointTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapPointTristripIndexCount, /*indexOffsetElements=*/ 0, /*instanceCount=*/ 2);
@@ -391,7 +404,8 @@ void DepthMapGenerator::renderDisparityDepthMapStereo(size_t viewIdx, const FxRe
 }
 
 void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView) {
-  internalRenderSetup(viewIdx, /*stereo=*/ false, renderView, renderView);
+  if (!internalRenderSetup(viewIdx, /*stereo=*/ false, renderView, renderView))
+    return;
 
   if (m_usePointRendering)
     rhi()->drawIndexedPrimitives(m_geoDepthMapPointTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapPointTristripIndexCount, /*indexOffsetElements=*/ 0, /*instanceCount=*/ 1);
@@ -485,6 +499,12 @@ void DepthMapGenerator::processFrame() {
     printf("DepthMapGenerator: viewData update took %.3f ms\n", deltaTimeMs(startTimeNs, endTimeNs));
   }
 
+  // Update stream failure flags
+  for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
+    ViewData* vd = m_viewData[viewIdx];
+    vd->m_leftCameraStreamFailed = m_cameraSystem->cameraProvider()->isStreamFailed(vd->m_leftCameraIndex);
+    vd->m_rightCameraStreamFailed = m_cameraSystem->cameraProvider()->isStreamFailed(vd->m_rightCameraIndex);
+  }
 
   this->internalProcessFrame();
 }
@@ -493,7 +513,7 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
 
   for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
-    if (!vd->m_isStereoView)
+    if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
     if (m_useMedianFilter) {

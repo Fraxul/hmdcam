@@ -377,7 +377,7 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
   // Copy the results from the previous frame to GL
   for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
-    if (!vd->m_isStereoView)
+    if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
     copyNvSciBufToGpuMat(vd->m_ofaOutputDisparityBuffer, vd->m_disparityGpuMat, (CUstream) m_globalStream.cudaPtr());
@@ -412,7 +412,7 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
   // First pass: do preprocessing, hand off to NvSci, and submit OFA tasks per view
   for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
-    if (!vd->m_isStereoView)
+    if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
     // Remap for distortion correction
@@ -443,7 +443,7 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
   // Second pass: wait on OFA processing to finish
   for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
-    if (!vd->m_isStereoView)
+    if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
     vd->m_ofaEofSync->waitNvSciToCuda((CUstream) m_globalStream.cudaPtr());

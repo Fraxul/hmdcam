@@ -212,8 +212,9 @@ void ArgusCamera::buildCaptureSessions() {
     // Populate device set for this session
     printf("Session %zu devices: ", sessionIdx);
     for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
-      if (sessionIndexForStream(cameraIdx) == sessionIdx) {
+      if ((cameraIdx / m_streamsPerSession) == sessionIdx) {
         sessionDevices.push_back(m_perSensorData[cameraIdx].m_cameraDevice);
+        m_perSensorData[cameraIdx].m_sessionIdx = sessionIdx;
         printf("%zu ", cameraIdx);
       }
     }
@@ -990,6 +991,14 @@ cv::cuda::GpuMat ArgusCamera::gpuMatGreyscale(size_t sensorIdx) {
   const CUeglFrame& eglFrame = m_perSensorData[sensorIdx].m_bufferPool.activeBuffer().eglFrame;
   return cv::cuda::GpuMat(eglFrame.height, eglFrame.width, CV_8U, eglFrame.frame.pPitch[0], eglFrame.pitch);
 }
+
+bool ArgusCamera::isStreamFailed(size_t sensorIndex) const {
+  const SensorData& sensorData = m_perSensorData[sensorIndex];
+  if (sensorData.hasCaptureFailed())
+    return true;
+  return m_perSessionData[sensorData.m_sessionIdx].m_sessionCaptureFailed;
+}
+
 
 /*
 void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {

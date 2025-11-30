@@ -29,6 +29,7 @@ public:
   virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().cudaLumaTexObject; }
   virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().cudaChromaTexObject; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
+  virtual bool isStreamFailed(size_t sensorIndex) const;
   // =======================
 
   // === IArgusCamera ===
@@ -130,7 +131,9 @@ private:
     // Which buffers need to be released to the stream next readFrame
     Argus::Buffer* m_releaseBuffer = nullptr;
 
-    unsigned int m_captureFailureCount = 0;
+    uint32_t m_sessionIdx = 0;
+
+    uint32_t m_captureFailureCount = 0;
     bool hasCaptureFailed() const { return m_captureFailureCount >= 3; }
   };
 
@@ -153,7 +156,7 @@ private:
 
   uint32_t m_streamsPerSession = 2;
   virtual size_t sessionCount() const { return m_perSessionData.size(); }
-  virtual size_t sessionIndexForStream(size_t streamIdx) const { return streamIdx / m_streamsPerSession; }
+  virtual size_t sessionIndexForStream(size_t streamIdx) const { return m_perSensorData[streamIdx].m_sessionIdx; }
 
   // Inter-session timing data
   struct SessionTimingData {

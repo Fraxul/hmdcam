@@ -1057,6 +1057,27 @@ int main(int argc, char* argv[]) {
           drawPDUStatusLine();
         }
 
+        // Camera provider status -- show failed streams
+        {
+          char indexBuf[64];
+          indexBuf[0] = '\0';
+          char* p = indexBuf;
+
+          for (size_t streamIdx = 0; streamIdx < argusCamera->streamCount(); ++streamIdx) {
+            if (argusCamera->isStreamFailed(streamIdx)) {
+              if (p == indexBuf) {
+                p += sprintf(p, "%zu", streamIdx);
+              } else {
+                p += sprintf(p, ", %zu", streamIdx);
+              }
+            }
+          }
+          if (p != indexBuf) {
+            ImGui::TextColored(ImColor(1.0f, 0.25f, 0.25f), "Sensor stream failures: %s", indexBuf);
+          }
+        }
+
+
         ImGui::End();
       }
 
@@ -1140,6 +1161,9 @@ int main(int argc, char* argv[]) {
           // TODO logic needs work for single-pass stereo
           for (int eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
             for (int viewEyeIdx = 0; viewEyeIdx < (v.isStereo ? 2 : 1); ++viewEyeIdx) {
+              if (argusCamera->isStreamFailed(v.cameraIndices[viewEyeIdx]))
+                continue; // Skip view rendering due to failed stream.
+
               {
                 char buf[64];
                 snprintf(buf, sizeof(buf), "View %zu eye %u view-eye %u", viewIdx, eyeIdx, viewEyeIdx);

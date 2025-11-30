@@ -13,6 +13,7 @@ public:
   virtual CUtexObject cudaLumaTexObject(size_t sensorIdx) const;
   virtual CUtexObject cudaChromaTexObject(size_t sensorIdx) const;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx) { return m_streamData[sensorIdx].lumaGpuMat; }
+  virtual bool isStreamFailed(size_t sensorIndex) const { return false; }
 
   // === IArgusCamera ===
   virtual size_t sessionCount() const { return 1; }

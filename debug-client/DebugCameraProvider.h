@@ -22,6 +22,7 @@ public:
   virtual CUtexObject cudaLumaTexObject(size_t streamIdx) const;
   virtual CUtexObject cudaChromaTexObject(size_t streamIdx) const;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t streamIdx);
+  virtual bool isStreamFailed(size_t sensorIndex) const { return false; }
 
   // -- DepthMapGenerator
 

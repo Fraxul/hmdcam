@@ -16,6 +16,7 @@ public:
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex) = 0;
   virtual unsigned int streamWidth() const = 0;
   virtual unsigned int streamHeight() const = 0;
+  virtual bool isStreamFailed(size_t sensorIndex) const = 0;
 };
 
 class NullCameraProvider : public ICameraProvider {
@@ -31,6 +32,7 @@ public:
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex) { return cv::cuda::GpuMat(); }
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
+  virtual bool isStreamFailed(size_t sensorIndex) const { return false; }
 protected:
   size_t m_streamCount;
   unsigned int m_streamWidth, m_streamHeight;

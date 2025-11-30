@@ -117,6 +117,9 @@ protected:
     bool m_isStereoView = false;
     bool m_isVerticalStereo = false;
     size_t m_leftCameraIndex = 0, m_rightCameraIndex = 0;
+    bool m_leftCameraStreamFailed = false;
+    bool m_rightCameraStreamFailed = false;
+    bool anyCameraStreamFailed() const { return m_leftCameraStreamFailed || m_rightCameraStreamFailed; }
 
     glm::mat3 m_R1;
     glm::vec4 m_depthParameters; // Parameters extracted from the view's stereoDisparityToDepth matrix
@@ -173,7 +176,7 @@ protected:
   bool m_debugUseFixedDisparity = false;
   int m_debugFixedDisparityValue = 1;
 
-  void internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1);
+  bool internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1);
   RHIRenderPipeline::ptr m_disparityDepthMapPipeline;
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
 
