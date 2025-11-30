@@ -23,16 +23,16 @@ public:
   virtual ~ArgusCamera();
 
   // === ICameraProvider ===
-  virtual size_t streamCount() const { return m_bufferPools.size(); }
-  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().rhiSurface; }
+  virtual size_t streamCount() const { return m_perSensorData.size(); }
+  virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface; }
   virtual const char* rgbTextureGLSamplerType() const { return "samplerExternalOES"; }
-  virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().cudaLumaTexObject; }
-  virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().cudaChromaTexObject; }
+  virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().cudaLumaTexObject; }
+  virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().cudaChromaTexObject; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
   // =======================
 
   // === IArgusCamera ===
-  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const { return m_bufferPools[sensorIndex].activeBuffer().cudaResource; }
+  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().cudaResource; }
   virtual bool readFrame();
   virtual void stop();
   virtual void setRepeatCapture(bool);
@@ -86,13 +86,6 @@ private:
   // Shared camera provider
   Argus::UniqueObj<Argus::CameraProvider> m_cameraProvider;
 
-  // Per-sensor objects
-  std::vector<Argus::CameraDevice*> m_cameraDevices;
-  std::vector<Argus::OutputStream*> m_outputStreams;
-
-  Argus::SensorMode* m_sensorMode = nullptr;
-
-
   struct BufferPool {
     struct Entry {
       Entry() : argusBuffer(NULL), nativeBuffer(-1), eglImage(NULL), cudaResource(NULL) {}
@@ -126,10 +119,23 @@ private:
 
   };
 
-  std::vector<BufferPool> m_bufferPools;
 
-  // Which buffers need to be released to the stream next readFrame
-  std::vector<Argus::Buffer*> m_releaseBuffers;
+  // Per-sensor objects
+  struct SensorData {
+    Argus::CameraDevice* m_cameraDevice = nullptr;
+    Argus::OutputStream* m_outputStream = nullptr;
+
+    BufferPool m_bufferPool;
+
+    // Which buffers need to be released to the stream next readFrame
+    Argus::Buffer* m_releaseBuffer = nullptr;
+  };
+
+
+  std::vector<SensorData> m_perSensorData;
+
+  // Shared sensor mode from m_perSensorData[0].m_cameraDevice
+  Argus::SensorMode* m_sensorMode = nullptr;
 
   // Sessions and per-session objects
   struct SessionData {

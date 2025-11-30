@@ -77,48 +77,58 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
   }
   printf("Argus Version: %s\n", iCameraProvider->getVersion().c_str());
 
-  iCameraProvider->getCameraDevices(&m_cameraDevices);
-  if (m_cameraDevices.empty()) {
-    die("No camera devices are available");
-  }
+  {
+    std::vector<Argus::CameraDevice*> cameraDevices;
+    iCameraProvider->getCameraDevices(&cameraDevices);
+    if (cameraDevices.empty()) {
+      die("No camera devices are available");
+    }
 
-  int maxSensors = 0;
-  if (readEnvironmentVariable("ARGUS_MAX_SENSORS", maxSensors)) {
-    if (m_cameraDevices.size() > maxSensors) {
-      printf("DEBUG: Trimming sensor list from ARGUS_MAX_SENSORS=%d env\n", maxSensors);
-      m_cameraDevices.resize(maxSensors);
+    int maxSensors = 0;
+    if (readEnvironmentVariable("ARGUS_MAX_SENSORS", maxSensors)) {
+      if (cameraDevices.size() > maxSensors) {
+        printf("DEBUG: Trimming sensor list from ARGUS_MAX_SENSORS=%d env\n", maxSensors);
+        cameraDevices.resize(maxSensors);
+      }
+    }
+    if (readEnvironmentVariable("ARGUS_STREAMS_PER_SESSION", m_streamsPerSession)) {
+      printf("DEBUG: Using %u streams per session\n", m_streamsPerSession);
+    }
+
+    std::vector<int> selectedSensorIndices;
+    if (readEnvironmentVariableVector("ARGUS_SENSOR_INDICES", selectedSensorIndices) && (!selectedSensorIndices.empty())) {
+      printf("DEBUG: Selecting %zu of %zu sensors: ", selectedSensorIndices.size(), cameraDevices.size());
+
+      // Remap camera devices by index
+      std::vector<Argus::CameraDevice*> selectedCameraDevices;
+      for (size_t i = 0; i < selectedSensorIndices.size(); ++i) {
+        printf("%d ", selectedSensorIndices[i]);
+        assert(selectedSensorIndices[i] < cameraDevices.size());
+        selectedCameraDevices.push_back(cameraDevices[selectedSensorIndices[i]]);
+      }
+      printf("\n");
+
+      // Swap in newly remapped list
+      cameraDevices.swap(selectedCameraDevices);
+
+    }
+
+    // Set up per-sensor objects from the camera device list.
+    m_perSensorData.resize(cameraDevices.size());
+    for (size_t cameraIdx = 0; cameraIdx < cameraDevices.size(); ++cameraIdx) {
+      m_perSensorData[cameraIdx].m_cameraDevice = cameraDevices[cameraIdx];
     }
   }
-  if (readEnvironmentVariable("ARGUS_STREAMS_PER_SESSION", m_streamsPerSession)) {
-    printf("DEBUG: Using %u streams per session\n", m_streamsPerSession);
-  }
 
-  std::vector<int> selectedSensorIndices;
-  if (readEnvironmentVariableVector("ARGUS_SENSOR_INDICES", selectedSensorIndices) && (!selectedSensorIndices.empty())) {
-    printf("DEBUG: Selecting %zu of %zu sensors: ", selectedSensorIndices.size(), m_cameraDevices.size());
-
-    // Remap camera devices by index
-    std::vector<Argus::CameraDevice*> selectedCameraDevices;
-    for (size_t i = 0; i < selectedSensorIndices.size(); ++i) {
-      printf("%d ", selectedSensorIndices[i]);
-      assert(selectedSensorIndices[i] < m_cameraDevices.size());
-      selectedCameraDevices.push_back(m_cameraDevices[selectedSensorIndices[i]]);
-    }
-    printf("\n");
-
-    // Swap in newly remapped list
-    m_cameraDevices.swap(selectedCameraDevices);
-
-  }
 
   // Get the selected camera device and sensor mode.
-  for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
+  for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
     printf("Sensor %zu:\n", cameraIdx);
-    ArgusHelpers::printCameraDeviceInfo(m_cameraDevices[cameraIdx], "  ");
+    ArgusHelpers::printCameraDeviceInfo(m_perSensorData[cameraIdx].m_cameraDevice, "  ");
   }
 
   // Pick a sensor mode from the first camera, which will be applied to all cameras
-  Argus::ICameraProperties *iCameraProperties = Argus::interface_cast<Argus::ICameraProperties>(m_cameraDevices[0]);
+  Argus::ICameraProperties *iCameraProperties = Argus::interface_cast<Argus::ICameraProperties>(m_perSensorData[0].m_cameraDevice);
   {
     // Select sensor mode. Pick the fastest mode (smallest FrameDurationRange.min) with the largest pixel area.
     uint64_t bestFrameDurationRangeMin = UINT64_MAX;
@@ -176,7 +186,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 #endif
 
   // Set up all of the per-stream metadata containers
-  m_frameMetadata.resize(m_cameraDevices.size());
+  m_frameMetadata.resize(m_perSensorData.size());
 
 
   buildCaptureSessions();
@@ -189,7 +199,7 @@ void ArgusCamera::buildCaptureSessions() {
   }
 
   // Determine how many capture sessions we need
-  size_t requiredCaptureSessions = (m_cameraDevices.size() + (m_streamsPerSession - 1)) / m_streamsPerSession;
+  size_t requiredCaptureSessions = (m_perSensorData.size() + (m_streamsPerSession - 1)) / m_streamsPerSession;
 
   // Create capture sessions and per-session objects
   m_perSessionData.resize(requiredCaptureSessions);
@@ -201,9 +211,9 @@ void ArgusCamera::buildCaptureSessions() {
 
     // Populate device set for this session
     printf("Session %zu devices: ", sessionIdx);
-    for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
+    for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
       if (sessionIndexForStream(cameraIdx) == sessionIdx) {
-        sessionDevices.push_back(m_cameraDevices[cameraIdx]);
+        sessionDevices.push_back(m_perSensorData[cameraIdx].m_cameraDevice);
         printf("%zu ", cameraIdx);
       }
     }
@@ -234,10 +244,10 @@ void ArgusCamera::buildCaptureSessions() {
 
 
   // Create the per-camera OutputStreams and textures.
-  m_bufferPools.resize(m_cameraDevices.size());
-  m_releaseBuffers.resize(m_cameraDevices.size(), NULL);
 
-  for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
+  for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
+    SensorData& sensorData = m_perSensorData[cameraIdx];
+
     // Create the OutputStreamSettings object for a buffer OutputStream
     Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIndexForStream(cameraIdx)].m_captureSession);
 
@@ -250,11 +260,10 @@ void ArgusCamera::buildCaptureSessions() {
     iBufferOutputStreamSettings->setBufferType(Argus::BUFFER_TYPE_EGL_IMAGE);
     iBufferOutputStreamSettings->setMetadataEnable(true);
 
-    iOutputStreamSettings->setCameraDevice(m_cameraDevices[cameraIdx]);
-    Argus::OutputStream* outputStream = iCaptureSession->createOutputStream(streamSettings.get());
-    m_outputStreams.push_back(outputStream);
+    iOutputStreamSettings->setCameraDevice(sensorData.m_cameraDevice);
+    sensorData.m_outputStream = iCaptureSession->createOutputStream(streamSettings.get());
 
-    Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(outputStream);
+    Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(sensorData.m_outputStream);
     if (!iBufferOutputStream)
         die("Failed to create BufferOutputStream");
 
@@ -392,12 +401,12 @@ void ArgusCamera::buildCaptureSessions() {
         CUDA_CHECK(cuTexObjectCreate(&b.cudaChromaTexObject, &resDesc, &texDesc, /*resourceViewDescriptor=*/ nullptr));
       }
 
-      m_bufferPools[cameraIdx].buffers.push_back(b);
+      sensorData.m_bufferPool.buffers.push_back(b);
     }
 
     // Enable the output stream on the associated session capture request
     Argus::IRequest *iRequest = Argus::interface_cast<Argus::IRequest>(m_perSessionData[sessionIndexForStream(cameraIdx)].m_captureRequest);
-    iRequest->enableOutputStream(outputStream);
+    iRequest->enableOutputStream(sensorData.m_outputStream);
   }
 
   // Update autocontrol settings
@@ -438,12 +447,12 @@ void ArgusCamera::setRepeatCapture(bool value) {
 }
 
 void ArgusCamera::teardownCaptureSessions() {
-  for (Argus::OutputStream* outputStream : m_outputStreams)
-    outputStream->destroy();
-  m_outputStreams.clear();
+  for (SensorData& sensorData : m_perSensorData) {
 
-  for (BufferPool& bp : m_bufferPools) {
-    for (BufferPool::Entry& b : bp.buffers) {
+    if (sensorData.m_outputStream)
+      sensorData.m_outputStream->destroy();
+
+    for (BufferPool::Entry& b : sensorData.m_bufferPool.buffers) {
       b.argusBuffer->destroy();
       cuTexObjectDestroy(b.cudaLumaTexObject);
       cuTexObjectDestroy(b.cudaChromaTexObject);
@@ -459,8 +468,7 @@ void ArgusCamera::teardownCaptureSessions() {
 #endif
     }
   }
-  m_bufferPools.clear();
-  m_releaseBuffers.clear();
+  m_perSensorData.clear();
 
   for (SessionData& sd : m_perSessionData) {
     sd.m_captureSession->destroy();
@@ -559,23 +567,25 @@ bool ArgusCamera::readFrame() {
   uint64_t timingRefPoint = currentTimeNs(); // CLOCK_MONOTONIC ref for the timingData
 
   bool captureOK = true;
-  for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
-    Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(m_outputStreams[cameraIdx]);
+  for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
+    SensorData& sensorData = m_perSensorData[cameraIdx];
+
+    Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(sensorData.m_outputStream);
     Argus::Status status = Argus::STATUS_OK;
     Argus::Buffer* buffer = iBufferOutputStream->acquireBuffer(kCaptureTimeoutNs, &status);
     if (status != Argus::STATUS_OK) {
       printf("ArgusCamera::readFrame(): Status %s while acquiring buffer from sensor %zu\n", argusStatusStr(status), cameraIdx);
       captureOK = false;
-      break;
+      continue;
     }
 
-    m_bufferPools[cameraIdx].setActiveBufferIndex(buffer);
+    sensorData.m_bufferPool.setActiveBufferIndex(buffer);
 
     // Clean up previous capture's buffer and track this one to be released next round
-    if (m_releaseBuffers[cameraIdx])
-      iBufferOutputStream->releaseBuffer(m_releaseBuffers[cameraIdx]);
+    if (sensorData.m_releaseBuffer)
+      iBufferOutputStream->releaseBuffer(sensorData.m_releaseBuffer);
 
-    m_releaseBuffers[cameraIdx] = buffer;
+    sensorData.m_releaseBuffer = buffer;
 
     Argus::IEGLImageBuffer* eglImageBuffer = Argus::interface_cast<Argus::IEGLImageBuffer>(buffer);
     assert(eglImageBuffer);
@@ -881,7 +891,7 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
     ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_sensorTimingData.size(), ImPlotCond_Always);
     ImPlot::SetupFinish();
 
-    for (size_t cameraIdx = 0; cameraIdx < m_cameraDevices.size(); ++cameraIdx) {
+    for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
       char idbuf[64];
       sprintf(idbuf, "Camera %zu", cameraIdx);
       ImPlot::PlotLine(idbuf, &m_sensorTimingData.data()[0].frameAge[cameraIdx], m_sensorTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_sensorTimingData.offset(), sizeof(SensorTimingData));
@@ -939,7 +949,7 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
 }
 
 cv::cuda::GpuMat ArgusCamera::gpuMatGreyscale(size_t sensorIdx) {
-  const CUeglFrame& eglFrame = m_bufferPools[sensorIdx].activeBuffer().eglFrame;
+  const CUeglFrame& eglFrame = m_perSensorData[sensorIdx].m_bufferPool.activeBuffer().eglFrame;
   return cv::cuda::GpuMat(eglFrame.height, eglFrame.width, CV_8U, eglFrame.frame.pPitch[0], eglFrame.pitch);
 }
 
