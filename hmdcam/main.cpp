@@ -575,6 +575,7 @@ int main(int argc, char* argv[]) {
 
     bool drawUI = false;
     bool debugEnableFastDebugToggles = false;
+    bool fastDebugEnableStateDidChange = false; // true for 1 frame when debugEnableFastDebugToggles is changed in the UI
     bool debugEnableDepthMapGenerator = true;
     int restartSkipFrameCounter = 0;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
@@ -669,8 +670,9 @@ int main(int argc, char* argv[]) {
             depthMapGenerator->setDebugUseFixedDisparity(false);
           }
         }
-      } else {
-        // If debug toggles are disabled, force-disable their effects
+      }
+      if (fastDebugEnableStateDidChange && !debugEnableFastDebugToggles) {
+        // If debug toggles were disabled in the UI, force-disable their effects
         if (depthMapGenerator)
           depthMapGenerator->setDebugUseFixedDisparity(false);
 
@@ -862,7 +864,7 @@ int main(int argc, char* argv[]) {
           } // Calibration header
 
           if (debugEnableDepthMapGenerator && depthMapGenerator && ImGui::CollapsingHeader("Depth Backend")) {
-            ImGui::Checkbox("Enable fast debug toggles", &debugEnableFastDebugToggles);
+            fastDebugEnableStateDidChange = ImGui::Checkbox("Enable fast debug toggles", &debugEnableFastDebugToggles);
 
             depthMapGenerator->renderIMGUI();
             if (ImGui::Button("Save Depth Backend Settings")) {
