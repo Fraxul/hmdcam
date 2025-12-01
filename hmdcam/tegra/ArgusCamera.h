@@ -154,7 +154,7 @@ private:
   std::vector<SessionData> m_perSessionData;
 
 
-  uint32_t m_streamsPerSession = 2;
+  uint32_t m_streamsPerSession = 1;
   virtual size_t sessionCount() const { return m_perSessionData.size(); }
   virtual size_t sessionIndexForStream(size_t streamIdx) const { return m_perSensorData[streamIdx].m_sessionIdx; }
 
