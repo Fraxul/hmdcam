@@ -61,6 +61,7 @@ public:
   // Start timestamp for the sensor capture, in nanoseconds. Referenced to CLOCK_MONOTONIC.
   uint64_t frameSensorTimestamp(size_t sensorIndex) const { return m_frameMetadata[sensorIndex].sensorTimestamp; }
   const FrameMetadata_t& frameMetadata(size_t sensorIndex) const { return m_frameMetadata[sensorIndex]; }
+  uint64_t oldestSensorTimestamp() const { return m_oldestSensorTimestamp; }
 
 protected:
   uint64_t m_targetCaptureIntervalNs;
@@ -71,6 +72,7 @@ protected:
 
   // Per-stream per-frame metadata, populated for each frame in readFrame()
   std::vector<FrameMetadata_t> m_frameMetadata;
+  uint64_t m_oldestSensorTimestamp; // Oldest timestamp across all sensors for the most recently acquired frame. Updated in readFrame().
 
   bool m_adjustCaptureInterval = false;
   bool m_didAdjustCaptureIntervalThisFrame = false;

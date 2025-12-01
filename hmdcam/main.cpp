@@ -706,10 +706,10 @@ int main(int argc, char* argv[]) {
       timingData.captureTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
 
       if (previousCaptureTimestamp) {
-        currentCaptureIntervalMs = static_cast<double>(argusCamera->frameSensorTimestamp(0) - previousCaptureTimestamp) / 1000000.0;
+        currentCaptureIntervalMs = static_cast<double>(argusCamera->oldestSensorTimestamp() - previousCaptureTimestamp) / 1000000.0;
         captureInterval(currentCaptureIntervalMs);
       }
-      previousCaptureTimestamp = argusCamera->frameSensorTimestamp(0);
+      previousCaptureTimestamp = argusCamera->oldestSensorTimestamp();
 
       // TODO move this inside CameraSystem
       if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext) {
@@ -1486,7 +1486,7 @@ int main(int argc, char* argv[]) {
           io.DeltaTime = static_cast<double>(interval / 1000000000.0);
         }
 
-        currentCaptureLatencyMs = static_cast<double>(thisFrameTimestamp - argusCamera->frameSensorTimestamp(0)) / 1000000.0;
+        currentCaptureLatencyMs = static_cast<double>(thisFrameTimestamp - argusCamera->oldestSensorTimestamp()) / 1000000.0;
         captureLatency(currentCaptureLatencyMs);
 
         previousFrameTimestamp = thisFrameTimestamp;

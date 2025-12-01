@@ -584,13 +584,16 @@ bool ArgusCamera::readFrame() {
 
   SensorTimingData timingData;
   uint64_t timingRefPoint = currentTimeNs(); // CLOCK_MONOTONIC ref for the timingData
+  m_oldestSensorTimestamp = timingRefPoint;
 
   bool captureOK = true;
   for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
     SensorData& sensorData = m_perSensorData[cameraIdx];
     // Skip sensors that are consistently failing.
-    if (sensorData.hasCaptureFailed())
+    if (sensorData.hasCaptureFailed()) {
+      timingData.frameAge[cameraIdx] = 0;
       continue;
+    }
 
 
     Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(sensorData.m_outputStream);
@@ -644,20 +647,24 @@ bool ArgusCamera::readFrame() {
     m_frameMetadata[cameraIdx].sensorAnalogGain = iMetadata->getSensorAnalogGain();
 
     timingData.frameAge[cameraIdx] = deltaTimeMs(m_frameMetadata[cameraIdx].sensorTimestamp, timingRefPoint);
+    m_oldestSensorTimestamp = std::min<uint64_t>(m_oldestSensorTimestamp, m_frameMetadata[cameraIdx].sensorTimestamp);
   }
   m_sensorTimingData.push_back(timingData);
 
-  // Compute session timestamp deltas using the first stream from each session.
+  // Compute session timestamp deltas vs. the oldest one encoutered this time.
   // (sensor timestamps inside of a session should be identical)
   if (sessionCount() > 1) {
     SessionTimingData td;
 
-    uint64_t session0TS = m_frameMetadata[ /*session 0, stream 0*/ 0].sensorTimestamp;
-    for (size_t sessionIdx = 1; sessionIdx < sessionCount(); ++sessionIdx) {
-      uint64_t ts = m_frameMetadata[sessionIdx * m_streamsPerSession].sensorTimestamp;
-      int64_t ts_diff = u64_diff(ts, session0TS);
+    for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
+      if (m_perSessionData[sessionIdx].m_sessionCaptureFailed) {
+        td.timestampDelta[sessionIdx] = 0;
+      } else {
+        uint64_t ts = m_frameMetadata[sessionIdx * m_streamsPerSession].sensorTimestamp;
+        int64_t ts_diff = u64_diff(ts, m_oldestSensorTimestamp);
 
-      td.timestampDelta[sessionIdx - 1] = static_cast<double>(ts_diff) / 1000000.0;
+        td.timestampDelta[sessionIdx] = static_cast<double>(ts_diff) / 1000000.0;
+      }
     }
     m_sessionTimingData.push_back(td);
   }
@@ -945,10 +952,10 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
     ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_sessionTimingData.size(), ImPlotCond_Always);
     ImPlot::SetupFinish();
 
-    for (size_t sessionIdx = 1; sessionIdx < sessionCount(); ++sessionIdx) {
+    for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
       char idbuf[64];
-      sprintf(idbuf, "Session %zu (vs. session 0)", sessionIdx);
-      ImPlot::PlotLine(idbuf, &m_sessionTimingData.data()[0].timestampDelta[sessionIdx-1], m_sessionTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_sessionTimingData.offset(), sizeof(SessionTimingData));
+      sprintf(idbuf, "Session %zu (vs. oldest)", sessionIdx);
+      ImPlot::PlotLine(idbuf, &m_sessionTimingData.data()[0].timestampDelta[sessionIdx], m_sessionTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_sessionTimingData.offset(), sizeof(SessionTimingData));
     }
     ImPlot::EndPlot();
   }

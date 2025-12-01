@@ -55,6 +55,7 @@ bool ArgusCameraMock::readFrame() {
   for (size_t i = 0; i < m_frameMetadata.size(); ++i) {
     m_frameMetadata[i].sensorTimestamp = now - m_targetCaptureIntervalNs;
   }
+  m_oldestSensorTimestamp = now - m_targetCaptureIntervalNs;
 
   for (size_t cameraIdx = 0; cameraIdx < m_streamData.size(); ++cameraIdx) {
     Stream& stream = m_streamData[cameraIdx];
