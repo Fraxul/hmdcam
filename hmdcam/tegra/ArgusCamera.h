@@ -160,7 +160,7 @@ private:
 
   // Inter-session timing data
   struct SessionTimingData {
-    float timestampDelta[4] = {0}; // in milliseconds; relative to session 0. no data for session 0 (would always be 0): timestampDelta[0] is for session 1, etc.
+    float timestampDelta[4] = {0}; // in milliseconds; relative to the oldest sensor timestamp from any stream in any session.
   };
   ScrollingBuffer<SessionTimingData> m_sessionTimingData = ScrollingBuffer<SessionTimingData>(512);
 

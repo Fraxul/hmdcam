@@ -553,6 +553,9 @@ bool ArgusCamera::readFrame() {
 #endif
 
   static uint64_t previousCaptureCompletionTimestamp = 0;
+
+  uint32_t captureCompletedEventsPerSession[16] = {0};
+
   if (m_captureIsRepeating) {
     // Pump event queues for all sessions
     for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
@@ -572,6 +575,7 @@ bool ArgusCamera::readFrame() {
             m_captureIntervalStats(static_cast<double>(ts_delta_us * 1000 /*convert to ns*/));
           }
           previousCaptureCompletionTimestamp = iev->getTime();
+          captureCompletedEventsPerSession[sessionIdx] += 1;
         }
         //if (iev->getEventType() == Argus::EVENT_TYPE_CAPTURE_STARTED)
 
@@ -617,12 +621,28 @@ bool ArgusCamera::readFrame() {
       continue;
     }
 
-    sensorData.m_bufferPool.setActiveBufferIndex(buffer);
-
-    // Clean up previous capture's buffer and track this one to be released next round
+    // Clean up previous capture's buffer
     if (sensorData.m_releaseBuffer)
       iBufferOutputStream->releaseBuffer(sensorData.m_releaseBuffer);
 
+    // Check to see if there might be another buffer available immediately.
+    // We might be able to fast-forward a bit and reduce latency.
+    // Unfortunately, calling iBufferOutputStream->acquireBuffer() will generate log spam
+    // if there is not actually another buffer available (instead of just returning TIMEOUT)
+    // so we try to guess based on the number of Capture Complete events received since the
+    // previous frame.
+    if (captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)] > 1) {
+      Argus::Buffer* ffBuffer = iBufferOutputStream->acquireBuffer(/*timeout=*/ 0, &status);
+      if (ffBuffer) {
+        // Got another buffer immediatey. Use this one and release the previous.
+        iBufferOutputStream->releaseBuffer(buffer);
+        buffer = ffBuffer;
+      }
+    }
+
+    sensorData.m_bufferPool.setActiveBufferIndex(buffer);
+
+    // Track this buffer to be released next round
     sensorData.m_releaseBuffer = buffer;
 
     Argus::IEGLImageBuffer* eglImageBuffer = Argus::interface_cast<Argus::IEGLImageBuffer>(buffer);
@@ -962,7 +982,7 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
 
   if (sessionCount() > 1) {
     ImGui::Checkbox("Auto-adjust skew", &m_adjustSessionSkew);
-    for (size_t sessionIdx = 1; sessionIdx < sessionCount(); ++sessionIdx) {
+    for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
       int offsetScaled = m_perSessionData[sessionIdx].m_durationSkew_ns / 10000;
       char namebuf[64];
       snprintf(namebuf, 64, "Ses. %zu skew *10us", sessionIdx);
