@@ -721,11 +721,13 @@ bool ArgusCamera::readFrame() {
   // Positive skew correction when TS offset is negative
   if (captureOK && m_adjustSessionSkew) {
     uint64_t session0TS = m_frameMetadata[ /*session 0, stream 0*/ 0].sensorTimestamp;
-    const int64_t ts_diff_limit_ns = 1000000;
-    const int64_t ts_large_diff_limit_ns = 5 * ts_diff_limit_ns;
 
-    const int64_t skew_correction_factor_ns = 10000;
-    const int64_t large_skew_correction_factor_ns = 3 * skew_correction_factor_ns;
+    // Allowable inter-sensor skew.
+    const int64_t ts_diff_limit_ns = 250'000;
+
+    // 30 microseconds seems to work pretty well. Should be a minimum of 2x the line-time of the camera (which is the framerate granularity)
+    // For the IMX662 at 90fps, one line-time is 8.888 microseconds, so the frametime granularity is 17.777 microseconds.
+    const int64_t skew_correction_factor_ns = 30'000;
 
     for (size_t sessionIdx = 1; sessionIdx < sessionCount(); ++sessionIdx) {
       uint64_t ts = m_frameMetadata[sessionIdx * m_streamsPerSession].sensorTimestamp;
@@ -734,11 +736,7 @@ bool ArgusCamera::readFrame() {
 
       int64_t updatedSkew = 0;
 
-      if (ts_diff_ns < (-ts_large_diff_limit_ns)) {
-        updatedSkew = large_skew_correction_factor_ns;
-      } else if (ts_diff_ns > ts_large_diff_limit_ns) {
-        updatedSkew = -large_skew_correction_factor_ns;
-      } else if (ts_diff_ns < (-ts_diff_limit_ns)) {
+      if (ts_diff_ns < (-ts_diff_limit_ns)) {
         updatedSkew = skew_correction_factor_ns;
       } else if (ts_diff_ns > ts_diff_limit_ns) {
         updatedSkew = -skew_correction_factor_ns;
@@ -958,6 +956,9 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
     ImPlot::SetupFinish();
 
     for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
+      if (m_perSensorData[cameraIdx].hasCaptureFailed())
+        continue; // Failed sensor, skip stats
+
       char idbuf[64];
       sprintf(idbuf, "Camera %zu", cameraIdx);
       ImPlot::PlotLine(idbuf, &m_sensorTimingData.data()[0].frameAge[cameraIdx], m_sensorTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_sensorTimingData.offset(), sizeof(SensorTimingData));
@@ -973,6 +974,9 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
     ImPlot::SetupFinish();
 
     for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
+      if (m_perSessionData[sessionIdx].m_sessionCaptureFailed)
+        continue; // Failed session, skip stats
+
       char idbuf[64];
       sprintf(idbuf, "Session %zu (vs. oldest)", sessionIdx);
       ImPlot::PlotLine(idbuf, &m_sessionTimingData.data()[0].timestampDelta[sessionIdx], m_sessionTimingData.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_sessionTimingData.offset(), sizeof(SessionTimingData));
@@ -986,11 +990,13 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
       int offsetScaled = m_perSessionData[sessionIdx].m_durationSkew_ns / 10000;
       char namebuf[64];
       snprintf(namebuf, 64, "Ses. %zu skew *10us", sessionIdx);
+      ImGui::BeginDisabled(m_perSessionData[sessionIdx].m_sessionCaptureFailed); // Disable adjustment slider for failed session.
       if (ImGui::SliderInt(namebuf, &offsetScaled, -10, 10)) {
         m_perSessionData[sessionIdx].m_durationSkew_ns = offsetScaled * 10000;
 
         setCaptureDurationNs(m_currentCaptureDurationNs); // resubmit requests with updated capture duration skew
       }
+      ImGui::EndDisabled();
     }
   }
 
