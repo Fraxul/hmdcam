@@ -7,6 +7,7 @@
 #include "rhi/gl/GLCommon.h"
 
 #include "xrt/xrt_instance.h"
+#include "xrt/xrt_space.h"
 #include "xrt/xrt_system.h"
 #include "xrt/xrt_device.h"
 #include "math/m_api.h"
@@ -56,6 +57,7 @@ static FxAtomicString ksMeshDistortionUniformBlock("MeshDistortionUniformBlock")
 struct xrt_instance* xrtInstance = NULL;
 struct xrt_device* xrtHMDevice = NULL;
 struct xrt_system_devices* xrtSystemDevices = NULL;
+struct xrt_space_overseer* xrtSpaceOverseer = nullptr;
 struct xrt_input* xrtHeadDetectInput = nullptr; // optional, can be null
 
 bool isDummyHMD = false;
@@ -93,7 +95,7 @@ bool RenderInit(ERenderBackend backendType) {
       return false;
     }
 
-    ret = xrt_instance_create_system(xrtInstance, &xrtSystemDevices, /*compositor=*/ NULL);
+    ret = xrt_instance_create_system(xrtInstance, &xrtSystemDevices, &xrtSpaceOverseer, /*compositor=*/ NULL);
     if (ret != 0) {
       printf("xrt_instance_create_system() failed: %d\n", ret);
       return false;
@@ -286,6 +288,9 @@ void RenderShutdown() {
 
   if (xrtSystemDevices)
     xrt_system_devices_destroy(&xrtSystemDevices); // also destroys owned devices
+
+  if (xrtSpaceOverseer)
+    xrt_space_overseer_destroy(&xrtSpaceOverseer);
 
   if (xrtInstance)
     xrt_instance_destroy(&xrtInstance);
