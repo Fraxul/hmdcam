@@ -359,6 +359,8 @@ bool EyeTrackingService::loadCalibrationData(cv::FileStorage& fs) {
     readNode(fs, filterDCutoff);
     readNode(fs, hideCrosshairAfterFrameCount);
     readNode(fs, showCrosshairAfterFrameCount);
+    cv::read(fs["leftEyeCamera"], m_processingState[0].m_cameraDeviceName, m_processingState[0].m_cameraDeviceName);
+    cv::read(fs["rightEyeCamera"], m_processingState[1].m_cameraDeviceName, m_processingState[1].m_cameraDeviceName);
 
   } catch (const std::exception& ex) {
     printf("Unable to load calibration data: %s\n", ex.what());
@@ -380,6 +382,9 @@ void EyeTrackingService::saveCalibrationData(cv::FileStorage& fs) {
   writeNode(fs, filterDCutoff);
   writeNode(fs, hideCrosshairAfterFrameCount);
   writeNode(fs, showCrosshairAfterFrameCount);
+  fs.write("leftEyeCamera", m_processingState[0].m_cameraDeviceName);
+  fs.write("rightEyeCamera", m_processingState[1].m_cameraDeviceName);
+
 }
 #undef writeNode
 
@@ -1243,14 +1248,15 @@ bool EyeTrackingService::processFrame() {
     ProcessingState& ps = m_processingState[eyeIdx];
 
     if (!ps.m_processingThreadAlive) {
-      if (!ps.m_inputFilename.empty()) {
+      if (!(ps.m_cameraDeviceName.empty() && ps.m_cameraDeviceNameOverride.empty())) {
         // Try re-starting processing, ratelimited to once a second
         if (deltaTimeMs(ps.m_lastCaptureOpenAttemptTimeNs, currentTimeNs()) > 1000.0f) {
           ps.m_lastCaptureOpenAttemptTimeNs = currentTimeNs();
-          if (ps.m_capture.tryOpenSensor(ps.m_inputFilename.c_str())) {
+
+          if (ps.m_capture.tryOpenSensor(ps.getCameraDeviceName())) {
             // Capture is open, restart the processing thread
             ps.m_processingThread = boost::thread(boost::bind(&EyeTrackingService::eyeProcessingThreadFn, this, eyeIdx));
-            printf("EyeTrackingService: Successfully opened capture of \"%s\" for eye %zu\n", ps.m_inputFilename.c_str(), eyeIdx);
+            printf("EyeTrackingService: Successfully opened capture of \"%s\" for eye %zu\n", ps.getCameraDeviceName(), eyeIdx);
           }
         }
       }

@@ -153,12 +153,9 @@ int main(int argc, char* argv[]) {
   const size_t eyeTrackingCalibrationTotalSampleCount = eyeTrackingCalibrationPointCount * eyeTrackingCalibrationScaleCount;
 
   if (argc > 1) {
-    printf("Using input filename %s\n", argv[1]);
-    eyeTrackingService->setInputFilename(0, argv[1]);
-  } else {
-    eyeTrackingService->setInputFilename(0, "/dev/video4");
+    printf("Overriding input camera %s\n", argv[1]);
+    eyeTrackingService->setInputDeviceOverride(0, argv[1]);
   }
-
 
   {
     // Accumulators to track frame timing statistics

@@ -68,13 +68,9 @@ int main(int argc, char* argv[]) {
   EyeTrackingService* svc = new EyeTrackingService();
   svc->m_debugShowFeedbackView = true; // Required to populate getDebugViewForEye
 
-  //svc->setInputFilename(0, "/mnt/scratch/eyetracking/demo3_200x150.mp4");
-  //svc->setInputFilename(0, "/mnt/scratch/eyetracking/ViveProEye_left_200x150.mp4");
   if (argc > 1) {
-    printf("Using input filename %s\n", argv[1]);
-    svc->setInputFilename(0, argv[1]);
-  } else {
-    svc->setInputFilename(0, "/mnt/scratch/eyetracking/openEDS_S_1.mp4");
+    printf("Overriding input camera %s\n", argv[1]);
+    svc->setInputDeviceOverride(0, argv[1]);
   }
 
   //cv::VideoWriter videoOut;

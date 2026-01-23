@@ -33,9 +33,9 @@ public:
   void renderSceneGizmos_preUI(FxRenderView* renderViews);
   void renderSceneGizmos_postUI(FxRenderView* renderViews);
 
-  void setInputFilename(size_t eyeIdx, const std::string& s) {
+  void setInputDeviceOverride(size_t eyeIdx, const std::string& s) {
     assert(eyeIdx < 2);
-    m_processingState[eyeIdx].m_inputFilename = s;
+    m_processingState[eyeIdx].m_cameraDeviceNameOverride = s;
   }
 
   bool processFrame(); // Called from main thread
@@ -74,7 +74,12 @@ public:
 
     uint64_t m_lastDebugBadFitCaptureTimestampMs = 0; // currentRealTimeMs
 
-    std::string m_inputFilename;
+    std::string m_cameraDeviceName; // Loaded from and saved to the config.
+    std::string m_cameraDeviceNameOverride; // used if empty, otherwise m_cameraDeviceName. Not saved to the config.
+    const char* getCameraDeviceName() const {
+      return m_cameraDeviceNameOverride.empty() ? m_cameraDeviceName.c_str() : m_cameraDeviceNameOverride.c_str();
+    }
+
     // Ratelimiting for capture-open attempts
     uint64_t m_lastCaptureOpenAttemptTimeNs = 0; // currentTimeNs
 

@@ -455,8 +455,6 @@ int main(int argc, char* argv[]) {
 #ifdef USE_EYETRACKING
   if (enableEyetracking) {
     eyeTrackingService = new EyeTrackingService();
-    // TODO configurable camera paths!
-    eyeTrackingService->setInputFilename(0, "/dev/video4");
   }
   RHISurface::ptr eyeTrackingDebugTexture;
   cv::Mat eyeTrackingDebugViewRGBA;
