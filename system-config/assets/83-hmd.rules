@@ -14,8 +14,12 @@ ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="b801", MODE="0666", GROUP="plugdev"
 ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="0c6a", MODE="0666", GROUP="plugdev"
 # HP VR1000
 ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="0367", MODE="0666", GROUP="plugdev"
-# Acer AH101
+# Acer AH100/AH101
 ATTRS{idVendor}=="0502", ATTRS{idProduct}=="b0d5", MODE="0666", GROUP="plugdev"
+# Samsung Odyssey
+ATTRS{idVendor}=="04e8", ATTRS{idProduct}=="7310", MODE="0666", GROUP="plugdev"
+# Samsung Odyssey Plus
+ATTRS{idVendor}=="04e8", ATTRS{idProduct}=="7312", MODE="0666", GROUP="plugdev"
 
 # Intel Movidius Myraid VPU
 SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666", GROUP="plugdev"
