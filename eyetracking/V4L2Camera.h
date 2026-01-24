@@ -16,6 +16,10 @@ public:
   uint32_t streamWidth() const { return m_streamWidth; }
   uint32_t streamHeight() const { return m_streamHeight; }
 
+  // Framerate values are in frames per second. Default target framerate value is 120 fps.
+  void setTargetFramerate(uint32_t framerate) { m_targetFramerate = framerate; } // Must be called before tryOpenSensor()
+  double framerate() const { return m_actualFramerate; } // Available once sensor is opened
+
   bool tryOpenSensor(const char* deviceFn);
   bool readFrame();
 
@@ -47,6 +51,9 @@ protected:
   struct v4l2_format m_fmt = {0};
   uint32_t m_streamWidth = 0;
   uint32_t m_streamHeight = 0;
+
+  uint32_t m_targetFramerate = 120;
+  double m_actualFramerate = 120.0;
 
   std::vector<Buffer> m_buffers;
 

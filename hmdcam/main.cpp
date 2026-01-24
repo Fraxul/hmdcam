@@ -37,6 +37,7 @@
 #ifdef IS_TEGRA
 #define USE_EYETRACKING
 #include "EyeTrackingService.h"
+#include "FaceTrackingService.h"
 #endif
 #include "FocusAssistDebugOverlay.h"
 #include "GestureMenus.h"
@@ -79,6 +80,7 @@ CameraSystem* cameraSystem;
 DebugServer* debugServer = nullptr;
 #ifdef USE_EYETRACKING
 EyeTrackingService* eyeTrackingService = nullptr;
+FaceTrackingService* faceTrackingService = nullptr;
 #endif
 
 #define readNode(node, settingName) cv::read(node[#settingName], settingName, settingName)
@@ -455,9 +457,8 @@ int main(int argc, char* argv[]) {
 #ifdef USE_EYETRACKING
   if (enableEyetracking) {
     eyeTrackingService = new EyeTrackingService();
+    faceTrackingService = new FaceTrackingService();
   }
-  RHISurface::ptr eyeTrackingDebugTexture;
-  cv::Mat eyeTrackingDebugViewRGBA;
 #endif
 
 
@@ -727,14 +728,25 @@ int main(int argc, char* argv[]) {
       if (eyeTrackingService && eyeTrackingService->processFrame()) {
         if (debugPrintLatency && ((frameCounter & 127) == 0)) {
           for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-            if (eyeTrackingService->m_processingState[eyeIdx].m_processingThreadAlive) {
-              printf("Frame %zu eye %zu: %s\n",
-                frameCounter, eyeIdx, eyeTrackingService->getDebugPerfStatsForEye(eyeIdx));
+            if (eyeTrackingService->m_processingState[eyeIdx].processingThreadAlive()) {
+              printf("Eyetracking[%zu]: Frame %zu: %s\n",
+                eyeIdx, frameCounter, eyeTrackingService->getDebugPerfStatsForEye(eyeIdx));
             }
           }
         }
 
         eyeTrackingService->CANTransmitEyeAngles();
+      }
+
+      if (faceTrackingService && faceTrackingService->processFrame()) {
+        if (debugPrintLatency && ((frameCounter & 127) == 0)) {
+          if (faceTrackingService->m_processingState.processingThreadAlive()) {
+            printf("Facetracking: Frame %zu: %s\n",
+              frameCounter, faceTrackingService->getDebugPerfStats());
+          }
+        }
+
+        faceTrackingService->CANTransmitTrackingData();
       }
 #endif
 
@@ -873,6 +885,10 @@ int main(int argc, char* argv[]) {
 #ifdef USE_EYETRACKING
           if (eyeTrackingService && ImGui::CollapsingHeader("Eyetracking Config")) {
             eyeTrackingService->renderIMGUI();
+          }
+
+          if (faceTrackingService && ImGui::CollapsingHeader("Facetracking Config")) {
+            faceTrackingService->renderIMGUI();
           }
 #endif
 
@@ -1283,6 +1299,9 @@ int main(int argc, char* argv[]) {
       if (eyeTrackingService) {
         eyeTrackingService->renderSceneGizmos_preUI(renderViews);
       }
+      if (faceTrackingService) {
+        faceTrackingService->renderSceneGizmos_preUI(renderViews);
+      }
 #endif
 
       // UI overlay
@@ -1307,6 +1326,9 @@ int main(int argc, char* argv[]) {
       // Eyetracking gizmos, post-UI
       if (eyeTrackingService) {
         eyeTrackingService->renderSceneGizmos_postUI(renderViews);
+      }
+      if (faceTrackingService) {
+        faceTrackingService->renderSceneGizmos_postUI(renderViews);
       }
 #endif
 

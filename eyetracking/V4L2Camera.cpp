@@ -322,9 +322,9 @@ bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
       sp.parm.capture.extendedmode, sp.parm.capture.readbuffers);
 
 
-    // Adjust framerate. TODO: this should be configurable
+    // Try to set the requested target framerate
     sp.parm.capture.timeperframe.numerator = 1;
-    sp.parm.capture.timeperframe.denominator = 120;
+    sp.parm.capture.timeperframe.denominator = m_targetFramerate;
 
     if (!tryIoctl(VIDIOC_S_PARM, &sp))
       goto err;
@@ -335,6 +335,8 @@ bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
       sp.parm.capture.timeperframe.numerator, sp.parm.capture.timeperframe.denominator,
       sp.parm.capture.extendedmode, sp.parm.capture.readbuffers);
 
+    // Compute the actual framerate after S_PARM
+    m_actualFramerate = static_cast<double>(sp.parm.capture.timeperframe.denominator) / static_cast<double>(sp.parm.capture.timeperframe.numerator);
 
     // Request MMAP buffers
     struct v4l2_requestbuffers reqbuf;

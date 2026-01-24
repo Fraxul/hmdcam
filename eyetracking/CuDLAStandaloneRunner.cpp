@@ -62,10 +62,10 @@ static void printTensorDesc(const std::vector<cudlaModuleTensorDescriptor>& tens
     printf("\tdata category: %d\n", desc.dataCategory);
     printf("\tpixel fmt: %d\n", desc.pixelFormat);
     printf("\tpixel mapping: %d\n", desc.pixelMapping);
-    printf("\tstride[0] (w): %d\n", desc.stride[0]);
-    printf("\tstride[1] (h): %d\n", desc.stride[1]);
-    printf("\tstride[2] (c): %d\n", desc.stride[2]);
-    printf("\tstride[3] (n): %d\n", desc.stride[3]);
+    printf("\tstride bytes[0] (w): %d\n", desc.stride[0]);
+    printf("\tstride bytes[1] (h): %d\n", desc.stride[1]);
+    printf("\tstride bytes[2] (c): %d\n", desc.stride[2]);
+    printf("\tstride bytes[3] (n): %d\n", desc.stride[3]);
   }
 }
 

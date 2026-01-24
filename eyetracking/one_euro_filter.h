@@ -1,3 +1,4 @@
+#pragma once
 // Originally from https://github.com/casiez/OneEuroFilter/blob/main/CppUsingTemplates/1efilter.cc at revision 32a58a9
 /*(utf8)
 1€ Filter, template-compliant version
