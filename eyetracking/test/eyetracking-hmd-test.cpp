@@ -201,7 +201,7 @@ int main(int argc, char* argv[]) {
       if (eyeTrackingService->processFrame()) {
         if ((frameCounter & 127) == 0) {
           for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-            if (eyeTrackingService->m_processingState[eyeIdx].m_processingThreadAlive) {
+            if (eyeTrackingService->m_processingState[eyeIdx].processingThreadAlive()) {
               printf("Frame %zu eye %zu: %s\n",
                 frameCounter, eyeIdx, eyeTrackingService->getDebugPerfStatsForEye(eyeIdx));
             }

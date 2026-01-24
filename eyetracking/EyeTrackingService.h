@@ -3,19 +3,21 @@
 #include "common/FxRenderView.h"
 #include "common/ScrollingBuffer.h"
 #include "SingleEyeFitter/SingleEyeFitter.h"
+#include "TrackingThreadBase.h"
 #include "one_euro_filter.h"
 #include <boost/atomic.hpp>
 #include <boost/thread.hpp>
 #include <glm/glm.hpp>
 #include <opencv2/core.hpp>
 #include "CuDLAStandaloneRunner.h"
-#include "V4L2Camera.h"
 
 #include <algorithm>
 #include <memory>
 #include <vector>
 
 #define PER_EYE for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
+
+class EyeTrackingService;
 
 class EyeTrackingService {
 public:
@@ -64,27 +66,25 @@ public:
     kCalibrated
   };
 
-  struct ProcessingState {
-    boost::thread m_processingThread;
+  class ProcessingState : public TrackingThreadBase {
+  public:
+    virtual ~ProcessingState();
 
-    bool m_processingThreadAlive = false;
-    uint64_t m_lastCaptureTimestampNs = 0; // currentTimeNs
+    EyeTrackingService* m_service = nullptr; // Ref to containing service
+    size_t m_eyeIdx = 0; // Which eye this is, for debug prints
 
-    uint32_t m_captureFileIndex = 0; // Set to non-zero to one-shot capture to a file
+    virtual void internalUpdateStateOnCaptureOpen();
+    virtual void internalProcessOneCapture();
+    void postprocessOneEye();
+    bool postprocessOneEye_fitEllipse();
+
+    cv::Rect m_captureCropRect;
+    cv::Mat m_tempRGBDebugMat; // Temporary drawing target for debug feedback view.
+
+    cv::Mat m_roiMaskMat;
+    cv::Mat m_roiDilatedMaskMat;
 
     uint64_t m_lastDebugBadFitCaptureTimestampMs = 0; // currentRealTimeMs
-
-    std::string m_cameraDeviceName; // Loaded from and saved to the config.
-    std::string m_cameraDeviceNameOverride; // used if empty, otherwise m_cameraDeviceName. Not saved to the config.
-    const char* getCameraDeviceName() const {
-      return m_cameraDeviceNameOverride.empty() ? m_cameraDeviceName.c_str() : m_cameraDeviceNameOverride.c_str();
-    }
-
-    // Ratelimiting for capture-open attempts
-    uint64_t m_lastCaptureOpenAttemptTimeNs = 0; // currentTimeNs
-
-    // Video capture object
-    V4L2Camera m_capture;
 
     // Profiling stats
     float m_lastFrameTotalProcessingTimeMs = 0.0f;
@@ -185,13 +185,6 @@ public:
 
 protected:
 
-
-  void eyeProcessingThreadFn(size_t eyeIdx);
-
-  void postprocessOneEye(size_t eyeIdx);
-  bool postprocessOneEye_fitEllipse(size_t eyeIdx);
-
-
   // Calibration data and settings
   float m_focalLength = 6.0; // millimeters. seems only vaguely related to the actual lens focal length.
   float m_pixelPitchMicrons = 3.0; // Pixel size/pitch of the camera sensor, micrometers
@@ -232,8 +225,5 @@ protected:
 
   uint32_t m_roiOutputWidth = 0, m_roiOutputHeight = 0;
   uint32_t m_roiOutputRowStrideElements = 0;
-
-
-  uint32_t m_nextCaptureIndex = 0;
 };
 
