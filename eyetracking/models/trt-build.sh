@@ -1,7 +1,7 @@
 #!/bin/bash
 
 usage() {
-  echo "Usage: trt-build.sh model.onnx {gpu|dla|dla-standalone}"
+  echo "Usage: trt-build.sh model.onnx {gpu|dla|dla-standalone|dla-relaxed}"
   exit 1
 }
 
@@ -15,10 +15,16 @@ if [ "$2" == "gpu" ]; then
   target_args="--useCudaGraph --inputIOFormats=fp16:chw --outputIOFormats=fp16:chw"
   
 elif [ "$2" == "dla" ]; then
-  target_args="--useDLACore=0 --allowGPUFallback --directIO --inputIOFormats=fp16:dla_linear --outputIOFormats=fp16:dla_linear" # --memPoolSize=dlaSRAM:1"
+  # Mostly used for profiling, since the TensorRT builder won't do a profiling run on a dla-standalone build.
+  target_args="--useDLACore=0 --directIO --inputIOFormats=fp16:dla_linear --outputIOFormats=fp16:dla_linear" # --memPoolSize=dlaSRAM:1"
 
 elif [ "$2" == "dla-standalone" ]; then
+  # Produces a standalone DLA loadable. This is what CuDLA requires.
   target_args="--useDLACore=0 --buildDLAStandalone --directIO --inputIOFormats=fp16:dla_linear --outputIOFormats=fp16:dla_linear" # --memPoolSize=dlaSRAM:1"
+
+elif [ "$2" == "dla-relaxed" ]; then
+  # Same as `dla`, but without the directIO flag and with GPU fallback. Used during model development to see which layers fail to compile for the DLA.
+  target_args="--useDLACore=0 --allowGPUFallback --inputIOFormats=fp16:dla_linear" #--outputIOFormats=fp16:dla_linear" # --memPoolSize=dlaSRAM:1"
 
 elif [ -z "$2" ]; then
   echo "Missing target"
