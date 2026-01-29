@@ -60,7 +60,7 @@ public:
 
 
     // Output data.
-    float m_browPosition = 0.0f; // -1 to 1 range; synthesized from {brow_down, brow_down_partial, neutral, brow_up_partial, brow_up} channels.
+    float m_browPosition = 0.0f; // -1 to 1 range
     // Filter initializer values are overwritten in applyCalibrationData
     one_euro_filter<float, double> m_browPositionFilter = {/*freq=*/ 120, /*minCutoff=*/ 1, /*beta=*/ 0.1, /*dcutoff=*/ 1};
 
@@ -110,6 +110,9 @@ protected:
   void processingThreadFn();
 
   void applyCalibrationData();
+
+  float m_browPositionScale = 1.0f;
+  float m_browPositionExponent = 1.0f;
 
   float m_filterMinCutoff = 0.2;
   float m_filterDCutoff = 0.2;

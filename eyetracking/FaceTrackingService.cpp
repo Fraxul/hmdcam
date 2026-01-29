@@ -114,6 +114,9 @@ void FaceTrackingService::saveCalibrationData() {
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
 bool FaceTrackingService::loadCalibrationData(cv::FileStorage& fs) {
   try {
+    readNode(fs, browPositionScale);
+    readNode(fs, browPositionExponent);
+
     readNode(fs, filterMinCutoff);
     readNode(fs, filterBetaExponent);
     readNode(fs, filterDCutoff);
@@ -129,6 +132,9 @@ bool FaceTrackingService::loadCalibrationData(cv::FileStorage& fs) {
 
 #define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_##settingName)
 void FaceTrackingService::saveCalibrationData(cv::FileStorage& fs) {
+  writeNode(fs, browPositionScale);
+  writeNode(fs, browPositionExponent);
+
   writeNode(fs, filterMinCutoff);
   writeNode(fs, filterBetaExponent);
   writeNode(fs, filterDCutoff);
@@ -249,22 +255,15 @@ void FaceTrackingService::ProcessingState::internalProcessOneCapture() {
   // Process/filter channel data
   GraphData graphDataFrame;
 
-
   {
-    float neutral = m_channelData[0];
-    float brow_down_partial = m_channelData[1];
-    float brow_down = m_channelData[2];
-    float brow_up_partial = m_channelData[3];
-    float brow_up = m_channelData[4];
-
-    float weights[] = {brow_down, brow_down_partial, neutral, brow_up_partial, brow_up};
-    float values[] = {-1.0f, -0.5f, 0.0f, 0.5f, 1.0f};
-
-    float browPositionRaw = interpolateChannels(5, weights, values);
-    // Add sample to filter
-    double ts = static_cast<double>(currentTimeNs() / 1000ULL) / 1'000'000.0;
-    graphDataFrame.browPosition = browPositionRaw;
-    m_browPosition = m_browPositionFilter(browPositionRaw, ts);
+    // Brow position output
+    float browPositionUnfiltered = glm::sign(m_channelData[0]) * glm::clamp(powf(glm::abs(m_channelData[0]) * m_service->m_browPositionScale, m_service->m_browPositionExponent), 0.0f, 1.0f);
+    if (!glm::isnan(browPositionUnfiltered)) {
+      // Add sample to filter
+      double ts = static_cast<double>(currentTimeNs() / 1000ULL) / 1'000'000.0;
+      graphDataFrame.browPosition = browPositionUnfiltered;
+      m_browPosition = m_browPositionFilter(browPositionUnfiltered, ts);
+    }
   }
 
 
@@ -321,6 +320,11 @@ void FaceTrackingService::renderIMGUI() {
       ImPlot::EndPlot();
     }
   }
+
+  // These settings apply immediately and do not require calling applyCalibrationData
+  ImGui::Separator();
+  ImGui::DragFloat("Brow Position Scale", &m_browPositionScale, /*speed=*/ 0.05f, /*min=*/ 0.0f, /*max=*/ 2.0f, "%.2f");
+  ImGui::DragFloat("Brow Position Exponent", &m_browPositionExponent, /*speed=*/ 0.05f, /*min=*/ 0.0f, /*max=*/ 2.0f, "%.2f");
 
   // Filter settings require calling applyCalibrationData
   ImGui::Separator();

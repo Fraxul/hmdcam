@@ -260,7 +260,7 @@ int main(int argc, char* argv[]) {
         ImGui::Begin("FTOutput", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
         if (faceTrackingService && faceTrackingService->m_processingState.m_channelData) {
           ImGui::SliderFloat("Brow Position", &faceTrackingService->m_processingState.m_browPosition, -1.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
-          const char* channelNames[] = { "neutral", "brow_down_partial", "brow_down", "brow_up_partial", "brow_up" };
+          const char* channelNames[] = { "brow_position" };
 
           for (uint32_t channelIdx = 0; channelIdx < faceTrackingService->m_processingState.m_trackingOutputChannels; ++channelIdx) {
             ImGui::SliderFloat(channelNames[channelIdx], &faceTrackingService->m_processingState.m_channelData[channelIdx], 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
