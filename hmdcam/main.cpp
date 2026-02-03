@@ -245,6 +245,7 @@ int main(int argc, char* argv[]) {
   ERenderBackend renderBackendType = kRenderBackendVKDirect;
   bool enableCANBus = true;
   bool enableEyetracking = true;
+  bool enableExtsyncWait = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
   bool debugNoRepeatingCapture = false;
@@ -272,6 +273,8 @@ int main(int argc, char* argv[]) {
       enableCANBus = false;
     } else if (!strcmp(argv[i], "--disable-eyetracking")) {
       enableEyetracking = false;
+    } else if (!strcmp(argv[i], "--disable-extsync-wait")) {
+      enableExtsyncWait = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
       debugInitOnly = true;
     } else if (!strcmp(argv[i], "--debug-no-repeating-capture")) {
@@ -579,6 +582,111 @@ int main(int argc, char* argv[]) {
     int restartSkipFrameCounter = 0;
     boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
     boost::scoped_ptr<IDebugOverlay> debugOverlay;
+
+
+    // If the extsync-status device is present, wait for external sync signals to be available.
+    // This needs to happen before we try and capture from any of the cameras.
+    if (enableExtsyncWait) {
+      const char* extsync_device = "/dev/extsync_status";
+      int extsync_fd = open(extsync_device, O_RDONLY);
+
+      if (extsync_fd < 0) {
+        printf("Extsync status device \"%s\" could not be opened: %s\n", extsync_device, strerror(errno));
+        printf("Using fixed warmup time instead.\n");
+      } else {
+        printf("Waiting for external sync...\n");
+      }
+
+      uint64_t syncWaitStartTime = currentTimeNs();
+      uint64_t syncWaitEndTime = syncWaitStartTime + (10 * 1'000'000'000ULL); // timeout
+
+      while (true) {
+        uint64_t frameStartTime = currentTimeNs();
+
+        if (extsync_fd >= 0) {
+          char c;
+          ssize_t res = pread(extsync_fd, &c, 1, /*offset=*/ 0);
+          if (res < 1) {
+            printf("Extsync status pread() failed: %s\n", strerror(errno));
+          }
+          if (c == '1') {
+            printf("Extsync status flag set after %u ms\n", (unsigned int) deltaTimeMs(syncWaitStartTime, frameStartTime));
+            break;
+          }
+        }
+
+        if (frameStartTime > syncWaitEndTime) {
+          if (extsync_fd >= 0) {
+            printf("Timeout while waiting for extsync status flag to be set!\n");
+          } else {
+            printf("Fixed display-sync warmup time completed\n");
+          }
+          break;
+        }
+
+        ImGui_ImplFxRHI_NewFrame();
+        ImGui_ImplInputListener_NewFrame();
+        ImGui::NewFrame();
+
+        // Sync-wait status window.
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y*0.5f), 0, /*pivot=*/ImVec2(0.5f, 0.5f)); // center aligned
+        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents, since we don't provide a way to resize the UI
+        ImGui::Begin("SyncStatus", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+        ImGui::Text("Waiting for sync: %.2f seconds elapsed", deltaTimeMs(syncWaitStartTime, frameStartTime) / 1000.0f);
+        ImGui::End();
+
+        // Draw ImGui to guiRT
+        rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+        rhi()->beginRenderPass(guiRT, kLoadClear);
+        ImGui::Render();
+        ImGui_ImplFxRHI_RenderDrawData(guiRT, ImGui::GetDrawData());
+        rhi()->endRenderPass(guiRT);
+
+        // Setup for rendering to eye rendertargets
+        rhi()->setClearDepth(0.0f);
+        rhi()->beginRenderPass(eyeRT, kLoadClear);
+        rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
+        rhi()->setViewports(eyeViewports, 2);
+
+        FxRenderView renderViews[2];
+        for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+          renderViews[eyeIdx].viewMatrix = eyeView[eyeIdx];
+          renderViews[eyeIdx].projectionMatrix = eyeProjection[eyeIdx];
+          renderViews[eyeIdx].viewProjectionMatrix = renderViews[eyeIdx].projectionMatrix * renderViews[eyeIdx].viewMatrix;
+        }
+
+        // Draw UI in 3d view
+        {
+          rhi()->bindBlendState(standardAlphaOverBlendState);
+          rhi()->bindDepthStencilState(disabledDepthStencilState);
+          rhi()->bindRenderPipeline(uiLayerStereoPipeline);
+          rhi()->loadTexture(ksImageTex, guiTex, linearClampSampler);
+          rhi()->setViewports(eyeViewports, 2);
+
+          UILayerStereoUniformBlock ub;
+          glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth)) * glm::scale(glm::vec3(uiScale * (io.DisplaySize.x / io.DisplaySize.y), uiScale, uiScale));
+          ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
+          ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
+
+          rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
+          rhi()->drawNDCQuad();
+        }
+        rhi()->endRenderPass(eyeRT);
+
+        // Submit eye rendertargets for distortion/scanout
+        renderHMDFrame();
+
+        uint64_t delta = currentTimeNs() - frameStartTime;
+        const uint64_t frametimeTarget = 11'111'111;
+        if (delta < frametimeTarget) {
+          delayNs(frametimeTarget - delta);
+        }
+      }
+
+      if (extsync_fd >= 0) {
+        close(extsync_fd);
+      }
+    }
 
 
     // Warm up the depth map generator. It might need to do expensive initialization tasks once it sees the
