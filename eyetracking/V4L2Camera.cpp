@@ -168,9 +168,14 @@ bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
 
     m_fd = ::open(deviceFn, O_RDWR | O_NONBLOCK);
     if (m_fd < 0) {
-      fprintf(stderr, "open(%s): %s\n", deviceFn, strerror(errno));
+      // Avoid log spam by only printing the errno when it changes.
+      if (m_lastOpenErrno != errno) {
+        m_lastOpenErrno = errno;
+        fprintf(stderr, "open(%s): %s\n", deviceFn, strerror(m_lastOpenErrno));
+      }
       return false;
     }
+    m_lastOpenErrno = 0; // opened successfully
 
     struct v4l2_capability vcap;
     if (!tryIoctl(VIDIOC_QUERYCAP, &vcap))

@@ -48,6 +48,8 @@ protected:
   uint64_t m_tscToMonotonicRawOffset = 0;
 
   int m_fd = -1;
+  int m_lastOpenErrno = 0;
+
   struct v4l2_format m_fmt = {0};
   uint32_t m_streamWidth = 0;
   uint32_t m_streamHeight = 0;
