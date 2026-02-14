@@ -27,8 +27,7 @@ etEnv.Program(
     'cuda', 'cudla', 'cudart',
     'boost_thread',
     'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync', 'nvmedia_ijpd_sci',
-    'ceres', 'glog'
-  ],
+  ] + etEnv['CERES_LIBS'],
 )
 
 

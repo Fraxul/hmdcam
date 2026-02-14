@@ -43,7 +43,7 @@ env = Environment(tools = env_tools, toolpath=['scons-tools'],
   NVCCFLAGS=['--expt-relaxed-constexpr', '-g'],
   CPPDEFINES=['GLM_ENABLE_EXPERIMENTAL'],
   CPPFLAGS=['-g', '-Wall', '-Wshadow'],
-  CXXFLAGS=['-std=c++14'],
+  CXXFLAGS=['-std=c++17'],
   LINKFLAGS=['-g', '-fuse-ld=lld'],
   LIBPATH=['/usr/lib/aarch64-linux-gnu/tegra', '/usr/local/lib', '/usr/local/cuda/lib64'],
   CUDA_SDK_PATH='/usr/local/cuda',
@@ -133,6 +133,17 @@ if (have_opencv_cuda):
   env.Append(CPPDEFINES=['HAVE_OPENCV_CUDA'])
 env['HAVE_OPENCV_CUDA'] = have_opencv_cuda
 
+# Add locally-built Ceres solver
+CERES_BUILD='#build/ceres'
+if not os.path.exists(str(Dir(CERES_BUILD))):
+  sys.exit('Ceres Solver build artifacts are not present. Please run ./build-ceres.sh first.')
+env.Append(
+  CPPPATH=[CERES_BUILD + '/include'],
+  LIBPATH=[CERES_BUILD + '/lib']
+)
+env['CERES_LIBS'] = ['ceres', 'cholmod', 'lapack', 'spqr', 'glog', 'gflags']
+
+# Finally, export environment for individual component build scripts to clone and modify.
 Export('env')
 
 build_dgpu = True

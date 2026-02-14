@@ -7,7 +7,7 @@ Don't forget to set up the submodules after cloning:
   git submodule update --init --recursive
 
 Install prerequisite packages:
-  sudo apt install cmake scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lld lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev libsocketcan-dev libeigen3-dev libceres-dev
+  sudo apt install cmake scons libhidapi-dev libhidapi-hidraw0 libboost-all-dev libudev-dev clang lld lldb ninja-build libusb-1.0-0-dev libepoxy-dev libeigen3-dev libsdl2-dev libsocketcan-dev libeigen3-dev libgoogle-glog-dev libgflags-dev libsuitesparse-dev
 
 Install the Jetson Multimedia API and other required libraries (CUDA for Tegra):
   sudo apt install nvidia-l4t-jetson-multimedia-api nvidia-cuda-dev
@@ -26,6 +26,9 @@ Build and install OpenCV 4.10 with some extra opencv_contrib modules. (TODO: mor
 
 Build the embedded Monado library required for distortion processing
   ./build-monado.sh
+
+Build Ceres Solver, required for eyetracking and camera calibration. (The version in the Ubuntu repositories is too old; the camera calibration library requires v2.2.0 or newer.)
+  ./build-ceres.sh
 
 Optional: If you want to build the DepthAI backend, run the included script to build required libraries first:
   ./build-depthai-core.sh

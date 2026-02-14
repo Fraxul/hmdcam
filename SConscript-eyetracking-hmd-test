@@ -44,8 +44,7 @@ etEnv.Append(
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
     'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync', 'nvmedia_ijpd_sci',
     'nvToolsExt',
-    'ceres', 'glog',
-  ]
+  ] + etEnv['CERES_LIBS']
 )
 monadoStatics = \
     Glob(MONADO_BUILD + '/src/xrt/targets/common/*.a') + \

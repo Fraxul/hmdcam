@@ -80,9 +80,9 @@ if tegraEnv['IS_TEGRA']:
       'nvbufsurface', 'nvbufsurftransform',
       'nvmedia_iofa_sci', 'nvmedia_ijpd_sci',
       'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync',
-      'cudla', 'ceres', 'glog',
+      'cudla',
       'v4l2'
-    ],
+    ] + tegraEnv['CERES_LIBS'],
     CPPDEFINES=[
       'NO_OPENSSL', # live555 config directive
     ]
