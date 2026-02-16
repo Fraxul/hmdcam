@@ -805,6 +805,7 @@ int main(int argc, char* argv[]) {
         if (!debugNoRepeatingCapture)
           argusCamera->setRepeatCapture(!((bool) calibrationContext));
 
+        nvtxMarkA("ArgusCamera::readFrame()");
         argusCamera->readFrame();
       } else {
         restartSkipFrameCounter -= 1;
@@ -820,6 +821,7 @@ int main(int argc, char* argv[]) {
 
       // TODO move this inside CameraSystem
       if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext) {
+        nvtxMarkA("DepthMapGenerator::processFrame()");
         depthMapGenerator->processFrame();
       }
 
@@ -860,6 +862,7 @@ int main(int argc, char* argv[]) {
 
 
       if (calibrationContext || drawUI) {
+        nvtxMarkA("ImGUI (full)");
         // GUI support
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents, since we don't provide a way to resize the UI
@@ -1154,6 +1157,7 @@ int main(int argc, char* argv[]) {
         }
 
       } else {
+        nvtxMarkA("ImGUI (statusbar)");
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, 0), 0, /*pivot=*/ImVec2(0.5f, 0.0f)); // top-center aligned
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents
         ImGui::Begin("StatusBar", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
