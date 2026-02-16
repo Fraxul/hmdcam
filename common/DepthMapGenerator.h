@@ -110,9 +110,7 @@ protected:
 
   struct ViewData {
     ViewData() {}
-    virtual ~ViewData() {
-      CUDA_SAFE_FREE(m_medianFilterScratchBuffer);
-    }
+    virtual ~ViewData() { }
 
     bool m_isStereoView = false;
     bool m_isVerticalStereo = false;
@@ -130,8 +128,7 @@ protected:
 
     cv::cuda::GpuMat m_disparityGpuMat;
 
-    cv::cuda::GpuMat m_disparityMedianFilterSourceGpuMat;
-    CUdeviceptr m_medianFilterScratchBuffer = 0;
+    cv::cuda::GpuMat m_disparityMedianFilterDestGpuMat;
 
     RHISurface::ptr m_disparityTexture;
     RHISurface::ptr m_leftGray, m_rightGray;
