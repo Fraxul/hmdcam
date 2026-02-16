@@ -428,6 +428,10 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
 
     // Tell OFA to wait on the pre fence for this frame
     NVMEDIA_CHECK(NvMediaIOFAInsertPreNvSciSyncFence(m_iofa, &vd->m_ofaPreSync->m_nvSciSyncFence));
+
+    // We must clear the pre-fence after handing it off to IOFA, as prep for the next loop.
+    NvSciSyncFenceClear(&vd->m_ofaPreSync->m_nvSciSyncFence);
+
     // EOF sync object needs to be provided before frame submission
     NVMEDIA_CHECK(NvMediaIOFASetNvSciSyncObjforEOF(m_iofa, vd->m_ofaEofSync->m_nvSciSync));
 
