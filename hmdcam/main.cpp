@@ -146,7 +146,7 @@ struct FrameTimingData {
   float captureLatencyMs = 0;
   float captureIntervalMs = 0;
 
-  float captureIntervalAdjustmentMarker = 0;
+  float captureTimingAdjustmentMarker = 0;
 
   float viewRenderTimeMs = 0;
   float distortionRenderTimeMs = 0;
@@ -600,6 +600,8 @@ int main(int argc, char* argv[]) {
       uint64_t syncWaitStartTime = currentTimeNs();
       uint64_t syncWaitEndTime = syncWaitStartTime + (10 * 1'000'000'000ULL); // timeout
 
+      bool extsyncOK = false;
+
       while (true) {
         uint64_t frameStartTime = currentTimeNs();
 
@@ -611,6 +613,7 @@ int main(int argc, char* argv[]) {
           }
           if (c == '1') {
             printf("Extsync status flag set after %u ms\n", (unsigned int) deltaTimeMs(syncWaitStartTime, frameStartTime));
+            extsyncOK = true;
             break;
           }
         }
@@ -685,6 +688,10 @@ int main(int argc, char* argv[]) {
 
       if (extsync_fd >= 0) {
         close(extsync_fd);
+      }
+
+      if (extsyncOK) {
+        argusCamera->setUsingExternalSync(true);
       }
     }
 
@@ -1050,7 +1057,7 @@ int main(int argc, char* argv[]) {
               ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
               ImPlot::SetupFinish();
 
-              ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureIntervalAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureTimingAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::EndPlot();
@@ -1626,7 +1633,7 @@ int main(int argc, char* argv[]) {
 
       timingData.captureLatencyMs = currentCaptureLatencyMs;
       timingData.captureIntervalMs = currentCaptureIntervalMs;
-      timingData.captureIntervalAdjustmentMarker = argusCamera->didAdjustCaptureIntervalThisFrame() ? 10.0f : 0.0;
+      timingData.captureTimingAdjustmentMarker = argusCamera->didAdjustCaptureTimingThisFrame() ? 10.0f : 0.0;
 
       s_timingDataBuffer.push_back(timingData);
     } // Camera rendering loop

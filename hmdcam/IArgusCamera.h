@@ -30,6 +30,9 @@ public:
   virtual void loadSettings(cv::FileStorage&) = 0;
   virtual void saveSettings(cv::FileStorage&) = 0;
 
+  virtual void setUsingExternalSync(bool) {}
+  bool didAdjustCaptureTimingThisFrame() const { return m_didAdjustCaptureTimingThisFrame; }
+
   // ====================
 
 
@@ -37,11 +40,6 @@ public:
 
   uint64_t targetCaptureIntervalNs() const { return m_targetCaptureIntervalNs; }
   void setTargetCaptureIntervalNs(uint64_t value) { m_targetCaptureIntervalNs = value; }
-
-  bool didAdjustCaptureIntervalThisFrame() const { return m_didAdjustCaptureIntervalThisFrame; }
-  bool willAdjustCaptureInterval() const { return m_adjustCaptureInterval; }
-  void setAdjustCaptureInterval(bool value) { m_adjustCaptureInterval = value; }
-
 
   const glm::vec2& acRegionCenter() const { return m_acRegionCenter; }
   const glm::vec2& acRegionSize() const { return m_acRegionSize; }
@@ -74,9 +72,7 @@ protected:
   std::vector<FrameMetadata_t> m_frameMetadata;
   uint64_t m_oldestSensorTimestamp; // Oldest timestamp across all sensors for the most recently acquired frame. Updated in readFrame().
 
-  bool m_adjustCaptureInterval = false;
-  bool m_didAdjustCaptureIntervalThisFrame = false;
-  int m_adjustCaptureCooldownFrames = 96;
-  int m_adjustCaptureEvalWindowFrames = 64;
+  // Set in derived class
+  bool m_didAdjustCaptureTimingThisFrame = false;
 };
 

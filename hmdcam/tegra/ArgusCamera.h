@@ -50,6 +50,16 @@ public:
   virtual void loadSettings(cv::FileStorage&);
   virtual void saveSettings(cv::FileStorage&);
 
+  virtual void setUsingExternalSync(bool usingExternalSync) {
+    m_usingExternalSync = usingExternalSync;
+
+    if (usingExternalSync) {
+      // Turn off session skew and capture interval adjustments in extsync mode, since we don't control the timing.
+      m_adjustSessionSkew = false;
+      m_adjustCaptureInterval = false;
+    }
+  }
+
   void setCaptureDurationOffset(int64_t ns);
   int64_t captureDurationOffset() const;
 
@@ -83,6 +93,8 @@ private:
   CaptureIntervalStats_t m_captureIntervalStats;
 
   void setCaptureDurationNs(uint64_t captureDurationNs);
+
+  bool didAdjustCaptureTimingThisFrame() const { return m_didAdjustCaptureTimingThisFrame; }
 
   // Shared camera provider
   Argus::UniqueObj<Argus::CameraProvider> m_cameraProvider;
@@ -171,7 +183,10 @@ private:
   ScrollingBuffer<SensorTimingData> m_sensorTimingData = ScrollingBuffer<SensorTimingData>(512);
 
 
+  bool m_usingExternalSync = false;
   bool m_adjustSessionSkew = true;
+
+  bool m_adjustCaptureInterval = false;
 
   mutable RHISurface::ptr m_tmpBlitSurface;
   mutable RHIRenderTarget::ptr m_tmpBlitRT;

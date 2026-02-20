@@ -59,13 +59,16 @@ int64_t u64_diff(uint64_t lhs, uint64_t rhs) {
   return (lhs > rhs) ? (int64_t)abs_diff : -(int64_t)abs_diff;
 }
 
+constexpr int kAdjustCaptureCooldownFrames = 96;
+constexpr int kAdjustCaptureEvalWindowFrames = 64;
+
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framerate) :
   m_display(display_), m_context(context_),
   m_shouldResubmitCaptureRequest(false),
   m_captureIsRepeating(false),
   m_minAcRegionWidth(0),
   m_minAcRegionHeight(0),
-  m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = m_adjustCaptureEvalWindowFrames) {
+  m_captureIntervalStats(boost::accumulators::tag::rolling_window::window_size = kAdjustCaptureEvalWindowFrames) {
 
   m_targetCaptureIntervalNs = 1000000000.0 / framerate;
 
@@ -689,13 +692,13 @@ bool ArgusCamera::readFrame() {
     m_sessionTimingData.push_back(td);
   }
 
-  m_didAdjustCaptureIntervalThisFrame = false;
+  m_didAdjustCaptureTimingThisFrame = false;
   int64_t newCaptureDuration = m_currentCaptureDurationNs;
   bool shouldUpdateCaptureDuration = false;
 
-  if (captureOK && m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > m_adjustCaptureCooldownFrames) && m_previousSensorTimestampNs)) {
+  if (captureOK && m_adjustCaptureInterval && m_captureIsRepeating && (((++m_samplesAtCurrentDuration) > kAdjustCaptureCooldownFrames) && m_previousSensorTimestampNs)) {
 
-    if (boost::accumulators::rolling_count(m_captureIntervalStats) >= m_adjustCaptureEvalWindowFrames) {
+    if (boost::accumulators::rolling_count(m_captureIntervalStats) >= kAdjustCaptureEvalWindowFrames) {
 
       int64_t durationToTSDeltaOffset = boost::accumulators::rolling_mean(m_captureIntervalStats) - m_currentCaptureDurationNs;
 
@@ -824,7 +827,7 @@ void ArgusCamera::setCaptureDurationNs(uint64_t captureDurationNs) {
 
   m_currentCaptureDurationNs = captureDurationNs;
   m_samplesAtCurrentDuration = 0;
-  m_didAdjustCaptureIntervalThisFrame = true;
+  m_didAdjustCaptureTimingThisFrame = true;
   m_shouldResubmitCaptureRequest = true;
 }
 
@@ -984,7 +987,7 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
     ImPlot::EndPlot();
   }
 
-  if (sessionCount() > 1) {
+  if ((m_usingExternalSync == false) && sessionCount() > 1) {
     ImGui::Checkbox("Auto-adjust skew", &m_adjustSessionSkew);
     for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
       int offsetScaled = m_perSessionData[sessionIdx].m_durationSkew_ns / 10000;
@@ -1001,21 +1004,15 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
   }
 
 
-  settingsDirty |= ImGui::Checkbox("Auto-adjust capture interval", &m_adjustCaptureInterval);
+  if (!m_usingExternalSync) {
+    settingsDirty |= ImGui::Checkbox("Auto-adjust capture interval", &m_adjustCaptureInterval);
 
-  if (m_adjustCaptureInterval) {
-    ImGui::SliderInt("Adjustment Cooldown Frames", &m_adjustCaptureCooldownFrames, 1, 64);
-    if (ImGui::SliderInt("Adjustment Tgt Eval Window", &m_adjustCaptureEvalWindowFrames, 1, 256)) {
-      m_captureIntervalStats = CaptureIntervalStats_t(boost::accumulators::tag::rolling_window::window_size = m_adjustCaptureEvalWindowFrames);
+    int offsetUs = captureDurationOffset() / 1000;
+    if (ImGui::SliderInt("Offset (us)", &offsetUs, -30, 30)) {
+      setCaptureDurationOffset(offsetUs * 1000);
+      settingsDirty = true;
     }
   }
-
-  int offsetUs = captureDurationOffset() / 1000;
-  if (ImGui::SliderInt("Offset (us)", &offsetUs, -30, 30)) {
-    setCaptureDurationOffset(offsetUs * 1000);
-    settingsDirty = true;
-  }
-
 
   return settingsDirty;
 }
