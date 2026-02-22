@@ -436,10 +436,13 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     NVMEDIA_CHECK(NvMediaIOFASetNvSciSyncObjforEOF(m_iofa, vd->m_ofaEofSync->m_nvSciSync));
 
     // OFA processing
-    NVMEDIA_CHECK(NvMediaIOFAProcessFrame(m_iofa, &vd->m_ofaSurfArray, &m_iofaProcessParams, /*pEpiInfo=*/ nullptr, /*pROIParams=*/ nullptr));
+    vd->m_ofaSubmissionOK = NVMEDIA_CHECK_NONFATAL(NvMediaIOFAProcessFrame(m_iofa, &vd->m_ofaSurfArray, &m_iofaProcessParams, /*pEpiInfo=*/ nullptr, /*pROIParams=*/ nullptr));
 
     // Get EOF fence so CUDA can wait on it later
-    NVMEDIA_CHECK(NvMediaIOFAGetEOFNvSciSyncFence(m_iofa, vd->m_ofaEofSync->m_nvSciSync, &vd->m_ofaEofSync->m_nvSciSyncFence));
+    if (vd->m_ofaSubmissionOK) {
+      NVMEDIA_CHECK(NvMediaIOFAGetEOFNvSciSyncFence(m_iofa, vd->m_ofaEofSync->m_nvSciSync, &vd->m_ofaEofSync->m_nvSciSyncFence));
+    }
+
   } // view loop
 
   CUDA_CHECK(cuEventRecord(m_ofaHandoffCompleteEvent, (CUstream) m_globalStream.cudaPtr()));
@@ -450,7 +453,9 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
-    vd->m_ofaEofSync->waitNvSciToCuda((CUstream) m_globalStream.cudaPtr());
+    if (vd->m_ofaSubmissionOK) {
+      vd->m_ofaEofSync->waitNvSciToCuda((CUstream) m_globalStream.cudaPtr());
+    }
   }
 
   // Frame finished event occurs after the CUDA stream has waited on all OFA processing

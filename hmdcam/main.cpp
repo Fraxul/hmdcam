@@ -7,6 +7,7 @@
 #include <sys/time.h>
 #include <signal.h>
 #include <dlfcn.h>
+#include <cuda.h>
 
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
@@ -704,13 +705,19 @@ int main(int argc, char* argv[]) {
       argusCamera->readFrame();
       uint64_t processFrameStart = currentTimeNs();
       depthMapGenerator->processFrame();
+      // Must call cuCtxSynchronize during warmup to ensure that the depth map generation process is actually finished,
+      // since we're not submitting any other work that depends on it.
+      // For the OFA backend, this also ensures that we don't stack up too many in-flight frames and fill the OFA ring buffer, which is quite small.
+      cuCtxSynchronize();
       printf("Depth Map Generator warmup took %.3f ms\n", deltaTimeMs(processFrameStart, currentTimeNs()));
-#if 1
+#if 0
       argusCamera->readFrame();
       processFrameStart = currentTimeNs();
       depthMapGenerator->processFrame();
+      cuCtxSynchronize();
       printf("Depth Map Generator 2nd frame took %.3f ms\n", deltaTimeMs(processFrameStart, currentTimeNs()));
-#else
+#endif
+#if 0
       for (size_t i = 0; i < 100; ++i) {
         uint64_t readFrameStart = currentTimeNs();
         argusCamera->readFrame();

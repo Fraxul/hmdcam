@@ -81,6 +81,8 @@ protected:
     // Hold on to the NvMediaIofaBufArray to save a little CPU during frame processing,
     // since it doesn't change.
     NvMediaIofaBufArray m_ofaSurfArray;
+
+    bool m_ofaSubmissionOK = false;
   };
 
   virtual ViewData* newEmptyViewData() { return new ViewDataOFA(); }

@@ -5,6 +5,7 @@
 #include "nvscibuf.h"
 
 #define NVMEDIA_CHECK(x) checkNvMediaStatus(x, #x, __FILE__, __LINE__, true)
+#define NVMEDIA_CHECK_NONFATAL(x) checkNvMediaStatus(x, #x, __FILE__, __LINE__, false)
 #define NVSCI_CHECK(x) checkNvSciError(x, #x, __FILE__, __LINE__, true)
 bool checkNvMediaStatus(NvMediaStatus res, const char* op, const char* file, int line, bool fatal);
 bool checkNvSciError(NvSciError res, const char* op, const char* file, int line, bool fatal);
