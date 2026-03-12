@@ -8,7 +8,7 @@
 #include <signal.h>
 
 #include <opencv2/highgui.hpp>
-#include <opencv2/videoio.hpp>
+// #include <opencv2/videoio.hpp>
 
 #include "common/Timing.h"
 

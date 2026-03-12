@@ -23,7 +23,7 @@ etEnv.Program(
     + ['eyetracking/test/eyetracking-test.cpp'],
   LIBS=[
     'pthread', 'rt',
-    'opencv_core', 'opencv_imgproc', 'opencv_videoio', 'opencv_highgui',
+    'opencv_core', 'opencv_imgproc', 'opencv_highgui',
     'cuda', 'cudla', 'cudart',
     'boost_thread',
     'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync', 'nvmedia_ijpd_sci',
