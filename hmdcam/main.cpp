@@ -79,6 +79,7 @@ uint64_t settingsAutosaveIntervalFrames = 1000; // will be recomputed when we kn
 IArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
 DebugServer* debugServer = nullptr;
+DepthMapGenerator* depthMapGenerator = nullptr;
 #ifdef USE_EYETRACKING
 EyeTrackingService* eyeTrackingService = nullptr;
 FaceTrackingService* faceTrackingService = nullptr;
@@ -304,7 +305,7 @@ int main(int argc, char* argv[]) {
   // will break EGL initialization in libargus and nvbufsurface.
   unsetenv("DISPLAY");
 
-  DepthMapGenerator* depthMapGenerator = createDepthMapGenerator(depthBackend);
+  depthMapGenerator = createDepthMapGenerator(depthBackend);
 
   if (depthBackend == kDepthBackendDepthAI) {
     // Set thread affinity.

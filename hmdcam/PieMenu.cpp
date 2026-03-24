@@ -24,6 +24,7 @@ struct PieMenuContext
 		bool			m_oItemIsSubMenu[c_iMaxPieItemCount];
 		ImVector<char>	m_oItemNames[c_iMaxPieItemCount];
 		ImVec2			m_oItemSizes[c_iMaxPieItemCount];
+		bool      m_oItemIsEnabled[c_iMaxPieItemCount];
 	};
 
 	PieMenuContext()
@@ -69,7 +70,7 @@ void BeginPieMenuEx()
 void EndPieMenuEx()
 {
 	IM_ASSERT(s_oPieMenuContext.m_iCurrentIndex >= 0);
-	PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentIndex];
+	// PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentIndex];
 
 	--s_oPieMenuContext.m_iCurrentIndex;
 }
@@ -139,7 +140,7 @@ void EndPiePopup()
 		PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[iIndex];
 
 		float fMenuHeight = sqrt(oPieMenu.m_fMaxItemSqrDiameter);
- 
+
 		const float fMinRadius = fCurrentRadius;
 		const float fMaxRadius = fMinRadius + (fMenuHeight * oPieMenu.m_iCurrentIndex) / ( 2.f );
 				
@@ -151,7 +152,7 @@ void EndPiePopup()
 		for( int item_n = 0; item_n < oPieMenu.m_iCurrentIndex; item_n++ )
 		{
 			const char* item_label = oPieMenu.m_oItemNames[ item_n ].Data;
-			const float inner_spacing = oStyle.ItemInnerSpacing.x / fMinRadius / 2;
+			// const float inner_spacing = oStyle.ItemInnerSpacing.x / fMinRadius / 2;
 			const float fMinInnerSpacing = oStyle.ItemInnerSpacing.x / ( fMinRadius * 2.f );
 			const float fMaxInnerSpacing = oStyle.ItemInnerSpacing.x / ( fMaxRadius * 2.f );
 			const float item_inner_ang_min = item_arc_span * ( item_n - 0.5f + fMinInnerSpacing ) + fRotate;
@@ -229,7 +230,9 @@ void EndPiePopup()
 			ImVec2 text_pos = ImVec2(
 				s_oPieMenuContext.m_oCenter.x + cosf((item_inner_ang_min + item_inner_ang_max) * 0.5f) * (fMinRadius + fMaxRadius) * 0.5f - text_size.x * 0.5f,
 				s_oPieMenuContext.m_oCenter.y + sinf((item_inner_ang_min + item_inner_ang_max) * 0.5f) * (fMinRadius + fMaxRadius) * 0.5f - text_size.y * 0.5f);
-			pDrawList->AddText(text_pos, ImColor(255, 255, 255), item_label);
+
+			ImU32 color = ImGui::GetColorU32(oPieMenu.m_oItemIsEnabled[item_n] ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+			pDrawList->AddText(text_pos, color, item_label);
 
 			if (hovered)
 				item_hovered = item_n;
@@ -283,7 +286,7 @@ void EndPiePopup()
 	ImGui::PopStyleVar(2);
 }
 
-bool BeginPieMenu(const char* pName, bool bEnabled)
+bool BeginPieMenu(const char* pName)
 {
 	IM_ASSERT(s_oPieMenuContext.m_iCurrentIndex >= 0 && s_oPieMenuContext.m_iCurrentIndex < PieMenuContext::c_iMaxPieItemCount);
 	
@@ -299,7 +302,9 @@ bool BeginPieMenu(const char* pName, bool bEnabled)
 		oPieMenu.m_fMaxItemSqrDiameter = fSqrDiameter;
 	}
 
+	bool bEnabled = !(ImGui::GetCurrentContext()->CurrentItemFlags & ImGuiItemFlags_Disabled);
 	oPieMenu.m_oItemIsSubMenu[oPieMenu.m_iCurrentIndex] = true;
+	oPieMenu.m_oItemIsEnabled[oPieMenu.m_iCurrentIndex] = bEnabled;
 
 	int iLen = strlen(pName);
 	ImVector<char>& oName = oPieMenu.m_oItemNames[oPieMenu.m_iCurrentIndex];
@@ -307,7 +312,7 @@ bool BeginPieMenu(const char* pName, bool bEnabled)
 	oName[iLen] = '\0';
 	memcpy(oName.Data, pName, iLen);
 
-	if (oPieMenu.m_iLastHoveredItem == oPieMenu.m_iCurrentIndex)
+	if (oPieMenu.m_iLastHoveredItem == oPieMenu.m_iCurrentIndex && bEnabled)
 	{
 		++oPieMenu.m_iCurrentIndex;
 
@@ -325,7 +330,7 @@ void EndPieMenu()
 	--s_oPieMenuContext.m_iCurrentIndex;
 }
 
-bool PieMenuItem(const char* pName, bool bEnabled)
+bool PieMenuItem(const char* pName)
 {
 	IM_ASSERT(s_oPieMenuContext.m_iCurrentIndex >= 0 && s_oPieMenuContext.m_iCurrentIndex < PieMenuContext::c_iMaxPieItemCount);
 
@@ -341,7 +346,9 @@ bool PieMenuItem(const char* pName, bool bEnabled)
 		oPieMenu.m_fMaxItemSqrDiameter = fSqrDiameter;
 	}
 
+	bool bEnabled = !(ImGui::GetCurrentContext()->CurrentItemFlags & ImGuiItemFlags_Disabled);
 	oPieMenu.m_oItemIsSubMenu[oPieMenu.m_iCurrentIndex] = false;
+	oPieMenu.m_oItemIsEnabled[oPieMenu.m_iCurrentIndex] = bEnabled;
 
 	int iLen = strlen(pName);
 	ImVector<char>& oName = oPieMenu.m_oItemNames[oPieMenu.m_iCurrentIndex];
@@ -354,6 +361,7 @@ bool PieMenuItem(const char* pName, bool bEnabled)
 
 	if( bActive )
 		s_oPieMenuContext.m_bClose = true;
-	return bActive;
+
+	return bActive && bEnabled;
 }
 
