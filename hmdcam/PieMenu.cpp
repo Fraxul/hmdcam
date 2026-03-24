@@ -142,8 +142,11 @@ void EndPiePopup() {
       const float item_outer_ang_min = item_arc_span * ( item_n - 0.5f + fMaxInnerSpacing ) + fRotate;
       const float item_outer_ang_max = item_arc_span * ( item_n + 0.5f - fMaxInnerSpacing ) + fRotate;
 
+      // Hit-test mouse cursor vs. item
       bool hovered = false;
-      if( fDragDistSqr >= fMinRadius * fMinRadius && fDragDistSqr < fMaxRadius * fMaxRadius ) {
+      // Pointer is allowed to exit fMaxRadius if we're on the outer ring of the menu.
+      // This implements a "gesture" style, where you can drag past the outer ring to select.
+      if ((fDragDistSqr >= (fMinRadius * fMinRadius)) && ((iIndex == s_oPieMenuContext.m_iMaxStackIndex) || (fDragDistSqr < (fMaxRadius * fMaxRadius)))) {
         while( ( drag_angle - item_inner_ang_min ) < 0.f )
           drag_angle += 2.f * IM_PI;
         while( ( drag_angle - item_inner_ang_min ) > 2.f * IM_PI )
@@ -221,6 +224,7 @@ void EndPiePopup() {
 
     oPieMenu.m_iHoveredItem = item_hovered;
 
+    // Snap back to last hovered item on cursor exiting the outer ring.
     if (fDragDistSqr >= fMaxRadius * fMaxRadius)
       item_hovered = oPieMenu.m_iLastHoveredItem;
 
