@@ -58,6 +58,10 @@ public:
   bool m_debugSaveBadFitImages = false;
   uint32_t m_debugSaveBadFitIntervalMs = 500; // Write at most one image per this many ms
 
+  void debugClearCalibration() {
+    PER_EYE m_processingState[eyeIdx].m_shouldClearCalibration = true;
+  }
+
 
   enum CalibrationState {
     kWaitingForValidFrames,
@@ -117,6 +121,7 @@ public:
     float m_centerYawDeg = 0.0f;
 
     CalibrationState m_calibrationState = kWaitingForValidFrames;
+    bool m_shouldClearCalibration = false;
 
     // Center offset of the camera capture, used for translating between the eye-fitter
     // coordinate system (zero at center) and the capture/image coordinate system (zero at left-top)

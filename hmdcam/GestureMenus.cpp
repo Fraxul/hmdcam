@@ -87,6 +87,10 @@ void GestureMenuTick() {
         eyeTrackingService->m_debugShowFeedbackView = !eyeTrackingService->m_debugShowFeedbackView;
       }
 
+      if (PieMenuItem("Recalibrate")) {
+        eyeTrackingService->debugClearCalibration();
+      }
+
       if (PieMenuItem(eyeTrackingService->m_debugDisableProcessing ? "Enable\nProcessing" : "Disable\nProcessing")) {
         eyeTrackingService->m_debugDisableProcessing = !eyeTrackingService->m_debugDisableProcessing;
       }

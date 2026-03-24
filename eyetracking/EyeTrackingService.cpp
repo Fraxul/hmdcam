@@ -262,7 +262,20 @@ void EyeTrackingService::saveCalibrationData(cv::FileStorage& fs) {
 
 void EyeTrackingService::ProcessingState::postprocessOneEye() {
   const uint32_t kContiguousValidFrameCountThreshold = 100;
-  const uint32_t kInvalidFrameCountThreshold = 300; // Number of invalid frames in a row to throw away the calibration and start over
+  const uint32_t kInvalidFrameCountThreshold = 2000; // Number of invalid frames in a row to throw away the calibration and start over
+
+  // Trigger/flag set by the main thread
+  if (m_shouldClearCalibration) {
+    printf("EyeTrackingService::postprocessOneEye(%zu): calibration reset requested\n", m_eyeIdx);
+    m_shouldClearCalibration = false;
+
+    // Wipe calibration state and start over
+    m_calibrationState = kWaitingForValidFrames;
+    m_calibrationSamples.clear();
+    m_contiguousValidFrameCounter = 0;
+    m_contiguousInvalidFrameCounter = 0;
+    m_lastInvalidFrameRunLength = 0;
+  }
 
   bool fitEllipse = postprocessOneEye_fitEllipse();
 
@@ -1126,6 +1139,10 @@ void EyeTrackingService::renderIMGUI() {
   if (m_debugShowFeedbackView) {
     ImGui::DragFloat("FB brightness", &m_debugFeedbackBrightness, /*speed=*/ 0.05f, /*min=*/ 0.0f, /*max=*/ 1.0f, "%.2f");
     ImGui::Checkbox("Draw debug overlays", &m_debugDrawOverlays);
+  }
+
+  if (ImGui::Button("Recalibrate")) {
+    debugClearCalibration();
   }
 
   if (ImGui::CollapsingHeader("Data graphs")) {
