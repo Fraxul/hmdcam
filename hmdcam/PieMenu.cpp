@@ -9,6 +9,7 @@ struct PieMenuContext {
   static const int  c_iMaxPieItemCount = 12;
   static const int  c_iRadiusEmpty = 30;
   static const int  c_iRadiusMin = 30;
+  static const int  c_iRadiusPadding = 10; // Padding added to computed menu height (max of diameters of all items in that menu level)
   static const int  c_iMinItemCount = 3;
   static const int  c_iMinItemCountPerLevel = 3;
 
@@ -53,8 +54,6 @@ void BeginPieMenuEx() {
   oPieMenu.m_fMaxItemSqrDiameter = 0.f;
   if( !ImGui::IsMouseReleased( s_oPieMenuContext.m_iMouseButton ) )
     oPieMenu.m_iHoveredItem = -1;
-  if (s_oPieMenuContext.m_iCurrentStackIndex > 0)
-    oPieMenu.m_fMaxItemSqrDiameter = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentStackIndex - 1].m_fMaxItemSqrDiameter;
 }
 
 void EndPieMenuEx() {
@@ -122,8 +121,11 @@ void EndPiePopup() {
 
     float fMenuHeight = sqrt(oPieMenu.m_fMaxItemSqrDiameter);
 
+    // Compute inner and outer radius for this level of the menu.
+    // Inner radius is the outer radius of the previous level.
     const float fMinRadius = fCurrentRadius;
-    const float fMaxRadius = fMinRadius + (fMenuHeight * oPieMenu.m_iCurrentIndex) / ( 2.f );
+    // Outer radius offset is based on the size of the contained items (fMenuHeight), plus padding (PieMenuContext::c_iRadiusPadding).
+    const float fMaxRadius = fMinRadius + ImMax(static_cast<float>(PieMenuContext::c_iRadiusEmpty), fMenuHeight + PieMenuContext::c_iRadiusPadding);
 
     const float item_arc_span = 2 * IM_PI / ImMax(PieMenuContext::c_iMinItemCount + PieMenuContext::c_iMinItemCountPerLevel * iIndex, oPieMenu.m_iCurrentIndex);
     float drag_angle = atan2f(oDragDelta.y, oDragDelta.x);
