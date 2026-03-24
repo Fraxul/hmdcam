@@ -25,18 +25,13 @@ struct PieMenuContext {
     bool            m_oItemIsEnabled[c_iMaxPieItemCount];
   };
 
-  PieMenuContext() {
-    m_iCurrentIndex = -1;
-    m_iLastFrame = 0;
-  }
-
   PieMenu   m_oPieMenuStack[c_iMaxPieMenuStack];
-  int       m_iCurrentIndex;
-  int       m_iMaxIndex;
-  int       m_iLastFrame;
+  int       m_iCurrentStackIndex = -1;
+  int       m_iMaxStackIndex = -1;
+  int       m_iLastRenderedFrame = 0;
   ImVec2    m_oCenter;
-  int       m_iMouseButton;
-  bool      m_bClose;
+  int       m_iMouseButton = 0;
+  bool      m_bClose = false;
 };
 
 static PieMenuContext s_oPieMenuContext;
@@ -48,25 +43,25 @@ bool IsPopupOpen(const char* pName) {
 }
 
 void BeginPieMenuEx() {
-  IM_ASSERT(s_oPieMenuContext.m_iCurrentIndex < PieMenuContext::c_iMaxPieMenuStack);
+  IM_ASSERT(s_oPieMenuContext.m_iCurrentStackIndex < PieMenuContext::c_iMaxPieMenuStack);
 
-  ++s_oPieMenuContext.m_iCurrentIndex;
-  ++s_oPieMenuContext.m_iMaxIndex;
+  ++s_oPieMenuContext.m_iCurrentStackIndex;
+  ++s_oPieMenuContext.m_iMaxStackIndex;
 
-  PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentIndex];
+  PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentStackIndex];
   oPieMenu.m_iCurrentIndex = 0;
   oPieMenu.m_fMaxItemSqrDiameter = 0.f;
   if( !ImGui::IsMouseReleased( s_oPieMenuContext.m_iMouseButton ) )
     oPieMenu.m_iHoveredItem = -1;
-  if (s_oPieMenuContext.m_iCurrentIndex > 0)
-    oPieMenu.m_fMaxItemSqrDiameter = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentIndex - 1].m_fMaxItemSqrDiameter;
+  if (s_oPieMenuContext.m_iCurrentStackIndex > 0)
+    oPieMenu.m_fMaxItemSqrDiameter = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentStackIndex - 1].m_fMaxItemSqrDiameter;
 }
 
 void EndPieMenuEx() {
-  IM_ASSERT(s_oPieMenuContext.m_iCurrentIndex >= 0);
-  // PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentIndex];
+  IM_ASSERT(s_oPieMenuContext.m_iCurrentStackIndex >= 0);
+  // PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentStackIndex];
 
-  --s_oPieMenuContext.m_iCurrentIndex;
+  --s_oPieMenuContext.m_iCurrentStackIndex;
 }
 
 bool BeginPiePopup(const char* pName, int iMouseButton) {
@@ -83,12 +78,12 @@ bool BeginPiePopup(const char* pName, int iMouseButton) {
     bool bOpened = ImGui::BeginPopup(pName, ImGuiWindowFlags_NoBackground);
     if (bOpened) {
       int iCurrentFrame = ImGui::GetFrameCount();
-      if (s_oPieMenuContext.m_iLastFrame < (iCurrentFrame - 1)) {
+      if (s_oPieMenuContext.m_iLastRenderedFrame < (iCurrentFrame - 1)) {
         s_oPieMenuContext.m_oCenter = ImGui::GetIO().MousePos;
       }
-      s_oPieMenuContext.m_iLastFrame = iCurrentFrame;
+      s_oPieMenuContext.m_iLastRenderedFrame = iCurrentFrame;
 
-      s_oPieMenuContext.m_iMaxIndex = -1;
+      s_oPieMenuContext.m_iMaxStackIndex = -1;
       BeginPieMenuEx();
 
       return true;
@@ -122,7 +117,7 @@ void EndPiePopup() {
 
   const float c_fDefaultRotate = -IM_PI / 2.f;
   float fLastRotate = c_fDefaultRotate;
-  for (int iIndex = 0; iIndex <= s_oPieMenuContext.m_iMaxIndex; ++iIndex) {
+  for (int iIndex = 0; iIndex <= s_oPieMenuContext.m_iMaxStackIndex; ++iIndex) {
     PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[iIndex];
 
     float fMenuHeight = sqrt(oPieMenu.m_fMaxItemSqrDiameter);
@@ -160,9 +155,9 @@ void EndPiePopup() {
 
       int arc_segments = (int)( 32 * item_arc_span / ( 2 * IM_PI ) ) + 1;
 
-      ImU32 iColor = hovered ? ImColor( 100, 100, 150 ) : ImColor( 70, 70, 70 );
-      iColor = ImGui::GetColorU32( hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg );
-      iColor = ImGui::GetColorU32( hovered ? ImGuiCol_Button : ImGuiCol_ButtonHovered );
+      //ImU32 iColor = hovered ? ImColor( 100, 100, 150 ) : ImColor( 70, 70, 70 );
+      //iColor = ImGui::GetColorU32( hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg );
+      ImU32 iColor = ImGui::GetColorU32( hovered ? ImGuiCol_Button : ImGuiCol_ButtonHovered );
       //iColor |= 0xFF000000;
 
       const float fAngleStepInner = (item_inner_ang_max - item_inner_ang_min) / arc_segments;
@@ -262,9 +257,9 @@ void EndPiePopup() {
 }
 
 bool BeginPieMenu(const char* pName) {
-  IM_ASSERT(s_oPieMenuContext.m_iCurrentIndex >= 0 && s_oPieMenuContext.m_iCurrentIndex < PieMenuContext::c_iMaxPieItemCount);
+  IM_ASSERT(s_oPieMenuContext.m_iCurrentStackIndex >= 0 && s_oPieMenuContext.m_iCurrentStackIndex < PieMenuContext::c_iMaxPieMenuStack);
 
-  PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentIndex];
+  PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentStackIndex];
 
   ImVec2 oTextSize = ImGui::CalcTextSize(pName, NULL, true);
   oPieMenu.m_oItemSizes[oPieMenu.m_iCurrentIndex] = oTextSize;
@@ -297,14 +292,14 @@ bool BeginPieMenu(const char* pName) {
 }
 
 void EndPieMenu() {
-  IM_ASSERT(s_oPieMenuContext.m_iCurrentIndex >= 0 && s_oPieMenuContext.m_iCurrentIndex < PieMenuContext::c_iMaxPieItemCount);
-  --s_oPieMenuContext.m_iCurrentIndex;
+  IM_ASSERT(s_oPieMenuContext.m_iCurrentStackIndex >= 0 && s_oPieMenuContext.m_iCurrentStackIndex < PieMenuContext::c_iMaxPieMenuStack);
+  --s_oPieMenuContext.m_iCurrentStackIndex;
 }
 
 bool PieMenuItem(const char* pName) {
-  IM_ASSERT(s_oPieMenuContext.m_iCurrentIndex >= 0 && s_oPieMenuContext.m_iCurrentIndex < PieMenuContext::c_iMaxPieItemCount);
+  IM_ASSERT(s_oPieMenuContext.m_iCurrentStackIndex >= 0 && s_oPieMenuContext.m_iCurrentStackIndex < PieMenuContext::c_iMaxPieMenuStack);
 
-  PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentIndex];
+  PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentStackIndex];
 
   ImVec2 oTextSize = ImGui::CalcTextSize(pName, NULL, true);
   oPieMenu.m_oItemSizes[oPieMenu.m_iCurrentIndex] = oTextSize;
