@@ -49,7 +49,7 @@
 #include "Render.h"
 #include "RenderBackend.h"
 #include "RenderDebug.h"
-#include "nvToolsExt.h"
+#include <nvtx3/nvToolsExt.h>
 
 #include "imgui_backend.h"
 #include "implot/implot.h"
@@ -237,6 +237,8 @@ struct DisparityScaleUniformBlock {
 };
 
 int main(int argc, char* argv[]) {
+
+  nvtxInitialize(nullptr);
 
 // Ignore warning diagnostics for flags that may go unused due to compile-time options
 #pragma clang diagnostic push

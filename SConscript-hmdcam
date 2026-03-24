@@ -40,7 +40,6 @@ tegraEnv.Append(
     'cuda', 'cudart',
     'nppc', 'nppidei', 'nppitc', 'nppif',
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
-    'nvToolsExt',
     'socketcan',
   ]
 )
