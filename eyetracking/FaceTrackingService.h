@@ -39,12 +39,11 @@ public:
 
   bool processFrame(); // Called from main thread
 
-  void CANTransmitTrackingData();
-
   void requestCapture();
 
   bool m_debugShowFeedbackView = false; // Draw camera(s) over the scene in renderSceneGizmos(). Required for getDebugView() to return anything.
   bool m_debugFreezeCapture = false;
+  bool m_debugDisableProcessing = false;
   float m_debugFeedbackBrightness = 1.0f;
   const char* getDebugPerfStats() { return m_processingState.getDebugPerfStats(); }
 

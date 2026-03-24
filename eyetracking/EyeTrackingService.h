@@ -42,8 +42,6 @@ public:
 
   bool processFrame(); // Called from main thread
 
-  void CANTransmitEyeAngles();
-
   void requestCapture();
 
   glm::vec2 getPitchYawAnglesForEye(size_t eyeIdx);
@@ -55,6 +53,7 @@ public:
   bool m_debugShowFeedbackView = false; // Draw eye camera(s) over the scene in renderSceneGizmos(). Required for getDebugViewForEye() to return anything.
   float m_debugFeedbackBrightness = 1.0f;
   bool m_debugFreezeCapture = false;
+  bool m_debugDisableProcessing = false;
 
   bool m_debugSaveBadFitImages = false;
   uint32_t m_debugSaveBadFitIntervalMs = 500; // Write at most one image per this many ms
@@ -184,6 +183,8 @@ public:
   ProcessingState m_processingState[2];
 
 protected:
+
+  void CANTransmitEyeAngles(); // called in processFrame()
 
   // Calibration data and settings
   float m_focalLength = 6.0; // millimeters. seems only vaguely related to the actual lens focal length.

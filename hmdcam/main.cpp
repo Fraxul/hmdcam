@@ -861,8 +861,6 @@ int main(int argc, char* argv[]) {
             }
           }
         }
-
-        eyeTrackingService->CANTransmitEyeAngles();
       }
 
       if (faceTrackingService && faceTrackingService->processFrame()) {
@@ -872,8 +870,6 @@ int main(int argc, char* argv[]) {
               frameCounter, faceTrackingService->getDebugPerfStats());
           }
         }
-
-        faceTrackingService->CANTransmitTrackingData();
       }
 #endif
 

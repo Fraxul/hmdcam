@@ -302,6 +302,7 @@ void FaceTrackingService::renderIMGUI() {
 
   bool dirty = false;
   ImGui::Checkbox("FT capture freeze", &m_debugFreezeCapture);
+  ImGui::Checkbox("FT Disable Processing", &m_debugDisableProcessing);
   ImGui::Checkbox("FT camera feedback view", &m_debugShowFeedbackView);
 
 
@@ -344,6 +345,9 @@ void FaceTrackingService::renderIMGUI() {
 }
 
 void FaceTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
+  if (m_debugDisableProcessing)
+    return;
+
   // TODO parameterize? or pull from external config
   const float feedbackViewDepth = 0.5f;
 
@@ -383,6 +387,9 @@ void FaceTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
 }
 
 void FaceTrackingService::renderSceneGizmos_postUI(FxRenderView* renderViews) {
+  if (m_debugDisableProcessing)
+    return;
+
   // TODO nothing to render here right now. Should add an overlay with bar graphs for the expression parameters or whatever
 }
 
@@ -408,15 +415,17 @@ void FaceTrackingService::requestCapture() {
 }
 
 bool FaceTrackingService::processFrame() {
+  if (m_debugDisableProcessing)
+    return false;
+
   // Copy some flags from the service to the tracking thread base
   m_processingState.m_debugFreezeCapture = m_debugFreezeCapture;
 
   m_processingState.processFrameHook();
 
-  return m_processingState.processingThreadAlive();
-}
+  if (!m_processingState.processingThreadAlive())
+    return false;
 
-void FaceTrackingService::CANTransmitTrackingData() {
   constexpr uint16_t kPortID = 202;
 
   // Signed 8-bit integer for brow position; 0 is neutral, 127 is full up, -127 is full down.
@@ -429,6 +438,8 @@ void FaceTrackingService::CANTransmitTrackingData() {
   buf.put_i8(browPosition);
 
   canbus()->transmitMessage(kPortID, buf);
+
+  return true;
 }
 
 void FaceTrackingService::applyCalibrationData() {

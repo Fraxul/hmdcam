@@ -1068,6 +1068,9 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
 
 
 bool EyeTrackingService::processFrame() {
+  if (m_debugDisableProcessing)
+    return false;
+
   FRAME_DEBUG_LOG("\x1b[2J\x1b[H"); // Clear terminal per frame
 
   // Processing thread maintenance:
@@ -1085,6 +1088,8 @@ bool EyeTrackingService::processFrame() {
     // printf("EyeTrackingService: no processing threads alive\n");
     return false;
   }
+
+  CANTransmitEyeAngles();
 
   return true;
 }
@@ -1116,6 +1121,7 @@ void EyeTrackingService::renderIMGUI() {
 
   ImGui::Checkbox("Auto-save bad fit images", &m_debugSaveBadFitImages);
   ImGui::Checkbox("ET capture freeze", &m_debugFreezeCapture);
+  ImGui::Checkbox("Disable Processing", &m_debugDisableProcessing);
   ImGui::Checkbox("ET camera feedback view", &m_debugShowFeedbackView);
   if (m_debugShowFeedbackView) {
     ImGui::DragFloat("FB brightness", &m_debugFeedbackBrightness, /*speed=*/ 0.05f, /*min=*/ 0.0f, /*max=*/ 1.0f, "%.2f");
@@ -1287,6 +1293,9 @@ void EyeTrackingService::CANTransmitEyeAngles() {
 }
 
 void EyeTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
+  if (m_debugDisableProcessing)
+    return;
+
   // TODO needs to support dual eye!
   // TODO parameterize? or pull from external config
   const float feedbackViewDepth = 0.5f;
@@ -1327,6 +1336,9 @@ void EyeTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
 }
 
 void EyeTrackingService::renderSceneGizmos_postUI(FxRenderView* renderViews) {
+  if (m_debugDisableProcessing)
+    return;
+
   // TODO needs to support dual eye!
 
   const float crosshairDepth = 0.4f;

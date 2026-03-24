@@ -158,7 +158,6 @@ int main(int argc, char* argv[]) {
               frameCounter, faceTrackingService->getDebugPerfStats());
           }
         }
-        faceTrackingService->CANTransmitTrackingData();
 
         // HACK: Transmit some empty eyetracking frames as well so that the eye controller will use the facetracking CAN data.
         {

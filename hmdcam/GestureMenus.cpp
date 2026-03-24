@@ -71,7 +71,8 @@ void GestureMenuTick() {
 
     if (BeginPieMenu("Render")) {
 
-      if (PieMenuItem("Toggle\nFixed\nDisparity")) {
+      bool useFixedDisparity = depthMapGenerator ? depthMapGenerator->debugUseFixedDisparity() : false;
+      if (PieMenuItem(useFixedDisparity ? "Disable\nFixed\nDisparity" : "Enable\nFixed\nDisparity")) {
         if (depthMapGenerator) {
           depthMapGenerator->setDebugUseFixedDisparity(!depthMapGenerator->debugUseFixedDisparity());
         }
@@ -80,19 +81,31 @@ void GestureMenuTick() {
       EndPieMenu();
     }
 
-    if (BeginPieMenu("Eye\nTrack")) {
 #ifdef USE_EYETRACKING
-      // TODO
-#endif
+    if (eyeTrackingService && BeginPieMenu("Eye\nTrack")) {
+      if (PieMenuItem(eyeTrackingService->m_debugShowFeedbackView ? "Hide\nFeedback" : "Show\nFeedback")) {
+        eyeTrackingService->m_debugShowFeedbackView = !eyeTrackingService->m_debugShowFeedbackView;
+      }
+
+      if (PieMenuItem(eyeTrackingService->m_debugDisableProcessing ? "Enable\nProcessing" : "Disable\nProcessing")) {
+        eyeTrackingService->m_debugDisableProcessing = !eyeTrackingService->m_debugDisableProcessing;
+      }
+
       EndPieMenu();
     }
 
     if (BeginPieMenu("Face\nTrack")) {
-#ifdef USE_EYETRACKING
-      // TODO
-#endif
+      if (PieMenuItem(faceTrackingService->m_debugShowFeedbackView ? "Hide\nFeedback" : "Show\nFeedback")) {
+        faceTrackingService->m_debugShowFeedbackView = !faceTrackingService->m_debugShowFeedbackView;
+      }
+
+      if (PieMenuItem(faceTrackingService->m_debugDisableProcessing ? "Enable\nProcessing" : "Disable\nProcessing")) {
+        faceTrackingService->m_debugDisableProcessing = !faceTrackingService->m_debugDisableProcessing;
+      }
+
       EndPieMenu();
     }
+#endif
 
 #if 0
     if (PieMenuItem("Test1")) { /*TODO*/ }
