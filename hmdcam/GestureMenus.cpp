@@ -23,7 +23,9 @@ void GestureMenuTick() {
   // Handle gestures not intersecting with any window(s)
   if (ImGui::GetIO().WantCaptureMouse == false && ImGui::IsMouseClicked(1)) {
     // Teleport mouse to screen-center before opening the popup.
-    io.MousePos = ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2);
+    ImVec2 screenCenter = ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2);
+    io.MousePos = screenCenter; // Applies this frame
+    io.AddMousePosEvent(screenCenter.x, screenCenter.y); // Applies to future frames
     ImGui::OpenPopup("PieMenu");
   }
 

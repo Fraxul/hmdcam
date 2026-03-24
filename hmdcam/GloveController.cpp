@@ -35,7 +35,8 @@ GloveController::GloveController() {
     }
   });
 
-  ImGui::GetIO().MouseDrawCursor = true;
+  // Always-on cursor option
+  // ImGui::GetIO().MouseDrawCursor = true;
 }
 
 void GloveController::handleControllerPacket(ControllerId controllerId, const GloveControllerPacket& packet) {
@@ -64,6 +65,9 @@ void GloveController::handleControllerPacket(ControllerId controllerId, const Gl
 
 void GloveController::processFrame() {
   auto& io = ImGui::GetIO();
+
+  // Cursor defaults off, unless one of the controllers has a button down.
+  io.MouseDrawCursor = false;
 
   for (uint8_t controllerId = 0; controllerId < kMaxControllerId; ++controllerId) {
     ControllerState& state = m_controllerState[controllerId];
@@ -104,8 +108,12 @@ void GloveController::processFrame() {
       state.previousButtonState = state.buttonState;
     }
 
-    // TODO: Only apply mouse input when the appropriate button is held.
+    // Only apply mouse input when a button is held.
+    if (state.buttonState == 0)
+      continue;
 
+    // Any button down, so ensure the cursor is drawn.
+    io.MouseDrawCursor = true;
 
     // Collapse gyroscope axes down to 2d projection.
     // Use the accelerometer vector to rotate around the roll axis to align the mouse Y axis with gravity.
