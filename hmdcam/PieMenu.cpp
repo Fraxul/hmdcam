@@ -37,12 +37,6 @@ struct PieMenuContext {
 
 static PieMenuContext s_oPieMenuContext;
 
-bool IsPopupOpen(const char* pName) {
-  ImGuiID iID = ImGui::GetID(pName);
-  ImGuiContext& g = *GImGui;
-  return g.OpenPopupStack.Size > g.BeginPopupStack.Size && g.OpenPopupStack[g.BeginPopupStack.Size].PopupId == iID;
-}
-
 void BeginPieMenuEx() {
   IM_ASSERT(s_oPieMenuContext.m_iCurrentStackIndex < PieMenuContext::c_iMaxPieMenuStack);
 
@@ -64,7 +58,7 @@ void EndPieMenuEx() {
 }
 
 bool BeginPiePopup(const char* pName, int iMouseButton) {
-  if (IsPopupOpen(pName)) {
+  if (ImGui::IsPopupOpen(pName)) {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
