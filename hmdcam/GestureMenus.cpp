@@ -16,20 +16,39 @@ extern FaceTrackingService* faceTrackingService;
 #endif // USE_EYETRACKING
 extern DepthMapGenerator* depthMapGenerator;
 
+int gestureMenuButton = -1;
 void GestureMenuTick() {
   auto& io = ImGui::GetIO();
 
   //if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(1)) {
   // Handle gestures not intersecting with any window(s)
-  if (ImGui::GetIO().WantCaptureMouse == false && ImGui::IsMouseClicked(1)) {
-    // Teleport mouse to screen-center before opening the popup.
-    ImVec2 screenCenter = ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2);
-    io.MousePos = screenCenter; // Applies this frame
-    io.AddMousePosEvent(screenCenter.x, screenCenter.y); // Applies to future frames
-    ImGui::OpenPopup("PieMenu");
+  if (gestureMenuButton == -1) {
+    // See if any buttons are pressed.
+    if (ImGui::GetIO().WantCaptureMouse == false) {
+      for (int buttonIdx = 0; buttonIdx < ImGuiMouseButton_COUNT; ++buttonIdx) {
+        if (ImGui::IsMouseClicked(buttonIdx)) {
+          gestureMenuButton = buttonIdx;
+          break;
+        }
+      }
+
+      if (gestureMenuButton >= 0) {
+        // Teleport mouse to screen-center before opening the popup.
+        ImVec2 screenCenter = ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2);
+        io.MousePos = screenCenter; // Applies this frame
+        io.AddMousePosEvent(screenCenter.x, screenCenter.y); // Applies to future frames
+        ImGui::OpenPopup("PieMenu");
+      }
+    }
+  } else {
+    if (ImGui::IsMouseReleased(gestureMenuButton)) {
+      // Button is released this frame, so un-latch from it.
+      // BeginPiePopup will accept -1 as "keep using the previous button".
+      gestureMenuButton = -1;
+    }
   }
 
-  if (BeginPiePopup("PieMenu", /*iMouseButton=*/ 1)) {
+  if (BeginPiePopup("PieMenu", gestureMenuButton)) {
     if (BeginPieMenu("Process")) {
       // Unlock logic with timeout.
       static uint64_t lastUnlockTimeNs = 0;

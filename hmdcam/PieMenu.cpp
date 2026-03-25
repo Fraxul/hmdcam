@@ -96,7 +96,10 @@ bool BeginPiePopup(const char* pName, int iMouseButton) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
 
-    s_oPieMenuContext.m_iMouseButton = iMouseButton;
+    // negative iMouseButton means use the previously-stored button.
+    if (iMouseButton >= 0) {
+      s_oPieMenuContext.m_iMouseButton = iMouseButton;
+    }
     s_oPieMenuContext.m_bClose = false;
 
     ImGui::SetNextWindowPos( ImVec2( -100.f, -100.f ), ImGuiCond_Appearing );
