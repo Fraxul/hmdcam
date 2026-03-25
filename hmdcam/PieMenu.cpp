@@ -13,6 +13,11 @@ struct PieMenuContext {
   static const int  c_iMinItemCount = 3;
   static const int  c_iMinItemCountPerLevel = 3;
 
+  static const int c_iDelayIndicatorSize = 60;
+  static const int c_iDelayIndicatorThickness = 6;
+  static const int c_iDelayIndicatorAngleExtent = 270;
+  static const int c_iDelayFrames = 30; // Number of frames to delay opening of the menu and instead show a progress indicator. Set to 0 to open instantly.
+
   struct PieMenu {
     int             m_iCurrentIndex;
     float           m_fMaxItemSqrDiameter;
@@ -30,12 +35,39 @@ struct PieMenuContext {
   int       m_iCurrentStackIndex = -1;
   int       m_iMaxStackIndex = -1;
   int       m_iLastRenderedFrame = 0;
+  int       m_iDelayTimerFrame = 0;
   ImVec2    m_oCenter;
   int       m_iMouseButton = 0;
   bool      m_bClose = false;
 };
 
 static PieMenuContext s_oPieMenuContext;
+
+
+// Adapted from https://github.com/AnClark/ImGui_Arc_ProgressBar
+void DrawArc(float size, float max_angle_factor, float fill_fraction, float thickness, ImVec2 pos) {
+  ImDrawList *draw_list = ImGui::GetForegroundDrawList();
+
+  float x = pos.x, y = pos.y;    // Position
+
+  constexpr float ONE_DIV_360f = 1.0f / 360.0f;   // Performance tweak
+
+  float a_min_factor, a_max_factor, a_max_factor_100percentage;
+  a_min_factor = -1.5f + ((360.0f - max_angle_factor) * ONE_DIV_360f);    // Angle PI*-1.5f resides in the bottom point of circle
+  a_max_factor_100percentage = (a_min_factor + 1.0f) * -1.0f;       // Arc max factor on 100% percentage state
+
+  float a_factor_delta = (a_max_factor_100percentage - a_min_factor) * fill_fraction;
+  a_max_factor = a_min_factor + a_factor_delta;
+
+  // Path for background arc (dimmed arc)
+  draw_list->PathArcTo(ImVec2(x + size * 0.5f, y + size * 0.5f), size * 0.5f, 3.141592f * a_min_factor, 3.141592f * a_max_factor_100percentage);
+  draw_list->PathStroke(ImGui::GetColorU32(ImGuiCol_Button), ImDrawFlags_None, thickness);
+
+  // Path for progress filling (highlighted arc)
+  draw_list->PathArcTo(ImVec2(x + size * 0.5f, y + size * 0.5f), size * 0.5f, 3.141592f * a_min_factor, 3.141592f * a_max_factor);
+  draw_list->PathStroke(ImGui::GetColorU32(ImGuiCol_ButtonActive), ImDrawFlags_None, thickness);
+}
+
 
 void BeginPieMenuEx() {
   IM_ASSERT(s_oPieMenuContext.m_iCurrentStackIndex < PieMenuContext::c_iMaxPieMenuStack);
@@ -72,14 +104,40 @@ bool BeginPiePopup(const char* pName, int iMouseButton) {
     if (bOpened) {
       int iCurrentFrame = ImGui::GetFrameCount();
       if (s_oPieMenuContext.m_iLastRenderedFrame < (iCurrentFrame - 1)) {
+        // Newly opened this frame -- recenter
         s_oPieMenuContext.m_oCenter = ImGui::GetIO().MousePos;
+        // Reset delay timer
+        s_oPieMenuContext.m_iDelayTimerFrame = 0;
       }
       s_oPieMenuContext.m_iLastRenderedFrame = iCurrentFrame;
+      ++s_oPieMenuContext.m_iDelayTimerFrame;
 
-      s_oPieMenuContext.m_iMaxStackIndex = -1;
-      BeginPieMenuEx();
+      if (s_oPieMenuContext.m_iDelayTimerFrame < PieMenuContext::c_iDelayFrames) {
+        // In open-delay mode. Draw delay indicator.
+        DrawArc(PieMenuContext::c_iDelayIndicatorSize, PieMenuContext::c_iDelayIndicatorAngleExtent,
+          static_cast<float>(s_oPieMenuContext.m_iDelayTimerFrame) / static_cast<float>(PieMenuContext::c_iDelayFrames),
+          PieMenuContext::c_iDelayIndicatorThickness,
+          ImVec2(
+            s_oPieMenuContext.m_oCenter.x - (PieMenuContext::c_iDelayIndicatorSize / 2),
+            s_oPieMenuContext.m_oCenter.y - (PieMenuContext::c_iDelayIndicatorSize / 2)));
 
-      return true;
+        // Allow closing the popup by releasing the button during the delay phase.
+        if (ImGui::IsMouseReleased(s_oPieMenuContext.m_iMouseButton)) {
+          ImGui::CloseCurrentPopup();
+        }
+
+        // Cleanup after BeginPopup() and PushStyleColor()
+        ImGui::EndPopup();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(2);
+        return false;
+      } else {
+        // Open-delay passed, render menu.
+        s_oPieMenuContext.m_iMaxStackIndex = -1;
+        BeginPieMenuEx();
+
+        return true;
+      }
     } else {
       ImGui::End();
       ImGui::PopStyleColor(2);
