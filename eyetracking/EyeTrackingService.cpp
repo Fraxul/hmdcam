@@ -85,6 +85,12 @@ template <typename T> glm::vec2 boundsCenterFromPoints(const std::vector<cv::Poi
   return (boundsMin + boundsMax) * 0.5f;
 }
 
+// [-180.0, 180.0] -> [-18000, 18000] -- 0.01deg precision in int16_t
+inline int16_t serializeAngle(float angleDeg) {
+  return static_cast<int16_t>(glm::clamp(angleDeg, -180.0f, 180.0f) * 100.0);
+}
+
+
 EyeTrackingService::EyeTrackingService() {
 
   // Set some ProcessingState constants
@@ -232,6 +238,9 @@ bool EyeTrackingService::loadCalibrationData(cv::FileStorage& fs) {
     readNode(fs, showCrosshairAfterFrameCount);
     cv::read(fs["leftEyeCamera"], m_processingState[0].m_cameraDeviceName, m_processingState[0].m_cameraDeviceName);
     cv::read(fs["rightEyeCamera"], m_processingState[1].m_cameraDeviceName, m_processingState[1].m_cameraDeviceName);
+    readNode(fs, blinkDetectMinFrames);
+    readNode(fs, blinkDetectMaxFrames);
+    readNode(fs, blinkCooldownFrames);
 
   } catch (const std::exception& ex) {
     printf("Unable to load calibration data: %s\n", ex.what());
@@ -255,6 +264,9 @@ void EyeTrackingService::saveCalibrationData(cv::FileStorage& fs) {
   writeNode(fs, showCrosshairAfterFrameCount);
   fs.write("leftEyeCamera", m_processingState[0].m_cameraDeviceName);
   fs.write("rightEyeCamera", m_processingState[1].m_cameraDeviceName);
+  writeNode(fs, blinkDetectMinFrames);
+  writeNode(fs, blinkDetectMaxFrames);
+  writeNode(fs, blinkCooldownFrames);
 
 }
 #undef writeNode
@@ -1079,7 +1091,6 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
   m_lastFrameTotalProcessingTimeMs = perfTimer.totalElapsedTime();
 }
 
-
 bool EyeTrackingService::processFrame() {
   if (m_debugDisableProcessing)
     return false;
@@ -1102,7 +1113,56 @@ bool EyeTrackingService::processFrame() {
     return false;
   }
 
-  CANTransmitEyeAngles();
+
+  // Blink tracking
+  bool triggerBlink = false;
+  {
+    bool havePupilLock = false;
+    ++m_frameCounterSinceLastBlink;
+
+    PER_EYE {
+      if (m_processingState[eyeIdx].m_calibrationState == kCalibrated) {
+        havePupilLock |= m_processingState[eyeIdx].m_eyeFitterOutputsValid;
+      }
+    }
+    if (havePupilLock) {
+      // Check for rising edge of pupil lock signal (where m_lastPupilLockFailureLengthFrames is nonzero).
+      if (m_lastPupilLockFailureLengthFrames >= m_blinkDetectMinFrames && m_lastPupilLockFailureLengthFrames <= m_blinkDetectMaxFrames) {
+        // Reacquired pupil lock and blink conditions match. Trigger blink if not within the cooldown period.
+        if (m_frameCounterSinceLastBlink > m_blinkCooldownFrames) {
+          triggerBlink = true;
+          m_frameCounterSinceLastBlink = 0;
+        }
+      }
+      m_lastPupilLockFailureLengthFrames = 0;
+    } else {
+      ++m_lastPupilLockFailureLengthFrames;
+    }
+  }
+
+  // CANbus message transmission
+  // TODO: This should transmit refined gaze vector from both eyes, once we implement dual-eye tracking.
+  constexpr uint16_t kPortID = 201;
+
+  uint8_t state = 0; // kStateInvalid
+  if (m_processingState[0].m_calibrationState == kCalibrated) {
+    if (m_processingState[0].m_eyeFitterOutputsValid) {
+      state = 2; // kStatePupilLock
+    } else {
+      state = 1; // kStateCalibrated
+    }
+  }
+
+  SerializationBuffer buf;
+  buf.reserve(8);
+
+  glm::vec2 angles = getPitchYawAnglesForEye(0);
+  buf.put_u8(state);
+  buf.put_i16_le(serializeAngle(angles[0])); // pitch
+  buf.put_i16_le(serializeAngle(angles[1])); // yaw
+  buf.put_u8((triggerBlink && m_enableBlink) ? 1 : 0); // blink trigger flag
+
+  canbus()->transmitMessage(kPortID, buf);
 
   return true;
 }
@@ -1224,6 +1284,10 @@ void EyeTrackingService::renderIMGUI() {
   ImGui::DragInt("Crosshair hide after valid frames", &m_hideCrosshairAfterFrameCount, /*v_speed=*/ 10, /*v_min=*/ 0, /*v_max=*/ 1000);
   ImGui::DragInt("Crosshair show after invalid frames", &m_showCrosshairAfterFrameCount, /*v_speed=*/ 1, /*v_min=*/ 0, /*v_max=*/ 100);
 
+  ImGui::DragInt("Blink Detect Min Frames", &m_blinkDetectMinFrames, /*v_speed=*/ 1, /*v_min=*/ 0, /*v_max=*/ 100);
+  ImGui::DragInt("Blink Detect Max Frames", &m_blinkDetectMaxFrames, /*v_speed=*/ 1, /*v_min=*/ 0, /*v_max=*/ 100);
+  ImGui::DragInt("Blink Cooldown Frames", &m_blinkCooldownFrames, /*v_speed=*/ 10, /*v_min=*/ 0, /*v_max=*/ 1000);
+
   if (ImGui::Button("Save Settings")) {
     saveCalibrationData();
   }
@@ -1278,35 +1342,6 @@ void EyeTrackingService::requestCapture() {
     }
   }
 
-}
-
-// [-180.0, 180.0] -> [-18000, 18000] -- 0.01deg precision in int16_t
-inline int16_t serializeAngle(float angleDeg) {
-  return static_cast<int16_t>(glm::clamp(angleDeg, -180.0f, 180.0f) * 100.0);
-}
-
-// TODO: This should transmit refined gaze vector from both eyes, once we implement dual-eye tracking.
-void EyeTrackingService::CANTransmitEyeAngles() {
-  constexpr uint16_t kPortID = 201;
-
-  uint8_t state = 0; // kStateInvalid
-  if (m_processingState[0].m_calibrationState == kCalibrated) {
-    if (m_processingState[0].m_eyeFitterOutputsValid) {
-      state = 2; // kStatePupilLock
-    } else {
-      state = 1; // kStateCalibrated
-    }
-  }
-
-  SerializationBuffer buf;
-  buf.reserve(8);
-
-  glm::vec2 angles = getPitchYawAnglesForEye(0);
-  buf.put_u8(state);
-  buf.put_i16_le(serializeAngle(angles[0])); // pitch
-  buf.put_i16_le(serializeAngle(angles[1])); // yaw
-
-  canbus()->transmitMessage(kPortID, buf);
 }
 
 void EyeTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {

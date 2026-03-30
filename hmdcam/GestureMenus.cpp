@@ -108,8 +108,16 @@ void GestureMenuTick() {
         eyeTrackingService->m_debugShowFeedbackView = !eyeTrackingService->m_debugShowFeedbackView;
       }
 
+      if (PieMenuItem(eyeTrackingService->m_enableBlink ? "Disable\nBlink" : "Enable\nBlink")) {
+        eyeTrackingService->m_enableBlink = !eyeTrackingService->m_enableBlink;
+      }
+
       if (PieMenuItem("Recalibrate")) {
         eyeTrackingService->debugClearCalibration();
+      }
+
+      if (PieMenuItem(eyeTrackingService->m_debugSaveBadFitImages ? "Disable\nBad-fit\nImage Save" : "Enable\nBad-fit\nImage Save")) {
+        eyeTrackingService->m_debugSaveBadFitImages = !eyeTrackingService->m_debugSaveBadFitImages;
       }
 
       if (PieMenuItem(eyeTrackingService->m_debugDisableProcessing ? "Enable\nProcessing" : "Disable\nProcessing")) {

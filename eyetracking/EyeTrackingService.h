@@ -46,6 +46,9 @@ public:
 
   glm::vec2 getPitchYawAnglesForEye(size_t eyeIdx);
 
+
+  bool m_enableBlink = true;
+
   const char* getDebugPerfStatsForEye(size_t eyeIdx);
   cv::Mat& getDebugViewForEye(size_t eyeIdx);
   bool m_debugDrawOverlays = true; // Affects content returned by getDebugViewForEye
@@ -190,6 +193,15 @@ public:
 protected:
 
   void CANTransmitEyeAngles(); // called in processFrame()
+
+  // Blink tracking settings
+  int m_blinkDetectMinFrames = 10;
+  int m_blinkDetectMaxFrames = 20;
+  int m_blinkCooldownFrames = 240;
+
+  // Blink tracking state
+  int m_lastPupilLockFailureLengthFrames = 0;
+  int m_frameCounterSinceLastBlink = 0;
 
   // Calibration data and settings
   float m_focalLength = 6.0; // millimeters. seems only vaguely related to the actual lens focal length.
