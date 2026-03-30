@@ -15,6 +15,8 @@ extern EyeTrackingService* eyeTrackingService;
 extern FaceTrackingService* faceTrackingService;
 #endif // USE_EYETRACKING
 extern DepthMapGenerator* depthMapGenerator;
+extern void debugRestartCapture();
+extern bool drawStatusBar;
 
 int gestureMenuButton = -1;
 void GestureMenuTick() {
@@ -92,11 +94,19 @@ void GestureMenuTick() {
 
     if (BeginPieMenu("Render")) {
 
+      if (PieMenuItem(drawStatusBar ? "Hide\nStatus\nBar" : "Show\nStatus\nBar")) {
+        drawStatusBar = !drawStatusBar;
+      }
+
       bool useFixedDisparity = depthMapGenerator ? depthMapGenerator->debugUseFixedDisparity() : false;
       if (PieMenuItem(useFixedDisparity ? "Disable\nFixed\nDisparity" : "Enable\nFixed\nDisparity")) {
         if (depthMapGenerator) {
           depthMapGenerator->setDebugUseFixedDisparity(!depthMapGenerator->debugUseFixedDisparity());
         }
+      }
+
+      if (PieMenuItem("Restart\nCapture")) {
+        debugRestartCapture();
       }
 
       EndPieMenu();
