@@ -134,3 +134,34 @@ _Float16 fp16VectorMax(const _Float16* inFP16, size_t elementCount) {
   return result;
 }
 
+// Convert single-channel u8 input to rgba8 output, with alpha = 0xff
+void convertGrayToRGBA(const uint8_t* inGray, uint8_t* outRGBA, size_t count) {
+  // Broadcast 0xff into all 16 lanes of a 128-bit vector — this is our alpha channel
+  const uint8x16_t alpha = vdupq_n_u8(0xff);
+  size_t vectorCount = count & ~size_t(15);
+  for (size_t i = 0; i < vectorCount; i += 16) {
+    // Load 16 contiguous gray values into a 128-bit NEON register
+    uint8x16_t g = vld1q_u8(inGray + i);
+
+    // Pack the R, G, B, A channels as a struct-of-vectors:
+    //   .val[0] = R = g   (gray copied to red)
+    //   .val[1] = G = g   (gray copied to green)
+    //   .val[2] = B = g   (gray copied to blue)
+    //   .val[3] = A = 0xff
+    uint8x16x4_t rgba = {{g, g, g, alpha}};
+
+    // Store with 4-lane interleave: takes the struct-of-vectors layout above
+    // and writes 64 bytes in array-of-structs (R,G,B,A,R,G,B,A,...) order.
+    // The hardware handles the de-interleave, so we get 16 RGBA pixels in one store.
+    vst4q_u8(outRGBA + i * 4, rgba);
+  }
+  // Scalar fallback for any trailing pixels beyond the last full 16-element vector
+  for (size_t i = vectorCount; i < count; ++i) {
+    uint8_t c = inGray[i];
+    outRGBA[i * 4 + 0] = c;
+    outRGBA[i * 4 + 1] = c;
+    outRGBA[i * 4 + 2] = c;
+    outRGBA[i * 4 + 3] = 0xff;
+  }
+}
+

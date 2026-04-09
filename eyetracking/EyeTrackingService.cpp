@@ -857,13 +857,13 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
 
   cv::Mat segROIMat = cv::Mat(captureMat, segROIRect);
 
-  m_lastFrameROIToSegmentationTimeMs = perfTimer.checkpoint();
-
   // Convert u8 pixels in ROI window to snorm fp16 to populate m_segInputTensor
   // The ROI input is known not to be contiguous, so we do it row-by-row.
   for (size_t y = 0; y < m_service->m_segInputHeight; ++y) {
     convertUnorm8ToSnormFp16(segROIMat.ptr<uint8_t>(y, 0), m_segmentationExec->inputTensorPtr<_Float16>(0) + (y * m_service->m_segInputRowStrideElements), m_service->m_segInputWidth);
   }
+
+  m_lastFrameROIToSegmentationTimeMs = perfTimer.checkpoint();
 
   // Launch segmentation network.
   m_segmentationExec->asyncStartInference();
@@ -873,12 +873,17 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
   bool populateDebugView = m_service->m_debugShowFeedbackView;
 
   if (populateDebugView) {
-    // While the DLA is running the segmentation network (~4+ ms), convert the capture buffer to RGBA in preparation for debug drawing (~0.8ms)
-    cv::cvtColor(/*src=*/ captureMat, /*dst=*/ m_tempRGBDebugMat, cv::COLOR_GRAY2RGBA);
+    // While the DLA is running the segmentation network (~4+ ms), convert the capture buffer to RGBA in preparation for debug drawing
+    m_tempRGBDebugMat.create(captureMat.size(), CV_8UC4);
+    for (size_t y = 0; y < captureMat.rows; ++y) {
+      convertGrayToRGBA(captureMat.ptr<uint8_t>(y), m_tempRGBDebugMat.ptr<uint8_t>(y), captureMat.cols);
+    }
   }
 
   // Wait for segmentation network to finish
   m_segmentationExec->asyncFinishInference();
+
+  m_lastFrameSegmentationTimeMs = perfTimer.checkpoint();
 
   // Postprocess network results: run threshold operation to create binary mask
   for (size_t y = 0; y < m_service->m_segInputHeight; ++y) {
@@ -889,7 +894,6 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
 
 
   // Eye-fitter postprocessing
-  m_lastFrameSegmentationTimeMs = perfTimer.checkpoint();
 
   postprocessOneEye();
 
