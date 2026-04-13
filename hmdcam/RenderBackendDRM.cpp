@@ -302,7 +302,7 @@ void RenderBackendDRM::init() {
 
   // Create output stream
   EGLint stream_attr[] = {
-    EGL_STREAM_FIFO_LENGTH_KHR, 1,
+    EGL_STREAM_FIFO_LENGTH_KHR, 0, // Mailbox mode
     EGL_NONE};
   DRM_CHECK_PTR(m_eglStream = eglCreateStreamKHR(m_eglDisplay, stream_attr));
   EGL_CHECK_BOOL(eglStreamConsumerOutputEXT(m_eglDisplay, m_eglStream, m_eglOutputLayer));
@@ -316,6 +316,8 @@ void RenderBackendDRM::init() {
   DRM_CHECK_PTR(m_eglSurface = eglCreateStreamProducerSurfaceKHR(m_eglDisplay, m_eglConfig, m_eglStream, srf_attr));
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext));
 
+  // Disable vsync, since the camera capture pacing effectively syncs the rendering
+  eglSwapInterval(m_eglDisplay, 0);
 
   m_windowRenderTarget = new RHIEGLSurfaceRenderTargetGL(m_eglDisplay, m_eglSurface);
   m_windowRenderTarget->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
