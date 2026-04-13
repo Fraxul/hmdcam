@@ -21,6 +21,8 @@ public:
 
   virtual RHIRenderTarget::ptr windowRenderTarget() const { return m_windowRenderTarget; }
 
+  virtual uint64_t lastPresentationTimestamp() const { return 0; }
+
 private:
 
   uint32_t m_surfaceWidth = 0;

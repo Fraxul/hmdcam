@@ -4,9 +4,12 @@
 // https://github.com/KhronosGroup/Vulkan-Samples/blob/master/samples/extensions/open_gl_interop/open_gl_interop.cpp
 
 #include "RenderBackendVKDirect.h"
+#include "common/Timing.h"
 #include <epoxy/egl.h>
 #include <xf86drm.h>
 #include <fcntl.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 #include "rhi/gl/GLCommon.h"
 
 #define CHECK(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); abort(); }
@@ -31,6 +34,7 @@ const std::vector<const char*> requiredInstanceExtensions = {
   VK_KHR_DISPLAY_EXTENSION_NAME,
   VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
   VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
+  VK_EXT_DISPLAY_SURFACE_COUNTER_EXTENSION_NAME,
 };
 
 const std::vector<const char*> requiredDeviceExtensions = {
@@ -39,7 +43,8 @@ const std::vector<const char*> requiredDeviceExtensions = {
   VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
   VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
   VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
-  VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME
+  VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+  VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME,
 };
 
 const std::vector<const char*> validationLayers = {
@@ -519,9 +524,53 @@ void RenderBackendVKDirect::init() {
   // Window RT
   m_windowRenderTarget = new VKDirectSwapchainRenderTarget(this);
   m_windowRenderTarget->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
+
+  // Start scanout timestamp worker thread
+  m_scanoutEventFd = eventfd(0, 0);
+  CHECK(m_scanoutEventFd >= 0);
+  m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+
   } catch (const std::exception& ex) {
     printf("%s\n", ex.what());
     abort();
+  }
+}
+
+RenderBackendVKDirect::~RenderBackendVKDirect() {
+  if (m_scanoutEventFd >= 0) {
+    // Signal shutdown by closing the eventfd; the worker's read() will return 0/error.
+    close(m_scanoutEventFd);
+    m_scanoutEventFd = -1;
+  }
+  if (m_scanoutThread.joinable())
+    m_scanoutThread.join();
+
+  // Destroy any fence left in the mailbox
+  VkFence leftover = m_scanoutFenceMailbox.load(std::memory_order_acquire);
+  if (leftover != VK_NULL_HANDLE)
+    m_device->destroyFence(leftover);
+}
+
+void RenderBackendVKDirect::scanoutThreadFunc() {
+  for (;;) {
+    // Block until the main thread posts a new fence (or the eventfd is closed).
+    uint64_t val;
+    if (read(m_scanoutEventFd, &val, sizeof(val)) != sizeof(val))
+      break; // eventfd closed — time to shut down
+
+    // Pick up the fence from the mailbox
+    VkFence rawFence = m_scanoutFenceMailbox.exchange(VK_NULL_HANDLE, std::memory_order_acq_rel);
+    if (rawFence == VK_NULL_HANDLE)
+      continue;
+
+    vk::Fence fence(rawFence);
+    m_device->waitForFences(fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
+
+    m_lastPresentationTimestamp.store(
+      currentTimeNs(),
+      std::memory_order_release);
+
+    m_device->destroyFence(fence);
   }
 }
 
@@ -571,6 +620,22 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   // VK_KHR_display
   // present on Direct Display output
   m_presentQueue.presentKHR({presentWaitSemaphores, m_swapchain.get(), m_frameIndex});
+
+  // VK_EXT_display_control: register a first-pixel-out fence and post it to the
+  // scanout worker thread via atomic mailbox.
+  {
+    vk::DisplayEventInfoEXT eventInfo{vk::DisplayEventTypeEXT::eFirstPixelOut};
+    vk::Fence scanoutFence = m_device->registerDisplayEventEXT(m_display.m_displayKHR, eventInfo);
+
+    // Exchange into the mailbox; destroy any stale fence we displaced.
+    VkFence prev = m_scanoutFenceMailbox.exchange(static_cast<VkFence>(scanoutFence), std::memory_order_acq_rel);
+    if (prev != VK_NULL_HANDLE)
+      m_device->destroyFence(prev);
+
+    // Wake the worker thread
+    uint64_t val = 1;
+    write(m_scanoutEventFd, &val, sizeof(val));
+  }
 
   m_frameIndex = (m_frameIndex + 1) % m_swapchainImages.size();
 

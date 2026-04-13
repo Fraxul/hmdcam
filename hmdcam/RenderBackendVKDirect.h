@@ -10,6 +10,8 @@
 #include "vulkan/vulkan.hpp"
 #pragma clang diagnostic pop
 
+#include <atomic>
+#include <thread>
 #include <vector>
 
 class RenderBackendVKDirect;
@@ -54,7 +56,7 @@ protected:
 class RenderBackendVKDirect : public RenderBackend {
 public:
   RenderBackendVKDirect();
-  virtual ~RenderBackendVKDirect() {}
+  virtual ~RenderBackendVKDirect();
 
   virtual void init();
 
@@ -68,6 +70,8 @@ public:
   virtual EGLConfig eglConfig() const { return (EGLConfig) 0; }
 
   virtual RHIRenderTarget::ptr windowRenderTarget() const { return m_windowRenderTarget; }
+
+  virtual uint64_t lastPresentationTimestamp() const { return m_lastPresentationTimestamp.load(std::memory_order_acquire); }
 
 protected:
 
@@ -116,5 +120,14 @@ protected:
   void submitTexture(VKGLSyncData*);
 
   bool m_firstFrame = true;
+
+  // VK_EXT_display_control: scanout timestamp tracking via worker thread.
+  // Atomic mailbox: main thread exchanges in a new fence, worker thread picks
+  // it up. Stale fences displaced by new ones are destroyed by the producer.
+  std::atomic<uint64_t> m_lastPresentationTimestamp{0};
+  std::thread m_scanoutThread;
+  std::atomic<VkFence> m_scanoutFenceMailbox{VK_NULL_HANDLE};
+  int m_scanoutEventFd = -1; // eventfd for waking the worker thread
+  void scanoutThreadFunc();
 };
 

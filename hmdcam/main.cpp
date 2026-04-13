@@ -154,6 +154,9 @@ struct FrameTimingData {
 
   float viewRenderTimeMs = 0;
   float distortionRenderTimeMs = 0;
+
+  // Time offset between the latest present timestamp from the render backend and the return from readFrame
+  float presentToCaptureOffsetMs = 0;
 };
 
 ScrollingBuffer<FrameTimingData> s_timingDataBuffer(512);
@@ -576,6 +579,13 @@ int main(int argc, char* argv[]) {
         boost::accumulators::tag::median
       > > frameInterval;
 
+    boost::accumulators::accumulator_set<double, boost::accumulators::stats<
+        boost::accumulators::tag::min,
+        boost::accumulators::tag::max,
+        boost::accumulators::tag::mean,
+        boost::accumulators::tag::median
+      > > presentToCaptureLatency;
+
     io.DeltaTime = 1.0f / 60.0f; // Will be updated during frame-timing computation
 
     RHIRenderTarget::ptr guiRT;
@@ -836,6 +846,16 @@ int main(int argc, char* argv[]) {
       }
 
       timingData.captureTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
+      // Track presentation latency using the frame timestamp from Argus
+      {
+        uint64_t presentationTimestamp = renderBackend->lastPresentationTimestamp();
+        if (presentationTimestamp != 0) {
+          timingData.presentToCaptureOffsetMs = deltaTimeMs(presentationTimestamp, argusCamera->oldestSensorTimestamp());
+        } else {
+          // Presentation timestamp is not supported by the backend
+          timingData.presentToCaptureOffsetMs = 0;
+        }
+      }
 
       if (previousCaptureTimestamp) {
         currentCaptureIntervalMs = static_cast<double>(argusCamera->oldestSensorTimestamp() - previousCaptureTimestamp) / 1000000.0;
@@ -1053,6 +1073,16 @@ int main(int argc, char* argv[]) {
               ImPlot::PlotLine("Submit",  &s_timingDataBuffer.data()[0].submitTimeMs,  s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
               ImPlot::EndPlot();
           }
+          if (ImPlot::BeginPlot("##PresentationTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
+              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+              ImPlot::SetupAxisLimits(ImAxis_Y1, -12.0f, 12.0f, ImPlotCond_Always);
+              ImPlot::SetupFinish();
+
+              ImPlot::PlotLine("Present-Capture Offset", &s_timingDataBuffer.data()[0].presentToCaptureOffsetMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+              ImPlot::EndPlot();
+          }
           if (debugRenderTiming && ImPlot::BeginPlot("##RenderTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
               ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
               ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
@@ -1258,11 +1288,19 @@ int main(int argc, char* argv[]) {
             static_cast<double>(boost::accumulators::min(frameInterval)) / 1000000.0,
             static_cast<double>(boost::accumulators::max(frameInterval)) / 1000000.0,
             static_cast<double>(boost::accumulators::median(frameInterval)) / 1000000.0);
+
+          printf("Present-to-Capture latency: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
+            boost::accumulators::min(presentToCaptureLatency),
+            boost::accumulators::max(presentToCaptureLatency),
+            boost::accumulators::mean(presentToCaptureLatency),
+            boost::accumulators::median(presentToCaptureLatency));
+
         }
 
         captureLatency = {};
         captureInterval = {};
         frameInterval = {};
+        presentToCaptureLatency = {};
       }
 
       rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
@@ -1639,6 +1677,7 @@ int main(int argc, char* argv[]) {
 
         currentCaptureLatencyMs = static_cast<double>(thisFrameTimestamp - argusCamera->oldestSensorTimestamp()) / 1000000.0;
         captureLatency(currentCaptureLatencyMs);
+        presentToCaptureLatency(timingData.presentToCaptureOffsetMs);
 
         previousFrameTimestamp = thisFrameTimestamp;
       }

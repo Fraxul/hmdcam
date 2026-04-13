@@ -34,5 +34,9 @@ public:
   virtual EGLConfig eglConfig() const = 0;
 
   virtual RHIRenderTarget::ptr windowRenderTarget() const = 0;
+
+  // Returns the timestamp (in nanoseconds, referenced to currentTimeNs()) of the
+  // most recent first-pixel-out scanout event. Returns 0 if not supported by this backend.
+  virtual uint64_t lastPresentationTimestamp() const = 0;
 };
 

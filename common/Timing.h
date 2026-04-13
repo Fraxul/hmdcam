@@ -5,6 +5,9 @@
 #include <errno.h>
 
 // Returns monotonic time (time since boot)
+// This really should be CLOCK_MONOTONIC_RAW to avoid the timebase drifting during clock adjustment,
+// but many events we care about (like libargus capture timestamps, or DRM page-flip timestamps) are
+// relative to CLOCK_MONOTONIC, so using that is the path of least resistance.
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -20,7 +23,7 @@ static inline uint64_t currentRealTimeMs() {
 }
 
 static inline float deltaTimeMs(uint64_t startTimeNs, uint64_t endTimeNs) {
-  return static_cast<float>(endTimeNs - startTimeNs) / 1000000.0f;
+  return static_cast<float>(static_cast<int64_t>(endTimeNs) - static_cast<int64_t>(startTimeNs)) / 1000000.0f;
 }
 
 static inline void delayNs(uint64_t ns) {
