@@ -551,7 +551,24 @@ RenderBackendVKDirect::~RenderBackendVKDirect() {
     m_device->destroyFence(leftover);
 }
 
+// Margin before the expected scanout time at which we switch from
+// blocking vkWaitForFences to WFE spin-polling. Trades a small amount of
+// power for lower wakeup jitter — WFE power-gates the core between polls.
+constexpr uint64_t kScanoutSpinMarginNs = 500000; // 500 µs
+
 void RenderBackendVKDirect::scanoutThreadFunc() {
+  const uint64_t refreshPeriodNs = static_cast<uint64_t>(1000000000.0 / m_refreshRateHz);
+  bool useAdaptiveBlock = false;
+  {
+    const char* s = getenv("VKDIRECT_USE_ADAPTIVE_BLOCK");
+    if (s) {
+      useAdaptiveBlock = (s[0] == '1');
+    }
+  }
+  if (useAdaptiveBlock) {
+    printf("RenderBackendVKDirect::scanoutThreadFunc(): Using adaptive block strategy\n");
+  }
+
   for (;;) {
     // Block until the main thread posts a new fence (or the eventfd is closed).
     uint64_t val;
@@ -564,11 +581,45 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
       continue;
 
     vk::Fence fence(rawFence);
-    m_device->waitForFences(fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
 
-    m_lastPresentationTimestamp.store(
-      currentTimeNs(),
-      std::memory_order_release);
+    if (useAdaptiveBlock) {
+      // Adaptive block + WFE spin:
+      // 1) Estimate when this scanout will fire based on the last one + refresh period.
+      // 2) Block (kernel sleep) until we're within kScanoutSpinMarginNs of that estimate.
+      // 3) WFE spin-poll for the final stretch — low power, low jitter.
+      uint64_t lastTs = m_lastPresentationTimestamp.load(std::memory_order_acquire);
+      if (lastTs != 0) {
+        uint64_t expectedScanout = lastTs + refreshPeriodNs;
+        uint64_t now = currentTimeNs();
+        if (expectedScanout > now + kScanoutSpinMarginNs) {
+          // Block for the bulk of the wait. Convert to Vulkan timeout (nanoseconds).
+          uint64_t blockNs = expectedScanout - now - kScanoutSpinMarginNs;
+          m_device->waitForFences(fence, VK_TRUE, blockNs);
+        }
+      } else {
+        // No prior timestamp — first frame. Use a coarse blocking wait that leaves
+        // margin for the spin phase (one full refresh period minus the spin margin).
+        uint64_t blockNs = refreshPeriodNs > kScanoutSpinMarginNs
+                             ? refreshPeriodNs - kScanoutSpinMarginNs : 0;
+        if (blockNs > 0)
+          m_device->waitForFences(fence, VK_TRUE, blockNs);
+      }
+
+      // WFE spin-poll: power-gate the core between status checks.
+      while (m_device->getFenceStatus(fence) == vk::Result::eNotReady) {
+#ifdef __aarch64__
+        asm volatile("wfe" ::: "memory");
+#else
+        // x86 fallback — yield to the hyperthread / save a tiny bit of power
+        asm volatile("pause" ::: "memory");
+#endif
+      }
+    } else {
+      // Basic waitForFences strategy.
+      m_device->waitForFences(fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
+    }
+
+    m_lastPresentationTimestamp.store(currentTimeNs(), std::memory_order_release);
 
     m_device->destroyFence(fence);
   }
