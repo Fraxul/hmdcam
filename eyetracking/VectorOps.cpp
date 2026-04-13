@@ -1,6 +1,7 @@
 #include "VectorOps.h"
 #include <assert.h>
 #include <algorithm>
+#include <arm_acle.h>
 
 // Fast conversion of 0....255 range uint8 values to -1...1 range fp16 values
 // Has a tiny precision loss around input 127 / output zero:
@@ -172,5 +173,72 @@ void convertGrayToRGBA(const uint8_t* inGray, uint8_t* outRGBA, size_t count) {
     outRGBA[i * 4 + 2] = c;
     outRGBA[i * 4 + 3] = 0xff;
   }
+}
+
+// 6x6 area downsample of an input image using a box filter:
+// Output image dimensions is (inputWidth/6, inputHeight/6)
+// Each output pixel is the average of the corresponding 6x6 pixel area in the input image.
+void areaDownsample6x6(const uint8_t* __restrict inU8, size_t inputRowStride, uint8_t* __restrict outU8, size_t outputWidth, size_t outputHeight, size_t outputRowStride) {
+  // Output line-width is guaranteed to be a multiple of 8 pixels wide.
+  assert((outputWidth & 7) == 0);
+
+  // Division by 36 via vqrdmulh: sat_s16((2*a*910 + 2^15) >> 16) ~= round(a/36)
+  const int16x8_t kDiv36 = vdupq_n_s16(910);
+
+  // Row-streaming approach: process one input row at a time left-to-right across the full
+  // output width. This gives the HW prefetcher a single sequential DRAM stream (optimal for
+  // bandwidth), with partial sums kept in a tiny L1-resident buffer.
+  // The output width is generally small, so we just keep it on the stack.
+  alignas(16) uint16_t partialBuf[outputWidth];
+
+#define preload(x) __pldx(0, 0, 1, x)
+  for (size_t outputY = 0; outputY < outputHeight; ++outputY) {
+    uint8_t* outputRow = outU8 + (outputY * outputRowStride);
+    const uint8_t* baseRow = inU8 + ((outputY * 6) * inputRowStride);
+
+    // Row 0: initialize partial sums
+    {
+      const uint8_t* row = baseRow;
+      preload(row); preload(row + 64); preload(row + 128);
+      for (size_t outputX = 0, off = 0; outputX < outputWidth; outputX += 8, off += 48) {
+        uint8x16x3_t x = vld3q_u8(row + off);
+        uint16x8_t s = vpaddlq_u8(x.val[0]);
+        s = vpadalq_u8(s, x.val[1]);
+        s = vpadalq_u8(s, x.val[2]);
+        vst1q_u16(partialBuf + outputX, s);
+      }
+    }
+
+    // Rows 1-4: accumulate into partial sums (one row at a time for single-stream DRAM access)
+    for (size_t rowIdx = 1; rowIdx < 5; ++rowIdx) {
+      const uint8_t* row = baseRow + rowIdx * inputRowStride;
+      preload(row); preload(row + 64); preload(row + 128);
+      for (size_t outputX = 0, off = 0; outputX < outputWidth; outputX += 8, off += 48) {
+        uint16x8_t s = vld1q_u16(partialBuf + outputX);
+        uint8x16x3_t x = vld3q_u8(row + off);
+        s = vpadalq_u8(s, x.val[0]);
+        s = vpadalq_u8(s, x.val[1]);
+        s = vpadalq_u8(s, x.val[2]);
+        vst1q_u16(partialBuf + outputX, s);
+      }
+    }
+
+    // Row 5 + divide: merge last accumulation with division
+    {
+      const uint8_t* row = baseRow + 5 * inputRowStride;
+      preload(row); preload(row + 64); preload(row + 128);
+      for (size_t outputX = 0, off = 0; outputX < outputWidth; outputX += 8, off += 48) {
+        uint16x8_t s = vld1q_u16(partialBuf + outputX);
+        uint8x16x3_t x = vld3q_u8(row + off);
+        s = vpadalq_u8(s, x.val[0]);
+        s = vpadalq_u8(s, x.val[1]);
+        s = vpadalq_u8(s, x.val[2]);
+        int16x8_t div = vqrdmulhq_s16(vreinterpretq_s16_u16(s), kDiv36);
+        uint8x8_t res = vqmovun_s16(div);
+        vst1_u8(outputRow + outputX, res);
+      }
+    }
+  }
+#undef preload
 }
 

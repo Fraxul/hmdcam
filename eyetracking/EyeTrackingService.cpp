@@ -704,6 +704,10 @@ void EyeTrackingService::ProcessingState::internalUpdateStateOnCaptureOpen() {
       m_capture.streamWidth(), m_capture.streamHeight(),
       targetStreamWidth, targetStreamHeight,
       cropOffsetX, cropOffsetY);
+
+    // Ensure that the ROI input scaling is what we expect (for the vectorized 1/6 area resize)
+    assert(m_service->m_roiInputWidth == (targetStreamWidth / 6));
+    assert(m_service->m_roiInputHeight == (targetStreamHeight / 6));
   }
 
   // Update the capture center offset, now that we know the frame dimensions.
@@ -715,6 +719,7 @@ void EyeTrackingService::ProcessingState::internalUpdateStateOnCaptureOpen() {
   // Pre-create some mats
   m_roiMaskMat.create(m_service->m_roiOutputHeight, m_service->m_roiOutputWidth, CV_8UC1);
   m_roiDilatedMaskMat.create(m_service->m_roiOutputHeight, m_service->m_roiOutputWidth, CV_8UC1);
+  m_roiScaleMat.create(m_service->m_roiInputHeight, m_service->m_roiInputWidth, CV_8UC1);
 }
 
 
@@ -725,21 +730,32 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
   cv::Mat captureMat = cv::Mat(m_capture.lumaPlane(), m_captureCropRect);
 
   // Scale from capture mat to the input size for the ROI prediction network
-
-  // TODO: This cv::resize call should probably be vectorized
-  // INTER_NEAREST: ~0.6ms, INTER_LINEAR: ~0.75ms, INTER_AREA: 19ms (!)
-  cv::resize(captureMat, m_roiScaleMat, cv::Size(m_service->m_roiInputWidth, m_service->m_roiInputHeight), 0, 0, cv::INTER_LINEAR);
+  // This vectorized downsample runs about the same speed as cv::resize(..., cv::INTER_LINEAR),
+  // but implements a full 6x6 pixel box filter (equivalent quality to the much slower cv::INTER_AREA)
+  areaDownsample6x6(captureMat.ptr<uint8_t>(), captureMat.step, m_roiScaleMat.ptr<uint8_t>(), m_roiScaleMat.cols, m_roiScaleMat.rows, m_roiScaleMat.step);
 
   // Convert CV_U8 from the scale output to int8 or half for the ROI network input
   if (m_service->m_roiIOIsInt8) {
     int8_t* roiInputTensor = m_roiExec->inputTensorPtr<int8_t>(0);
-    for (size_t row = 0; row < m_service->m_roiInputHeight; ++row) {
-      convertUnorm8ToDLAInt8(m_roiScaleMat.ptr<uint8_t>(row), roiInputTensor + (m_service->m_roiInputRowStrideElements * row), m_service->m_roiInputWidth);
+    if (m_service->m_roiInputRowStrideElements == m_service->m_roiInputWidth) {
+      // Tightly-packed input, convert entire block at once
+        convertUnorm8ToDLAInt8(m_roiScaleMat.ptr<uint8_t>(), roiInputTensor, m_service->m_roiInputWidth * m_service->m_roiInputHeight);
+    } else {
+      // Padded input, convert a row at a time
+      for (size_t row = 0; row < m_service->m_roiInputHeight; ++row) {
+        convertUnorm8ToDLAInt8(m_roiScaleMat.ptr<uint8_t>(row), roiInputTensor + (m_service->m_roiInputRowStrideElements * row), m_service->m_roiInputWidth);
+      }
     }
   } else {
     _Float16* roiInputTensor = m_roiExec->inputTensorPtr<_Float16>(0);
-    for (size_t row = 0; row < m_service->m_roiInputHeight; ++row) {
-      convertUnorm8ToSnormFp16(m_roiScaleMat.ptr<uint8_t>(row), roiInputTensor + (m_service->m_roiInputRowStrideElements * row), m_service->m_roiInputWidth);
+    if (m_service->m_roiInputRowStrideElements == m_service->m_roiInputWidth) {
+      // Tightly-packed input, convert entire block at once
+      convertUnorm8ToSnormFp16(m_roiScaleMat.ptr<uint8_t>(), roiInputTensor, m_service->m_roiInputWidth * m_service->m_roiInputHeight);
+    } else {
+      // Padded input, convert a row at a time
+      for (size_t row = 0; row < m_service->m_roiInputHeight; ++row) {
+        convertUnorm8ToSnormFp16(m_roiScaleMat.ptr<uint8_t>(row), roiInputTensor + (m_service->m_roiInputRowStrideElements * row), m_service->m_roiInputWidth);
+      }
     }
   }
 
