@@ -243,21 +243,28 @@ void RenderBackendVKDirect::init() {
     // image count depending on capabilities
     uint32_t imageCount = std::min(capabilities.maxImageCount, capabilities.minImageCount + 1);
 
-    // pick a preferred format or use the first available one
-    vk::SurfaceFormatKHR format{vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear};
-    bool valid = false;
+    // Pick a format matching the interop textures (R8G8B8A8 / GL_RGBA8) so the
+    // blit can use a straight copy. A8B8G8R8UnormPack32 is byte-identical to
+    // R8G8B8A8Unorm on little-endian. Fall back to B8G8R8A8, then whatever the
+    // display supports.
+    vk::SurfaceFormatKHR preferredFormats[] = {
+      {vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+      {vk::Format::eA8B8G8R8UnormPack32, vk::ColorSpaceKHR::eSrgbNonlinear},
+      {vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+    };
+    vk::SurfaceFormatKHR format = formats[0]; // default fallback
     if (formats.size() == 1 && formats[0].format == vk::Format::eUndefined) {
-      valid = true;
-    }
-    for (auto& f : formats) {
-      if (f == format) {
-        valid = true;
-        break;
+      format = preferredFormats[0];
+    } else {
+      for (auto& pf : preferredFormats) {
+        if (contains(formats, pf)) {
+          format = pf;
+          break;
+        }
       }
     }
-    if (!valid) {
-      format = formats[0];
-    }
+
+    printf("Selected swapchain format: %s %s\n", to_string(format.format).c_str(), to_string(format.colorSpace).c_str());
 
     // use valid extent if available, otherwise derive from display mode
     vk::Extent2D extent;
