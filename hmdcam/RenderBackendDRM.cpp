@@ -26,6 +26,29 @@
 
 RenderBackend* createDRMBackend() { return new RenderBackendDRM(); }
 
+// Look up the ID of a named property on a DRM object. Returns 0 if not found.
+static uint32_t drmGetPropertyId(int fd, uint32_t objectId, uint32_t objectType, const char* name) {
+  drmModeObjectProperties* props = drmModeObjectGetProperties(fd, objectId, objectType);
+  if (!props)
+    return 0;
+  uint32_t id = 0;
+  for (uint32_t i = 0; i < props->count_props; ++i) {
+    drmModePropertyRes* prop = drmModeGetProperty(fd, props->props[i]);
+    if (!prop)
+      continue;
+
+    if (!strcmp(prop->name, name))
+      id = prop->prop_id;
+
+    drmModeFreeProperty(prop);
+
+    if (id)
+      break;
+  }
+  drmModeFreeObjectProperties(props);
+  return id;
+}
+
 static const char* drmConnectorTypeToString(int c) {
   switch (c) {
     default:
@@ -100,13 +123,10 @@ void RenderBackendDRM::init() {
     }
   }
 
-  //DRM_CHECK(drmSetClientCap(m_drmFd, DRM_CLIENT_CAP_ATOMIC, 1));
-  //DRM_CHECK(drmSetClientCap(m_drmFd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1));
+  DRM_CHECK(drmSetClientCap(m_drmFd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1));
+  DRM_CHECK(drmSetClientCap(m_drmFd, DRM_CLIENT_CAP_ATOMIC, 1));
 
   DRM_CHECK_PTR(m_drmResources = drmModeGetResources(m_drmFd));
-
-  drmModePlaneRes* planeRes = nullptr;
-  DRM_CHECK_PTR(planeRes = drmModeGetPlaneResources(m_drmFd));
 
     // Parse connector info
   for (int connIdx = 0; connIdx < m_drmResources->count_connectors; ++connIdx) {
@@ -152,11 +172,18 @@ void RenderBackendDRM::init() {
   if (m_drmEncoder->crtc_id) {
     fprintf(stderr, "Reusing existing CRTC ID %d\n", m_drmEncoder->crtc_id);
     m_drmCrtc = drmModeGetCrtc(m_drmFd, m_drmEncoder->crtc_id);
+    for (int crtcIdx = 0; crtcIdx < m_drmResources->count_crtcs; ++crtcIdx) {
+      if (m_drmResources->crtcs[crtcIdx] == m_drmEncoder->crtc_id) {
+        m_drmCrtcPipe = crtcIdx;
+        break;
+      }
+    }
   } else {
     for (int crtcIdx = 0; crtcIdx < m_drmResources->count_crtcs; ++crtcIdx) {
       if (m_drmEncoder->possible_crtcs & (1 << crtcIdx)) {
         fprintf(stderr, "Selecting CRTC index %d / ID %d\n", crtcIdx, m_drmResources->crtcs[crtcIdx]);
         m_drmCrtc = drmModeGetCrtc(m_drmFd, m_drmResources->crtcs[crtcIdx]);
+        m_drmCrtcPipe = crtcIdx;
         break;
       }
     }
@@ -240,16 +267,132 @@ void RenderBackendDRM::init() {
     abort();
   }
 
+  // Find the primary plane associated with this CRTC
+  {
+    drmModePlaneRes* planeRes = nullptr;
+    DRM_CHECK_PTR(planeRes = drmModeGetPlaneResources(m_drmFd));
+
+    for (uint32_t i = 0; i < planeRes->count_planes; ++i) {
+      drmModePlane* plane = drmModeGetPlane(m_drmFd, planeRes->planes[i]);
+      if (!plane)
+        continue;
+
+      // Check if this plane can be used with our CRTC
+      if (!(plane->possible_crtcs & (1 << m_drmCrtcPipe))) {
+        drmModeFreePlane(plane);
+        continue;
+      }
+
+      // Check if this is the primary plane by reading its "type" property
+      drmModeObjectProperties* planeProps = drmModeObjectGetProperties(m_drmFd, plane->plane_id, DRM_MODE_OBJECT_PLANE);
+      if (!planeProps) {
+        drmModeFreePlane(plane);
+        continue;
+      }
+
+      bool isPrimary = false;
+      for (uint32_t j = 0; j < planeProps->count_props; ++j) {
+        drmModePropertyRes* prop = drmModeGetProperty(m_drmFd, planeProps->props[j]);
+        if (prop) {
+          if (!strcmp(prop->name, "type") && planeProps->prop_values[j] == DRM_PLANE_TYPE_PRIMARY)
+            isPrimary = true;
+          drmModeFreeProperty(prop);
+        }
+        if (isPrimary)
+          break;
+      }
+      drmModeFreeObjectProperties(planeProps);
+
+      if (isPrimary) {
+        m_drmPlane = plane;
+        fprintf(stderr, "Selected primary plane %u for CRTC %u (pipe %d)\n", plane->plane_id, m_drmCrtc->crtc_id, m_drmCrtcPipe);
+        break;
+      }
+
+      drmModeFreePlane(plane);
+    }
+
+    drmModeFreePlaneResources(planeRes);
+
+    if (!m_drmPlane) {
+      fprintf(stderr, "No primary plane found for CRTC %u\n", m_drmCrtc->crtc_id);
+      abort();
+    }
+  }
+
   // Allocate a dumb framebuffer -- required by the nvidia-drm driver.
   m_drmFb.width = surfaceWidth();
   m_drmFb.height = surfaceHeight();
   m_drmFb.bpp = 32;
   DRM_CHECK(drmIoctl(m_drmFd, DRM_IOCTL_MODE_CREATE_DUMB, &m_drmFb));
 
-  // Add the framebuffer and do the modeset
+  // Add the framebuffer
   uint32_t offset = 0;
   DRM_CHECK(drmModeAddFB2(m_drmFd, surfaceWidth(), surfaceHeight(), DRM_FORMAT_ARGB8888, &m_drmFb.handle, &m_drmFb.pitch, &offset, &m_drmFbBufferId, 0));
-  DRM_CHECK(drmModeSetCrtc(m_drmFd, /*crtcId=*/ m_drmCrtc->crtc_id, /*bufferId=*/ m_drmFbBufferId, /*x=*/ 0, /*y=*/ 0, /*connectors=*/ &m_drmConnector->connector_id, /*count=*/ 1, m_drmModeInfo));
+
+  // Atomic modeset: create a mode blob and commit connector->CRTC->plane in one atomic request
+  {
+    DRM_CHECK(drmModeCreatePropertyBlob(m_drmFd, m_drmModeInfo, sizeof(drmModeModeInfo), &m_drmModeBlobId));
+
+    // Look up required property IDs
+    uint32_t connCrtcId   = drmGetPropertyId(m_drmFd, m_drmConnector->connector_id, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID");
+    uint32_t crtcActiveId = drmGetPropertyId(m_drmFd, m_drmCrtc->crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE");
+    uint32_t crtcModeId   = drmGetPropertyId(m_drmFd, m_drmCrtc->crtc_id, DRM_MODE_OBJECT_CRTC, "MODE_ID");
+    uint32_t planeFbId    = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID");
+    uint32_t planeCrtcId  = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "CRTC_ID");
+    uint32_t planeCrtcX   = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "CRTC_X");
+    uint32_t planeCrtcY   = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "CRTC_Y");
+    uint32_t planeCrtcW   = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "CRTC_W");
+    uint32_t planeCrtcH   = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "CRTC_H");
+    uint32_t planeSrcX    = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "SRC_X");
+    uint32_t planeSrcY    = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "SRC_Y");
+    uint32_t planeSrcW    = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "SRC_W");
+    uint32_t planeSrcH    = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "SRC_H");
+
+    if (!connCrtcId || !crtcActiveId || !crtcModeId || !planeFbId || !planeCrtcId ||
+        !planeCrtcX || !planeCrtcY || !planeCrtcW || !planeCrtcH ||
+        !planeSrcX || !planeSrcY || !planeSrcW || !planeSrcH) {
+      fprintf(stderr, "Failed to look up one or more DRM atomic properties\n");
+      fprintf(stderr, "  connector CRTC_ID=%u  crtc ACTIVE=%u MODE_ID=%u\n", connCrtcId, crtcActiveId, crtcModeId);
+      fprintf(stderr, "  plane FB_ID=%u CRTC_ID=%u CRTC_X=%u CRTC_Y=%u CRTC_W=%u CRTC_H=%u\n", planeFbId, planeCrtcId, planeCrtcX, planeCrtcY, planeCrtcW, planeCrtcH);
+      fprintf(stderr, "  plane SRC_X=%u SRC_Y=%u SRC_W=%u SRC_H=%u\n", planeSrcX, planeSrcY, planeSrcW, planeSrcH);
+      abort();
+    }
+
+    drmModeAtomicReq* req = drmModeAtomicAlloc();
+    if (!req) {
+      fprintf(stderr, "drmModeAtomicAlloc() failed\n");
+      abort();
+    }
+
+    // Connector: link to CRTC
+    drmModeAtomicAddProperty(req, m_drmConnector->connector_id, connCrtcId, m_drmCrtc->crtc_id);
+
+    // CRTC: activate and set mode
+    drmModeAtomicAddProperty(req, m_drmCrtc->crtc_id, crtcActiveId, 1);
+    drmModeAtomicAddProperty(req, m_drmCrtc->crtc_id, crtcModeId, m_drmModeBlobId);
+
+    // Primary plane: set framebuffer and source/destination rectangles
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeFbId, m_drmFbBufferId);
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeCrtcId, m_drmCrtc->crtc_id);
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeCrtcX, 0);
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeCrtcY, 0);
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeCrtcW, surfaceWidth());
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeCrtcH, surfaceHeight());
+    // SRC coords are in 16.16 fixed point
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeSrcX, 0);
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeSrcY, 0);
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeSrcW, (uint64_t)surfaceWidth() << 16);
+    drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeSrcH, (uint64_t)surfaceHeight() << 16);
+
+    int ret = drmModeAtomicCommit(m_drmFd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
+    drmModeAtomicFree(req);
+    if (ret) {
+      fprintf(stderr, "drmModeAtomicCommit() failed: %s (%d)\n", strerror(-ret), ret);
+      abort();
+    }
+    fprintf(stderr, "Atomic modeset commit successful\n");
+  }
 
   // Set up the EGL display
   {
@@ -277,7 +420,7 @@ void RenderBackendDRM::init() {
     EGL_RED_SIZE, 1,
     EGL_GREEN_SIZE, 1,
     EGL_BLUE_SIZE, 1,
-    EGL_ALPHA_SIZE, 1,
+    EGL_ALPHA_SIZE, 0,
     EGL_NONE
   };
 
@@ -292,9 +435,9 @@ void RenderBackendDRM::init() {
   // If we don't do this, then loading EGL_KHR_stream and EGL_EXT_output_base will fail.
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
 
-  // Get the layer for this crtc/plane
+  // Get the layer for this plane
   EGLAttrib layer_attr[] = {
-    EGL_DRM_CRTC_EXT, m_drmCrtc->crtc_id,
+    EGL_DRM_PLANE_EXT, m_drmPlane->plane_id,
     EGL_NONE
   };
 
@@ -350,15 +493,23 @@ RenderBackendDRM::~RenderBackendDRM() {
   }
   memset(&m_drmFb, 0, sizeof(m_drmFb));
 
+  // Destroy the mode blob
+  if (m_drmModeBlobId) {
+    drmModeDestroyPropertyBlob(m_drmFd, m_drmModeBlobId);
+    m_drmModeBlobId = 0;
+  }
+
   // Free DRM resource allocs
   drmModeFreeConnector(m_drmConnector);
   drmModeFreeEncoder(m_drmEncoder);
   drmModeFreeCrtc(m_drmCrtc);
+  drmModeFreePlane(m_drmPlane);
   drmModeFreeResources(m_drmResources);
 
   m_drmConnector = NULL;
   m_drmEncoder = NULL;
   m_drmCrtc = NULL;
+  m_drmPlane = NULL;
   m_drmResources = NULL;
 
   close(m_drmFd);

@@ -51,9 +51,12 @@ private:
 
   drmModeEncoder* m_drmEncoder = nullptr;
   drmModeCrtc* m_drmCrtc = nullptr;
+  drmModePlane* m_drmPlane = nullptr; // primary plane for the CRTC
 
   struct drm_mode_create_dumb m_drmFb;
   uint32_t m_drmFbBufferId = 0;
+  uint32_t m_drmModeBlobId = 0; // mode blob for atomic modeset
+  int m_drmCrtcPipe = 0;
 
   // noncopyable
   RenderBackendDRM(const RenderBackendDRM&);
