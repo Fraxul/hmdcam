@@ -169,7 +169,7 @@ void RenderBackendVKDirect::init() {
                                                       vk::DisplayPlaneAlphaFlagBitsKHR::eGlobal,
                                                       vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixel,
                                                       vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixelPremultiplied};
-    for(uint32_t i = 0; i < sizeof(alphaModes); i++)  {
+    for(uint32_t i = 0; i < (sizeof(alphaModes) / sizeof(alphaModes[0])); ++i)  {
       if(planeCapabilities.supportedAlpha & alphaModes[i]) {
         alphaMode = alphaModes[i];
         break;
