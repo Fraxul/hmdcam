@@ -521,6 +521,8 @@ void RenderBackendVKDirect::init() {
     }
   }
 
+  m_unsignaledFrames = static_cast<uint32_t>(m_swapchainImages.size());
+
   // Window RT
   m_windowRenderTarget = new VKDirectSwapchainRenderTarget(this);
   m_windowRenderTarget->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
@@ -626,9 +628,11 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
 }
 
 VKGLSyncData* RenderBackendVKDirect::acquireTexture() {
-  if (m_firstFrame) {
-    // don't wait for the first frame to be available - there's nobody to signal this
-    m_firstFrame = false;
+  if (m_unsignaledFrames > 0) {
+    // Skip the wait for the first cycle through all swapchain images -- the
+    // available semaphore for each index is first signaled by its blit submit,
+    // so there is nobody to signal it on the very first use.
+    --m_unsignaledFrames;
   } else {
     GLenum srcLayout = GL_LAYOUT_COLOR_ATTACHMENT_EXT;
     glWaitSemaphoreEXT(m_syncData[m_frameIndex].m_availableGL, 0, nullptr, 1, &m_syncData[m_frameIndex].m_textureGL, &srcLayout);
@@ -637,12 +641,22 @@ VKGLSyncData* RenderBackendVKDirect::acquireTexture() {
 }
 
 void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
-  // GL: signal rendering is done
-  // VK: acquire image from swapchain
-  // VK: blit texture to swapchain image (wait for GL finished, VK image acquired. signal VK blit done)
-  // present (wait for VK blit done. signal VK image available)
+  // Synchronization overview (all semaphores are VK/GL-shared via EXT_external_semaphore):
+  //
+  //   acquireTexture:  GL waits on  "available"  -- blocks until VK is done reading the interop texture
+  //                    ... GL renders into the interop texture ...
+  //   submitTexture:   GL signals   "finished"   -- tells VK that GL rendering is complete
+  //                    VK waits on  "finished" + "imageAcquired"
+  //                    VK blits interop texture -> swapchain image
+  //                    VK signals   "blitFinished" + "available"
+  //                       blitFinished: gates presentKHR
+  //                       available:    unblocks the next acquireTexture for this index
 
-  // signal GL is done
+  // Flush GL command stream so the semaphore signal below is submitted to the GPU.
+  glFlush();
+
+  // Signal VK that GL is done rendering into the interop texture.
+  // The layout transition to TRANSFER_SRC prepares it for the VK blit read.
   GLenum targetLayout = GL_LAYOUT_TRANSFER_SRC_EXT;
   glSignalSemaphoreEXT(m_syncData[m_frameIndex].m_finishedGL, 0, nullptr, 1, &m_syncData[m_frameIndex].m_textureGL, &targetLayout);
 
@@ -650,11 +664,13 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   auto r = m_device->acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), m_imageAcquiredSemaphores[m_frameIndex].get(), vk::Fence());
   assert(m_frameIndex == r.value);  // this should be guaranteed, decoupling would mean N*M prepared blit command buffers
 
-  // wait for GL finished & VK imageAcquired, blit/copy current texture onto current swapchain image, signal VK blit finished
+  // Blit the interop texture onto the swapchain image.
+  // Wait: "finished" (GL done) + "imageAcquired" (swapchain image ready).
+  // Signal: "blitFinished" (for present) + "available" (GL can reuse this interop texture).
   std::array<vk::Semaphore, 2> blitWaitSemaphores { m_syncData[m_frameIndex].m_finished.get(), m_imageAcquiredSemaphores[m_frameIndex].get() };
   std::array<vk::PipelineStageFlags, 2> blitWaitStages { vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTopOfPipe };
 
-  std::array<vk::Semaphore, 1> blitSignalSemaphores {m_blitFinishedSemaphores[m_frameIndex].get()};
+  std::array<vk::Semaphore, 2> blitSignalSemaphores {m_blitFinishedSemaphores[m_frameIndex].get(), m_syncData[m_frameIndex].m_available.get()};
 
   vk::SubmitInfo submitInfo{blitWaitSemaphores,
                             blitWaitStages,
@@ -664,12 +680,8 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
 
   m_presentQueue.submit(submitInfo, vk::Fence{});
 
-  // present
+  // Present: waits for the blit to finish before scanning out.
   std::vector<vk::Semaphore> presentWaitSemaphores{m_blitFinishedSemaphores[m_frameIndex].get()};
-  //std::vector<vk::Semaphore> presentSignalSemaphores{m_syncData[m_frameIndex].m_available.get()};
-
-  // VK_KHR_display
-  // present on Direct Display output
   m_presentQueue.presentKHR({presentWaitSemaphores, m_swapchain.get(), m_frameIndex});
 
   // VK_EXT_display_control: register a first-pixel-out fence and post it to the
@@ -689,9 +701,6 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   }
 
   m_frameIndex = (m_frameIndex + 1) % m_swapchainImages.size();
-
-  // RFE
-  glSignalSemaphoreEXT(m_syncData[m_frameIndex].m_availableGL, 0, nullptr, 0, nullptr, nullptr);
 }
 
 uint32_t RenderBackendVKDirect::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {

@@ -119,7 +119,7 @@ protected:
   VKGLSyncData* acquireTexture();
   void submitTexture(VKGLSyncData*);
 
-  bool m_firstFrame = true;
+  uint32_t m_unsignaledFrames; // decremented each frame; skip available-semaphore wait while > 0
 
   // VK_EXT_display_control: scanout timestamp tracking via worker thread.
   // Atomic mailbox: main thread exchanges in a new fence, worker thread picks
