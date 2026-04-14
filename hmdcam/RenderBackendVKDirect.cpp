@@ -489,8 +489,8 @@ void RenderBackendVKDirect::init() {
       };
 
       b.pipelineBarrier(
-        /*srcStageMask=*/ vk::PipelineStageFlagBits::eAllCommands,
-        /*dstStageMask=*/ vk::PipelineStageFlagBits::eAllCommands,
+        /*srcStageMask=*/ vk::PipelineStageFlagBits::eTopOfPipe,
+        /*dstStageMask=*/ vk::PipelineStageFlagBits::eTransfer,
         /*dependencyFlags=*/ vk::DependencyFlagBits::eByRegion,
         /*memory barriers=*/ nullptr,
         /*buffer memory barriers=*/ nullptr,
@@ -499,8 +499,8 @@ void RenderBackendVKDirect::init() {
       b.blitImage(m_syncData[i].m_image.get(), vk::ImageLayout::eTransferSrcOptimal, m_swapchainImages[i], vk::ImageLayout::eTransferDstOptimal, vk::ArrayProxy<const vk::ImageBlit>{ 1, &region }, vk::Filter::eNearest);
 
       vk::ImageMemoryBarrier swapchainPresentSrcBarrier = {
-        /*srcAccessMask=*/ vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite,
-        /*dstAccessMask=*/ vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite,
+        /*srcAccessMask=*/ vk::AccessFlagBits::eTransferWrite,
+        /*dstAccessMask=*/ vk::AccessFlagBits::eNone,
         /*oldLayout=*/ vk::ImageLayout::eTransferDstOptimal,
         /*newLayout=*/ vk::ImageLayout::ePresentSrcKHR,
         /*srcQueueFamilyIndex=*/ 0,
@@ -510,8 +510,8 @@ void RenderBackendVKDirect::init() {
       };
 
       b.pipelineBarrier(
-        /*srcStageMask=*/ vk::PipelineStageFlagBits::eAllCommands,
-        /*dstStageMask=*/ vk::PipelineStageFlagBits::eAllCommands,
+        /*srcStageMask=*/ vk::PipelineStageFlagBits::eTransfer,
+        /*dstStageMask=*/ vk::PipelineStageFlagBits::eBottomOfPipe,
         /*dependencyFlags=*/ vk::DependencyFlagBits::eByRegion,
         /*memory barriers=*/ nullptr,
         /*buffer memory barriers=*/ nullptr,
