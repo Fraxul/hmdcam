@@ -617,8 +617,9 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   GLenum targetLayout = GL_LAYOUT_TRANSFER_SRC_EXT;
   glSignalSemaphoreEXT(m_syncData[m_frameIndex].m_finishedGL, 0, nullptr, 1, &m_syncData[m_frameIndex].m_textureGL, &targetLayout);
 
-  // RFE: handle return values
   auto r = m_device->acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), m_imageAcquiredSemaphores[m_frameIndex].get(), vk::Fence());
+  if (r.result == vk::Result::eSuboptimalKHR)
+    fprintf(stderr, "RenderBackendVKDirect: acquireNextImageKHR returned eSuboptimalKHR\n");
   uint32_t swapchainIndex = r.value;
 
   // Record the blit command buffer for this frame. The interop texture index
@@ -699,7 +700,9 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
 
   // Present: waits for the blit to finish before scanning out.
   std::vector<vk::Semaphore> presentWaitSemaphores{m_blitFinishedSemaphores[m_frameIndex].get()};
-  m_presentQueue.presentKHR({presentWaitSemaphores, m_swapchain.get(), swapchainIndex});
+  vk::Result presentResult = m_presentQueue.presentKHR({presentWaitSemaphores, m_swapchain.get(), swapchainIndex});
+  if (presentResult == vk::Result::eSuboptimalKHR)
+    fprintf(stderr, "RenderBackendVKDirect: presentKHR returned eSuboptimalKHR\n");
 
   // VK_EXT_display_control: register a first-pixel-out fence and post it to the
   // scanout worker thread via atomic mailbox.
