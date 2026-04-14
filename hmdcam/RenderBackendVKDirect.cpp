@@ -455,70 +455,13 @@ void RenderBackendVKDirect::init() {
     m_blitFinishedSemaphores.push_back(m_device->createSemaphoreUnique(ci));
   }
 
-  // Command pool and command buffers
+  // Command pool and command buffers (recorded per-frame in submitTexture)
   {
-    vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlags(), m_presentFamily};
+    vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlagBits::eResetCommandBuffer, m_presentFamily};
     m_commandPool = m_device->createCommandPool(commandPoolCreateInfo);
 
     vk::CommandBufferAllocateInfo commandBufferAllocateInfo = {m_commandPool, vk::CommandBufferLevel::ePrimary, uint32_t(m_swapchainImages.size())};
-
     m_blitCommandBuffers = m_device->allocateCommandBuffers(commandBufferAllocateInfo);
-
-    for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
-      auto& b = m_blitCommandBuffers[i];
-      b.begin({ vk::CommandBufferUsageFlagBits::eSimultaneousUse });
-
-      std::array<vk::Offset3D, 2> srcoffsets{ vk::Offset3D{ 0,0,0 }, vk::Offset3D{ int32_t(m_swapchainExtent.width), int32_t(m_swapchainExtent.height), 1 } };
-      std::array<vk::Offset3D, 2> dstoffsets{ vk::Offset3D{ 0,int32_t(m_swapchainExtent.height),0 }, vk::Offset3D{ int32_t(m_swapchainExtent.width), 0, 1 } };
-      vk::ImageSubresourceLayers layers{ vk::ImageAspectFlags{vk::ImageAspectFlagBits::eColor}, 0, 0, 1 };
-      vk::ImageBlit region {
-        layers, srcoffsets,
-        layers, dstoffsets
-      };
-      std::vector<vk::ImageBlit> regions = { region };
-
-      vk::ImageMemoryBarrier swapchainTransferDstBarrier = {
-        /*srcAccessMask=*/ vk::AccessFlagBits::eNone,
-        /*dstAccessMask=*/ vk::AccessFlagBits::eTransferWrite,
-        /*oldLayout=*/ vk::ImageLayout::eUndefined,
-        /*newLayout=*/ vk::ImageLayout::eTransferDstOptimal,
-        /*srcQueueFamilyIndex=*/ 0,
-        /*dstQueueFamilyIndex=*/ 0,
-        /*image=*/ m_swapchainImages[i],
-        /*subresourceRange=*/ vk::ImageSubresourceRange( {vk::ImageAspectFlagBits::eColor, /*baseMipLevel=*/ 0, /*levelCount=*/ 1, /*baseArrayLayer=*/ 0, /*layerCount=*/ 1 })
-      };
-
-      b.pipelineBarrier(
-        /*srcStageMask=*/ vk::PipelineStageFlagBits::eTopOfPipe,
-        /*dstStageMask=*/ vk::PipelineStageFlagBits::eTransfer,
-        /*dependencyFlags=*/ vk::DependencyFlagBits::eByRegion,
-        /*memory barriers=*/ nullptr,
-        /*buffer memory barriers=*/ nullptr,
-        /*image memory barriers=*/ swapchainTransferDstBarrier);
-
-      b.blitImage(m_syncData[i].m_image.get(), vk::ImageLayout::eTransferSrcOptimal, m_swapchainImages[i], vk::ImageLayout::eTransferDstOptimal, vk::ArrayProxy<const vk::ImageBlit>{ 1, &region }, vk::Filter::eNearest);
-
-      vk::ImageMemoryBarrier swapchainPresentSrcBarrier = {
-        /*srcAccessMask=*/ vk::AccessFlagBits::eTransferWrite,
-        /*dstAccessMask=*/ vk::AccessFlagBits::eNone,
-        /*oldLayout=*/ vk::ImageLayout::eTransferDstOptimal,
-        /*newLayout=*/ vk::ImageLayout::ePresentSrcKHR,
-        /*srcQueueFamilyIndex=*/ 0,
-        /*dstQueueFamilyIndex=*/ 0,
-        /*image=*/ m_swapchainImages[i],
-        /*subresourceRange=*/ vk::ImageSubresourceRange( {vk::ImageAspectFlagBits::eColor, /*baseMipLevel=*/ 0, /*levelCount=*/ 1, /*baseArrayLayer=*/ 0, /*layerCount=*/ 1 })
-      };
-
-      b.pipelineBarrier(
-        /*srcStageMask=*/ vk::PipelineStageFlagBits::eTransfer,
-        /*dstStageMask=*/ vk::PipelineStageFlagBits::eBottomOfPipe,
-        /*dependencyFlags=*/ vk::DependencyFlagBits::eByRegion,
-        /*memory barriers=*/ nullptr,
-        /*buffer memory barriers=*/ nullptr,
-        /*image memory barriers=*/ swapchainPresentSrcBarrier);
-
-      b.end();
-    }
   }
 
   m_unsignaledFrames = static_cast<uint32_t>(m_swapchainImages.size());
@@ -662,9 +605,69 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
 
   // RFE: handle return values
   auto r = m_device->acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), m_imageAcquiredSemaphores[m_frameIndex].get(), vk::Fence());
-  assert(m_frameIndex == r.value);  // this should be guaranteed, decoupling would mean N*M prepared blit command buffers
+  uint32_t swapchainIndex = r.value;
 
-  // Blit the interop texture onto the swapchain image.
+  // Record the blit command buffer for this frame. The interop texture index
+  // (m_frameIndex) and the swapchain image index (from acquireNextImageKHR) are
+  // independent, so we record on the fly rather than pre-baking a 1:1 mapping.
+  {
+    auto& b = m_blitCommandBuffers[m_frameIndex];
+    b.reset();
+    b.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+
+    vk::ImageSubresourceRange subresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+
+    vk::ImageMemoryBarrier swapchainTransferDstBarrier = {
+      /*srcAccessMask=*/ vk::AccessFlagBits::eNone,
+      /*dstAccessMask=*/ vk::AccessFlagBits::eTransferWrite,
+      /*oldLayout=*/ vk::ImageLayout::eUndefined,
+      /*newLayout=*/ vk::ImageLayout::eTransferDstOptimal,
+      /*srcQueueFamilyIndex=*/ 0,
+      /*dstQueueFamilyIndex=*/ 0,
+      /*image=*/ m_swapchainImages[swapchainIndex],
+      /*subresourceRange=*/ subresourceRange
+    };
+
+    b.pipelineBarrier(
+      /*srcStageMask=*/ vk::PipelineStageFlagBits::eTopOfPipe,
+      /*dstStageMask=*/ vk::PipelineStageFlagBits::eTransfer,
+      /*dependencyFlags=*/ vk::DependencyFlagBits::eByRegion,
+      /*memory barriers=*/ nullptr,
+      /*buffer memory barriers=*/ nullptr,
+      /*image memory barriers=*/ swapchainTransferDstBarrier);
+
+    std::array<vk::Offset3D, 2> srcoffsets{ vk::Offset3D{0, 0, 0}, vk::Offset3D{int32_t(m_swapchainExtent.width), int32_t(m_swapchainExtent.height), 1} };
+    std::array<vk::Offset3D, 2> dstoffsets{ vk::Offset3D{0, int32_t(m_swapchainExtent.height), 0}, vk::Offset3D{int32_t(m_swapchainExtent.width), 0, 1} };
+    vk::ImageSubresourceLayers layers{vk::ImageAspectFlagBits::eColor, 0, 0, 1};
+    vk::ImageBlit region{layers, srcoffsets, layers, dstoffsets};
+
+    b.blitImage(m_syncData[m_frameIndex].m_image.get(), vk::ImageLayout::eTransferSrcOptimal,
+                m_swapchainImages[swapchainIndex], vk::ImageLayout::eTransferDstOptimal,
+                vk::ArrayProxy<const vk::ImageBlit>{1, &region}, vk::Filter::eNearest);
+
+    vk::ImageMemoryBarrier swapchainPresentSrcBarrier = {
+      /*srcAccessMask=*/ vk::AccessFlagBits::eTransferWrite,
+      /*dstAccessMask=*/ vk::AccessFlagBits::eNone,
+      /*oldLayout=*/ vk::ImageLayout::eTransferDstOptimal,
+      /*newLayout=*/ vk::ImageLayout::ePresentSrcKHR,
+      /*srcQueueFamilyIndex=*/ 0,
+      /*dstQueueFamilyIndex=*/ 0,
+      /*image=*/ m_swapchainImages[swapchainIndex],
+      /*subresourceRange=*/ subresourceRange
+    };
+
+    b.pipelineBarrier(
+      /*srcStageMask=*/ vk::PipelineStageFlagBits::eTransfer,
+      /*dstStageMask=*/ vk::PipelineStageFlagBits::eBottomOfPipe,
+      /*dependencyFlags=*/ vk::DependencyFlagBits::eByRegion,
+      /*memory barriers=*/ nullptr,
+      /*buffer memory barriers=*/ nullptr,
+      /*image memory barriers=*/ swapchainPresentSrcBarrier);
+
+    b.end();
+  }
+
+  // Submit the blit.
   // Wait: "finished" (GL done) + "imageAcquired" (swapchain image ready).
   // Signal: "blitFinished" (for present) + "available" (GL can reuse this interop texture).
   std::array<vk::Semaphore, 2> blitWaitSemaphores { m_syncData[m_frameIndex].m_finished.get(), m_imageAcquiredSemaphores[m_frameIndex].get() };
@@ -682,7 +685,7 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
 
   // Present: waits for the blit to finish before scanning out.
   std::vector<vk::Semaphore> presentWaitSemaphores{m_blitFinishedSemaphores[m_frameIndex].get()};
-  m_presentQueue.presentKHR({presentWaitSemaphores, m_swapchain.get(), m_frameIndex});
+  m_presentQueue.presentKHR({presentWaitSemaphores, m_swapchain.get(), swapchainIndex});
 
   // VK_EXT_display_control: register a first-pixel-out fence and post it to the
   // scanout worker thread via atomic mailbox.
