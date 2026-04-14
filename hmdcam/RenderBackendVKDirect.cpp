@@ -388,7 +388,7 @@ void RenderBackendVKDirect::init() {
            vk::ImageUsageFlags(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc),
            vk::SharingMode::eExclusive,
            /*queueFamilies=*/ 0, nullptr,
-           /*initialLayout=*/ vk::ImageLayout::eTransferSrcOptimal
+           /*initialLayout=*/ vk::ImageLayout::eUndefined
         }),
         vk::ExternalMemoryImageCreateInfo({
           vk::ExternalMemoryHandleTypeFlags(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd)
