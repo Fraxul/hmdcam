@@ -619,6 +619,21 @@ bool ArgusCamera::readFrame() {
         iCaptureSession->cancelRequests();
         m_perSessionData[sessionIdx].m_sessionCaptureFailed = true;
 
+        // Check to see if all session captures crashed; if they did, just kill the process.
+        {
+          bool anySessionAlive = false;
+          for (size_t i = 0; i < m_perSessionData.size(); ++i) {
+            if (!m_perSessionData[i].m_sessionCaptureFailed) {
+              anySessionAlive = true;
+              break;
+            }
+          }
+          if (!anySessionAlive) {
+            printf("ArgusCamera::readFrame(): All sessions have failed, terminating process.\n");
+            abort();
+          }
+        }
+
       }
       captureOK = false;
       continue;
