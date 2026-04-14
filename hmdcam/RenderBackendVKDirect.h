@@ -112,7 +112,7 @@ protected:
   std::vector<VKGLSyncData> m_syncData;
   std::vector<vk::UniqueSemaphore> m_imageAcquiredSemaphores;
   std::vector<vk::UniqueSemaphore> m_blitFinishedSemaphores;
-  vk::CommandPool m_commandPool;
+  vk::UniqueCommandPool m_commandPool;
   std::vector<vk::CommandBuffer>  m_blitCommandBuffers;
 
   friend class VKDirectSwapchainRenderTarget;

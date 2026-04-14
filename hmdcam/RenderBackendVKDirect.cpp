@@ -458,9 +458,9 @@ void RenderBackendVKDirect::init() {
   // Command pool and command buffers (recorded per-frame in submitTexture)
   {
     vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlagBits::eResetCommandBuffer, m_presentFamily};
-    m_commandPool = m_device->createCommandPool(commandPoolCreateInfo);
+    m_commandPool = m_device->createCommandPoolUnique(commandPoolCreateInfo);
 
-    vk::CommandBufferAllocateInfo commandBufferAllocateInfo = {m_commandPool, vk::CommandBufferLevel::ePrimary, uint32_t(m_swapchainImages.size())};
+    vk::CommandBufferAllocateInfo commandBufferAllocateInfo = {m_commandPool.get(), vk::CommandBufferLevel::ePrimary, uint32_t(m_swapchainImages.size())};
     m_blitCommandBuffers = m_device->allocateCommandBuffers(commandBufferAllocateInfo);
   }
 
@@ -490,10 +490,17 @@ RenderBackendVKDirect::~RenderBackendVKDirect() {
   if (m_scanoutThread.joinable())
     m_scanoutThread.join();
 
+  // Wait for all in-flight GPU work to complete before destroying VK objects.
+  if (m_device)
+    m_device->waitIdle();
+
   // Destroy any fence left in the mailbox
   VkFence leftover = m_scanoutFenceMailbox.load(std::memory_order_acquire);
   if (leftover != VK_NULL_HANDLE)
     m_device->destroyFence(leftover);
+
+  if (m_drmFd >= 0)
+    close(m_drmFd);
 }
 
 // Margin before the expected scanout time at which we switch from
