@@ -553,7 +553,8 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
         if (expectedScanout > now + kScanoutSpinMarginNs) {
           // Block for the bulk of the wait. Convert to Vulkan timeout (nanoseconds).
           uint64_t blockNs = expectedScanout - now - kScanoutSpinMarginNs;
-          m_device->waitForFences(fence, VK_TRUE, blockNs);
+          // Timeout is intentional — we spin-poll for the final stretch below.
+          (void)m_device->waitForFences(fence, VK_TRUE, blockNs);
         }
       } else {
         // No prior timestamp — first frame. Use a coarse blocking wait that leaves
@@ -561,7 +562,8 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
         uint64_t blockNs = refreshPeriodNs > kScanoutSpinMarginNs
                              ? refreshPeriodNs - kScanoutSpinMarginNs : 0;
         if (blockNs > 0)
-          m_device->waitForFences(fence, VK_TRUE, blockNs);
+          // Timeout is intentional — we spin-poll for the final stretch below.
+          (void)m_device->waitForFences(fence, VK_TRUE, blockNs);
       }
 
       // WFE spin-poll: power-gate the core between status checks.
@@ -574,8 +576,8 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
 #endif
       }
     } else {
-      // Basic waitForFences strategy.
-      m_device->waitForFences(fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
+      // Basic waitForFences strategy. Infinite timeout; result is always eSuccess.
+      (void)m_device->waitForFences(fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
     }
 
     m_lastPresentationTimestamp.store(currentTimeNs(), std::memory_order_release);
