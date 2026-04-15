@@ -32,16 +32,18 @@ protected:
     void cleanup(NvSciCudaInteropBuffer*& buf) {
       if (!buf)
         return;
-      assert(m_iofa); 
+      assert(m_iofa);
       NVMEDIA_CHECK(NvMediaIOFAUnregisterNvSciBufObj(m_iofa, buf->m_nvSciBuf));
+      delete buf;
       buf = nullptr;
     }
 
     void cleanup(NvSciCudaInteropSync*& sync) {
       if (!sync)
         return;
-      assert(m_iofa); 
+      assert(m_iofa);
       NVMEDIA_CHECK(NvMediaIOFAUnregisterNvSciSyncObj(m_iofa, sync->m_nvSciSync));
+      delete sync;
       sync = nullptr;
     }
 

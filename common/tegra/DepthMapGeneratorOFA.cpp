@@ -174,7 +174,11 @@ void DepthMapGeneratorOFA::internalPostInitWithCameraSystem() {
   iofaParams.pydMode = NVMEDIA_IOFA_PYD_FRAME_MODE;
   iofaParams.preset = NVMEDIA_IOFA_PRESET_HQ; // high-quality mode
 
-  NVMEDIA_CHECK(NvMediaIOFAInit(m_iofa, &iofaParams, /*maxInputBuffering=*/ 4));
+  // Hardware maximum input buffer depth is 8. We should never have more than
+  // (viewCount * 2) frames in flight (if we somehow submit all view for a frame
+  // before any views from the previous frame are done processing), but we might
+  // as well max out the input buffer size.
+  NVMEDIA_CHECK(NvMediaIOFAInit(m_iofa, &iofaParams, /*maxInputBuffering=*/ 8));
 
   // Processing parameters
   memset(&m_iofaProcessParams, 0, sizeof(m_iofaProcessParams));
@@ -455,6 +459,11 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
 
     if (vd->m_ofaSubmissionOK) {
       vd->m_ofaEofSync->waitNvSciToCuda((CUstream) m_globalStream.cudaPtr());
+
+      // Clear the EOF fence after consumption to release internal NvSciSync references.
+      // Without this, each frame overwrites the old fence in GetEOFNvSciSyncFence without
+      // freeing it, leaking sync resources.
+      NvSciSyncFenceClear(&vd->m_ofaEofSync->m_nvSciSyncFence);
     }
   }
 

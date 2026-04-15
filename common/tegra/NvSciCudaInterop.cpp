@@ -132,6 +132,9 @@ NvSciCudaInteropSync::NvSciCudaInteropSync(NvSciCudaInteropSyncDirection directi
 }
 
 NvSciCudaInteropSync::~NvSciCudaInteropSync() {
+  // Clear any outstanding fence before freeing the sync object, since a non-cleared
+  // fence holds a reference to the NvSciSyncObj and could prevent proper cleanup.
+  NvSciSyncFenceClear(&m_nvSciSyncFence);
   CUDA_CHECK(cuDestroyExternalSemaphore(m_cuSem));
   NvSciSyncObjFree(m_nvSciSync);
 }
