@@ -11,6 +11,8 @@ ctags -R \
   imgui/*.cpp \
   implot \
   live555/include \
+  nvmedia \
+  nvsci_headers \
   rhi \
   stb \
   tegra_mmapi \
