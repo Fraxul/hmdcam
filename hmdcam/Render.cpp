@@ -156,10 +156,6 @@ bool RenderInit(ERenderBackend backendType) {
   renderBackend->init();
   windowRenderTarget = renderBackend->windowRenderTarget();
 
-  printf("%s\n", glGetString(GL_RENDERER));
-  printf("%s\n", glGetString(GL_VERSION));
-  printf("%s\n", glGetString(GL_EXTENSIONS));
-
   // CUDA init
   {
     cuInit(0);
