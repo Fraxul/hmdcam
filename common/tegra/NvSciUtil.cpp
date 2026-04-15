@@ -4,9 +4,34 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+
+const char* kNvMediaStatusStr[] = {
+  "NVMEDIA_STATUS_OK",                      //  0
+  "NVMEDIA_STATUS_BAD_PARAMETER",           //  1
+  "NVMEDIA_STATUS_PENDING",                 //  2
+  "NVMEDIA_STATUS_TIMED_OUT",               //  3
+  "NVMEDIA_STATUS_OUT_OF_MEMORY",           //  4
+  "NVMEDIA_STATUS_NOT_INITIALIZED",         //  5
+  "NVMEDIA_STATUS_NOT_SUPPORTED",           //  6
+  "NVMEDIA_STATUS_ERROR",                   //  7
+  "NVMEDIA_STATUS_NONE_PENDING",            //  8
+  "NVMEDIA_STATUS_INSUFFICIENT_BUFFERING",  //  9
+  "NVMEDIA_STATUS_INVALID_SIZE",            // 10
+  "NVMEDIA_STATUS_INCOMPATIBLE_VERSION",    // 11
+  "unknown_12",                             // 12
+  "NVMEDIA_STATUS_UNDEFINED_STATE",         // 13
+  "NVMEDIA_STATUS_PFSD_ERROR",              // 14
+  "NVMEDIA_STATUS_INVALID_STATE",           // 15
+};
+constexpr uint32_t kNvMediaStatusCount = (sizeof(kNvMediaStatusStr) / sizeof(kNvMediaStatusStr[0]));
+
 bool checkNvMediaStatus(NvMediaStatus res, const char* op, const char* file, int line, bool fatal) {
   if (res != NVMEDIA_STATUS_OK) {
-    fprintf(stderr, "%s (%s:%d) returned NvMediaStatus %d\n", op, file, line, res);
+    if (static_cast<uint32_t>(res) < kNvMediaStatusCount) {
+      fprintf(stderr, "%s (%s:%d) returned %s\n", op, file, line, kNvMediaStatusStr[res]);
+    } else {
+      fprintf(stderr, "%s (%s:%d) returned NvMediaStatus %d\n", op, file, line, res);
+    }
     if (fatal)
       abort();
 
