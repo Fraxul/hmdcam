@@ -31,6 +31,10 @@
 #include <unistd.h>
 
 static const uint32_t kOFAMaxDisparity = 128; // must be {128, 256}
+
+// Grid-size shift: 0=1x1, 1=2x2, 2=4x4, 3=8x8
+// The output size is fixed at 1/4 of input resolution, so this controls the downsampling applied to the input before handing it to the OFA.
+static const uint32_t kOFAGridSizeShift = 1;
 extern CUdevice cudaDevice;
 
 #define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
@@ -107,7 +111,8 @@ DepthMapGeneratorOFA::DepthMapGeneratorOFA() : DepthMapGenerator(kDepthBackendOF
   // NvMediaIOFA docs say:
   // Returned [disparity] values are in Q10.5 format, i.e., signed fixed point with 5 fractional bits.
   // Divide it by 32.0f to convert it to floating point.
-  m_disparityPrescale = (1.0f / 32.0f);
+  // The disparity values are relative to the OFA input size, so we also need to account for any grid size scaling here.
+  m_disparityPrescale = (1.0f / static_cast<float>(32 << kOFAGridSizeShift));
 
   CUDA_CHECK(cuEventCreate(&m_masterFrameStartEvent, CU_EVENT_DEFAULT));
   CUDA_CHECK(cuEventCreate(&m_ofaHandoffCompleteEvent, CU_EVENT_DEFAULT));
@@ -154,21 +159,20 @@ DepthMapGeneratorOFA::DepthMapGeneratorOFA() : DepthMapGenerator(kDepthBackendOF
 void DepthMapGeneratorOFA::internalPostInitWithCameraSystem() {
   // Finish initializing the hardware now that we know the dimensions
 
+  // Compute OFA input width/height from output size and grid shift
+  m_ofaInputWidth = internalWidth() * (1 << kOFAGridSizeShift);
+  m_ofaInputHeight = internalHeight() * (1 << kOFAGridSizeShift);
+
   // Hardware settings
   NvMediaIofaInitParams iofaParams;
   memset(&iofaParams, 0, sizeof(iofaParams));
   iofaParams.ofaMode = NVMEDIA_IOFA_MODE_STEREO;
   iofaParams.ofaPydLevel = 0;
-  iofaParams.width[0] = internalWidth();
-  iofaParams.height[0] = internalHeight();
-
-  // Using a 1x1 grid, input and output sizes are identical.
-  // For other cases:
-  // outWidth  = (width  + (1 << gridSize) - 1)) >> gridSize
-  // outHeight = (height + (1 << gridSize) - 1)) >> gridSize
-  iofaParams.gridSize[0] = NVMEDIA_IOFA_GRIDSIZE_1X1;
-  iofaParams.outWidth[0] = iofaParams.width[0];
-  iofaParams.outHeight[0] = iofaParams.height[0];
+  iofaParams.width[0] = m_ofaInputWidth;
+  iofaParams.height[0] = m_ofaInputHeight;
+  iofaParams.gridSize[0] = (NvMediaIofaGridSize) kOFAGridSizeShift;
+  iofaParams.outWidth[0] = internalWidth();
+  iofaParams.outHeight[0] = internalHeight();
 
   iofaParams.dispRange = NVMEDIA_IOFA_DISPARITY_RANGE_128;
   iofaParams.pydMode = NVMEDIA_IOFA_PYD_FRAME_MODE;
@@ -191,7 +195,7 @@ void DepthMapGeneratorOFA::internalPostInitWithCameraSystem() {
   {
     NvSciBufAttrList attrList = nullptr;
     NVSCI_CHECK(NvSciBufAttrListCreate(gBufModule(), &attrList));
-    setSinglePlaneImageAttrs(attrList, internalWidth(), internalHeight(), NvSciColor_Y8, NvSciColorStd_REC709_ER);
+    setSinglePlaneImageAttrs(attrList, m_ofaInputWidth, m_ofaInputHeight, NvSciColor_Y8, NvSciColorStd_REC709_ER);
     m_inputBufferAttrList = finishAndReconcileBufAttrList(attrList);
   }
 
@@ -253,8 +257,8 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
 
     vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
-    // Build a half-res undistortRectifyMap to save some processing time
-    unsigned int downsampleFactor = 2;
+    // If the gridSizeShift is <= 1, we build a half-res undistortRectifyMap to save some processing time in remapArray.
+    unsigned int downsampleFactor = (kOFAGridSizeShift <= 1) ? 2 : 1;
 
     PER_EYE {
       CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
@@ -262,7 +266,7 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
     }
 
     // Output from remapArray
-    PER_EYE vd->m_rectifiedMat[eyeIdx].create(cv::Size(internalWidth(), internalHeight()), CV_8U);
+    PER_EYE vd->m_rectifiedMat[eyeIdx].create(cv::Size(m_ofaInputWidth, m_ofaInputHeight), CV_8U);
 
     // OFA input buffers
     PER_EYE {
@@ -388,10 +392,10 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
 
     if (m_populateDebugTextures) {
       if (!vd->m_leftGray)
-        vd->m_leftGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_leftGray = rhi()->newTexture2D(m_ofaInputWidth, m_ofaInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
 
       if (!vd->m_rightGray)
-        vd->m_rightGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_rightGray = rhi()->newTexture2D(m_ofaInputWidth, m_ofaInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
 
       copyNvSciBufToSurface(vd->m_ofaInputBuffer[0], vd->m_leftGray, (CUstream) m_globalStream.cudaPtr());
       copyNvSciBufToSurface(vd->m_ofaInputBuffer[1], vd->m_rightGray, (CUstream) m_globalStream.cudaPtr());
@@ -421,7 +425,13 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
 
     // Remap for distortion correction
     cv::Size inputSize = cv::Size(inputWidth(), inputHeight());
-    PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), inputSize, vd->m_undistortRectifyMap_gpu[eyeIdx], vd->m_rectifiedMat[eyeIdx], (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ 2);
+
+    // We pick a downsampleFactor based on the grid size shift, assuming that the undistortRectifyMap is half-res at grid size shifts of <= 1.
+    // We only need to downsample again if the OFA grid size shift is zero, to get a total 4x downsample.
+    // Grid size shift of 1 (2x2) will have the half-res undistortRectifyMap and does not require downsampling here.
+    // Grid size shift of 2 (4x4) will have a full-res undistortRectifyMap and also does not require downsampling here.
+    unsigned int remapDownsampleFactor = (kOFAGridSizeShift == 0) ? 2 : 1;
+    PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), inputSize, vd->m_undistortRectifyMap_gpu[eyeIdx], vd->m_rectifiedMat[eyeIdx], (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ remapDownsampleFactor);
 
     // Populate NvSci input buffer
     // TODO: This really should be merged in with the remap above -- write straight to the CUarray, skip a copy.

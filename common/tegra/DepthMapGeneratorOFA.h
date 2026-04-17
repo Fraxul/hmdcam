@@ -95,6 +95,7 @@ protected:
   CUevent m_masterFrameFinishedEvent;
   NvMediaIofa* m_iofa = nullptr;
   NvMediaIofaProcessParams m_iofaProcessParams;
+  uint32_t m_ofaInputWidth = 0, m_ofaInputHeight = 0;
 
   NvSciBufAttrList m_inputBufferAttrList = nullptr;
   NvSciBufAttrList m_disparityBufferAttrList = nullptr;
