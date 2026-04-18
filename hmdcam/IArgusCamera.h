@@ -56,7 +56,7 @@ public:
   };
 
   // Metadata accessors for the current frame
-  // Start timestamp for the sensor capture, in nanoseconds. Referenced to CLOCK_MONOTONIC.
+  // Start timestamp for the sensor capture, in nanoseconds. TSC timestamp, referenced to currentTimeNs()
   uint64_t frameSensorTimestamp(size_t sensorIndex) const { return m_frameMetadata[sensorIndex].sensorTimestamp; }
   const FrameMetadata_t& frameMetadata(size_t sensorIndex) const { return m_frameMetadata[sensorIndex]; }
   uint64_t oldestSensorTimestamp() const { return m_oldestSensorTimestamp; }
