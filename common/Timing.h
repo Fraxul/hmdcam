@@ -4,15 +4,30 @@
 #include <time.h>
 #include <errno.h>
 
+#ifdef IS_TEGRA
 // Returns monotonic time (time since boot)
-// This really should be CLOCK_MONOTONIC_RAW to avoid the timebase drifting during clock adjustment,
-// but many events we care about (like libargus capture timestamps, or DRM page-flip timestamps) are
-// relative to CLOCK_MONOTONIC, so using that is the path of least resistance.
+// Uses the TSC on Tegra platforms, which is fixed at 31.250MHz.
+// libargus hardware timestamps use the TSC, so this makes timebase conversion trivial.
+static inline uint64_t tscTimestampToNs(uint64_t tscTimestamp) {
+  // 31.250MHz == 32 ns/tick.
+  return tscTimestamp * 32u;
+}
+
+static inline uint64_t currentTimeNs() {
+  uint64_t tscCounter;
+  asm volatile("mrs %0, cntvct_el0" : "=r"(tscCounter));
+  return tscTimestampToNs(tscCounter);
+}
+#else
+// Returns monotonic time (time since boot).
+// Uses CLOCK_MONOTONIC_RAW to avoid the timebase drifting during clock adjustment.
+// Be careful if interacting with events timestamped by other parts of the system that may use CLOCK_MONOTONIC.
 static inline uint64_t currentTimeNs() {
   struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
   return (ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
+#endif
 
 // Returns realtime (time since the 1970 epoch).
 // Uses the CLOCK_REALTIME_COARSE timer, which is accurate to about a millisecond.

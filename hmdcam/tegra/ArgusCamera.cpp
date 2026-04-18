@@ -10,6 +10,7 @@
 #include "rhi/cuda/CudaUtil.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include <Argus/Argus.h>
+#include <Argus/Ext/SensorTimestampTsc.h>
 #include <EGLStream/EGLStream.h>
 #include <cudaEGL.h>
 #include <opencv2/cvconfig.h>
@@ -590,7 +591,7 @@ bool ArgusCamera::readFrame() {
   }
 
   SensorTimingData timingData;
-  uint64_t timingRefPoint = currentTimeNs(); // CLOCK_MONOTONIC ref for the timingData
+  uint64_t timingRefPoint = currentTimeNs(); // ref for the timingData
   m_oldestSensorTimestamp = timingRefPoint;
 
   bool captureOK = true;
@@ -669,15 +670,25 @@ bool ArgusCamera::readFrame() {
     Argus::IBuffer* iBuffer = Argus::interface_cast<Argus::IBuffer>(buffer);
     assert(iBuffer);
 
-    const Argus::ICaptureMetadata* iMetadata = Argus::interface_cast<const Argus::ICaptureMetadata>(iBuffer->getMetadata());
+    const Argus::CaptureMetadata* metadata = iBuffer->getMetadata();
+    const Argus::ICaptureMetadata* iMetadata = Argus::interface_cast<const Argus::ICaptureMetadata>(metadata);
 
     if (!iMetadata) {
       printf("ArgusCamera::readFrame(): Failed to read metadata for camera index %zu\n", cameraIdx);
       continue;
     }
 
+    const Argus::Ext::ISensorTimestampTsc *iTscTimestamp = Argus::interface_cast<const Argus::Ext::ISensorTimestampTsc>(metadata);
+    if (!iTscTimestamp) {
+      printf("ArgusCamera::readFrame(): TSC timestamp metadata missing for camera index %zu\n", cameraIdx);
+
+      // Crappy fallback timestamp
+      m_frameMetadata[cameraIdx].sensorTimestamp = iMetadata->getSensorTimestamp();
+    } else {
+      m_frameMetadata[cameraIdx].sensorTimestamp = tscTimestampToNs(iTscTimestamp->getSensorSofTimestampTsc());
+    }
+
     // Update metadata fields for this frame
-    m_frameMetadata[cameraIdx].sensorTimestamp = iMetadata->getSensorTimestamp();
     m_frameMetadata[cameraIdx].frameDurationNs = iMetadata->getFrameDuration();
     m_frameMetadata[cameraIdx].sensorExposureTimeNs = iMetadata->getSensorExposureTime();
     m_frameMetadata[cameraIdx].sensorSensitivityISO = iMetadata->getSensorSensitivity();
