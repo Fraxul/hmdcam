@@ -26,7 +26,7 @@ env['ENV']['TERM'] = os.environ['TERM']
 
 env.Program(
   target = 'solver-test',
-  source = Glob('*.cpp') +
+  source = ['solver-test.cpp'] +
     Glob('#industrial_calibration/core/src/*.cpp') +
     Glob('#industrial_calibration/optimizations/src/*.cpp'),
 
@@ -36,6 +36,12 @@ env.Program(
     'boost_chrono', 'boost_filesystem', 'boost_system', 'boost_thread',
     'ceres', 'cholmod', 'lapack', 'spqr', 'glog', 'gflags'
   ]
-
 )
 
+env.Program(
+  target = 'charuco-benchmark',
+  source = ['charuco-benchmark.cpp'],
+  LIBS = ['opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
+    'pthread', 'rt',
+  ]
+)
