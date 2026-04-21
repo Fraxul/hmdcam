@@ -79,6 +79,7 @@ if tegraEnv['IS_TEGRA']:
       'nvbufsurface', 'nvbufsurftransform',
       'nvmedia_iofa_sci', 'nvmedia_ijpd_sci',
       'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync',
+      'nvrm_host1x',
       'cudla',
       'v4l2'
     ] + tegraEnv['CERES_LIBS'],

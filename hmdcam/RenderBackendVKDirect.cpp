@@ -10,6 +10,9 @@
 #include <fcntl.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <atomic>
+#include <cassert>
 #include "rhi/gl/GLCommon.h"
 
 #define CHECK(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); abort(); }
@@ -17,6 +20,109 @@
 
 // Instantiate the vulkan dynamic loader in this file
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
+
+#ifdef IS_TEGRA
+// Minimal reverse-engineered libnvrm_host1x syncpoint API.
+//
+// NvRmHost1xSyncpointWait exposes the kernel-recorded hardware timestamp of the syncpoint signal.
+// In the absence of any of the advanced Vulkan presentation timing extensions,
+// this provides better accuracy than the CPU-timestamped Vulkan display event codepath.
+extern "C" {
+  struct NvRmHost1xTimestamp {   // out-parameter struct populated by SyncpointWait
+    uint32_t tv_sec;
+    uint32_t _pad;
+    uint32_t tv_nsec;
+    uint32_t clock_id; // library-translated: kernel 0/1 -> 0, kernel 2 -> 1
+  };
+
+  uint32_t NvRmHost1xOpen(void** out_handle, uint32_t attrs);
+  void NvRmHost1xClose(void* handle);
+  uint32_t NvRmHost1xGetDefaultOpenAttrs(uint32_t* out_attrs);
+  uint32_t NvRmHost1xSyncpointRead(void* h1x, uint32_t id, uint32_t* out_value);
+  uint32_t NvRmHost1xWaiterAllocate(void** out_waiter, void* h1x);
+  void NvRmHost1xWaiterFree(void* waiter);
+  uint32_t NvRmHost1xSyncpointWait(void* waiter, uint32_t id, uint32_t thresh, uint32_t timeout_us, NvRmHost1xTimestamp* out_ts);
+}
+
+// VBlank syncpt, retrieved by hooking ioctl.
+uint32_t vblankSyncptId = 0;
+
+// ioctl shim for figuring out what syncpt channel our display vblank is on.
+// Early in initialization, the display drivers call nvKmsIoctl with NVKMS_IOCTL_ENABLE_VBLANK_SYNC_OBJECT,
+// which populates the syncpt ID in its response. This is the easiest way to find that.
+// (The alternative is using the NvKms API ourselves correctly, and there's a lot going on there.)
+static std::atomic_bool ioctl_shim_active = true;
+static int (*real_ioctl)(int fd, unsigned long request, ...) = nullptr;
+
+// Loader function for real_ioctl.
+void init_ioctl_shim() { real_ioctl = reinterpret_cast<decltype(real_ioctl)>(dlsym(RTLD_NEXT, "ioctl")); }
+// Load the real ioctl as early as possible by putting a function pointer into preinit_array.
+__attribute__((section(".preinit_array"), used))static void (*const preinit_ioctl_shim)(void) = init_ioctl_shim;
+
+
+// NvKmsIoctl helper structs
+struct NvKmsIoctlArg {
+  uint32_t command;
+  uint32_t payloadLength;
+  void* payload;
+};
+
+struct NvKmsEnableVblankSyncObjectRequest {
+    uint32_t deviceHandle;
+    uint32_t dispHandle;
+    uint32_t head;
+};
+
+struct NvKmsEnableVblankSyncObjectReply {
+    uint32_t vblankHandle;
+    uint32_t syncptId;
+};
+
+struct NvKmsEnableVblankSyncObjectParams {
+    struct NvKmsEnableVblankSyncObjectRequest request; /*! in */
+    struct NvKmsEnableVblankSyncObjectReply reply;     /*! out */
+};
+
+constexpr unsigned long kNvKmsIoctlRequest = 0xc0106d00;
+constexpr uint32_t NVKMS_IOCTL_ENABLE_VBLANK_SYNC_OBJECT = 56;
+
+// Cold-path ioctl shim. This will self-disable once it catches the vblank sync object.
+__attribute__((cold, noinline))
+static int ioctl_shim(int fd, unsigned long request, void* arg) {
+  NvKmsIoctlArg* kmsArg = (NvKmsIoctlArg*) arg;
+  if (__builtin_expect((request == kNvKmsIoctlRequest && kmsArg->command == NVKMS_IOCTL_ENABLE_VBLANK_SYNC_OBJECT), false)) {
+    int res = real_ioctl(fd, request, arg);
+    if (res == 0) {
+      // IOCTL succeeded, we should have the syncpt id.
+      NvKmsEnableVblankSyncObjectParams* vblankParams = (NvKmsEnableVblankSyncObjectParams*) kmsArg->payload;
+      fprintf(stderr, "NVKMS_IOCTL_ENABLE_VBLANK_SYNC_OBJECT(%u, %u, %u) => syncpt %u\n",
+        vblankParams->request.deviceHandle, vblankParams->request.dispHandle, vblankParams->request.head,
+        vblankParams->reply.syncptId);
+
+      vblankSyncptId = vblankParams->reply.syncptId;
+
+      // Stop running the shim, we're done.
+      std::atomic_store_explicit(&ioctl_shim_active, false, std::memory_order_relaxed);
+    }
+    return res;
+  }
+  return real_ioctl(fd, request, arg);
+}
+
+// Hot-path ioctl replacement. This is optimized to forward to the real ioctl as fast as possible once the shim self-disables.
+extern "C" int ioctl(int fd, unsigned long request, ...) {
+  va_list ap;
+  va_start(ap, request);
+  void* arg = va_arg(ap, void*);
+  va_end(ap);
+
+  if (__builtin_expect(
+          std::atomic_load_explicit(&ioctl_shim_active, std::memory_order_relaxed), 0)) {
+      return ioctl_shim(fd, request, arg);
+  }
+  return real_ioctl(fd, request, arg);
+}
+#endif // IS_TEGRA
 
 RenderBackend* createVKDirectBackend() { return new RenderBackendVKDirect(); }
 
@@ -477,10 +583,37 @@ void RenderBackendVKDirect::init() {
   m_windowRenderTarget = new VKDirectSwapchainRenderTarget(this);
   m_windowRenderTarget->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
 
-  // Start scanout timestamp worker thread
+
+  // Scanout timestamp source setup.
+#ifdef IS_TEGRA
+  // Tegra: host1x vblank syncpoint. If init fails, leave the worker thread
+  // unstarted; lastPresentationTimestamp stays at 0. The render loop will
+  // continue to function; only consumers that depend on the timestamp are
+  // affected.
+
+  // We first need to render a frame to the device to get the output configured;
+  // without this, the ioctl hook can't catch the vblank syncpt ID.
+  {
+    VKGLSyncData* frame = acquireTexture();
+    glBindFramebuffer(GL_FRAMEBUFFER, frame->m_framebufferGL);
+    glViewport(0, 0, surfaceWidth(), surfaceHeight());
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glFlush();
+    submitTexture(frame);
+  }
+
+  if (initScanoutSyncpt()) {
+    m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+  } else {
+    fprintf(stderr, "RenderBackendVKDirect: host1x syncpt init failed; lastPresentationTimestamp will remain 0\n");
+  }
+#else
+  // Non-Tegra: Vulkan display-event fence path.
   m_scanoutEventFd = eventfd(0, 0);
   CHECK(m_scanoutEventFd >= 0);
   m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+#endif
 
   } catch (const std::exception& ex) {
     printf("%s\n", ex.what());
@@ -489,11 +622,17 @@ void RenderBackendVKDirect::init() {
 }
 
 RenderBackendVKDirect::~RenderBackendVKDirect() {
+#ifdef IS_TEGRA
+  // Signal the worker to exit. It's blocking in NvRmHost1xSyncpointWait with
+  // a 500ms timeout, which bounds shutdown latency.
+  m_scanoutShutdown.store(true, std::memory_order_release);
+#else
   if (m_scanoutEventFd >= 0) {
-    // Signal shutdown by closing the eventfd; the worker's read() will return 0/error.
+    // Closing the eventfd makes the worker's read() return 0 immediately.
     close(m_scanoutEventFd);
     m_scanoutEventFd = -1;
   }
+#endif
   if (m_scanoutThread.joinable())
     m_scanoutThread.join();
 
@@ -501,14 +640,115 @@ RenderBackendVKDirect::~RenderBackendVKDirect() {
   if (m_device)
     m_device->waitIdle();
 
-  // Destroy any fence left in the mailbox
+#ifdef IS_TEGRA
+  // Host1x shutdown
+  if (m_nvrmHost1x) {
+    NvRmHost1xClose(m_nvrmHost1x);
+    m_nvrmHost1x = nullptr;
+  }
+#else
+  // Destroy any fence left in the mailbox.
   VkFence leftover = m_scanoutFenceMailbox.load(std::memory_order_acquire);
   if (leftover != VK_NULL_HANDLE)
     m_device->destroyFence(leftover);
+#endif
 
   if (m_drmFd >= 0)
     close(m_drmFd);
 }
+
+#ifdef IS_TEGRA
+bool RenderBackendVKDirect::initScanoutSyncpt() {
+  if (vblankSyncptId == 0) {
+    fprintf(stderr, "RenderBackendVKDirect::initScanoutSyncpt(): Syncpt ID is unknown!\n");
+    return false;
+  }
+
+  uint32_t attrs = 0;
+  // NvRmHost1xGetDefaultOpenAttrs is a complete no-op and returns 1 (failure) on the current build.
+  // The Vulkan ICD init path calls it like this, though, so we'll do the same.
+  NvRmHost1xGetDefaultOpenAttrs(&attrs);
+
+  uint32_t rc = NvRmHost1xOpen(&m_nvrmHost1x, attrs);
+  if (rc != 0 || !m_nvrmHost1x) {
+    fprintf(stderr, "RenderBackendVKDirect::initScanoutSyncpt(): NvRmHost1xOpen failed rc=0x%x\n", rc);
+    return false;
+  }
+
+  // Sanity-read of the target syncpoint. If this fails the id is likely wrong
+  // (e.g., nvkms-fence moved to a different id after a kernel update); falling
+  // back to the fence path is safer than running with a stale id that will
+  // silently never tick.
+  uint32_t value = 0;
+  rc = NvRmHost1xSyncpointRead(m_nvrmHost1x, vblankSyncptId, &value);
+  if (rc != 0) {
+    fprintf(stderr, "RenderBackendVKDirect::initScanoutSyncpt(): NvRmHost1xSyncpointRead(id=%u) failed rc=0x%x\n", vblankSyncptId, rc);
+    NvRmHost1xClose(m_nvrmHost1x);
+    m_nvrmHost1x = nullptr;
+    return false;
+  }
+  printf("RenderBackendVKDirect::initScanoutSyncpt(): using host1x syncpt id=%u (current value %u)\n", vblankSyncptId, value);
+
+  return true;
+}
+
+void RenderBackendVKDirect::scanoutThreadFunc() {
+  // The waiter is reusable, so we just allocate it once at thread startup.
+  void* waiter = nullptr;
+  if (NvRmHost1xWaiterAllocate(&waiter, m_nvrmHost1x) != 0 || !waiter) {
+    fprintf(stderr, "RenderBackendVKDirect::scanoutThreadFunc(): NvRmHost1xWaiterAllocate failed!\n");
+    return;
+  }
+
+  // Get the initial value to start the wait loop.
+  uint32_t current = 0;
+  NvRmHost1xSyncpointRead(m_nvrmHost1x, vblankSyncptId, &current);
+
+  // Finite timeout so shutdown can be checked between waits even if the
+  // display isn't ticking. 500ms is short enough for responsive shutdown
+  // and long enough that a live display won't hit it.
+  const uint32_t kWaitTimeoutUs = 500000;
+
+  while (!m_scanoutShutdown.load(std::memory_order_acquire)) {
+    NvRmHost1xTimestamp ts = {};
+    uint32_t rc = NvRmHost1xSyncpointWait(waiter, vblankSyncptId, current + 1, kWaitTimeoutUs, &ts);
+
+    if (rc == 0) {
+      // Translate kernel CLOCK_MONOTONIC ns into our CNTVCT-based timebase
+      // so consumers reading lastPresentationTimestamp() can compare against
+      // currentTimeNs() directly.
+      uint64_t kernel_ns = (uint64_t) ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+
+      // Compute CLOCK_MONOTONIC to CNTVCT timebase offset.
+      // Bracket the clock_gettime() call with two cntvct reads and use the midpoint to improve accuracy.
+      // We have to continually calculate the offset because CLOCK_MONOTONIC is gradually adjusted by NTP sync.
+      // (if it were CLOCK_MONOTONIC_RAW, that'd be a one-time fixed offset computation.)
+      uint64_t monoToTscOffsetNs;
+      {
+        struct timespec mts;
+        uint64_t cntvct_before, cntvct_after;
+        asm volatile("mrs %0, cntvct_el0" : "=r"(cntvct_before));
+        clock_gettime(CLOCK_MONOTONIC, &mts);
+        asm volatile("mrs %0, cntvct_el0" : "=r"(cntvct_after));
+        uint64_t cntvct_mid_ns = tscTimestampToNs((cntvct_before + cntvct_after) / 2);
+        uint64_t mono_ns = (uint64_t) mts.tv_sec * 1000000000ULL + mts.tv_nsec;
+        monoToTscOffsetNs = (int64_t) cntvct_mid_ns - (int64_t) mono_ns;
+      }
+
+      uint64_t tsc_ns    = (uint64_t) ((int64_t) kernel_ns + monoToTscOffsetNs);
+      m_lastPresentationTimestamp.store(tsc_ns, std::memory_order_release);
+    }
+    // Re-read the current value so the next threshold is always "next
+    // unseen tick," even if we lost a vblank (e.g., to timeout or
+    // scheduling). Protects against returning immediately on stale data.
+    NvRmHost1xSyncpointRead(m_nvrmHost1x, vblankSyncptId, &current);
+  }
+  NvRmHost1xWaiterFree(waiter);
+}
+
+#else
+
+// Original Vulkan display timing backend. More jitter due to timestamping on the CPU after thread wakeup.
 
 // Margin before the expected scanout time at which we switch from
 // blocking vkWaitForFences to WFE spin-polling. Trades a small amount of
@@ -585,6 +825,7 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
     m_device->destroyFence(fence);
   }
 }
+#endif // IS_TEGRA
 
 VKGLSyncData* RenderBackendVKDirect::acquireTexture() {
   if (m_unsignaledFrames > 0) {
@@ -706,8 +947,11 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   if (presentResult == vk::Result::eSuboptimalKHR)
     fprintf(stderr, "RenderBackendVKDirect: presentKHR returned eSuboptimalKHR\n");
 
-  // VK_EXT_display_control: register a first-pixel-out fence and post it to the
-  // scanout worker thread via atomic mailbox.
+#ifndef IS_TEGRA
+  // VK_EXT_display_control: register a first-pixel-out fence and post it to
+  // the scanout worker thread via atomic mailbox. Only compiled on non-Tegra
+  // builds; on Tegra the worker thread waits directly on the host1x vblank
+  // syncpoint and doesn't need per-frame fence registration.
   {
     vk::DisplayEventInfoEXT eventInfo{vk::DisplayEventTypeEXT::eFirstPixelOut};
     vk::Fence scanoutFence = m_device->registerDisplayEventEXT(m_display.m_displayKHR, eventInfo);
@@ -721,6 +965,7 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
     uint64_t val = 1;
     write(m_scanoutEventFd, &val, sizeof(val));
   }
+#endif
 
   m_frameIndex = (m_frameIndex + 1) % m_swapchainImages.size();
 }

@@ -121,13 +121,29 @@ protected:
 
   uint32_t m_unsignaledFrames; // decremented each frame; skip available-semaphore wait while > 0
 
+  // Presentation timestamp tracking
+  std::atomic<uint64_t> m_lastPresentationTimestamp{0};
+  std::thread m_scanoutThread;
+
+#ifdef IS_TEGRA
+  // NvRmHost1x syncpoint path. The worker waits on the nvkms-fence vblank syncpoint, captures the
+  // kernel-recorded timestamp on each increment, and translates from the returned
+  // CLOCK_MONOTONIC timebase into currentTimeNs()'s timebase (TSC-relative).
+  // If the Host1x init fails, lastPresentationTimestamp will stay at 0.
+  std::atomic<bool> m_scanoutShutdown{false};
+  void* m_nvrmHost1x = nullptr; // NvRmHost1xOpen() session
+  bool initScanoutSyncpt();  // returns true if the syncpt path is usable
+#else
   // VK_EXT_display_control: scanout timestamp tracking via worker thread.
   // Atomic mailbox: main thread exchanges in a new fence, worker thread picks
   // it up. Stale fences displaced by new ones are destroyed by the producer.
-  std::atomic<uint64_t> m_lastPresentationTimestamp{0};
-  std::thread m_scanoutThread;
+  // This is less accurate than the NvRmHost1x path, but is platform-agnostic.
+  // Mostly keeping this around in case Nvidia ever gets around to implementing
+  // VK_GOOGLE_display_timing or similar.
   std::atomic<VkFence> m_scanoutFenceMailbox{VK_NULL_HANDLE};
   int m_scanoutEventFd = -1; // eventfd for waking the worker thread
+#endif // IS_TEGRA
+
   void scanoutThreadFunc();
 };
 
