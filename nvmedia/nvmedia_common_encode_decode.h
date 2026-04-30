@@ -10,6 +10,21 @@
  * its affiliates is strictly prohibited.
  */
 
+// Based on the NvMedia API from DriveOS 6.0.10
+//
+// API reference: https://developer.nvidia.com/docs/drive/drive-os/6.0.10/public/drive-os-linux-sdk/api_reference/nvmedia__common__encode__decode_8h.html
+//
+//
+// The Doxygen comments were automatically merged back into this file by AI and may not be accurate.
+// When in doubt, consult the API reference documentation linked above.
+//
+
+/**
+ * \file
+ * \brief NVIDIA Media Interface: Common Types for Encode and Decode
+ *
+ * This file contains common types and definitions for decode and encode operations.
+ */
 
 #ifndef NVMEDIA_COMMON_ENCODE_DECODE_H
 #define NVMEDIA_COMMON_ENCODE_DECODE_H
@@ -20,12 +35,18 @@ extern "C" {
 
 #include <stdint.h>
 
+/**
+ * \brief Specifies NVJPG HW instance ID.
+ */
 typedef enum  {
     NVMEDIA_JPEG_INSTANCE_0 = 0,
     NVMEDIA_JPEG_INSTANCE_1,
     NVMEDIA_JPEG_INSTANCE_AUTO
 } NvMediaJPEGInstanceId;
 
+/**
+ * \brief Video codec type.
+ */
 typedef enum {
     NVMEDIA_VIDEO_CODEC_H264,
     NVMEDIA_VIDEO_CODEC_VC1,
@@ -43,10 +64,13 @@ typedef enum {
     NVMEDIA_VIDEO_CODEC_END
 } NvMediaVideoCodec;
 
+/**
+ * \brief Holds an application data buffer containing compressed video data.
+ */
 typedef struct {
-    uint8_t *bitstream;
-    uint32_t bitstreamBytes;
-    uint32_t bitstreamSize;
+    uint8_t *bitstream;         /**< A pointer to the bitstream data bytes. */
+    uint32_t bitstreamBytes;    /**< The number of data bytes. */
+    uint32_t bitstreamSize;     /**< Size of bitstream array. */
 } NvMediaBitstreamBuffer;
 
 #ifdef __cplusplus
