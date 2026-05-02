@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 static inline uint32_t floorLogTwo(uint32_t v) {
+  // clang-format off
   uint32_t pos = 0;
   if (v >= 1<<16) { v >>= 16; pos += 16; }
   if (v >= 1<< 8) { v >>=  8; pos +=  8; }
@@ -10,6 +11,7 @@ static inline uint32_t floorLogTwo(uint32_t v) {
   if (v >= 1<< 2) { v >>=  2; pos +=  2; }
   if (v >= 1<< 1) {           pos +=  1; }
   return (v == 0) ? 0 : pos;
+  // clang-format on
 }
 
 static inline uint32_t leadingZeros(uint32_t x) {

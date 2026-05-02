@@ -45,6 +45,7 @@ GLuint RHIRenderPipelineGL::vao() {
     }
 
     for (size_t arrayIndex = 0; arrayIndex < elem.arrayElementCount; ++arrayIndex) {
+      // clang-format off
       switch (elem.elementType) {
         case kVertexElementTypeFloat1:
           glVertexAttribFormat(loc + arrayIndex, 1, GL_FLOAT, GL_FALSE, elem.offset + (arrayIndex * 4)); break;
@@ -131,6 +132,7 @@ GLuint RHIRenderPipelineGL::vao() {
         default:
           assert(false && "unhandled RHIVertexElementType");
       };
+      // clang-format on
       GL(glVertexAttribBinding(loc + arrayIndex, elem.streamBufferIndex));
       GL(glEnableVertexAttribArray(loc + arrayIndex));
     }

@@ -1421,12 +1421,14 @@ void EyeTrackingService::renderSceneGizmos_postUI(FxRenderView* renderViews) {
 
     glm::vec2 measuredPoint = getPitchYawAnglesForEye(0);
 
+    // clang-format off
     glm::mat4 modelMatrix =
         glm::eulerAngleXY(
           glm::radians(measuredPoint.x),
           glm::radians(measuredPoint.y))
       * glm::translate(glm::vec3(0.0f, 0.0f, -crosshairDepth))
       * glm::scale(glm::vec3(0.005f));
+    // clang-format on
 
     ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
     ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;

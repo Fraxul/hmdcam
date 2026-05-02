@@ -233,72 +233,51 @@ RHISurface::ptr RHIGL::newHMDSwapTexture(uint32_t width, uint32_t height, const 
 }
 
 static void rhiVertexElementTypeToGLPackFormat(RHIVertexElementType rhiFormat, GLenum& unpackFormat, GLenum& unpackType) {
+  // clang-format off
+  #define FMT_TYPE(glFmt, glType) unpackFormat = glFmt; unpackType = glType; return;
   switch (rhiFormat) {
-    case kVertexElementTypeFloat1:
-      unpackFormat = GL_RED; unpackType = GL_FLOAT; return;
-    case kVertexElementTypeFloat2:
-      unpackFormat = GL_RG; unpackType = GL_FLOAT; return;
-    case kVertexElementTypeFloat3:
-      unpackFormat = GL_RGB; unpackType = GL_FLOAT; return;
-    case kVertexElementTypeFloat4:
-      unpackFormat = GL_RGBA; unpackType = GL_FLOAT; return;
-    case kVertexElementTypeHalf1:
-      unpackFormat = GL_RED; unpackType = GL_HALF_FLOAT; return;
-    case kVertexElementTypeHalf2:
-      unpackFormat = GL_RG; unpackType = GL_HALF_FLOAT; return;
-    case kVertexElementTypeHalf4:
-      unpackFormat = GL_RGBA; unpackType = GL_HALF_FLOAT; return;
+    case kVertexElementTypeFloat1:    FMT_TYPE(GL_RED, GL_FLOAT);
+    case kVertexElementTypeFloat2:    FMT_TYPE(GL_RG, GL_FLOAT);
+    case kVertexElementTypeFloat3:    FMT_TYPE(GL_RGB, GL_FLOAT);
+    case kVertexElementTypeFloat4:    FMT_TYPE(GL_RGBA, GL_FLOAT);
+    case kVertexElementTypeHalf1:     FMT_TYPE(GL_RED, GL_HALF_FLOAT);
+    case kVertexElementTypeHalf2:     FMT_TYPE(GL_RG, GL_HALF_FLOAT);
+    case kVertexElementTypeHalf4:     FMT_TYPE(GL_RGBA, GL_HALF_FLOAT);
     case kVertexElementTypeUShort1:
-    case kVertexElementTypeUShort1N:
-      unpackFormat = GL_RED; unpackType = GL_UNSIGNED_SHORT; return;
+    case kVertexElementTypeUShort1N:  FMT_TYPE(GL_RED, GL_UNSIGNED_SHORT);
     case kVertexElementTypeUShort2:
-    case kVertexElementTypeUShort2N:
-      unpackFormat = GL_RG; unpackType = GL_UNSIGNED_SHORT; return;
+    case kVertexElementTypeUShort2N:  FMT_TYPE(GL_RG, GL_UNSIGNED_SHORT);
     case kVertexElementTypeUShort4:
-    case kVertexElementTypeUShort4N:
-      unpackFormat = GL_RGBA; unpackType = GL_UNSIGNED_SHORT; return;
+    case kVertexElementTypeUShort4N:  FMT_TYPE(GL_RGBA, GL_UNSIGNED_SHORT);
     case kVertexElementTypeShort1:
-    case kVertexElementTypeShort1N:
-      unpackFormat = GL_RED; unpackType = GL_SHORT; return;
+    case kVertexElementTypeShort1N:   FMT_TYPE(GL_RED, GL_SHORT);
     case kVertexElementTypeShort2:
-    case kVertexElementTypeShort2N:
-      unpackFormat = GL_RG; unpackType = GL_SHORT; return;
+    case kVertexElementTypeShort2N:   FMT_TYPE(GL_RG, GL_SHORT);
     case kVertexElementTypeShort4:
-    case kVertexElementTypeShort4N:
-      unpackFormat = GL_RGBA; unpackType = GL_SHORT; return;
+    case kVertexElementTypeShort4N:   FMT_TYPE(GL_RGBA, GL_SHORT);
     case kVertexElementTypeUByte1:
-    case kVertexElementTypeUByte1N:
-      unpackFormat = GL_RED; unpackType = GL_UNSIGNED_BYTE; return;
+    case kVertexElementTypeUByte1N:   FMT_TYPE(GL_RED, GL_UNSIGNED_BYTE);
     case kVertexElementTypeUByte2:
-    case kVertexElementTypeUByte2N:
-      unpackFormat = GL_RG; unpackType = GL_UNSIGNED_BYTE; return;
+    case kVertexElementTypeUByte2N:   FMT_TYPE(GL_RG, GL_UNSIGNED_BYTE);
     case kVertexElementTypeUByte4:
-    case kVertexElementTypeUByte4N:
-      unpackFormat = GL_RGBA; unpackType = GL_UNSIGNED_BYTE; return;
+    case kVertexElementTypeUByte4N:   FMT_TYPE(GL_RGBA, GL_UNSIGNED_BYTE);
     case kVertexElementTypeByte1:
-    case kVertexElementTypeByte1N:
-      unpackFormat = GL_RED; unpackType = GL_BYTE; return;
+    case kVertexElementTypeByte1N:    FMT_TYPE(GL_RED, GL_BYTE);
     case kVertexElementTypeByte2:
-    case kVertexElementTypeByte2N:
-      unpackFormat = GL_RG; unpackType = GL_BYTE; return;
+    case kVertexElementTypeByte2N:    FMT_TYPE(GL_RG, GL_BYTE);
     case kVertexElementTypeByte4:
-    case kVertexElementTypeByte4N:
-      unpackFormat = GL_RGBA; unpackType = GL_BYTE; return;
-    case kVertexElementTypeUInt1:
-      unpackFormat = GL_RED; unpackType = GL_UNSIGNED_INT; return;
-    case kVertexElementTypeUInt2:
-      unpackFormat = GL_RG; unpackType = GL_UNSIGNED_INT; return;
-    case kVertexElementTypeUInt4:
-      unpackFormat = GL_RGBA; unpackType = GL_UNSIGNED_INT; return;
-    case kVertexElementTypeInt1:
-      unpackFormat = GL_RED; unpackType = GL_INT; return;
-    case kVertexElementTypeInt2:
-      unpackFormat = GL_RG; unpackType = GL_INT; return;
-    case kVertexElementTypeInt4:
-      unpackFormat = GL_RGBA; unpackType = GL_INT; return;
+    case kVertexElementTypeByte4N:    FMT_TYPE(GL_RGBA, GL_BYTE);
+    case kVertexElementTypeUInt1:     FMT_TYPE(GL_RED, GL_UNSIGNED_INT);
+    case kVertexElementTypeUInt2:     FMT_TYPE(GL_RG, GL_UNSIGNED_INT);
+    case kVertexElementTypeUInt4:     FMT_TYPE(GL_RGBA, GL_UNSIGNED_INT);
+    case kVertexElementTypeInt1:      FMT_TYPE(GL_RED, GL_INT);
+    case kVertexElementTypeInt2:      FMT_TYPE(GL_RG, GL_INT);
+    case kVertexElementTypeInt4:      FMT_TYPE(GL_RGBA, GL_INT);
     default:
       assert(false && "RHIGL rhiVertexElementTypeToGLPackFormat: unimplemented sourceDataFormat");
   }
+  #undef FMT_TYPE
+  // clang-format on
 }
 
 bool isIntegerInternalFormat(GLenum internalFormat) {
