@@ -39,4 +39,3 @@ public:
   // most recent first-pixel-out scanout event. Returns 0 if not supported by this backend.
   virtual uint64_t lastPresentationTimestamp() const = 0;
 };
-

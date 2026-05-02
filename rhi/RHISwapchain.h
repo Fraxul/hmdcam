@@ -21,4 +21,3 @@ protected:
   std::vector<RHISurface::ptr> m_surfaces;
   std::vector<RHIRenderTarget::ptr> m_renderTargets;
 };
-

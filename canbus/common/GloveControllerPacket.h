@@ -47,7 +47,7 @@ struct GloveControllerPacket {
       static_cast<float>(gyro_milliDPS[2]) / 1000.0f,
       buttonState);
 
-    unsigned int dataAge_ms  = (CANBus::currentCANTimestampUs() - messageTimestamp) / 1000000UL;
+    unsigned int dataAge_ms = (CANBus::currentCANTimestampUs() - messageTimestamp) / 1000000UL;
     if (dataAge_ms > 5000) {
       p += snprintf(buf + p, bufLen - p, " (%ums ago)", dataAge_ms);
     }
@@ -56,4 +56,3 @@ struct GloveControllerPacket {
 
   bool valid() const { return (messageTimestamp != 0); }
 };
-

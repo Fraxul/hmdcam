@@ -8,6 +8,7 @@ public:
   virtual ~RHITimerQueryGL();
 
   GLuint glId() const { return m_glId; }
+
 protected:
   GLuint m_glId;
 };

@@ -19,4 +19,3 @@ void DumpNvSciSyncAttrList(NvSciSyncAttrList list);
 
 NvSciBufAttrList ReconcileNvSciBufAttrLists(NvSciBufAttrList list1, NvSciBufAttrList list2 = nullptr);
 void DumpNvSciBufAttrList(NvSciBufAttrList list);
-

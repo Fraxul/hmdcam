@@ -24,14 +24,13 @@ FxCamera::FxCamera() :
   m_targetPosition(glm::vec3(0, 0, -5)),
   m_upVec(glm::vec3(0, 1, 0)),
   m_fovX(65.0f),
-  m_zNear(r_zNear), m_zFar(10000.0f),
+  m_zNear(r_zNear),
+  m_zFar(10000.0f),
   m_useInfiniteZ(true),
   m_useHMDControl(false) {
-
 }
 
 FxCamera::~FxCamera() {
-
 }
 
 glm::vec3 FxCamera::position() const {
@@ -76,7 +75,6 @@ void FxCamera::tumble(const glm::vec2& delta) {
   }
 
   m_position = m_targetPosition + positionVector;
-
 }
 
 void FxCamera::track(const glm::vec2& delta) {
@@ -274,4 +272,3 @@ FxRenderView FxCamera::toRenderView(float renderTargetAspectRatio, int forStereo
   res.recomputeFrustumData();
   return res;
 }
-

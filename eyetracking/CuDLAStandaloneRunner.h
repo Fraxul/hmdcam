@@ -23,7 +23,7 @@ public:
   void asyncStartInference();
   void asyncFinishInference();
 
-/*
+  /*
 typedef struct cudlaModuleTensorDescriptor_t {
     char name[CUDLA_RUNTIME_TENSOR_DESC_NAME_MAX_LEN + 1];
     uint64_t size; // full size in bytes
@@ -42,33 +42,41 @@ typedef struct cudlaModuleTensorDescriptor_t {
 
   size_t inputTensorCount() const { return m_inputTensorDesc.size(); }
   const cudlaModuleTensorDescriptor& inputTensorDescriptor(size_t idx) const { return m_inputTensorDesc[idx]; }
-  template <typename T = void> T* inputTensorPtr(size_t idx) const { assert(idx == 0); return reinterpret_cast<T*>(m_inputBufObjBuffer); }
+  template <typename T = void>
+  T* inputTensorPtr(size_t idx) const {
+    assert(idx == 0);
+    return reinterpret_cast<T*>(m_inputBufObjBuffer);
+  }
 
   size_t outputTensorCount() const { return m_outputTensorDesc.size(); }
   const cudlaModuleTensorDescriptor& outputTensorDescriptor(size_t idx) const { return m_outputTensorDesc[idx]; }
-  template <typename T = void> T* outputTensorPtr(size_t idx) const { assert(idx == 0); return reinterpret_cast<T*>(m_outputBufObjBuffer); }
+  template <typename T = void>
+  T* outputTensorPtr(size_t idx) const {
+    assert(idx == 0);
+    return reinterpret_cast<T*>(m_outputBufObjBuffer);
+  }
 
 protected:
   void initWithModuleData(uint64_t deviceIdx, const uint8_t* moduleData, size_t moduleLen);
 
-  cudlaDevHandle               m_devHandle = nullptr;
-  cudlaModule                  m_moduleHandle = nullptr;
-  NvSciBufObj                  m_inputBufObj = nullptr;
-  NvSciBufObj                  m_outputBufObj = nullptr;
-  NvSciBufModule               m_bufModule = nullptr;
-  NvSciSyncObj                 m_syncWaitObj = nullptr;
-  NvSciSyncObj                 m_syncSignalObj = nullptr;
-  NvSciSyncModule              m_syncModule = nullptr;
-  NvSciSyncFence               m_preFence = NvSciSyncFenceInitializer; // Associated with m_syncWaitObj
-  NvSciSyncFence               m_eofFence = NvSciSyncFenceInitializer; // Associated with m_syncSignalObj
-  NvSciSyncCpuWaitContext      m_cpuWaitCtx = nullptr;
+  cudlaDevHandle m_devHandle = nullptr;
+  cudlaModule m_moduleHandle = nullptr;
+  NvSciBufObj m_inputBufObj = nullptr;
+  NvSciBufObj m_outputBufObj = nullptr;
+  NvSciBufModule m_bufModule = nullptr;
+  NvSciSyncObj m_syncWaitObj = nullptr;
+  NvSciSyncObj m_syncSignalObj = nullptr;
+  NvSciSyncModule m_syncModule = nullptr;
+  NvSciSyncFence m_preFence = NvSciSyncFenceInitializer; // Associated with m_syncWaitObj
+  NvSciSyncFence m_eofFence = NvSciSyncFenceInitializer; // Associated with m_syncSignalObj
+  NvSciSyncCpuWaitContext m_cpuWaitCtx = nullptr;
   std::vector<cudlaModuleTensorDescriptor> m_inputTensorDesc;
   std::vector<cudlaModuleTensorDescriptor> m_outputTensorDesc;
 
-  cudlaWaitEvents             m_waitEvents;
-  cudlaSignalEvents           m_signalEvents;
-  CudlaFence                  m_preFences[1];
-  CudlaFence                  m_eofFences[1];
+  cudlaWaitEvents m_waitEvents;
+  cudlaSignalEvents m_signalEvents;
+  CudlaFence m_preFences[1];
+  CudlaFence m_eofFences[1];
 
   // Deterministic fence support
   uint64_t m_signalerID = 0;

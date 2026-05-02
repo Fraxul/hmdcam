@@ -95,17 +95,16 @@ public:
       float browPosition = 0.0f;
     };
     bool m_freezeGraphData = false;
-    ScrollingBuffer<GraphData> m_graphData { 120 /*samples*/ };
+    ScrollingBuffer<GraphData> m_graphData{120 /*samples*/};
 
 
-private:
+  private:
     char m_debugPerfStatsBuffer[256]; // Accessed/populated through getDebugPerfStats()
   };
 
   ProcessingState m_processingState;
 
 protected:
-
   void processingThreadFn();
 
   void applyCalibrationData();
@@ -117,4 +116,3 @@ protected:
   float m_filterDCutoff = 0.2;
   float m_filterBetaExponent = -0.2; // Filter beta is pow(10.0, m_filterBetaExponent)
 };
-

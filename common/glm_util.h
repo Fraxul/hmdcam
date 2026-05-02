@@ -11,7 +11,8 @@ inline glm::vec3 transform(const glm::vec3& p, const glm::mat4& m) {
   return glm::vec3(p4) / p4.w;
 }
 
-template <typename T> inline bool is_valid_vector(const T& v) {
+template <typename T>
+inline bool is_valid_vector(const T& v) {
   for (size_t i = 0; i < v.length(); ++i)
     if (!boost::math::isfinite(v[i]))
       return false;
@@ -19,7 +20,8 @@ template <typename T> inline bool is_valid_vector(const T& v) {
   return true;
 }
 
-template <typename T> inline bool vector_eq(const T& v1, const T& v2) {
+template <typename T>
+inline bool vector_eq(const T& v1, const T& v2) {
   return glm::all(glm::epsilonEqual(v1, v2, 0.0001f));
 }
 
@@ -54,4 +56,3 @@ static inline glm::vec3 srgbToLinear(glm::vec3 in) {
 static inline glm::vec4 srgbToLinear(glm::vec4 in) {
   return glm::vec4(srgbToLinear(glm::vec3(in)), in[3]);
 }
-

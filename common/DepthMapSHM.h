@@ -7,7 +7,8 @@ class DepthMapSHM : public boost::noncopyable {
 public:
   // Note that the constructor is only called when _creating_ the segment, not when opening it.
   // (only called on the producer)
-  DepthMapSHM(size_t segmentSize) : m_segmentSize(segmentSize) {
+  DepthMapSHM(size_t segmentSize) :
+    m_segmentSize(segmentSize) {
     m_dataOffset = (sizeof(DepthMapSHM) + 4095) & (~4095);
     sem_init(&m_workerReadySem, /*pshared=*/ 1, /*value=*/ 0);
     sem_init(&m_workAvailableSem, /*pshared=*/ 1, /*value=*/ 0);
@@ -79,4 +80,3 @@ public:
   // Profiling data
   float m_frameTimeMs = 0;
 };
-

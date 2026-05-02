@@ -33,7 +33,7 @@ void recomputeHMDParameters();
 extern RenderBackend* renderBackend;
 
 typedef int CUdevice;
-typedef struct CUctx_st *CUcontext;
+typedef struct CUctx_st* CUcontext;
 extern CUdevice cudaDevice;
 extern CUcontext cudaContext;
 
@@ -66,4 +66,3 @@ extern RHIRenderPipeline::ptr camUndistortOverlayPipeline;
 extern RHIRenderPipeline::ptr solidQuadPipeline;
 
 extern RHISurface::ptr disabledMaskTex;
-

@@ -2,10 +2,10 @@
 #include "common/DepthMapGenerator.h"
 #include "common/DepthMapGeneratorMock.h"
 #ifdef HAVE_OPENCV_CUDA
-  #include "common/DepthMapGeneratorSHM.h"
+#include "common/DepthMapGeneratorSHM.h"
 #endif
 #ifdef L4T_RELEASE_MAJOR
-  #include "common/tegra/DepthMapGeneratorOFA.h"
+#include "common/tegra/DepthMapGeneratorOFA.h"
 #endif
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
@@ -46,29 +46,29 @@ DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr) {
 
 DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend backend) {
   switch (backend) {
-  case kDepthBackendNone:
-    return NULL;
+    case kDepthBackendNone:
+      return NULL;
 
-  case kDepthBackendMock:
-    return new DepthMapGeneratorMock();
+    case kDepthBackendMock:
+      return new DepthMapGeneratorMock();
 
-  case kDepthBackendDGPU:
-  case kDepthBackendDepthAI:
+    case kDepthBackendDGPU:
+    case kDepthBackendDepthAI:
 #ifdef HAVE_OPENCV_CUDA
-    return new DepthMapGeneratorSHM(backend);
+      return new DepthMapGeneratorSHM(backend);
 #else
-    assert(false && "createDepthMapGenerator: SHM-based backends were disabled at compile time (no opencv_cudaimgproc support).");
+      assert(false && "createDepthMapGenerator: SHM-based backends were disabled at compile time (no opencv_cudaimgproc support).");
 #endif
 
-  case kDepthBackendOFA:
+    case kDepthBackendOFA:
 #ifdef L4T_RELEASE_MAJOR
-    return new DepthMapGeneratorOFA();
+      return new DepthMapGeneratorOFA();
 #else
-    assert(false && "createDepthMapGenerator: OFA backend was disabled at compile time (not building on Tegra).");
+      assert(false && "createDepthMapGenerator: OFA backend was disabled at compile time (not building on Tegra).");
 #endif
 
-  default:
-    assert(false && "createDepthMapGenerator: Unhandled backend enum");
+    default:
+      assert(false && "createDepthMapGenerator: Unhandled backend enum");
   };
   return NULL;
 }
@@ -114,7 +114,8 @@ struct DisparityMipUniformBlock {
   float pad3, pad4;
 };
 
-DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) : m_backend(backend_) {
+DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) :
+  m_backend(backend_) {
   memset(&m_nppStreamContext, 0, sizeof(m_nppStreamContext));
   NPP_CHECK(nppSetStream((CUstream) m_globalStream.cudaPtr()));
   NPP_CHECK(nppGetStreamContext(&m_nppStreamContext));
@@ -319,15 +320,15 @@ void DepthMapGenerator::saveSettings() {
 
   // Write common render settings
   fs.startWriteStruct(cv::String("renderSettings"), cv::FileNode::MAP, cv::String());
-    writeNode(fs, splitDepthDiscontinuity);
-    writeNode(fs, maxDepthDiscontinuity);
-    writeNode(fs, minDepthCutoff);
-    writeNode(fs, usePointRendering);
-    writeNode(fs, pointScale);
-    writeNode(fs, trimLeft);
-    writeNode(fs, trimTop);
-    writeNode(fs, trimRight);
-    writeNode(fs, trimBottom);
+  writeNode(fs, splitDepthDiscontinuity);
+  writeNode(fs, maxDepthDiscontinuity);
+  writeNode(fs, minDepthCutoff);
+  writeNode(fs, usePointRendering);
+  writeNode(fs, pointScale);
+  writeNode(fs, trimLeft);
+  writeNode(fs, trimTop);
+  writeNode(fs, trimRight);
+  writeNode(fs, trimBottom);
   fs.endWriteStruct();
 }
 #undef writeNode
@@ -663,4 +664,3 @@ float DepthMapGenerator::debugComputeDepthForDisparity(size_t viewIdx, float dis
   float lz = vd->m_depthParameters[2] / (vd->m_depthParameters[3] * disparityPixels * m_algoDownsampleX);
   return lz;
 }
-

@@ -35,8 +35,8 @@ public:
   char* m_fbase;
   size_t m_flen;
   int m_fd;
+
 private:
   mmfile(const mmfile& right); // noncopyable
   mmfile& operator=(const mmfile& right); // nonassignable
 };
-

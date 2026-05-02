@@ -40,7 +40,7 @@ struct PowerState {
     if (chargerPowerInput_mV) {
       p += snprintf(buf + p, bufLen - p, " (In: %umV %umA)", chargerPowerInput_mV, chargerPowerInput_mA);
     }
-    unsigned int dataAge_ms  = (CANBus::currentCANTimestampUs() - messageTimestamp) / 1000000UL;
+    unsigned int dataAge_ms = (CANBus::currentCANTimestampUs() - messageTimestamp) / 1000000UL;
     if (dataAge_ms > 5000) {
       p += snprintf(buf + p, bufLen - p, " (%ums ago)", dataAge_ms);
     }
@@ -49,4 +49,3 @@ struct PowerState {
 
   bool valid() const { return (messageTimestamp != 0); }
 };
-

@@ -7,6 +7,4 @@ public:
   virtual ~RHIEGLStreamSurfaceGL();
 
   RHIEGLStreamSurfaceGL(uint32_t width_, uint32_t height_, RHISurfaceFormat format_);
-
 };
-

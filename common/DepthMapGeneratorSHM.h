@@ -69,4 +69,3 @@ protected:
 private:
   ViewDataSHM* viewDataAtIndex(size_t index) { return static_cast<ViewDataSHM*>(m_viewData[index]); }
 };
-

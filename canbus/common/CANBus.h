@@ -16,7 +16,6 @@ CANBus* canbus();
 
 class CANBus {
 public:
-
   CANBus();
   ~CANBus();
 
@@ -35,7 +34,6 @@ public:
   void transmitMessage(CanardPortID port_id, SerializationBuffer& b);
 
 protected:
-
   // CanardRxSubscription object can't be moved while active, so SubscriptionData objects must be passed around by pointer.
   struct SubscriptionData : public CanardRxSubscription, boost::noncopyable {
 
@@ -63,6 +61,4 @@ protected:
   boost::condition_variable m_txQueueFilled;
   std::map<CanardPortID, CanardTransferMetadata*> m_txMetadata;
   CanardTransferMetadata* getTransferMetadata(CanardPortID);
-
 };
-

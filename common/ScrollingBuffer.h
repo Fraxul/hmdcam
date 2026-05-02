@@ -2,9 +2,12 @@
 #include <vector>
 #include <stdint.h>
 
-template <typename T> class ScrollingBuffer {
+template <typename T>
+class ScrollingBuffer {
 public:
-  ScrollingBuffer(size_t maxSize = 1024) : m_maxSize(maxSize), m_offset(0) {
+  ScrollingBuffer(size_t maxSize = 1024) :
+    m_maxSize(maxSize),
+    m_offset(0) {
     m_data.reserve(m_maxSize);
   }
 
@@ -45,4 +48,3 @@ protected:
   size_t m_maxSize;
   size_t m_offset;
 };
-

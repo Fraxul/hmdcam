@@ -22,16 +22,33 @@
 #include "NvVideoEncoder.h"
 #include "NvUtils.h"
 
-#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
-#define CHECK_ZERO(x) if ((x) != 0) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
-#define CHECK_TRUE(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
-#define CHECK_NOT_NULL(x) if ((x) == NULL) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
+#define die(msg, ...)                         \
+  do {                                        \
+    fprintf(stderr, msg "\n", ##__VA_ARGS__); \
+    abort();                                  \
+  } while (0)
+#define CHECK_ZERO(x)                                              \
+  if ((x) != 0) {                                                  \
+    fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); \
+    abort();                                                       \
+  }
+#define CHECK_TRUE(x)                                              \
+  if (!(x)) {                                                      \
+    fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); \
+    abort();                                                       \
+  }
+#define CHECK_NOT_NULL(x)                                          \
+  if ((x) == NULL) {                                               \
+    fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); \
+    abort();                                                       \
+  }
 
 static const uint32_t kInputBufferCount = 6;
 static const uint32_t kOutputBufferCount = 10;
 
 NvEncSession::NvEncSession(uint32_t _width, uint32_t _height) :
-  m_width(_width), m_height(_height),
+  m_width(_width),
+  m_height(_height),
   m_encoderPixfmt(V4L2_PIX_FMT_H264) {
 
   // NvLogging
@@ -128,8 +145,6 @@ NvEncSession::NvEncSession(uint32_t _width, uint32_t _height) :
       m_encOutputPlaneSurfaces[i]->numFilled = 1;
     }
   }
-
-
 }
 
 NvEncSession::~NvEncSession() {
@@ -204,7 +219,7 @@ RHISurface::ptr NvEncSession::acquireSurface() {
 
   RHISurface::ptr res;
   if (!m_rhiSurfaces.empty())
-    res =m_rhiSurfaces[m_currentSurfaceIndex];
+    res = m_rhiSurfaces[m_currentSurfaceIndex];
 
   pthread_mutex_unlock(&m_stateLock);
   return res;
@@ -299,8 +314,8 @@ void NvEncSession::cudaWorker() {
     if (m_encoderOutputPlaneBufferQueue.empty()) {
       struct v4l2_buffer v4l2_buf;
       struct v4l2_plane planes[MAX_PLANES];
-      NvBuffer *buffer;
-      NvBuffer *shared_buffer;
+      NvBuffer* buffer;
+      NvBuffer* shared_buffer;
 
       memset(&v4l2_buf, 0, sizeof(v4l2_buf));
       memset(planes, 0, sizeof(planes));
@@ -347,17 +362,17 @@ void NvEncSession::cudaWorker() {
     copyDescriptor.srcMemoryType = CU_MEMORYTYPE_ARRAY;
     copyDescriptor.srcArray = pReadArray;
 
-  #if 0
+#if 0
     // this might work for CU_EGL_FRAME_TYPE_ARRAY? untested.
     copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
     copyDescriptor.dstArray = eglFrame.frame.pArray[0];
-  #else
+#else
     // CU_EGL_FRAME_TYPE_PITCH destination
     assert(eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH);
     copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
     copyDescriptor.dstDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
     copyDescriptor.dstPitch = eglFrame.pitch;
-  #endif
+#endif
 
     copyDescriptor.WidthInBytes = m_vicInputSurfaces[surfaceIdx]->surfaceList[0].planeParams.width[0] * m_vicInputSurfaces[surfaceIdx]->surfaceList[0].planeParams.bytesPerPix[0];
     copyDescriptor.Height = m_vicInputSurfaces[surfaceIdx]->surfaceList[0].height;
@@ -463,16 +478,16 @@ void NvEncSession::start() {
   ret = m_enc->setRateControlMode(V4L2_MPEG_VIDEO_BITRATE_MODE_VBR);
   if (ret < 0) die("Could not set rate control mode");
 
-  ret = m_enc->setBitrate(m_bitsPerSecond/2);
+  ret = m_enc->setBitrate(m_bitsPerSecond / 2);
   if (ret < 0) die("Could not set bitrate");
 
   ret = m_enc->setPeakBitrate(m_bitsPerSecond);
   if (ret < 0) die("Could not set bitrate");
 
   if (m_encoderPixfmt == V4L2_PIX_FMT_H264) {
-      ret = m_enc->setProfile(V4L2_MPEG_VIDEO_H264_PROFILE_HIGH);
+    ret = m_enc->setProfile(V4L2_MPEG_VIDEO_H264_PROFILE_HIGH);
   } else {
-      ret = m_enc->setProfile(V4L2_MPEG_VIDEO_H265_PROFILE_MAIN);
+    ret = m_enc->setProfile(V4L2_MPEG_VIDEO_H265_PROFILE_MAIN);
   }
   if (ret < 0) die("Could not set encoder profile");
 
@@ -590,7 +605,7 @@ void NvEncSession::stop() {
   pthread_mutex_unlock(&m_stateLock);
 }
 
-bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer) {
+bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer) {
 
   if (m_inShutdown)
     return false; // cancel operations
@@ -660,7 +675,7 @@ bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_bu
   return true;
 }
 
-/*static*/ bool NvEncSession::encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer *v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void *arg) {
+/*static*/ bool NvEncSession::encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void* arg) {
   return reinterpret_cast<NvEncSession*>(arg)->encoder_capture_plane_dq_callback(v4l2_buf, buffer, shared_buffer);
 }
 
@@ -668,4 +683,3 @@ bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_bu
   reinterpret_cast<NvEncSession*>(arg)->cudaWorker();
   return NULL;
 }
-

@@ -23,7 +23,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "OnDemandServerMediaSubsession.hh"
 class NvEncSession;
 
-class H264VideoNvEncSessionServerMediaSubsession: public OnDemandServerMediaSubsession {
+class H264VideoNvEncSessionServerMediaSubsession : public OnDemandServerMediaSubsession {
 public:
   static H264VideoNvEncSessionServerMediaSubsession* createNew(UsageEnvironment& env, NvEncSession* source);
 
@@ -33,19 +33,19 @@ public:
 
 protected:
   H264VideoNvEncSessionServerMediaSubsession(UsageEnvironment& env, NvEncSession*);
-      // called only by createNew();
+  // called only by createNew();
   virtual ~H264VideoNvEncSessionServerMediaSubsession();
 
   void setDoneFlag() { fDoneFlag = ~0; }
 
 protected: // redefined virtual functions
   virtual char const* getAuxSDPLine(RTPSink* rtpSink,
-				    FramedSource* inputSource);
+    FramedSource* inputSource);
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
-					      unsigned& estBitrate);
+    unsigned& estBitrate);
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock,
-                                    unsigned char rtpPayloadTypeIfDynamic,
-				    FramedSource* inputSource);
+    unsigned char rtpPayloadTypeIfDynamic,
+    FramedSource* inputSource);
 
 private:
   char* fAuxSDPLine;
@@ -53,4 +53,3 @@ private:
   RTPSink* fDummyRTPSink; // ditto
   NvEncSession* fNvEncSession;
 };
-

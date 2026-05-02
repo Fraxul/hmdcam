@@ -13,10 +13,26 @@
 #include <math.h>
 #include <unistd.h>
 
-#define DRM_CHECK(x) if ((x) != 0) { fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); abort(); }
-#define DRM_CHECK_PTR(x) if ((x) == nullptr) { fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); abort(); }
-#define EGL_CHECK_BOOL(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed (%d)\n", __FILE__, __LINE__, #x, eglGetError()); abort(); }
-#define CheckExtension(extStr) if (!epoxy_has_egl_extension(m_eglDisplay, extStr)) { fprintf(stderr, "Missing required EGL extension %s.\n\nExtension string: %s\n\n", extStr, eglQueryString(m_eglDisplay, EGL_EXTENSIONS)); abort(); }
+#define DRM_CHECK(x)                                                                     \
+  if ((x) != 0) {                                                                        \
+    fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); \
+    abort();                                                                             \
+  }
+#define DRM_CHECK_PTR(x)                                                                 \
+  if ((x) == nullptr) {                                                                  \
+    fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); \
+    abort();                                                                             \
+  }
+#define EGL_CHECK_BOOL(x)                                                              \
+  if (!(x)) {                                                                          \
+    fprintf(stderr, "%s:%d: %s failed (%d)\n", __FILE__, __LINE__, #x, eglGetError()); \
+    abort();                                                                           \
+  }
+#define CheckExtension(extStr)                                                                                                               \
+  if (!epoxy_has_egl_extension(m_eglDisplay, extStr)) {                                                                                      \
+    fprintf(stderr, "Missing required EGL extension %s.\n\nExtension string: %s\n\n", extStr, eglQueryString(m_eglDisplay, EGL_EXTENSIONS)); \
+    abort();                                                                                                                                 \
+  }
 
 
 // Allow building on old libepoxy (1.4.3-1) on Jetpack < 5.0
@@ -73,7 +89,7 @@ static const char* drmConnectorTypeToString(int c) {
   };
 }
 
-RenderBackendDRM::RenderBackendDRM() { }
+RenderBackendDRM::RenderBackendDRM() {}
 
 void RenderBackendDRM::init() {
   // This initialization sequence closely follows NVIDIA CUDA sample code.
@@ -128,7 +144,7 @@ void RenderBackendDRM::init() {
 
   DRM_CHECK_PTR(m_drmResources = drmModeGetResources(m_drmFd));
 
-    // Parse connector info
+  // Parse connector info
   for (int connIdx = 0; connIdx < m_drmResources->count_connectors; ++connIdx) {
     drmModeConnector* conn = drmModeGetConnector(m_drmFd, m_drmResources->connectors[connIdx]);
     if (!conn) {
@@ -254,7 +270,7 @@ void RenderBackendDRM::init() {
     printf("  Type: %u\n", m_drmModeInfo->type);
 
     // Compute precise refresh rate from timing parameters
-    m_refreshRateHz = (m_drmModeInfo->clock /*kHz*/ * 1000.0)  / static_cast<double>(m_drmModeInfo->htotal * m_drmModeInfo->vtotal);
+    m_refreshRateHz = (m_drmModeInfo->clock /*kHz*/ * 1000.0) / static_cast<double>(m_drmModeInfo->htotal * m_drmModeInfo->vtotal);
     if (fabs(1.0 - (m_refreshRateHz / static_cast<double>(m_drmModeInfo->vrefresh))) > 0.05) { // 5% tolerance
       printf("WARNING: Computed precise vrefresh timing (%g hz) doesn't line up with provided approximate timing (%u hz), using the approximate.\n", m_refreshRateHz, m_drmModeInfo->vrefresh);
       m_refreshRateHz = m_drmModeInfo->vrefresh;
@@ -262,7 +278,7 @@ void RenderBackendDRM::init() {
       printf("  Computed refresh (precise): %g hz\n", m_refreshRateHz);
     }
   }
-  if (m_drmModeIdx < 0){
+  if (m_drmModeIdx < 0) {
     fprintf(stderr, "Couldn't find a usable mode.\n");
     abort();
   }
@@ -352,8 +368,8 @@ void RenderBackendDRM::init() {
     // clang-format on
 
     if (!connCrtcId || !crtcActiveId || !crtcModeId || !planeFbId || !planeCrtcId ||
-        !planeCrtcX || !planeCrtcY || !planeCrtcW || !planeCrtcH ||
-        !planeSrcX || !planeSrcY || !planeSrcW || !planeSrcH) {
+      !planeCrtcX || !planeCrtcY || !planeCrtcW || !planeCrtcH ||
+      !planeSrcX || !planeSrcY || !planeSrcW || !planeSrcH) {
       fprintf(stderr, "Failed to look up one or more DRM atomic properties\n");
       fprintf(stderr, "  connector CRTC_ID=%u  crtc ACTIVE=%u MODE_ID=%u\n", connCrtcId, crtcActiveId, crtcModeId);
       fprintf(stderr, "  plane FB_ID=%u CRTC_ID=%u CRTC_X=%u CRTC_Y=%u CRTC_W=%u CRTC_H=%u\n", planeFbId, planeCrtcId, planeCrtcX, planeCrtcY, planeCrtcW, planeCrtcH);
@@ -528,8 +544,4 @@ RenderBackendDRM::~RenderBackendDRM() {
 
   close(m_drmFd);
   m_drmFd = -1;
-
 }
-
-
-

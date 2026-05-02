@@ -16,12 +16,36 @@
 #include "rhi/cuda/CudaUtil.h"
 #include "rhi/RHI.h"
 
-#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
-#define CHECK_ZERO(x) if ((x) != 0) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
-#define CHECK_TRUE(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
-#define CHECK_NOT_NULL(x) if ((x) == NULL) { fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); abort(); }
-#define CHECK_PTR(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed (returned NULL)\n", __FILE__, __LINE__, #x); abort(); }
-#define CleanupPtr(Fn, Obj, ... ) if (Obj != nullptr) { Fn(Obj  ,## __VA_ARGS__); Obj = nullptr; }
+#define die(msg, ...)                         \
+  do {                                        \
+    fprintf(stderr, msg "\n", ##__VA_ARGS__); \
+    abort();                                  \
+  } while (0)
+#define CHECK_ZERO(x)                                              \
+  if ((x) != 0) {                                                  \
+    fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); \
+    abort();                                                       \
+  }
+#define CHECK_TRUE(x)                                              \
+  if (!(x)) {                                                      \
+    fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); \
+    abort();                                                       \
+  }
+#define CHECK_NOT_NULL(x)                                          \
+  if ((x) == NULL) {                                               \
+    fprintf(stderr, "%s:%d: %s failed\n", __FILE__, __LINE__, #x); \
+    abort();                                                       \
+  }
+#define CHECK_PTR(x)                                                               \
+  if (!(x)) {                                                                      \
+    fprintf(stderr, "%s:%d: %s failed (returned NULL)\n", __FILE__, __LINE__, #x); \
+    abort();                                                                       \
+  }
+#define CleanupPtr(Fn, Obj, ...) \
+  if (Obj != nullptr) {          \
+    Fn(Obj, ##__VA_ARGS__);      \
+    Obj = nullptr;               \
+  }
 
 #define tryIoctl(req, param) tryIoctl_(req, #req, param)
 
@@ -50,19 +74,19 @@ NvSciBufAttrList V4L2Camera::populateOutputImageBufAttrList(uint32_t width, uint
     bool cpuAccessFlag = true;
 
     NvSciBufAttrKeyValuePair imgBufAttrs[] = {
-      {NvSciBufGeneralAttrKey_Types, &bufType, sizeof(bufType)},
-      {NvSciBufImageAttrKey_Layout, &layout, sizeof(layout)},
-      {NvSciBufImageAttrKey_ScanType, &scantype, sizeof(scantype)},
-      {NvSciBufGeneralAttrKey_NeedCpuAccess, &cpuAccessFlag, sizeof(cpuAccessFlag)},
-      {NvSciBufGeneralAttrKey_RequiredPerm, &perm, sizeof(perm)},
+      {           NvSciBufGeneralAttrKey_Types,        &bufType,        sizeof(bufType)},
+      {            NvSciBufImageAttrKey_Layout,         &layout,         sizeof(layout)},
+      {          NvSciBufImageAttrKey_ScanType,       &scantype,       sizeof(scantype)},
+      {   NvSciBufGeneralAttrKey_NeedCpuAccess,  &cpuAccessFlag,  sizeof(cpuAccessFlag)},
+      {    NvSciBufGeneralAttrKey_RequiredPerm,           &perm,           sizeof(perm)},
 
-      {NvSciBufImageAttrKey_SurfType, &surftype, sizeof(surftype)},
-      {NvSciBufImageAttrKey_SurfMemLayout, &memlayout, sizeof(memlayout)},
-      {NvSciBufImageAttrKey_SurfSampleType, &sampletype, sizeof(sampletype)},
-      {NvSciBufImageAttrKey_SurfBPC, &bpc, sizeof(bpc)},
+      {          NvSciBufImageAttrKey_SurfType,       &surftype,       sizeof(surftype)},
+      {     NvSciBufImageAttrKey_SurfMemLayout,      &memlayout,      sizeof(memlayout)},
+      {    NvSciBufImageAttrKey_SurfSampleType,     &sampletype,     sizeof(sampletype)},
+      {           NvSciBufImageAttrKey_SurfBPC,            &bpc,            sizeof(bpc)},
       {NvSciBufImageAttrKey_SurfComponentOrder, &componentorder, sizeof(componentorder)},
-      {NvSciBufImageAttrKey_SurfWidthBase, &width, sizeof(width)},
-      {NvSciBufImageAttrKey_SurfHeightBase, &height, sizeof(height)},
+      {     NvSciBufImageAttrKey_SurfWidthBase,          &width,          sizeof(width)},
+      {    NvSciBufImageAttrKey_SurfHeightBase,         &height,         sizeof(height)},
     };
 
     NVSCI_CHECK(NvSciBufAttrListSetAttrs(outputImageAttrList, imgBufAttrs, sizeof(imgBufAttrs) / sizeof(NvSciBufAttrKeyValuePair)));
@@ -109,9 +133,7 @@ V4L2Camera::V4L2Camera() {
   memset(&ijpdVersion, 0, sizeof(ijpdVersion));
   NVMEDIA_CHECK(NvMediaIJPDGetVersion(&ijpdVersion));
   printf("IJPD version: %u.%u.%u\n", ijpdVersion.major, ijpdVersion.minor, ijpdVersion.patch);
-  if ( (ijpdVersion.major != NVMEDIA_IJPD_VERSION_MAJOR)
-    || (ijpdVersion.minor != NVMEDIA_IJPD_VERSION_MINOR)
-    || (ijpdVersion.patch != NVMEDIA_IJPD_VERSION_PATCH)) {
+  if ((ijpdVersion.major != NVMEDIA_IJPD_VERSION_MAJOR) || (ijpdVersion.minor != NVMEDIA_IJPD_VERSION_MINOR) || (ijpdVersion.patch != NVMEDIA_IJPD_VERSION_PATCH)) {
 
     printf("WARNING: NvMediaIJPD header version mismatch -- expected %u.%u.%u\n",
       NVMEDIA_IJPD_VERSION_MAJOR,
@@ -123,7 +145,7 @@ V4L2Camera::V4L2Camera() {
   NVSCI_CHECK(NvSciBufModuleOpen(&m_bufModule));
 }
 
-bool V4L2Camera::tryIoctl_(unsigned long request, const char* requestStr, void *param) {
+bool V4L2Camera::tryIoctl_(unsigned long request, const char* requestStr, void* param) {
   int attempts = 3;
   const int timeout_ms = 1000;
 
@@ -145,7 +167,7 @@ bool V4L2Camera::tryIoctl_(unsigned long request, const char* requestStr, void *
     }
 
     // Wait for up to timeout_ms for the device to become ready
-    struct pollfd pfd = { m_fd, POLLIN, 0 };
+    struct pollfd pfd = {m_fd, POLLIN, 0};
     result = poll(&pfd, 1, timeout_ms);
     if (result == 0) {
       // Device didn't become ready in time
@@ -212,11 +234,11 @@ bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
       goto err;
 
     printf("Camera output format (after modeset): (%d x %d) pixfmt: %.4s stride: %d, imagesize: %d\n",
-            m_fmt.fmt.pix.width,
-            m_fmt.fmt.pix.height,
-            (const char*) (&m_fmt.fmt.pix.pixelformat),
-            m_fmt.fmt.pix.bytesperline,
-            m_fmt.fmt.pix.sizeimage);
+      m_fmt.fmt.pix.width,
+      m_fmt.fmt.pix.height,
+      (const char*) (&m_fmt.fmt.pix.pixelformat),
+      m_fmt.fmt.pix.bytesperline,
+      m_fmt.fmt.pix.sizeimage);
 
     m_streamWidth = m_fmt.fmt.pix.width;
     m_streamHeight = m_fmt.fmt.pix.height;
@@ -267,15 +289,15 @@ bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
       NVSCI_CHECK(NvSciBufObjGetConstCpuPtr(m_outputBufObj, reinterpret_cast<const void**>(&outputBufPtr)));
 
       NvSciBufAttrKeyValuePair attrs[] = {
-        {NvSciBufImageAttrKey_PlaneCount, nullptr, 0},
-        {NvSciBufImageAttrKey_PlaneOffset, nullptr, 0},
-        {NvSciBufImageAttrKey_PlaneWidth, nullptr, 0},
-        {NvSciBufImageAttrKey_PlaneHeight, nullptr, 0},
-        {NvSciBufImageAttrKey_PlaneDatatype, nullptr, 0},
+        {       NvSciBufImageAttrKey_PlaneCount, nullptr, 0},
+        {      NvSciBufImageAttrKey_PlaneOffset, nullptr, 0},
+        {       NvSciBufImageAttrKey_PlaneWidth, nullptr, 0},
+        {      NvSciBufImageAttrKey_PlaneHeight, nullptr, 0},
+        {    NvSciBufImageAttrKey_PlaneDatatype, nullptr, 0},
         {NvSciBufImageAttrKey_PlaneChannelCount, nullptr, 0},
-        {NvSciBufImageAttrKey_PlanePitch, nullptr, 0},
+        {       NvSciBufImageAttrKey_PlanePitch, nullptr, 0},
       };
-      NVSCI_CHECK(NvSciBufAttrListGetAttrs(m_outputImageAttrList, attrs, sizeof(attrs)/sizeof(attrs[0])));
+      NVSCI_CHECK(NvSciBufAttrListGetAttrs(m_outputImageAttrList, attrs, sizeof(attrs) / sizeof(attrs[0])));
 
 #if 0
       for (uint32_t plane = 0; plane < reinterpret_cast<const uint32_t*>(attrs[0].value)[0]; ++plane) {
@@ -346,7 +368,7 @@ bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
     // Request MMAP buffers
     struct v4l2_requestbuffers reqbuf;
 
-    memset(&reqbuf, 0, sizeof (reqbuf));
+    memset(&reqbuf, 0, sizeof(reqbuf));
     reqbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     reqbuf.memory = V4L2_MEMORY_MMAP;
     reqbuf.count = kBufferCount;
@@ -383,7 +405,6 @@ bool V4L2Camera::tryOpenSensor(const char* deviceFn) {
       b.bitstream.bitstream = (uint8_t*) b.mmap_ptr;
       b.bitstream.bitstreamSize = b.mmap_length;
       b.bitstream.bitstreamBytes = 0; // Will be set when buffer is dequeued
-
     }
 
     // Queue all buffers
@@ -499,4 +520,3 @@ V4L2Camera::~V4L2Camera() {
   CleanupPtr(NvSciSyncModuleClose, m_syncModule);
   CleanupPtr(NvSciBufModuleClose, m_bufModule);
 }
-

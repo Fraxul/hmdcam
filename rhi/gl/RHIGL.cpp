@@ -22,7 +22,13 @@ void initRHIGL() {
   initRHI(new RHIGL());
 }
 
-RHIGL::RHIGL() : m_clearColor(glm::vec4(0.0f)), m_clearDepth(1.0f), m_clearStencil(0), m_uniformBufferOffsetAlignment(256), m_maxMultisampleSamples(1), m_inComputePass(false),
+RHIGL::RHIGL() :
+  m_clearColor(glm::vec4(0.0f)),
+  m_clearDepth(1.0f),
+  m_clearStencil(0),
+  m_uniformBufferOffsetAlignment(256),
+  m_maxMultisampleSamples(1),
+  m_inComputePass(false),
   m_currentCullState(kCullDisabled),
   m_currentDepthBiasSlopeScale(0.0f),
   m_currentDepthBiasConstant(0.0f) {
@@ -52,7 +58,6 @@ RHIGL::RHIGL() : m_clearColor(glm::vec4(0.0f)), m_clearDepth(1.0f), m_clearStenc
 
     m_supportsDiscardFramebufferEXT = epoxy_has_gl_extension("GL_EXT_discard_framebuffer");
     printf("RHIGL: supportsDiscardFramebufferEXT = %d\n", m_supportsDiscardFramebufferEXT);
-
   }
 
   GLint t;
@@ -233,7 +238,7 @@ RHISurface::ptr RHIGL::newHMDSwapTexture(uint32_t width, uint32_t height, const 
 }
 
 static void rhiVertexElementTypeToGLPackFormat(RHIVertexElementType rhiFormat, GLenum& unpackFormat, GLenum& unpackType) {
-  // clang-format off
+// clang-format off
   #define FMT_TYPE(glFmt, glType) unpackFormat = glFmt; unpackType = glType; return;
   switch (rhiFormat) {
     case kVertexElementTypeFloat1:    FMT_TYPE(GL_RED, GL_FLOAT);
@@ -346,10 +351,10 @@ void RHIGL::generateTextureMips(RHISurface::ptr texture) {
     return;
 
   assert(glTex->glTarget() == GL_TEXTURE_2D ||
-         glTex->glTarget() == GL_TEXTURE_3D ||
-         glTex->glTarget() == GL_TEXTURE_2D_ARRAY ||
-         glTex->glTarget() == GL_TEXTURE_CUBE_MAP ||
-         glTex->glTarget() == GL_TEXTURE_CUBE_MAP_ARRAY);
+    glTex->glTarget() == GL_TEXTURE_3D ||
+    glTex->glTarget() == GL_TEXTURE_2D_ARRAY ||
+    glTex->glTarget() == GL_TEXTURE_CUBE_MAP ||
+    glTex->glTarget() == GL_TEXTURE_CUBE_MAP_ARRAY);
 
   GL(glBindTexture(glTex->glTarget(), glTex->glId()));
   GL(glGenerateMipmap(glTex->glTarget()));
@@ -591,7 +596,7 @@ void RHIGL::blitTex(RHISurface::ptr sourceTexture, uint8_t sourceLayer, RHIRect 
   internalPerformBlit(sourceFBO, sourceTexture->samples() > 1, destRect, sourceRect);
   glDeleteFramebuffers(1, &sourceFBO);
 }
- 
+
 void RHIGL::bindRenderPipeline(RHIRenderPipeline::ptr pipeline) {
   bool samePipeline = (m_activeRenderPipeline.get() == static_cast<RHIRenderPipelineGL*>(pipeline.get()));
 
@@ -663,7 +668,6 @@ void RHIGL::bindRenderPipeline(RHIRenderPipeline::ptr pipeline) {
       glDisable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
     }
   }
-
 }
 
 void RHIGL::bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr buffer, size_t baseOffsetBytes) {
@@ -727,9 +731,9 @@ void RHIGL::bindDepthStencilState(RHIDepthStencilState::ptr depthStencilState) {
   if (state.stencilTestEnable) {
     glEnable(GL_STENCIL_TEST);
     glStencilFuncSeparate(GL_FRONT, rhiCompareFunctionToGL(state.stencilFront.compareFunc), state.stencilFront.referenceValue, state.stencilMask);
-    glStencilFuncSeparate(GL_BACK,  rhiCompareFunctionToGL(state.stencilBack.compareFunc),  state.stencilBack.referenceValue,  state.stencilMask);
+    glStencilFuncSeparate(GL_BACK, rhiCompareFunctionToGL(state.stencilBack.compareFunc), state.stencilBack.referenceValue, state.stencilMask);
     glStencilOpSeparate(GL_FRONT, rhiStencilOpToGL(state.stencilFront.failOp), rhiStencilOpToGL(state.stencilFront.depthFailOp), rhiStencilOpToGL(state.stencilFront.passOp));
-    glStencilOpSeparate(GL_BACK,  rhiStencilOpToGL(state.stencilBack.failOp),  rhiStencilOpToGL(state.stencilBack.depthFailOp),  rhiStencilOpToGL(state.stencilBack.passOp));
+    glStencilOpSeparate(GL_BACK, rhiStencilOpToGL(state.stencilBack.failOp), rhiStencilOpToGL(state.stencilBack.depthFailOp), rhiStencilOpToGL(state.stencilBack.passOp));
   } else {
     glDisable(GL_STENCIL_TEST);
   }
@@ -812,7 +816,6 @@ void RHIGL::bindBlendState(RHIBlendState::ptr blendState) {
       }
     }
   }
-
 }
 
 void RHIGL::setCullState(RHICullState cullState) {
@@ -852,9 +855,7 @@ void RHIGL::clearScissorRect() {
 void RHIGL::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::ptr sampler) {
   uint32_t location = 0;
   uint32_t textureUnitNumber = 0;
-  bool found = m_inComputePass ?
-    m_activeComputePipeline->shaderGL()->samplerAttributeBinding(name, location, textureUnitNumber) :
-    m_activeRenderPipeline->shaderGL()->samplerAttributeBinding(name, location, textureUnitNumber);
+  bool found = m_inComputePass ? m_activeComputePipeline->shaderGL()->samplerAttributeBinding(name, location, textureUnitNumber) : m_activeRenderPipeline->shaderGL()->samplerAttributeBinding(name, location, textureUnitNumber);
 
   if (!found) {
     //printf("RHIGL::loadTexture: no texture slot in current pipeline mapped to name \"%s\"\n", name.c_str());
@@ -878,9 +879,7 @@ void RHIGL::loadImage(FxAtomicString name, RHISurface::ptr tex, RHIImageAccessTy
   uint32_t location = 0;
   uint32_t unitNumber = 0;
 
-  bool found = m_inComputePass ?
-    m_activeComputePipeline->shaderGL()->imageAttributeBinding(name, location, unitNumber) :
-    m_activeRenderPipeline->shaderGL()->imageAttributeBinding(name, location, unitNumber);
+  bool found = m_inComputePass ? m_activeComputePipeline->shaderGL()->imageAttributeBinding(name, location, unitNumber) : m_activeRenderPipeline->shaderGL()->imageAttributeBinding(name, location, unitNumber);
 
   if (!found) {
     printf("RHIGL::loadImage: no image unit in current pipeline mapped to name \"%s\"\n", name.c_str());
@@ -902,9 +901,7 @@ void RHIGL::loadImage(FxAtomicString name, RHISurface::ptr tex, RHIImageAccessTy
 }
 
 void RHIGL::loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr buffer) {
-  int32_t location = m_inComputePass ?
-    m_activeComputePipeline->shaderGL()->bufferBlockLocation(name) :
-    m_activeRenderPipeline->shaderGL()->bufferBlockLocation(name);
+  int32_t location = m_inComputePass ? m_activeComputePipeline->shaderGL()->bufferBlockLocation(name) : m_activeRenderPipeline->shaderGL()->bufferBlockLocation(name);
 
   if (location < 0) {
     printf("RHIGL::loadShaderBuffer: no buffer slot in current pipeline mapped to name \"%s\"\n", name.c_str());
@@ -916,9 +913,7 @@ void RHIGL::loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr buffer) {
 }
 
 void RHIGL::loadUniformBlock(FxAtomicString name, RHIBuffer::ptr blockBuffer) {
-  int32_t location = m_inComputePass ?
-    m_activeComputePipeline->shaderGL()->uniformBlockLocation(name) :
-    m_activeRenderPipeline->shaderGL()->uniformBlockLocation(name);
+  int32_t location = m_inComputePass ? m_activeComputePipeline->shaderGL()->uniformBlockLocation(name) : m_activeRenderPipeline->shaderGL()->uniformBlockLocation(name);
 
   if (location < 0) {
     printf("RHIGL::loadUniformBlock: no uniform block slot in current pipeline mapped to name \"%s\"\n", name.c_str());
@@ -933,9 +928,7 @@ void RHIGL::loadUniformBlock(FxAtomicString name, RHIBuffer::ptr blockBuffer) {
 }
 
 void RHIGL::loadUniformBlockImmediate(FxAtomicString name, const void* data, size_t size) {
-  int32_t location = m_inComputePass ?
-    m_activeComputePipeline->shaderGL()->uniformBlockLocation(name) :
-    m_activeRenderPipeline->shaderGL()->uniformBlockLocation(name);
+  int32_t location = m_inComputePass ? m_activeComputePipeline->shaderGL()->uniformBlockLocation(name) : m_activeRenderPipeline->shaderGL()->uniformBlockLocation(name);
 
   if (location < 0) {
     printf("RHIGL::loadUniformBlockImmediate: no uniform block slot in current pipeline mapped to name \"%s\"\n", name.c_str());
@@ -971,7 +964,7 @@ static GLenum convertPrimitiveTopology(RHIPrimitiveTopology topo) {
 void RHIGL::internalSetupRenderPipelineState() {
   for (const RHIRenderPipelineGL::StreamBufferDescriptor& bufferDesc : m_activeRenderPipeline->streamBufferDescriptors()) {
     assert(m_activeStreamBuffers[bufferDesc.index] && "RHIGL::internalSetupRenderPipelineState: Missing stream buffer binding");
-    glBindVertexBuffer(bufferDesc.index, m_activeStreamBuffers[bufferDesc.index]->glId(), /*offset=*/m_activeStreamBufferOffsets[bufferDesc.index], bufferDesc.stride);
+    glBindVertexBuffer(bufferDesc.index, m_activeStreamBuffers[bufferDesc.index]->glId(), /*offset=*/ m_activeStreamBufferOffsets[bufferDesc.index], bufferDesc.stride);
   }
 }
 
@@ -1207,4 +1200,3 @@ void RHIGL::dispatchComputeIndirect(RHIBuffer::ptr buffer) {
   GL(glDispatchComputeIndirect(NULL));
   GL(glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0));
 }
-

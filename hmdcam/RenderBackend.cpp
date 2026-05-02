@@ -3,7 +3,7 @@
 #include <string.h>
 
 ERenderBackend renderBackendStringToEnum(const char* s) {
-  
+
   if (!strcasecmp(s, "drm")) {
     return kRenderBackendDRM;
   } else if (!strcasecmp(s, "wayland")) {
@@ -34,4 +34,3 @@ extern RenderBackend* createSurfacelessBackend();
     case kRenderBackendNone: return NULL;
   };
 }
-

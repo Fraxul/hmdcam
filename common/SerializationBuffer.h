@@ -20,6 +20,7 @@ public:
   }
   virtual ~rewound_too_far() throw() {}
   virtual const char* what() const throw() { return msg; }
+
 protected:
   char msg[128];
 };
@@ -31,6 +32,7 @@ public:
   }
   virtual ~end_of_buffer() throw() {}
   virtual const char* what() const throw() { return msg; }
+
 protected:
   char msg[128];
 };
@@ -40,7 +42,8 @@ protected:
 class SerializationBuffer {
 protected:
   struct payload_base {
-    payload_base() : refcount(1) {}
+    payload_base() :
+      refcount(1) {}
     virtual ~payload_base() {}
     virtual const char* data() const = 0;
     virtual char* data() = 0;
@@ -56,9 +59,13 @@ protected:
 
   struct string_payload : public payload_base {
     string_payload() {}
-    string_payload(const std::string& _str) : str(_str) {}
-    string_payload(const char* data, size_t len) : str(data, len) {}
-    template <typename StartIterator, typename EndIterator> string_payload(StartIterator begin, EndIterator end) : str(begin, end) {}
+    string_payload(const std::string& _str) :
+      str(_str) {}
+    string_payload(const char* data, size_t len) :
+      str(data, len) {}
+    template <typename StartIterator, typename EndIterator>
+    string_payload(StartIterator begin, EndIterator end) :
+      str(begin, end) {}
     ~string_payload() {}
     const char* data() const { return str.data(); }
     char* data() { return const_cast<char*>(str.data()); }
@@ -67,13 +74,16 @@ protected:
     void clear() { str.clear(); }
     void reserve(size_t new_size) { str.reserve(new_size); }
     payload_base* clone() const { return new string_payload(str); }
+
   protected:
     std::string str;
   };
 
   // Immutable string ref -- no copying
   struct string_ref_payload : public payload_base {
-    string_ref_payload(const char* data_, size_t size_) : m_data(data_), m_size(size_) {}
+    string_ref_payload(const char* data_, size_t size_) :
+      m_data(data_),
+      m_size(size_) {}
     const char* data() const { return m_data; }
     char* data() { return const_cast<char*>(m_data); }
     size_t size() { return m_size; }
@@ -81,13 +91,17 @@ protected:
     void clear() { assert(0 && "attempted clear() of immutable Buffer::string_ref_payload"); }
     void reserve(size_t new_size) { assert(0 && "attempted reserve() on immutable Buffer::string_ref_payload"); }
     payload_base* clone() const { return new string_ref_payload(m_data, m_size); }
+
   protected:
     const char* m_data;
     size_t m_size;
   };
 
   struct payload_window : public payload_base {
-    payload_window(payload_base* _base, size_t _offset, size_t _length) : base(_base), window_offset(_offset), window_length(_length) {
+    payload_window(payload_base* _base, size_t _offset, size_t _length) :
+      base(_base),
+      window_offset(_offset),
+      window_length(_length) {
       if ((window_offset + window_length) > base->size()) throw end_of_buffer(window_offset + window_length, base->size());
       ++(base->refcount);
     }
@@ -102,6 +116,7 @@ protected:
     void reserve(size_t new_size) { assert(0 && "reserve() on SerializationBuffer::payload_window is meaningless"); }
     payload_base* clone() const { return new payload_window(base, window_offset, window_length); }
     size_t convert_to_absolute_offset(size_t local_offset) { return base->convert_to_absolute_offset(local_offset + window_offset); }
+
   protected:
     payload_base* base;
     size_t window_offset, window_length;
@@ -109,7 +124,9 @@ protected:
 
 #ifdef FILE_SUPPORT
   struct immutable_file_payload : public payload_base {
-    immutable_file_payload(const char* filename) : fm(filename, boost::interprocess::read_only), mr(fm, boost::interprocess::read_only) {}
+    immutable_file_payload(const char* filename) :
+      fm(filename, boost::interprocess::read_only),
+      mr(fm, boost::interprocess::read_only) {}
     const char* data() const { return reinterpret_cast<const char*>(mr.get_address()); }
     char* data() { return reinterpret_cast<char*>(mr.get_address()); }
     size_t size() { return mr.get_size(); }
@@ -117,27 +134,34 @@ protected:
     void clear() { assert(0 && "attempted clear() of SerializationBuffer::immutable_file_payload"); }
     void reserve(size_t new_size) { assert(0 && "attempted reserve() on SerializationBuffer::immutable_file_payload"); }
     payload_base* clone() const { return new immutable_file_payload(fm.get_name()); }
+
   protected:
     boost::interprocess::file_mapping fm;
     boost::interprocess::mapped_region mr;
   };
 #endif
 
-  SerializationBuffer(payload_base* _payload) : payload(_payload), offset(0)
-  { }
+  SerializationBuffer(payload_base* _payload) :
+    payload(_payload),
+    offset(0) {}
 
 public:
-  SerializationBuffer() : payload(new string_payload()), offset(0)
-  { }
+  SerializationBuffer() :
+    payload(new string_payload()),
+    offset(0) {}
 
-  SerializationBuffer(const char* _data, size_t _len) : payload(new string_payload(_data, _len)), offset(0)
-  { }
+  SerializationBuffer(const char* _data, size_t _len) :
+    payload(new string_payload(_data, _len)),
+    offset(0) {}
 
-  template <typename StartIterator, typename EndIterator> SerializationBuffer(StartIterator begin, EndIterator end) : payload(new string_payload(begin, end)), offset(0)
-{ }
+  template <typename StartIterator, typename EndIterator>
+  SerializationBuffer(StartIterator begin, EndIterator end) :
+    payload(new string_payload(begin, end)),
+    offset(0) {}
 
-  SerializationBuffer(const std::string& _str) : payload(new string_payload(_str)), offset(0)
-{ }
+  SerializationBuffer(const std::string& _str) :
+    payload(new string_payload(_str)),
+    offset(0) {}
 
 #ifdef FILE_SUPPORT
   static SerializationBuffer withFile(const char* filename) { return SerializationBuffer(new immutable_file_payload(filename)); }
@@ -160,7 +184,8 @@ public:
     return *this;
   }
 
-  SerializationBuffer(const SerializationBuffer& right) : payload(NULL) {
+  SerializationBuffer(const SerializationBuffer& right) :
+    payload(NULL) {
     assign(right);
   }
 
@@ -215,72 +240,72 @@ public:
   }
 
   SerializationBuffer& put_i8(int8_t i8) {
-    payload->append((char*)&i8, 1);
+    payload->append((char*) &i8, 1);
     return *this;
   }
 
   SerializationBuffer& put_u8(uint8_t i8) {
-    payload->append((char*)&i8, 1);
+    payload->append((char*) &i8, 1);
     return *this;
   }
 
   SerializationBuffer& put_i16(int16_t i16) {
     int16_t res = boost::endian::native_to_big(i16);
-    payload->append((char*)&res, 2);
+    payload->append((char*) &res, 2);
     return *this;
   }
 
   SerializationBuffer& put_i16_le(int16_t i16) {
     int16_t res = boost::endian::native_to_little(i16);
-    payload->append((char*)&res, 2);
+    payload->append((char*) &res, 2);
     return *this;
   }
 
   SerializationBuffer& put_u16(uint16_t i16) {
     uint16_t res = boost::endian::native_to_big(i16);
-    payload->append((char*)&res, 2);
+    payload->append((char*) &res, 2);
     return *this;
   }
 
   SerializationBuffer& put_u16_le(uint16_t i16) {
     uint16_t res = boost::endian::native_to_little(i16);
-    payload->append((char*)&res, 2);
+    payload->append((char*) &res, 2);
     return *this;
   }
 
   SerializationBuffer& put_i32(int32_t i32) {
     int32_t res = boost::endian::native_to_big(i32);
-    payload->append((char*)&res, 4);
+    payload->append((char*) &res, 4);
     return *this;
   }
 
   SerializationBuffer& put_i32_le(int32_t i32) {
     int32_t res = boost::endian::native_to_little(i32);
-    payload->append((char*)&res, 4);
+    payload->append((char*) &res, 4);
     return *this;
   }
 
   SerializationBuffer& put_u32(uint32_t i32) {
     uint32_t res = boost::endian::native_to_big(i32);
-    payload->append((char*)&res, 4);
+    payload->append((char*) &res, 4);
     return *this;
   }
 
   SerializationBuffer& put_u32_le(uint32_t i32) {
     uint32_t res = boost::endian::native_to_little(i32);
-    payload->append((char*)&res, 4);
+    payload->append((char*) &res, 4);
     return *this;
   }
 
   SerializationBuffer& put_u64(uint64_t i64) {
     uint64_t res = boost::endian::native_to_big(i64);
-    payload->append((char*)&res, 8);
+    payload->append((char*) &res, 8);
     return *this;
   }
 
   SerializationBuffer& put_u64_le(uint64_t i64) {
     uint64_t res = boost::endian::native_to_little(i64);
-    payload->append((char*)&res, 8);
+    payload->append((char*) &res, 8);
     return *this;
   }
 
@@ -291,7 +316,7 @@ public:
     } a;
     a.f = f;
     uint32_t res = boost::endian::native_to_big(a.i);
-    payload->append((char*)&res, 4);
+    payload->append((char*) &res, 4);
     return *this;
   }
 
@@ -322,7 +347,7 @@ public:
   const char* data() const { return payload->data(); }
   size_t size() const { return payload->size(); }
   bool empty() const { return size() == 0; }
-// Deserialization methods:
+  // Deserialization methods:
 
   void rewind() {
     offset = 0;
@@ -393,13 +418,19 @@ public:
   }
 
   float get_float() {
-    union { float f; uint32_t i; } a;
+    union {
+      float f;
+      uint32_t i;
+    } a;
     a.i = boost::endian::big_to_native(*reinterpret_cast<const uint32_t*>(consume(4)));
     return a.f;
   }
 
   float get_float_le() {
-    union { float f; uint32_t i; } a;
+    union {
+      float f;
+      uint32_t i;
+    } a;
     a.i = boost::endian::little_to_native(*reinterpret_cast<const uint32_t*>(consume(4)));
     return a.f;
   }
@@ -415,14 +446,18 @@ public:
   }
 
   const char* peek(size_t bytes) {
-    if (! bytes) return NULL;
-    else if ((payload->size() - offset) < bytes) throw end_of_buffer(bytes, payload->size() - offset);
+    if (!bytes)
+      return NULL;
+    else if ((payload->size() - offset) < bytes)
+      throw end_of_buffer(bytes, payload->size() - offset);
     return payload->data() + offset;
   }
 
   const char* consume(size_t bytes) {
-    if (! bytes) return NULL;
-    else if ((payload->size() - offset) < bytes) throw end_of_buffer(bytes, payload->size() - offset);
+    if (!bytes)
+      return NULL;
+    else if ((payload->size() - offset) < bytes)
+      throw end_of_buffer(bytes, payload->size() - offset);
 
     const char* r = payload->data() + offset;
     offset += bytes;
@@ -459,4 +494,3 @@ protected:
   payload_base* payload;
   size_t offset;
 };
-

@@ -2,4 +2,3 @@
 
 IArgusCamera::IArgusCamera() {}
 IArgusCamera::~IArgusCamera() {}
-

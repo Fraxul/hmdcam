@@ -97,9 +97,22 @@ protected:
 };
 
 struct RHIVertexLayoutElement {
-  RHIVertexLayoutElement() : offset(0), stride(0), arrayElementCount(1), streamBufferIndex(0), elementType(kVertexElementTypeNone), elementFrequency(kVertexElementFrequencyVertex) {}
+  RHIVertexLayoutElement() :
+    offset(0),
+    stride(0),
+    arrayElementCount(1),
+    streamBufferIndex(0),
+    elementType(kVertexElementTypeNone),
+    elementFrequency(kVertexElementFrequencyVertex) {}
   RHIVertexLayoutElement(uint8_t streamBufferIndex_, RHIVertexElementType elementType_, const FxAtomicString name_, uint16_t offset_, uint16_t stride_, uint8_t arrayElementCount_ = 1,
-    RHIVertexElementFrequency elementFrequency_ = kVertexElementFrequencyVertex) : elementName(name_), offset(offset_), stride(stride_), arrayElementCount(arrayElementCount_), streamBufferIndex(streamBufferIndex_), elementType(elementType_), elementFrequency(elementFrequency_) {}
+    RHIVertexElementFrequency elementFrequency_ = kVertexElementFrequencyVertex) :
+    elementName(name_),
+    offset(offset_),
+    stride(stride_),
+    arrayElementCount(arrayElementCount_),
+    streamBufferIndex(streamBufferIndex_),
+    elementType(elementType_),
+    elementFrequency(elementFrequency_) {}
 
   size_t hash() const;
 
@@ -114,7 +127,8 @@ struct RHIVertexLayoutElement {
 
 struct RHIVertexLayout {
   RHIVertexLayout() {}
-  RHIVertexLayout(const std::initializer_list<RHIVertexLayoutElement>& el_) : elements(el_.begin(), el_.end()) {}
+  RHIVertexLayout(const std::initializer_list<RHIVertexLayoutElement>& el_) :
+    elements(el_.begin(), el_.end()) {}
 
   boost::container::static_vector<RHIVertexLayoutElement, 16> elements;
 
@@ -168,7 +182,10 @@ public:
   struct Source {
     Source() {}
 
-    Source(ShadingUnit _unit, const std::string& _filename, const std::string& _text) : unit(_unit), filename(_filename), text(_text) {}
+    Source(ShadingUnit _unit, const std::string& _filename, const std::string& _text) :
+      unit(_unit),
+      filename(_filename),
+      text(_text) {}
     ShadingUnit unit;
     std::string filename;
     std::string text;
@@ -190,4 +207,3 @@ protected:
   std::map<std::string, std::string> m_flags;
   RHIVertexLayout m_vertexLayout;
 };
-

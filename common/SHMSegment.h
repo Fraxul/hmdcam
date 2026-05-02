@@ -8,9 +8,9 @@
 #include <sys/types.h>
 #include <boost/core/noncopyable.hpp>
 
-template <typename T> class SHMSegment : public boost::noncopyable {
+template <typename T>
+class SHMSegment : public boost::noncopyable {
 public:
-
   ~SHMSegment() {
     munmap(m_segment, m_size);
     close(m_fd);
@@ -25,9 +25,9 @@ public:
     ftruncate(shm_fd, size);
 
     SHMSegment* res = new SHMSegment(shm_fd, size);
-    new(res->m_segment) T(size);
+    new (res->m_segment) T(size);
 
-    return res; 
+    return res;
   }
 
   static SHMSegment<T>* openSegment(const char* name) {
@@ -45,7 +45,7 @@ public:
 
     size_t size = statbuf.st_size;
     // fprintf(stderr, "openSegment(%s): %zu bytes\n", name, size);
-    
+
     return new SHMSegment<T>(shm_fd, size);
   }
 
@@ -60,7 +60,9 @@ public:
   }
 
 protected:
-  SHMSegment(int fd, size_t length) : m_fd(fd), m_size(length) {
+  SHMSegment(int fd, size_t length) :
+    m_fd(fd),
+    m_size(length) {
     void* res = mmap(NULL, m_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE | MAP_LOCKED, m_fd, 0);
     if (res == MAP_FAILED) {
       perror("SHMSegment::<ctor> mmap");

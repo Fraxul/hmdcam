@@ -2,14 +2,20 @@
 #include "rhi/gl/RHISurfaceGL.h"
 #include <stdio.h>
 
-RHIRenderTargetGL::RHIRenderTargetGL() : m_glFramebufferId(0), m_width(0), m_height(0), m_layers(1), m_samples(1), m_colorTargetCount(0), m_isArray(false), m_hasDepthStencilTarget(false) {
-
+RHIRenderTargetGL::RHIRenderTargetGL() :
+  m_glFramebufferId(0),
+  m_width(0),
+  m_height(0),
+  m_layers(1),
+  m_samples(1),
+  m_colorTargetCount(0),
+  m_isArray(false),
+  m_hasDepthStencilTarget(false) {
 }
 
 RHIRenderTargetGL::~RHIRenderTargetGL() {
   if (m_glFramebufferId)
     glDeleteFramebuffers(1, &m_glFramebufferId);
-
 }
 
 /*static*/ bool RHIRenderTargetGL::formatCheck(RHIRenderTargetGL* target, const RHIRenderTargetDescriptorElement& element, bool& haveFormat) {
@@ -22,10 +28,10 @@ RHIRenderTargetGL::~RHIRenderTargetGL() {
 
     haveFormat = true;
   } else if (target->m_width != element.surface->width() ||
-             target->m_height != element.surface->height() ||
-             target->m_layers != (element.singleLayer ? 1 : element.surface->layers()) ||
-             target->m_samples != element.surface->samples() ||
-             target->m_isArray != (element.singleLayer ? false : element.surface->isArray())) {
+    target->m_height != element.surface->height() ||
+    target->m_layers != (element.singleLayer ? 1 : element.surface->layers()) ||
+    target->m_samples != element.surface->samples() ||
+    target->m_isArray != (element.singleLayer ? false : element.surface->isArray())) {
 
     assert(false && "RHIRenderTargetGL: Format mismatch in supplied color targets");
     return false;
@@ -64,7 +70,7 @@ RHIRenderTargetGL::~RHIRenderTargetGL() {
     formatCheck(tgt, descriptor.colorTargets[i], haveFormat);
     handleAttachment(GL_COLOR_ATTACHMENT0 + i, descriptor.colorTargets[i]);
   }
- 
+
   if (descriptor.depthStencilTarget.surface) {
     formatCheck(tgt, descriptor.depthStencilTarget, haveFormat);
 
@@ -88,7 +94,7 @@ RHIRenderTargetGL::~RHIRenderTargetGL() {
 
     handleAttachment(attachPoint, descriptor.depthStencilTarget);
   }
-  
+
   GLenum framebufferStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
   if (framebufferStatus != GL_FRAMEBUFFER_COMPLETE) {
     fprintf(stderr, "RHIRenderTargetGL: Framebuffer setup error, status is 0x%x\n", framebufferStatus);

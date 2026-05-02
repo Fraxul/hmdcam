@@ -30,5 +30,4 @@ protected:
   uint32_t m_colorTargetCount;
   bool m_isArray;
   bool m_hasDepthStencilTarget;
-
 };

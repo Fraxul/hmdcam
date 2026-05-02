@@ -39,5 +39,3 @@ protected:
   };
   std::vector<Stream> m_streamData;
 };
-
-

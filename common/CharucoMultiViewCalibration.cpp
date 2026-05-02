@@ -17,51 +17,55 @@ static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_32FC1);
 // Copied from cv::aruco::drawDetectedMarkers and modified to allow
 // drawing to 4-component images
 void internal_drawDetectedMarkers(cv::InputOutputArray _image, cv::InputArrayOfArrays _corners,
-                         cv::InputArray _ids = cv::noArray(), cv::Scalar borderColor = cv::Scalar(255, 0, 0, 255)) {
-    CV_Assert(_image.getMat().total() != 0 &&
-              (_image.getMat().channels() != 2 || _image.getMat().channels() <= 4));
-    CV_Assert((_corners.total() == _ids.total()) || _ids.total() == 0);
+  cv::InputArray _ids = cv::noArray(), cv::Scalar borderColor = cv::Scalar(255, 0, 0, 255)) {
+  CV_Assert(_image.getMat().total() != 0 &&
+    (_image.getMat().channels() != 2 || _image.getMat().channels() <= 4));
+  CV_Assert((_corners.total() == _ids.total()) || _ids.total() == 0);
 
-    // calculate colors
-    cv::Scalar textColor, cornerColor;
-    textColor = cornerColor = borderColor;
-    std::swap(textColor.val[0], textColor.val[1]);     // text color just sawp G and R
-    std::swap(cornerColor.val[1], cornerColor.val[2]); // corner color just sawp G and B
+  // calculate colors
+  cv::Scalar textColor, cornerColor;
+  textColor = cornerColor = borderColor;
+  std::swap(textColor.val[0], textColor.val[1]); // text color just sawp G and R
+  std::swap(cornerColor.val[1], cornerColor.val[2]); // corner color just sawp G and B
 
-    int nMarkers = (int)_corners.total();
-    for(int i = 0; i < nMarkers; i++) {
-        cv::Mat currentMarker = _corners.getMat(i);
-        CV_Assert(currentMarker.total() == 4 && currentMarker.channels() == 2);
-        if (currentMarker.type() != CV_32SC2)
-            currentMarker.convertTo(currentMarker, CV_32SC2);
+  int nMarkers = (int) _corners.total();
+  for (int i = 0; i < nMarkers; i++) {
+    cv::Mat currentMarker = _corners.getMat(i);
+    CV_Assert(currentMarker.total() == 4 && currentMarker.channels() == 2);
+    if (currentMarker.type() != CV_32SC2)
+      currentMarker.convertTo(currentMarker, CV_32SC2);
 
-        // draw marker sides
-        for(int j = 0; j < 4; j++) {
-            cv::Point p0, p1;
-            p0 = currentMarker.ptr<cv::Point>(0)[j];
-            p1 = currentMarker.ptr<cv::Point>(0)[(j + 1) % 4];
-            line(_image, p0, p1, borderColor, 1);
-        }
-        // draw first corner mark
-        rectangle(_image, currentMarker.ptr<cv::Point>(0)[0] - cv::Point(3, 3),
-                  currentMarker.ptr<cv::Point>(0)[0] + cv::Point(3, 3), cornerColor, 1, cv::LINE_AA);
-
-        // draw ID
-        if(_ids.total() != 0) {
-            cv::Point cent(0, 0);
-            for(int p = 0; p < 4; p++)
-                cent += currentMarker.ptr<cv::Point>(0)[p];
-            cent = cent / 4.;
-            int id = _ids.getMat().ptr<int>(0)[i];
-            char buf[32];
-            snprintf(buf, 32, "id=%d", id);
-            putText(_image, buf, cent, cv::FONT_HERSHEY_SIMPLEX, 0.5, textColor, 2);
-        }
+    // draw marker sides
+    for (int j = 0; j < 4; j++) {
+      cv::Point p0, p1;
+      p0 = currentMarker.ptr<cv::Point>(0)[j];
+      p1 = currentMarker.ptr<cv::Point>(0)[(j + 1) % 4];
+      line(_image, p0, p1, borderColor, 1);
     }
+    // draw first corner mark
+    rectangle(_image, currentMarker.ptr<cv::Point>(0)[0] - cv::Point(3, 3),
+      currentMarker.ptr<cv::Point>(0)[0] + cv::Point(3, 3), cornerColor, 1, cv::LINE_AA);
+
+    // draw ID
+    if (_ids.total() != 0) {
+      cv::Point cent(0, 0);
+      for (int p = 0; p < 4; p++)
+        cent += currentMarker.ptr<cv::Point>(0)[p];
+      cent = cent / 4.;
+      int id = _ids.getMat().ptr<int>(0)[i];
+      char buf[32];
+      snprintf(buf, 32, "id=%d", id);
+      putText(_image, buf, cent, cv::FONT_HERSHEY_SIMPLEX, 0.5, textColor, 2);
+    }
+  }
 }
 
 
-CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, const std::vector<size_t>& cameraIds_, const std::vector<size_t>& cameraStereoViewIds_) : m_undistortCapturedViews(true), m_enableFeedbackView(true), m_cameraSystem(cs_), m_cameraIds(cameraIds_) {
+CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, const std::vector<size_t>& cameraIds_, const std::vector<size_t>& cameraStereoViewIds_) :
+  m_undistortCapturedViews(true),
+  m_enableFeedbackView(true),
+  m_cameraSystem(cs_),
+  m_cameraIds(cameraIds_) {
 
   m_fullGreyTex.resize(cameraCount());
   m_fullGreyRT.resize(cameraCount());
@@ -85,9 +89,8 @@ CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, cons
     m_fullGreyTex[cameraIdx] = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
     m_fullGreyRT[cameraIdx] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_fullGreyTex[cameraIdx]}));
     m_feedbackTex[cameraIdx] = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    m_feedbackView[cameraIdx].create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/cameraProvider()->streamWidth(), CV_8UC4);
+    m_feedbackView[cameraIdx].create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/ cameraProvider()->streamWidth(), CV_8UC4);
   }
-
 }
 
 ICameraProvider* CharucoMultiViewCalibration::cameraProvider() const {
@@ -115,8 +118,8 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
     m_fullGreyMat[cameraIdx] = cameraSystem()->captureGreyscale(m_cameraIds[cameraIdx], m_fullGreyTex[cameraIdx], m_fullGreyRT[cameraIdx], distortionMap);
   }
 
-  std::vector<std::vector<cv::Point2f> > currentCharucoCornerPoints(cameraCount());
-  std::vector<std::vector<int> > currentCharucoCornerIds(cameraCount());
+  std::vector<std::vector<cv::Point2f>> currentCharucoCornerPoints(cameraCount());
+  std::vector<std::vector<int>> currentCharucoCornerIds(cameraCount());
 
   // Run ArUco marker detection
   // Note that we don't feed the camera distortion parameters to the aruco functions here, since the images we're operating on have already been undistorted.
@@ -144,7 +147,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
       }
 
       // Remove elements from common set not found in current camera set
-      for (std::set<int>::iterator it = commonCornerIds.begin(); it != commonCornerIds.end(); ) {
+      for (std::set<int>::iterator it = commonCornerIds.begin(); it != commonCornerIds.end();) {
         if (currentCameraSet.find(*it) == currentCameraSet.end()) {
           it = commonCornerIds.erase(it);
         } else {
@@ -160,7 +163,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   // Filter the eye corner sets to only commonly visible corners, which we will later feed to stereoCalibrate
   std::vector<cv::Point3f> thisFrameBoardRefCorners;
   std::vector<int> thisFrameBoardRefIds;
-  std::vector<std::vector<cv::Point2f> > thisFrameImageCorners(cameraCount());
+  std::vector<std::vector<cv::Point2f>> thisFrameImageCorners(cameraCount());
 
   std::vector<cv::Point3f> chessboardCorners = s_charucoBoard->getChessboardCorners();
 
@@ -196,7 +199,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
       }
 
       // Borrowed from cv::aruco::drawDetectedCornersCharuco -- modified to switch the color per-marker to indicate stereo visibility
-      for(size_t cornerIdx = 0; cornerIdx < currentCharucoCornerIds[cameraIdx].size(); ++cornerIdx) {
+      for (size_t cornerIdx = 0; cornerIdx < currentCharucoCornerIds[cameraIdx].size(); ++cornerIdx) {
         cv::Point2f corner = currentCharucoCornerPoints[cameraIdx][cornerIdx];
         int id = currentCharucoCornerIds[cameraIdx][cornerIdx];
 
@@ -276,4 +279,3 @@ cv::Mat CharucoMultiViewCalibration::calibSpaceProjection(size_t cameraIdx) {
     return c.intrinsicMatrix;
   }
 }
-

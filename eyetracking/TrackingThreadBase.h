@@ -6,7 +6,6 @@
 
 class TrackingThreadBase {
 public:
-
   // Call from processFrame on the main-thread loop.
   // Does no work, but ensures that the tracking thread is running and handles (re)opening the camera.
   void processFrameHook();
@@ -53,4 +52,3 @@ private:
   // Ratelimiting for capture-open attempts
   uint64_t m_lastCaptureOpenAttemptTimeNs = 0; // currentTimeNs
 };
-

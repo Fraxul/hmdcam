@@ -1,8 +1,10 @@
 #include "rhi/gl/RHIRenderPipelineGL.h"
 
-RHIRenderPipelineGL::RHIRenderPipelineGL(RHIShaderGL::ptr shader, const RHIRenderPipelineDescriptor& descriptor) : m_shader(shader), m_descriptor(descriptor), m_vao(0) {
+RHIRenderPipelineGL::RHIRenderPipelineGL(RHIShaderGL::ptr shader, const RHIRenderPipelineDescriptor& descriptor) :
+  m_shader(shader),
+  m_descriptor(descriptor),
+  m_vao(0) {
   assert(shader);
-
 }
 
 GLuint RHIRenderPipelineGL::vao() {
@@ -149,5 +151,3 @@ RHIRenderPipelineGL::~RHIRenderPipelineGL() {
 RHIShader* RHIRenderPipelineGL::shader() const {
   return m_shader.get();
 }
-
-

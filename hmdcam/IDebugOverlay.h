@@ -21,4 +21,3 @@ private:
   IDebugOverlay& operator=(const IDebugOverlay&) = delete;
   IDebugOverlay(const IDebugOverlay&) = delete;
 };
-

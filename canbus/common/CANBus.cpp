@@ -23,17 +23,16 @@ CANBus* canbus() {
 }
 
 static void* canardMemAllocate(CanardInstance* const ins, const size_t amount) {
-  (void)ins;
+  (void) ins;
   return malloc(amount);
 }
 
 static void canardMemFree(CanardInstance* const ins, void* const pointer) {
-  (void)ins;
+  (void) ins;
   free(pointer);
 }
 
 void heartbeatMessageHandler(SerializationBuffer&, const CanardTransferMetadata&, uint64_t) {
-
 }
 
 CANBus::CANBus() {
@@ -96,7 +95,6 @@ CANBus::~CANBus() {
   while (CanardTxQueueItem* item = canardTxPop(&m_txQueue, canardTxPeek(&m_txQueue))) {
     canardMemFree(&m_canard, item);
   }
-
 }
 
 void CANBus::addMessageSubscription(CanardPortID port_id, std::function<void(SerializationBuffer&, const CanardTransferMetadata&, uint64_t)> handler, size_t maxMessageLength, uint64_t messageTimeoutUs) {
@@ -190,7 +188,7 @@ void CANBus::canRxThread() {
       // Accessing the canard subscription data requires holding m_subscriptionLock
       boost::lock_guard<boost::mutex> l(m_subscriptionLock);
 
-      res = canardRxAccept((CanardInstance* const)&m_canard, timestamp_us, &rxFrame, /*redundant_iface_index=*/ 0, &transfer, &outSubscription);
+      res = canardRxAccept((CanardInstance* const) &m_canard, timestamp_us, &rxFrame, /*redundant_iface_index=*/ 0, &transfer, &outSubscription);
       // fprintf(stderr, "canardRxAccept(): %d\n", res);
       if (res != 1) {
         continue; // the frame received is not a valid transfer
@@ -217,7 +215,6 @@ void CANBus::canRxThread() {
       canardMemFree(&m_canard, transfer.payload);
     }
   }
-
 }
 
 CanardTransferMetadata* CANBus::getTransferMetadata(CanardPortID port_id) {
@@ -254,4 +251,3 @@ void CANBus::transmitMessage(CanardPortID port_id, SerializationBuffer& b) {
   // Wake Tx thread
   m_txQueueFilled.notify_one();
 }
-

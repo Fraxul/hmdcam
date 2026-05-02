@@ -42,4 +42,3 @@ protected:
   std::vector<Attribute> m_uniformBlocks;
   std::vector<Attribute> m_bufferBlocks;
 };
-

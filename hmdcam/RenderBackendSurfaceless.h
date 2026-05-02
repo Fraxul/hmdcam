@@ -24,7 +24,6 @@ public:
   virtual uint64_t lastPresentationTimestamp() const { return 0; }
 
 private:
-
   uint32_t m_surfaceWidth = 0;
   uint32_t m_surfaceHeight = 0;
   double m_refreshRateHz = 0;
@@ -43,4 +42,3 @@ private:
   RenderBackendSurfaceless(const RenderBackendSurfaceless&);
   RenderBackendSurfaceless& operator=(const RenderBackendSurfaceless&);
 };
-

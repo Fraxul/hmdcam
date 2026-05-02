@@ -5,5 +5,3 @@ void startPDUCommsThread();
 void drawPDUStatusLine();
 
 void drawPDUCommandMenu();
-
-

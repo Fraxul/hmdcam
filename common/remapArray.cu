@@ -12,7 +12,7 @@ using namespace cv;
 using namespace cv::cuda;
 
 // borrowed from glm/gtc/packing.inl
-static inline __host__  uint16_t packUnorm1x16(float s) {
+static inline __host__ uint16_t packUnorm1x16(float s) {
   return static_cast<uint16_t>(roundf(std::min<float>(std::max<float>(s, 0.0f), 1.0f) * 65535.0f));
 }
 //static inline __device__ uint16_t packUnorm1x16(float s) {
@@ -24,23 +24,24 @@ static inline __host__ __device__ float unpackUnorm1x16(uint16_t p) {
   return Unpack * 1.5259021896696421759365224689097e-5f; // 1.0 / 65535.0
 }
 
-template <unsigned int DownsampleFactor> __global__ void remapArray(CUtexObject src, float2 srcDims, const PtrStep<ushort2> undistortRectifyMap, PtrStepSz<uchar> dst) {
+template <unsigned int DownsampleFactor>
+__global__ void remapArray(CUtexObject src, float2 srcDims, const PtrStep<ushort2> undistortRectifyMap, PtrStepSz<uchar> dst) {
   const int x = blockDim.x * blockIdx.x + threadIdx.x;
   const int y = blockDim.y * blockIdx.y + threadIdx.y;
 
   if (x < dst.cols && y < dst.rows) {
     ushort2 unormCoords[DownsampleFactor * DownsampleFactor];
-    #pragma unroll
+#pragma unroll
     for (uint yOffset = 0; yOffset < DownsampleFactor; ++yOffset) {
       const ushort2* rowPtr = undistortRectifyMap.ptr((y * DownsampleFactor) + yOffset);
-      #pragma unroll
+#pragma unroll
       for (uint xOffset = 0; xOffset < DownsampleFactor; ++xOffset) {
         unormCoords[(yOffset * DownsampleFactor) + xOffset] = rowPtr[(x * DownsampleFactor) + xOffset];
       }
     }
 
     float samples[DownsampleFactor * DownsampleFactor];
-    #pragma unroll
+#pragma unroll
     for (uint i = 0; i < (DownsampleFactor * DownsampleFactor); ++i) {
       samples[i] = tex2D<float>(src,
         unpackUnorm1x16(unormCoords[i].x) * srcDims.x,
@@ -48,7 +49,7 @@ template <unsigned int DownsampleFactor> __global__ void remapArray(CUtexObject 
     }
 
     float val = 0.0f;
-    #pragma unroll
+#pragma unroll
     for (uint i = 0; i < (DownsampleFactor * DownsampleFactor); ++i) {
       val += samples[i];
     }
@@ -84,7 +85,7 @@ void remapArray(CUtexObject src, cv::Size inputImageSize, cv::cuda::GpuMat& undi
       remapArray<4><<<grid, block, 0, stream>>>(src, sz, map, out);
       break;
     default:
-    assert(false && "Unhandled downsampleFactor");
+      assert(false && "Unhandled downsampleFactor");
   }
 }
 
@@ -120,4 +121,3 @@ cv::cuda::GpuMat remapArray_initUndistortRectifyMap(cv::InputArray cameraMatrix,
   res.upload(resMat);
   return res;
 }
-

@@ -1,12 +1,11 @@
 #include "rhi/RHISwapchain.h"
 #include "rhi/RHI.h"
 
-RHISwapchain::RHISwapchain() : m_index(0) {
-
+RHISwapchain::RHISwapchain() :
+  m_index(0) {
 }
 
 RHISwapchain::~RHISwapchain() {
-
 }
 
 void RHISwapchain::addSurface(RHISurface::ptr srf, RHIRenderTarget::ptr rt) {
@@ -26,4 +25,3 @@ void RHISwapchain::advance() {
     m_index = 0;
   }
 }
-

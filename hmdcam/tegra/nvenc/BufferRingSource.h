@@ -6,7 +6,7 @@
 
 class NvEncSession;
 
-class BufferRingSource: public FramedSource {
+class BufferRingSource : public FramedSource {
 public:
   static BufferRingSource* createNew(UsageEnvironment& env, NvEncSession*);
 
@@ -46,4 +46,3 @@ private:
   NvEncSession* m_nvencSession;
   size_t m_nvencSessionCallbackId;
 };
-

@@ -4,11 +4,12 @@
 
 class FxAtomicString {
 public:
-
   FxAtomicString(const char*);
-  FxAtomicString() : m_ref(0) {}
+  FxAtomicString() :
+    m_ref(0) {}
 
-  FxAtomicString(const FxAtomicString& right) : m_ref(right.m_ref) {}
+  FxAtomicString(const FxAtomicString& right) :
+    m_ref(right.m_ref) {}
   FxAtomicString& operator=(const FxAtomicString& right) {
     m_ref = right.m_ref;
     return *this;
@@ -34,6 +35,5 @@ protected:
 };
 
 namespace boost {
-  size_t hash_value(const FxAtomicString&);
+size_t hash_value(const FxAtomicString&);
 }
-

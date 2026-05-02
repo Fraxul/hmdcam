@@ -21,4 +21,3 @@ __attribute__((weak)) void renderSubmitDebugSurface(RHISurface::ptr debugSurface
 __attribute__((weak)) const char* renderDebugURL() {
   return nullptr;
 }
-

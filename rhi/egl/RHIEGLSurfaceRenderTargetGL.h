@@ -17,4 +17,3 @@ protected:
   EGLDisplay m_display;
   EGLSurface m_surface;
 };
-

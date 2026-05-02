@@ -14,7 +14,6 @@ class DepthMapGenerator;
 
 class DebugServer {
 public:
-
   DebugServer();
   ~DebugServer();
   bool initWithCameraSystem(CameraSystem*, IArgusCamera*, DepthMapGenerator*);
@@ -31,7 +30,10 @@ protected:
   DepthMapGenerator* m_depthMapGenerator;
 
 
-  static void* streamThreadEntryPoint(void* x) { reinterpret_cast<DebugServer*>(x)->streamThreadFn(); return NULL; }
+  static void* streamThreadEntryPoint(void* x) {
+    reinterpret_cast<DebugServer*>(x)->streamThreadFn();
+    return NULL;
+  }
   void streamThreadFn();
   pthread_t m_streamThread = 0;
   pthread_mutex_t m_streamReadyMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -72,6 +74,4 @@ protected:
 
   SerializationBuffer m_streamHeader;
   cv::String m_cameraSystemConfig;
-
 };
-

@@ -3,12 +3,16 @@
 #include <cudaGL.h>
 #include "rhi/cuda/CudaUtil.h"
 
-RHIBufferGL::RHIBufferGL() : m_buffer(0), m_cuGraphicsResource(NULL) {
+RHIBufferGL::RHIBufferGL() :
+  m_buffer(0),
+  m_cuGraphicsResource(NULL) {
   m_size = 0;
   glGenBuffers(1, &m_buffer);
 }
 
-RHIBufferGL::RHIBufferGL(GLuint bufferId, size_t size, RHIBufferUsageMode usageMode_) : m_buffer(bufferId), m_cuGraphicsResource(NULL) {
+RHIBufferGL::RHIBufferGL(GLuint bufferId, size_t size, RHIBufferUsageMode usageMode_) :
+  m_buffer(bufferId),
+  m_cuGraphicsResource(NULL) {
   m_size = size;
   m_usageMode = usageMode_;
 }
@@ -29,11 +33,14 @@ void RHIBufferGL::map(RHIBufferMapMode mapMode) {
   GLenum glMapMode = GL_MAP_READ_BIT;
   switch (mapMode) {
     case kBufferMapReadOnly:
-      glMapMode = GL_MAP_READ_BIT; break;
+      glMapMode = GL_MAP_READ_BIT;
+      break;
     case kBufferMapReadWrite:
-      glMapMode = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT; break;
+      glMapMode = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT;
+      break;
     case kBufferMapWriteOnly:
-      glMapMode = GL_MAP_WRITE_BIT; break;
+      glMapMode = GL_MAP_WRITE_BIT;
+      break;
   };
 
   GL(glBindBuffer(GL_ARRAY_BUFFER, m_buffer));
@@ -75,4 +82,3 @@ CUgraphicsResource& RHIBufferGL::cuGraphicsResource() const {
 
   return m_cuGraphicsResource;
 }
-

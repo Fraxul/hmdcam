@@ -32,7 +32,8 @@
 
 #define PER_EYE for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
 
-DepthMapGeneratorMock::DepthMapGeneratorMock() : DepthMapGenerator(kDepthBackendMock) {
+DepthMapGeneratorMock::DepthMapGeneratorMock() :
+  DepthMapGenerator(kDepthBackendMock) {
 
   // running at quarter res, approx
   m_algoDownsampleX = 4;
@@ -43,15 +44,12 @@ DepthMapGeneratorMock::DepthMapGeneratorMock() : DepthMapGenerator(kDepthBackend
 }
 
 DepthMapGeneratorMock::~DepthMapGeneratorMock() {
-
 }
 
 void DepthMapGeneratorMock::internalLoadSettings(cv::FileStorage& fs) {
-
 }
 
 void DepthMapGeneratorMock::internalSaveSettings(cv::FileStorage& fs) {
-
 }
 
 void DepthMapGeneratorMock::internalUpdateViewData() {
@@ -110,4 +108,3 @@ void DepthMapGeneratorMock::internalRenderIMGUI() {
 
 void DepthMapGeneratorMock::internalRenderIMGUIPerformanceGraphs() {
 }
-

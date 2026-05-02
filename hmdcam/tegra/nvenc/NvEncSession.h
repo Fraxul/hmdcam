@@ -20,7 +20,10 @@ public:
 
   void setBitrate(uint32_t bitsPerSecond) { m_bitsPerSecond = bitsPerSecond; }
   uint32_t bitrate() const { return m_bitsPerSecond; }
-  void setFramerate(uint32_t numerator, uint32_t denominator) { m_framerateNumerator = numerator; m_framerateDenominator = denominator; }
+  void setFramerate(uint32_t numerator, uint32_t denominator) {
+    m_framerateNumerator = numerator;
+    m_framerateDenominator = denominator;
+  }
 
   size_t registerEncodedFrameDeliveryCallback(const std::function<void(const char*, size_t, struct timeval&)>& cb);
   void unregisterEncodedFrameDeliveryCallback(size_t cbId);
@@ -40,7 +43,7 @@ protected:
   uint32_t m_framerateNumerator = 30, m_framerateDenominator = 1;
   uint32_t m_encoderPixfmt = 0;
 
-  std::map<size_t, std::function<void(const char*, size_t, struct timeval&)> > m_encodedFrameDeliveryCallbacks;
+  std::map<size_t, std::function<void(const char*, size_t, struct timeval&)>> m_encodedFrameDeliveryCallbacks;
   size_t m_encodedFrameDeliveryCallbackIdGen = 0;
 
   uint32_t m_startCount = 0;
@@ -78,7 +81,7 @@ protected:
   };
   std::vector<surfaceDmaBufInfo> m_rhiSurfaceDmaBufs;
 
-  std::queue<std::pair<ssize_t, EGLSyncKHR> > m_gpuSubmissionQueue;
+  std::queue<std::pair<ssize_t, EGLSyncKHR>> m_gpuSubmissionQueue;
   pthread_mutex_t m_gpuSubmissionQueueLock;
   pthread_cond_t m_gpuSubmissionQueueCond;
   pthread_t m_cudaWorkerThread;
@@ -87,7 +90,7 @@ protected:
 
   std::queue<NvBuffer*> m_encoderOutputPlaneBufferQueue;
 
-  static bool encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void *arg);
+  static bool encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void* arg);
   static void* cudaWorker_thunk(void*);
 
   bool encoder_capture_plane_dq_callback(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer);
@@ -99,4 +102,3 @@ private:
   NvEncSession(const NvEncSession&);
   NvEncSession& operator=(const NvEncSession&);
 };
-

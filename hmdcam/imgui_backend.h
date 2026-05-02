@@ -7,4 +7,3 @@ void ImGui_ImplInputListener_NewFrame();
 void ImGui_ImplFxRHI_Init();
 void ImGui_ImplFxRHI_NewFrame();
 void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawData* draw_data);
-

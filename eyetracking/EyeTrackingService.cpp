@@ -43,15 +43,17 @@ static inline glm::vec2 toGlm(const cv::Point2f& p) { return glm::vec2(p.x, p.y)
 static inline glm::vec2 vec2AtAngleDeg(float deg) { return glm::vec2(cosf(glm::radians(deg)), sinf(glm::radians(deg))); }
 // static inline glm::vec2 vec2AtAngle(float rad) { return glm::vec2(cosf(rad), sinf(rad)); }
 
-template <typename T> void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
+template <typename T>
+void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
   // Mathematica: evaluated EulerMatrix[{roll, pitch, yaw}, {3, 1, 2}] . {0, 0, 1}
   // result: {Cos[yaw] Sin[pitch] Sin[roll] + Cos[roll] Sin[yaw], -Cos[roll] Cos[yaw] Sin[pitch] + Sin[roll] Sin[yaw], Cos[pitch] Cos[yaw]}
-  outVec[0] = (cos(yaw)*sin(pitch)*sin(roll)) + (cos(roll)*sin(yaw));
-  outVec[1] = (-cos(roll)*cos(yaw)*sin(pitch)) + (sin(roll)*sin(yaw));
-  outVec[2] = (cos(pitch)*cos(yaw));
+  outVec[0] = (cos(yaw) * sin(pitch) * sin(roll)) + (cos(roll) * sin(yaw));
+  outVec[1] = (-cos(roll) * cos(yaw) * sin(pitch)) + (sin(roll) * sin(yaw));
+  outVec[2] = (cos(pitch) * cos(yaw));
 }
 
-template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, bool toDegrees) {
+template <typename T>
+void vectorToAngles(const T* vec, T& outPitch, T& outYaw, bool toDegrees) {
   // Note: argument ordering is atan2(y, x)
 
   // Pitch is rotation around / flattening along the X axis, where the 2d plane is Z, Y
@@ -69,12 +71,14 @@ template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, 
   }
 }
 
-template <typename T> T clamp(T value, T min_, T max_) {
+template <typename T>
+T clamp(T value, T min_, T max_) {
   return std::min<T>(max_, std::max<T>(min_, value));
 }
 
 
-template <typename T> glm::vec2 boundsCenterFromPoints(const std::vector<cv::Point_<T> >& points) {
+template <typename T>
+glm::vec2 boundsCenterFromPoints(const std::vector<cv::Point_<T>>& points) {
   glm::vec2 boundsMin = toGlm(points[0]);
   glm::vec2 boundsMax = toGlm(points[0]);
   for (size_t i = 1; i < points.size(); ++i) {
@@ -100,7 +104,7 @@ EyeTrackingService::EyeTrackingService() {
     m_processingState[eyeIdx].m_captureDirName = "eyetracking-captures";
 
     // Construct capture file suffix with eye index
-    m_processingState[eyeIdx].m_captureFileSuffix = (eyeIdx  ? "_right" : "_left");
+    m_processingState[eyeIdx].m_captureFileSuffix = (eyeIdx ? "_right" : "_left");
   }
 
   loadCalibrationData();
@@ -204,7 +208,6 @@ EyeTrackingService::~EyeTrackingService() {
   PER_EYE {
     m_processingState[eyeIdx].shutdownThread();
   }
-
 }
 
 bool EyeTrackingService::loadCalibrationData() {
@@ -267,7 +270,6 @@ void EyeTrackingService::saveCalibrationData(cv::FileStorage& fs) {
   writeNode(fs, blinkDetectMinFrames);
   writeNode(fs, blinkDetectMaxFrames);
   writeNode(fs, blinkCooldownFrames);
-
 }
 #undef writeNode
 
@@ -370,7 +372,6 @@ void EyeTrackingService::ProcessingState::postprocessOneEye() {
             // Move to 'calibrated' state.
             // We still need to rebuild the eye fitter model, but that'll happen over time as the user looks around.
             m_calibrationState = kCalibrated;
-
           }
         }
       }
@@ -389,21 +390,20 @@ void EyeTrackingService::ProcessingState::postprocessOneEye() {
       m_calibrationState = kWaitingForValidFrames;
       break;
   };
-
 }
 
 
 // std::sort support
 namespace cv {
-  bool operator<(const Point& left, const Point& right) {
-    if (left.x < right.x)
-      return true;
-    else if (left.x > right.x)
-      return false;
-    else /*(left.x == right.x)*/
-      return left.y < right.y;
-  }
-};
+bool operator<(const Point& left, const Point& right) {
+  if (left.x < right.x)
+    return true;
+  else if (left.x > right.x)
+    return false;
+  else /*(left.x == right.x)*/
+    return left.y < right.y;
+}
+}; // namespace cv
 
 
 // Returns true if an ellipse was fit this frame, even if the full eye model fit/unproject wasn't successful.
@@ -420,7 +420,7 @@ bool EyeTrackingService::ProcessingState::postprocessOneEye_fitEllipse() {
 
   // Collect stats and filter contours
   {
-    std::vector<std::vector<cv::Point> > contours;
+    std::vector<std::vector<cv::Point>> contours;
     cv::findContoursLinkRuns(m_pupilMask, contours);
 
 
@@ -442,7 +442,7 @@ bool EyeTrackingService::ProcessingState::postprocessOneEye_fitEllipse() {
 
     // Sort filtered contours by area descending
     if (filteredContours.size() > 1)
-      std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.area > right.area; } );
+      std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.area > right.area; });
   }
 
   bool didFitEllipse = false;
@@ -596,7 +596,7 @@ bool EyeTrackingService::ProcessingState::postprocessOneEye_fitEllipse() {
       // so we need to offset the ellipse center coordinate (via toEllipseWithOffset)
 
       m_eyeModelFitter.add_observation(
-        /*image (unused)=*/cv::Mat(),
+        /*image (unused)=*/ cv::Mat(),
         /*pupil=*/ singleeyefitter::toEllipseWithOffset<double>(m_pupilEllipse, m_captureCenterOffset),
         /*inliers=*/ pupil_inliers);
 
@@ -679,17 +679,16 @@ cv::Point2f toImgCoord(const cv::Point2f& point, const cv::Point2f& centerOffset
   return point + centerOffset;
 }
 cv::Point toImgCoord(const cv::Point& point, const cv::Point2f& centerOffset) {
-    return cv::Point(
-        static_cast<int>(centerOffset.x) + point.x,
-        static_cast<int>(centerOffset.y) + point.y);
+  return cv::Point(
+    static_cast<int>(centerOffset.x) + point.x,
+    static_cast<int>(centerOffset.y) + point.y);
 }
 cv::RotatedRect toImgCoord(const cv::RotatedRect& rect, const cv::Point2f& centerOffset) {
-    return cv::RotatedRect(toImgCoord(rect.center, centerOffset),
-        cv::Size2f(rect.size.width, rect.size.height), rect.angle);
+  return cv::RotatedRect(toImgCoord(rect.center, centerOffset),
+    cv::Size2f(rect.size.width, rect.size.height), rect.angle);
 }
 
 EyeTrackingService::ProcessingState::~ProcessingState() {
-
 }
 
 void EyeTrackingService::ProcessingState::internalUpdateStateOnCaptureOpen() {
@@ -739,7 +738,7 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
     int8_t* roiInputTensor = m_roiExec->inputTensorPtr<int8_t>(0);
     if (m_service->m_roiInputRowStrideElements == m_service->m_roiInputWidth) {
       // Tightly-packed input, convert entire block at once
-        convertUnorm8ToDLAInt8(m_roiScaleMat.ptr<uint8_t>(), roiInputTensor, m_service->m_roiInputWidth * m_service->m_roiInputHeight);
+      convertUnorm8ToDLAInt8(m_roiScaleMat.ptr<uint8_t>(), roiInputTensor, m_service->m_roiInputWidth * m_service->m_roiInputHeight);
     } else {
       // Padded input, convert a row at a time
       for (size_t row = 0; row < m_service->m_roiInputHeight; ++row) {
@@ -803,7 +802,7 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
     cv::erode(/*src=*/ m_roiDilatedMaskMat, /*dst=*/ m_roiMaskMat, /*kernel (default)=*/ cv::Mat());
 
     // Collect and filter contours
-    std::vector<std::vector<cv::Point> > contours;
+    std::vector<std::vector<cv::Point>> contours;
     cv::findContoursLinkRuns(m_roiMaskMat, contours);
 
     struct Contour {
@@ -830,7 +829,7 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
       // Sort filtered contours by distance to center ascending
       // std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.distanceToCenter < right.distanceToCenter; } );
       // Sort filtered contours by area descending
-      std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.area > right.area; } );
+      std::sort(filteredContours.begin(), filteredContours.end(), [](const Contour& left, const Contour& right) { return left.area > right.area; });
     }
 
     if (!filteredContours.empty()) {
@@ -853,8 +852,7 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
   // Rescale to 0...1f and multiply by the actual source w/h
   cv::Point2i roiCenter_captureRelative = cv::Point2i(
     clamp<int32_t>(roiOutput[0] * static_cast<float>(captureMat.cols - 1), 0, captureMat.cols - 1),
-    clamp<int32_t>(roiOutput[1] * static_cast<float>(captureMat.rows - 1), 0, captureMat.rows - 1)
-  );
+    clamp<int32_t>(roiOutput[1] * static_cast<float>(captureMat.rows - 1), 0, captureMat.rows - 1));
 
   // Clip the capture-relative ROI center to the capture dimensions inset by half of the segmentation network input size. This should ensure that the
   // segmentation ROI rect fits entirely within the capture region.
@@ -1002,7 +1000,6 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
             }
           }
         }
-
       }
 
 #endif
@@ -1016,7 +1013,7 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
         uint8_t* pupilRowPtr = m_pupilMask.ptr<uint8_t>(row);
         for (size_t col = 0; col < debugROIViewRGB.cols; ++col) {
           if (pupilRowPtr[col])
-            debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/0] = 0xcc;
+            debugROIViewRGB.ptr<uint8_t>(row, col)[/*red channel=*/ 0] = 0xcc;
         }
       }
 #endif
@@ -1040,8 +1037,8 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
         glm::vec2 sector2Vec = vec2AtAngleDeg((m_service->m_rollOffsetDeg[m_eyeIdx] + 90.0f) - m_service->m_sectorCutoffAngleDeg);
 
         lineCenterDirectionLength(m_tempRGBDebugMat, m_debugBoundsCenter, verticalVec, 80.0f, cv::Scalar(0, 0, 255), /*bidirectional=*/ true);
-        lineCenterDirectionLength(m_tempRGBDebugMat, m_debugBoundsCenter, sector1Vec,  80.0f, cv::Scalar(255, 0, 0), /*bidirectional=*/ true);
-        lineCenterDirectionLength(m_tempRGBDebugMat, m_debugBoundsCenter, sector2Vec,  80.0f, cv::Scalar(255, 0, 0), /*bidirectional=*/ true);
+        lineCenterDirectionLength(m_tempRGBDebugMat, m_debugBoundsCenter, sector1Vec, 80.0f, cv::Scalar(255, 0, 0), /*bidirectional=*/ true);
+        lineCenterDirectionLength(m_tempRGBDebugMat, m_debugBoundsCenter, sector2Vec, 80.0f, cv::Scalar(255, 0, 0), /*bidirectional=*/ true);
       }
 
       if (m_eyeFitterOutputsValid) {
@@ -1065,12 +1062,12 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
           cv::line(m_tempRGBDebugMat,
             (rectPoints[0] + rectPoints[1]) * 0.5f,
             (rectPoints[2] + rectPoints[3]) * 0.5f,
-            cv::Scalar(60, 60, 0), /*thickness=*/2);
+            cv::Scalar(60, 60, 0), /*thickness=*/ 2);
 
           cv::line(m_tempRGBDebugMat,
             (rectPoints[1] + rectPoints[2]) * 0.5f,
             (rectPoints[0] + rectPoints[3]) * 0.5f,
-            cv::Scalar(60, 60, 0), /*thickness=*/2);
+            cv::Scalar(60, 60, 0), /*thickness=*/ 2);
 
           // Draw a small marker on the eye center point
           cv::circle(m_tempRGBDebugMat, eyeEllipseImg.center, /*r=*/ 3, cv::Scalar(0, 0, 255), /*thickness=*/ -1);
@@ -1089,7 +1086,6 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
         //FRAME_DEBUG_LOG("Ellipse: center=%.3f %.3f\n width=%.3f height=%.3f\n",
         //    m_pupilEllipse.center.x, m_pupilEllipse.center.y,
         //    m_pupilEllipse.size.width, m_pupilEllipse.size.height);
-
       }
 
       // Draw the ROI centroid
@@ -1240,7 +1236,7 @@ void EyeTrackingService::renderIMGUI() {
 
       ImGui::Checkbox("Freeze graph", &ps.m_freezeGraphData);
 
-      if (ImPlot::BeginPlot("##EllipseData1", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+      if (ImPlot::BeginPlot("##EllipseData1", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
         ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
         ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
         ImPlot::SetupAxisLimits(ImAxis_X1, 0, ps.m_graphData.size(), ImPlotCond_Always);
@@ -1251,7 +1247,7 @@ void EyeTrackingService::renderIMGUI() {
         ImPlot::EndPlot();
       }
 
-      if (ImPlot::BeginPlot("##EllipseData2", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+      if (ImPlot::BeginPlot("##EllipseData2", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
         ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
         ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
         ImPlot::SetupAxisLimits(ImAxis_X1, 0, ps.m_graphData.size(), ImPlotCond_Always);
@@ -1262,7 +1258,7 @@ void EyeTrackingService::renderIMGUI() {
         ImPlot::EndPlot();
       }
 
-      if (ImPlot::BeginPlot("##EllipseData3", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+      if (ImPlot::BeginPlot("##EllipseData3", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
         ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
         ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
         ImPlot::SetupAxisLimits(ImAxis_X1, 0, ps.m_graphData.size(), ImPlotCond_Always);
@@ -1361,7 +1357,6 @@ void EyeTrackingService::requestCapture() {
       ps.m_captureFileIndex = captureIndex;
     }
   }
-
 }
 
 void EyeTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
@@ -1456,8 +1451,7 @@ void EyeTrackingService::renderSceneGizmos_postUI(FxRenderView* renderViews) {
     CrosshairUniformBlock ub;
 
     glm::mat4 modelMatrix =
-        glm::translate(glm::vec3(0.0f, 0.0f, -crosshairDepth))
-      * glm::scale(glm::vec3(0.00375f));
+      glm::translate(glm::vec3(0.0f, 0.0f, -crosshairDepth)) * glm::scale(glm::vec3(0.00375f));
 
     ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
     ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
@@ -1498,4 +1492,3 @@ const char* EyeTrackingService::getDebugPerfStatsForEye(size_t eyeIdx) {
   buf[len - 1] = '\0';
   return buf;
 }
-

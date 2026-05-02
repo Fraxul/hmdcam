@@ -26,7 +26,11 @@
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/mean.hpp>
 
-#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
+#define die(msg, ...)                         \
+  do {                                        \
+    fprintf(stderr, msg "\n", ##__VA_ARGS__); \
+    abort();                                  \
+  } while (0)
 //#define FRAME_WAIT_TIME_STATS 1
 
 static const size_t kBufferCount = 8;
@@ -57,14 +61,15 @@ static const char* argusStatusStr(Argus::Status status) {
 
 int64_t u64_diff(uint64_t lhs, uint64_t rhs) {
   uint64_t abs_diff = (lhs > rhs) ? (lhs - rhs) : (rhs - lhs);
-  return (lhs > rhs) ? (int64_t)abs_diff : -(int64_t)abs_diff;
+  return (lhs > rhs) ? (int64_t) abs_diff : -(int64_t) abs_diff;
 }
 
 constexpr int kAdjustCaptureCooldownFrames = 96;
 constexpr int kAdjustCaptureEvalWindowFrames = 64;
 
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framerate) :
-  m_display(display_), m_context(context_),
+  m_display(display_),
+  m_context(context_),
   m_shouldResubmitCaptureRequest(false),
   m_captureIsRepeating(false),
   m_minAcRegionWidth(0),
@@ -114,7 +119,6 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 
       // Swap in newly remapped list
       cameraDevices.swap(selectedCameraDevices);
-
     }
 
     // Set up per-sensor objects from the camera device list.
@@ -132,7 +136,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
   }
 
   // Pick a sensor mode from the first camera, which will be applied to all cameras
-  Argus::ICameraProperties *iCameraProperties = Argus::interface_cast<Argus::ICameraProperties>(m_perSensorData[0].m_cameraDevice);
+  Argus::ICameraProperties* iCameraProperties = Argus::interface_cast<Argus::ICameraProperties>(m_perSensorData[0].m_cameraDevice);
   {
     // Select sensor mode. Pick the fastest mode (smallest FrameDurationRange.min) with the largest pixel area.
     uint64_t bestFrameDurationRangeMin = UINT64_MAX;
@@ -142,7 +146,7 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
     iCameraProperties->getAllSensorModes(&sensorModes);
     for (size_t modeIdx = 0; modeIdx < sensorModes.size(); ++modeIdx) {
       Argus::SensorMode* sensorModeCandidate = sensorModes[modeIdx];
-      Argus::ISensorMode *iSensorModeCandidate = Argus::interface_cast<Argus::ISensorMode>(sensorModeCandidate);
+      Argus::ISensorMode* iSensorModeCandidate = Argus::interface_cast<Argus::ISensorMode>(sensorModeCandidate);
 
       uint64_t pixelArea = iSensorModeCandidate->getResolution().width() * iSensorModeCandidate->getResolution().height();
 
@@ -164,13 +168,12 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
         }
       }
     }
-
   }
 
   if (!m_sensorMode)
     die("Unable to select a sensor mode");
 
-  Argus::ISensorMode *iSensorMode = Argus::interface_cast<Argus::ISensorMode>(m_sensorMode);
+  Argus::ISensorMode* iSensorMode = Argus::interface_cast<Argus::ISensorMode>(m_sensorMode);
   assert(iSensorMode);
 
   printf("Selected sensor mode:\n");
@@ -228,22 +231,22 @@ void ArgusCamera::buildCaptureSessions() {
     Argus::CaptureSession* session = iCameraProvider->createCaptureSession(sessionDevices);
     sessionData.m_captureSession = session;
 
-    Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(session);
-    Argus::IEventProvider *iEventProvider = Argus::interface_cast<Argus::IEventProvider>(session);
+    Argus::ICaptureSession* iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(session);
+    Argus::IEventProvider* iEventProvider = Argus::interface_cast<Argus::IEventProvider>(session);
     if (!iCaptureSession || !iEventProvider)
-        die("Failed to create CaptureSession");
+      die("Failed to create CaptureSession");
 
-    sessionData.m_completionEventQueue = iEventProvider->createEventQueue( {Argus::EVENT_TYPE_CAPTURE_COMPLETE });
+    sessionData.m_completionEventQueue = iEventProvider->createEventQueue({Argus::EVENT_TYPE_CAPTURE_COMPLETE});
     assert(sessionData.m_completionEventQueue);
 
     // Create capture request, set the sensor mode, and enable the output streams.
     sessionData.m_captureRequest = iCaptureSession->createRequest();
 
     if (!sessionData.m_captureRequest)
-        die("Failed to create Request");
-    Argus::ISourceSettings *iSourceSettings = Argus::interface_cast<Argus::ISourceSettings>(sessionData.m_captureRequest);
+      die("Failed to create Request");
+    Argus::ISourceSettings* iSourceSettings = Argus::interface_cast<Argus::ISourceSettings>(sessionData.m_captureRequest);
     if (!iSourceSettings)
-        die("Failed to get source settings request interface");
+      die("Failed to get source settings request interface");
     iSourceSettings->setSensorMode(m_sensorMode);
   }
 
@@ -254,10 +257,10 @@ void ArgusCamera::buildCaptureSessions() {
     SensorData& sensorData = m_perSensorData[cameraIdx];
 
     // Create the OutputStreamSettings object for a buffer OutputStream
-    Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIndexForStream(cameraIdx)].m_captureSession);
+    Argus::ICaptureSession* iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIndexForStream(cameraIdx)].m_captureSession);
 
     Argus::UniqueObj<Argus::OutputStreamSettings> streamSettings(iCaptureSession->createOutputStreamSettings(Argus::STREAM_TYPE_BUFFER));
-    Argus::IBufferOutputStreamSettings *iBufferOutputStreamSettings = Argus::interface_cast<Argus::IBufferOutputStreamSettings>(streamSettings);
+    Argus::IBufferOutputStreamSettings* iBufferOutputStreamSettings = Argus::interface_cast<Argus::IBufferOutputStreamSettings>(streamSettings);
     Argus::IOutputStreamSettings* iOutputStreamSettings = Argus::interface_cast<Argus::IOutputStreamSettings>(streamSettings);
     assert(iBufferOutputStreamSettings && iOutputStreamSettings);
 
@@ -268,13 +271,13 @@ void ArgusCamera::buildCaptureSessions() {
     iOutputStreamSettings->setCameraDevice(sensorData.m_cameraDevice);
     sensorData.m_outputStream = iCaptureSession->createOutputStream(streamSettings.get());
 
-    Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(sensorData.m_outputStream);
+    Argus::IBufferOutputStream* iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(sensorData.m_outputStream);
     if (!iBufferOutputStream)
-        die("Failed to create BufferOutputStream");
+      die("Failed to create BufferOutputStream");
 
     // Create the BufferSettings object to configure Buffer creation.
     Argus::UniqueObj<Argus::BufferSettings> bufferSettings(iBufferOutputStream->createBufferSettings());
-    Argus::IEGLImageBufferSettings *iBufferSettings = Argus::interface_cast<Argus::IEGLImageBufferSettings>(bufferSettings);
+    Argus::IEGLImageBufferSettings* iBufferSettings = Argus::interface_cast<Argus::IEGLImageBufferSettings>(bufferSettings);
     iBufferSettings->setEGLDisplay(m_display);
 
     // Allocate native buffers, create the Argus::Buffer for each EGLImage, and release to stream for initial capture use.
@@ -307,7 +310,7 @@ void ArgusCamera::buildCaptureSessions() {
       inputParams.params.memType = NVBUF_MEM_SURFACE_ARRAY;
       inputParams.memtag = NvBufSurfaceTag_CAMERA;
 
-      NvBufSurface *nvbuf_surf = 0;
+      NvBufSurface* nvbuf_surf = 0;
       if (NvBufSurfaceAllocate(&nvbuf_surf, 1, &inputParams) != 0) {
         die("NvBufSurfaceAllocate failed");
       }
@@ -322,10 +325,10 @@ void ArgusCamera::buildCaptureSessions() {
       iBufferSettings->setEGLImage(b.eglImage);
       b.argusBuffer = iBufferOutputStream->createBuffer(bufferSettings.get());
       if (!b.argusBuffer)
-          die("Failed to create Buffer");
+        die("Failed to create Buffer");
 
       if (iBufferOutputStream->releaseBuffer(b.argusBuffer) != Argus::STATUS_OK)
-          die("Failed to release Buffer for capture use");
+        die("Failed to release Buffer for capture use");
 
       CUDA_CHECK(cuGraphicsEGLRegisterImage(&b.cudaResource, b.eglImage, CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY));
       CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&b.eglFrame, b.cudaResource, 0, 0));
@@ -359,11 +362,11 @@ void ArgusCamera::buildCaptureSessions() {
         CUDA_RESOURCE_DESC resDesc;
         memset(&resDesc, 0, sizeof(resDesc));
         resDesc.resType = CU_RESOURCE_TYPE_PITCH2D;
-        resDesc.res.pitch2D.devPtr       = (CUdeviceptr) b.eglFrame.frame.pPitch[0];
-        resDesc.res.pitch2D.format       = b.eglFrame.cuFormat;
-        resDesc.res.pitch2D.numChannels  = b.eglFrame.numChannels;
-        resDesc.res.pitch2D.width        = b.eglFrame.width;
-        resDesc.res.pitch2D.height       = b.eglFrame.height;
+        resDesc.res.pitch2D.devPtr = (CUdeviceptr) b.eglFrame.frame.pPitch[0];
+        resDesc.res.pitch2D.format = b.eglFrame.cuFormat;
+        resDesc.res.pitch2D.numChannels = b.eglFrame.numChannels;
+        resDesc.res.pitch2D.width = b.eglFrame.width;
+        resDesc.res.pitch2D.height = b.eglFrame.height;
         resDesc.res.pitch2D.pitchInBytes = b.eglFrame.pitch;
 
         CUDA_TEXTURE_DESC texDesc;
@@ -385,11 +388,11 @@ void ArgusCamera::buildCaptureSessions() {
         memset(&resDesc, 0, sizeof(resDesc));
         resDesc.resType = CU_RESOURCE_TYPE_PITCH2D;
         // TODO hardcoded assumptions about the Chroma format -- we should be able to get this from the eglColorFormat!
-        resDesc.res.pitch2D.devPtr       = (CUdeviceptr) b.eglFrame.frame.pPitch[1];
-        resDesc.res.pitch2D.format       = b.eglFrame.cuFormat; // should be CU_AD_FORMAT_SIGNED_INT8
-        resDesc.res.pitch2D.numChannels  = 2;
-        resDesc.res.pitch2D.width        = b.eglFrame.width / 2;
-        resDesc.res.pitch2D.height       = b.eglFrame.height / 2;
+        resDesc.res.pitch2D.devPtr = (CUdeviceptr) b.eglFrame.frame.pPitch[1];
+        resDesc.res.pitch2D.format = b.eglFrame.cuFormat; // should be CU_AD_FORMAT_SIGNED_INT8
+        resDesc.res.pitch2D.numChannels = 2;
+        resDesc.res.pitch2D.width = b.eglFrame.width / 2;
+        resDesc.res.pitch2D.height = b.eglFrame.height / 2;
         // pitchInBytes NOTE: "...in case of multiplanar *eglFrame, pitch of only first plane is to be considered by the application."
         // (accessing planeDesc[0] is intentional)
         resDesc.res.pitch2D.pitchInBytes = b.eglFrame.pitch;
@@ -410,7 +413,7 @@ void ArgusCamera::buildCaptureSessions() {
     }
 
     // Enable the output stream on the associated session capture request
-    Argus::IRequest *iRequest = Argus::interface_cast<Argus::IRequest>(m_perSessionData[sessionIndexForStream(cameraIdx)].m_captureRequest);
+    Argus::IRequest* iRequest = Argus::interface_cast<Argus::IRequest>(m_perSessionData[sessionIndexForStream(cameraIdx)].m_captureRequest);
     iRequest->enableOutputStream(sensorData.m_outputStream);
   }
 
@@ -435,7 +438,7 @@ void ArgusCamera::setRepeatCapture(bool value) {
       if (m_perSessionData[sessionIdx].m_sessionCaptureFailed)
         continue;
 
-      Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
+      Argus::ICaptureSession* iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
       if (iCaptureSession->repeat(m_perSessionData[sessionIdx].m_captureRequest) != Argus::STATUS_OK)
         die("Failed to start repeat capture request");
     }
@@ -445,7 +448,7 @@ void ArgusCamera::setRepeatCapture(bool value) {
       if (m_perSessionData[sessionIdx].m_sessionCaptureFailed)
         continue;
 
-      Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
+      Argus::ICaptureSession* iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
       iCaptureSession->cancelRequests();
     }
     // Give the sessions time to return to idle
@@ -453,11 +456,10 @@ void ArgusCamera::setRepeatCapture(bool value) {
       if (m_perSessionData[sessionIdx].m_sessionCaptureFailed)
         continue;
 
-      Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
+      Argus::ICaptureSession* iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
       iCaptureSession->waitForIdle(kWaitForIdleTimeoutNs);
     }
   }
-
 }
 
 void ArgusCamera::teardownCaptureSessions() {
@@ -475,8 +477,8 @@ void ArgusCamera::teardownCaptureSessions() {
 #ifdef USE_NVBUF_UTILS
       NvBufferDestroy(b.nativeBuffer);
 #else
-      NvBufSurface *nvbuf_surf = nullptr;
-      NvBufSurfaceFromFd(b.nativeBuffer, (void**)(&nvbuf_surf));
+      NvBufSurface* nvbuf_surf = nullptr;
+      NvBufSurfaceFromFd(b.nativeBuffer, (void**) (&nvbuf_surf));
       if (nvbuf_surf != nullptr)
         NvBufSurfaceDestroy(nvbuf_surf);
 #endif
@@ -490,9 +492,6 @@ void ArgusCamera::teardownCaptureSessions() {
     sd.m_completionEventQueue->destroy();
   }
   m_perSessionData.clear();
-
-
-
 }
 
 ArgusCamera::~ArgusCamera() {
@@ -504,12 +503,14 @@ bool ArgusCamera::readFrame() {
   ++s_frameCounter;
 
 #ifdef FRAME_WAIT_TIME_STATS
+  // clang-format off
   static boost::accumulators::accumulator_set<double, boost::accumulators::stats<
         boost::accumulators::tag::min,
         boost::accumulators::tag::max,
         boost::accumulators::tag::mean,
         boost::accumulators::tag::median
     > > s_frameWaitTimeStats;
+  // clang-format on
 #endif
 
   if (!m_captureIsRepeating) {
@@ -534,8 +535,8 @@ bool ArgusCamera::readFrame() {
   // Service CaptureSession event queue and wait for capture completed event here
   // that should be able to smooth out some of the jitter without missing frames
   for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
-      if (m_perSessionData[sessionIdx].m_sessionCaptureFailed)
-        continue;
+    if (m_perSessionData[sessionIdx].m_sessionCaptureFailed)
+      continue;
 
     Argus::interface_cast<Argus::IEventProvider>(m_perSessionData[sessionIdx].m_captureSession)->waitForEvents(m_perSessionData[sessionIdx].m_completionEventQueue, m_targetCaptureIntervalNs / 2);
   }
@@ -551,7 +552,7 @@ bool ArgusCamera::readFrame() {
         boost::accumulators::max(s_frameWaitTimeStats),
         boost::accumulators::mean(s_frameWaitTimeStats),
         boost::accumulators::median(s_frameWaitTimeStats));
-        s_frameWaitTimeStats = {};
+      s_frameWaitTimeStats = {};
     }
   }
 #endif
@@ -582,7 +583,6 @@ bool ArgusCamera::readFrame() {
           captureCompletedEventsPerSession[sessionIdx] += 1;
         }
         //if (iev->getEventType() == Argus::EVENT_TYPE_CAPTURE_STARTED)
-
       }
     }
   } else {
@@ -604,7 +604,7 @@ bool ArgusCamera::readFrame() {
     }
 
 
-    Argus::IBufferOutputStream *iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(sensorData.m_outputStream);
+    Argus::IBufferOutputStream* iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(sensorData.m_outputStream);
     Argus::Status status = Argus::STATUS_OK;
     Argus::Buffer* buffer = iBufferOutputStream->acquireBuffer(kCaptureTimeoutNs, &status);
     if (status != Argus::STATUS_OK) {
@@ -615,7 +615,7 @@ bool ArgusCamera::readFrame() {
 
         size_t sessionIdx = sessionIndexForStream(cameraIdx);
 
-        Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
+        Argus::ICaptureSession* iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
         iCaptureSession->stopRepeat();
         iCaptureSession->cancelRequests();
         m_perSessionData[sessionIdx].m_sessionCaptureFailed = true;
@@ -634,7 +634,6 @@ bool ArgusCamera::readFrame() {
             abort();
           }
         }
-
       }
       captureOK = false;
       continue;
@@ -678,7 +677,7 @@ bool ArgusCamera::readFrame() {
       continue;
     }
 
-    const Argus::Ext::ISensorTimestampTsc *iTscTimestamp = Argus::interface_cast<const Argus::Ext::ISensorTimestampTsc>(metadata);
+    const Argus::Ext::ISensorTimestampTsc* iTscTimestamp = Argus::interface_cast<const Argus::Ext::ISensorTimestampTsc>(metadata);
     if (!iTscTimestamp) {
       printf("ArgusCamera::readFrame(): TSC timestamp metadata missing for camera index %zu\n", cameraIdx);
 
@@ -751,7 +750,7 @@ bool ArgusCamera::readFrame() {
   // Automatic skew adjustment:
   // Positive skew correction when TS offset is negative
   if (captureOK && m_adjustSessionSkew) {
-    uint64_t session0TS = m_frameMetadata[ /*session 0, stream 0*/ 0].sensorTimestamp;
+    uint64_t session0TS = m_frameMetadata[/*session 0, stream 0*/ 0].sensorTimestamp;
 
     // Allowable inter-sensor skew.
     const int64_t ts_diff_limit_ns = 250'000;
@@ -789,7 +788,7 @@ bool ArgusCamera::readFrame() {
       printf("ArgusCamera::readFrame(): Capture failed (%u/%u), attempting to recover\n", m_failedCaptures, kFailedCaptureThreshold);
       // Issue all stop-repeat requests and wait for the sessions to become idle
       for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
-        Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
+        Argus::ICaptureSession* iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
         Argus::Status status = iCaptureSession->cancelRequests();
         printf("ArgusCamera::readFrame(): cancelRequests(session %zu): %s\n", sessionIdx, argusStatusStr(status));
       }
@@ -801,7 +800,7 @@ bool ArgusCamera::readFrame() {
       for (size_t waitForIdleAttempt = 0; waitForIdleAttempt < kFailedWaitForIdleThreshold; ++waitForIdleAttempt) {
         waitForIdleOK = true;
         for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
-          Argus::ICaptureSession *iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
+          Argus::ICaptureSession* iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
           Argus::Status status = iCaptureSession->waitForIdle(kWaitForIdleTimeoutNs);
           printf("ArgusCamera::readFrame(): waitForIdle(session %zu): %s\n", sessionIdx, argusStatusStr(status));
           if (status != Argus::STATUS_OK)
@@ -939,21 +938,20 @@ void ArgusCamera::loadSettings(cv::FileStorage& fs) {
   double d;
   cv::read(fs["captureDurationOffset"], d, static_cast<double>(captureDurationOffset()));
   setCaptureDurationOffset(d);
-
 }
 #undef readNode
 
 #define writeNode(fileStorage, settingName) fileStorage.write(#settingName, settingName)
 void ArgusCamera::saveSettings(cv::FileStorage& fs) {
-    fs.write("exposureCompensation", m_exposureCompensation);
+  fs.write("exposureCompensation", m_exposureCompensation);
 
-    fs.write("acRegionCenterX", m_acRegionCenter.x);
-    fs.write("acRegionCenterY", m_acRegionCenter.y);
-    fs.write("acRegionSizeX", m_acRegionSize.x);
-    fs.write("acRegionSizeY", m_acRegionSize.y);
+  fs.write("acRegionCenterX", m_acRegionCenter.x);
+  fs.write("acRegionCenterY", m_acRegionCenter.y);
+  fs.write("acRegionSizeX", m_acRegionSize.x);
+  fs.write("acRegionSizeY", m_acRegionSize.y);
 
-    // cv doesn't support int64_t, so we cast to double
-    fs.write("captureDurationOffset",  static_cast<double>(captureDurationOffset()));
+  // cv doesn't support int64_t, so we cast to double
+  fs.write("captureDurationOffset", static_cast<double>(captureDurationOffset()));
 }
 #undef writeNode
 
@@ -964,7 +962,7 @@ bool ArgusCamera::renderSettingsIMGUI() {
     glm::vec2 acCenter = m_acRegionCenter;
     glm::vec2 acSize = m_acRegionSize;
     bool dirty = ImGui::SliderFloat2("AC Region Center", &acCenter[0], 0.0f, 1.0f);
-    dirty |=     ImGui::SliderFloat2("AC Region Size",   &acSize[0],   0.0f, 1.0f);
+    dirty |= ImGui::SliderFloat2("AC Region Size", &acSize[0], 0.0f, 1.0f);
     if (dirty) {
       setAcRegion(acCenter, acSize);
       settingsDirty = true;
@@ -980,7 +978,7 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
   const int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
 
   // Per-camera frame age graph
-  if (ImPlot::BeginPlot("Frame Age", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+  if (ImPlot::BeginPlot("Frame Age", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
     ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
     ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit);
     ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_sensorTimingData.size(), ImPlotCond_Always);
@@ -998,7 +996,7 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
   }
 
   // Inter-session timing skew graph
-  if ((sessionCount() > 1) && ImPlot::BeginPlot("###InterSessionTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+  if ((sessionCount() > 1) && ImPlot::BeginPlot("###InterSessionTiming", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
     ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
     ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit);
     ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_sessionTimingData.size(), ImPlotCond_Always);
@@ -1103,7 +1101,7 @@ void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, con
 #ifdef HAVE_CUDA // from opencv2/cvconfig.h
   if (!m_tmpBlitSurface) {
     m_tmpBlitSurface = rhi()->newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    m_tmpBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { m_tmpBlitSurface } ));
+    m_tmpBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_tmpBlitSurface}));
   }
 
   glm::mat4 ub = glm::mat4(1.0f);
@@ -1119,4 +1117,3 @@ void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, con
   RHICUDA::copySurfaceToGpuMat(m_tmpBlitSurface, gpuMat, const_cast<cv::cuda::Stream&>(stream));
 #endif
 }
-

@@ -74,7 +74,6 @@ public:
   void setDebugUseFixedDisparity(bool v) { m_debugUseFixedDisparity = v; }
 
 protected:
-
   DepthMapGeneratorBackend m_backend;
 
   // CUDA and NPP stream context
@@ -110,7 +109,7 @@ protected:
 
   struct ViewData {
     ViewData() {}
-    virtual ~ViewData() { }
+    virtual ~ViewData() {}
 
     bool m_isStereoView = false;
     bool m_isVerticalStereo = false;

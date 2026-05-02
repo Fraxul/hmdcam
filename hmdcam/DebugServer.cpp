@@ -20,11 +20,24 @@
 
 const int kRetryDelaySeconds = 10;
 
-#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
-#define TEST_NN_ERRNO(x) do { if ( ((x) < 0)) die("error: " #x " failed: %d (%s)", errno, strerror(errno) ); } while (0)
+#define die(msg, ...)                         \
+  do {                                        \
+    fprintf(stderr, msg "\n", ##__VA_ARGS__); \
+    abort();                                  \
+  } while (0)
+#define TEST_NN_ERRNO(x)                                                         \
+  do {                                                                           \
+    if (((x) < 0)) die("error: " #x " failed: %d (%s)", errno, strerror(errno)); \
+  } while (0)
 
-#define TEST_NZ(x) do { if ( (x)) die("error: " #x " failed (returned non-zero)." ); } while (0)
-#define TEST_Z(x)  do { if (!(x)) die("error: " #x " failed (returned zero/null)."); } while (0)
+#define TEST_NZ(x)                                             \
+  do {                                                         \
+    if ((x)) die("error: " #x " failed (returned non-zero)."); \
+  } while (0)
+#define TEST_Z(x)                                                \
+  do {                                                           \
+    if (!(x)) die("error: " #x " failed (returned zero/null)."); \
+  } while (0)
 
 DebugServer::DebugServer() {
   memset(&m_lumaResourceDescriptor, 0, sizeof(m_lumaResourceDescriptor));
@@ -77,19 +90,19 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
       // We don't fill the device pointers, we're just going to serialize the contents
       // of these descriptors to populate the config buffer.
       m_lumaResourceDescriptor.resType = CU_RESOURCE_TYPE_PITCH2D;
-      m_lumaResourceDescriptor.res.pitch2D.devPtr       = 0;
-      m_lumaResourceDescriptor.res.pitch2D.format       = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[0].channelDesc.f; // TODO
-      m_lumaResourceDescriptor.res.pitch2D.numChannels  = eglFrame.planeDesc[0].numChannels;
-      m_lumaResourceDescriptor.res.pitch2D.width        = eglFrame.planeDesc[0].width;
-      m_lumaResourceDescriptor.res.pitch2D.height       = eglFrame.planeDesc[0].height;
+      m_lumaResourceDescriptor.res.pitch2D.devPtr = 0;
+      m_lumaResourceDescriptor.res.pitch2D.format = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[0].channelDesc.f; // TODO
+      m_lumaResourceDescriptor.res.pitch2D.numChannels = eglFrame.planeDesc[0].numChannels;
+      m_lumaResourceDescriptor.res.pitch2D.width = eglFrame.planeDesc[0].width;
+      m_lumaResourceDescriptor.res.pitch2D.height = eglFrame.planeDesc[0].height;
       m_lumaResourceDescriptor.res.pitch2D.pitchInBytes = eglFrame.planeDesc[0].pitch;
 
       // TODO hardcoded assumptions about chroma format -- we should be able to get this from the eglColorFormat!
-      m_chromaResourceDescriptor.res.pitch2D.devPtr       = 0;
-      m_chromaResourceDescriptor.res.pitch2D.format       = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[1].channelDesc.f // TODO
-      m_chromaResourceDescriptor.res.pitch2D.numChannels  = 2; // eglFrame.planeDesc[1].numChannels; // TODO
-      m_chromaResourceDescriptor.res.pitch2D.width        = eglFrame.planeDesc[1].width;
-      m_chromaResourceDescriptor.res.pitch2D.height       = eglFrame.planeDesc[1].height;
+      m_chromaResourceDescriptor.res.pitch2D.devPtr = 0;
+      m_chromaResourceDescriptor.res.pitch2D.format = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[1].channelDesc.f // TODO
+      m_chromaResourceDescriptor.res.pitch2D.numChannels = 2; // eglFrame.planeDesc[1].numChannels; // TODO
+      m_chromaResourceDescriptor.res.pitch2D.width = eglFrame.planeDesc[1].width;
+      m_chromaResourceDescriptor.res.pitch2D.height = eglFrame.planeDesc[1].height;
       // pitchInBytes NOTE: "...in case of multiplanar *eglFrame, pitch of only first plane is to be considered by the application."
       // (accessing planeDesc[0] is intentional)
       m_chromaResourceDescriptor.res.pitch2D.pitchInBytes = eglFrame.planeDesc[0].pitch;
@@ -305,7 +318,7 @@ void DebugServer::streamThreadFn() {
   listenAddr.sin_addr.s_addr = htonl(INADDR_ANY);
   listenAddr.sin_port = htons(55443);
 
-  while (bind(listenFd, (struct sockaddr*)&listenAddr, sizeof(listenAddr)) < 0) {
+  while (bind(listenFd, (struct sockaddr*) &listenAddr, sizeof(listenAddr)) < 0) {
     if (errno == EADDRINUSE) {
       fprintf(stderr, "bind(): address in use, retrying in %ds\n", kRetryDelaySeconds);
       sleep(kRetryDelaySeconds);
@@ -317,19 +330,19 @@ void DebugServer::streamThreadFn() {
   TEST_NN_ERRNO(listen(listenFd, 1));
 
   // close listening socket on thread termination
-  pthread_cleanup_push((void(*)(void*)) close, (void*) static_cast<ssize_t>(listenFd));
+  pthread_cleanup_push((void (*)(void*)) close, (void*) static_cast<ssize_t>(listenFd));
 
   while (true) { // connection loop
     struct sockaddr_in clientAddr;
     socklen_t clientAddrLen = sizeof(clientAddr);
-    int clientFd = accept4(listenFd, (struct sockaddr*)&clientAddr, &clientAddrLen, SOCK_CLOEXEC);
+    int clientFd = accept4(listenFd, (struct sockaddr*) &clientAddr, &clientAddrLen, SOCK_CLOEXEC);
     if (clientFd < 0) {
       perror("accept");
       continue;
     }
 
     // close client socket on thread termination
-    pthread_cleanup_push((void(*)(void*)) close, (void*) static_cast<ssize_t>(clientFd));
+    pthread_cleanup_push((void (*)(void*)) close, (void*) static_cast<ssize_t>(clientFd));
     m_streamConnected = true;
 
 
@@ -369,11 +382,9 @@ void DebugServer::streamThreadFn() {
       } // frame loop
     }
 
-cleanup:
+  cleanup:
     m_streamConnected = false;
     pthread_cleanup_pop(/*execute=*/ 1); // close clientFd
   }
   pthread_cleanup_pop(/*execute=*/ 1); // close listenFd
 }
-
-

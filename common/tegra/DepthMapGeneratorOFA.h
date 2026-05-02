@@ -26,7 +26,6 @@ protected:
 
   struct ViewDataOFA : public ViewData {
     ViewDataOFA() {
-
     }
 
     void cleanup(NvSciCudaInteropBuffer*& buf) {
@@ -110,4 +109,3 @@ protected:
 private:
   ViewDataOFA* viewDataAtIndex(size_t index) { return static_cast<ViewDataOFA*>(m_viewData[index]); }
 };
-

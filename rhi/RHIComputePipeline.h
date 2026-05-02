@@ -9,4 +9,3 @@ public:
 
   virtual RHIShader* shader() const = 0;
 };
-

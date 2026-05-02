@@ -50,25 +50,25 @@ cv::aruco::CharucoDetector createCharucoDetector(cv::Mat cameraMatrix = cv::Mat(
 // Copied from cv::aruco::drawDetectedCornersCharuco and modified to allow
 // drawing to 4-component images
 static void internal_drawDetectedCornersCharuco(cv::InputOutputArray _image, cv::InputArray _charucoCorners,
-                                cv::InputArray _charucoIds = cv::noArray(), cv::Scalar cornerColor = cv::Scalar(255, 0, 0, 255)) {
-    CV_Assert(!_image.getMat().empty() &&
-              (_image.getMat().channels() != 2 && _image.getMat().channels() <= 4));
-    CV_Assert((_charucoCorners.getMat().total() == _charucoIds.getMat().total()) ||
-              _charucoIds.getMat().total() == 0);
+  cv::InputArray _charucoIds = cv::noArray(), cv::Scalar cornerColor = cv::Scalar(255, 0, 0, 255)) {
+  CV_Assert(!_image.getMat().empty() &&
+    (_image.getMat().channels() != 2 && _image.getMat().channels() <= 4));
+  CV_Assert((_charucoCorners.getMat().total() == _charucoIds.getMat().total()) ||
+    _charucoIds.getMat().total() == 0);
 
-    size_t nCorners = _charucoCorners.getMat().total();
-    for(size_t i = 0; i < nCorners; i++) {
-        cv::Point2f corner = _charucoCorners.getMat().at<cv::Point2f>((int)i);
-        // draw first corner mark
-        rectangle(_image, corner - cv::Point2f(3, 3), corner + cv::Point2f(3, 3), cornerColor, 1, cv::LINE_AA);
-        // draw ID
-        if(!_charucoIds.empty()) {
-            int id = _charucoIds.getMat().at<int>((int)i);
-            char buf[32];
-            snprintf(buf, 32, "id=%d", id);
-            putText(_image, buf, corner + cv::Point2f(5, -5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cornerColor, 2);
-        }
+  size_t nCorners = _charucoCorners.getMat().total();
+  for (size_t i = 0; i < nCorners; i++) {
+    cv::Point2f corner = _charucoCorners.getMat().at<cv::Point2f>((int) i);
+    // draw first corner mark
+    rectangle(_image, corner - cv::Point2f(3, 3), corner + cv::Point2f(3, 3), cornerColor, 1, cv::LINE_AA);
+    // draw ID
+    if (!_charucoIds.empty()) {
+      int id = _charucoIds.getMat().at<int>((int) i);
+      char buf[32];
+      snprintf(buf, 32, "id=%d", id);
+      putText(_image, buf, corner + cv::Point2f(5, -5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cornerColor, 2);
     }
+  }
 }
 
 
@@ -76,7 +76,10 @@ static void internal_drawDetectedCornersCharuco(cv::InputOutputArray _image, cv:
 FxAtomicString ksDistortionMap("distortionMap");
 
 
-CameraSystem::CameraSystem(ICameraProvider* cam) : calibrationFilename("calibration.yml"), m_cameraProvider(cam), m_calibrationDataRevision(0) {
+CameraSystem::CameraSystem(ICameraProvider* cam) :
+  calibrationFilename("calibration.yml"),
+  m_cameraProvider(cam),
+  m_calibrationDataRevision(0) {
 
   // Initialize ChAruCo data on first use
   if (!s_charucoBoard)
@@ -151,14 +154,17 @@ bool CameraSystem::loadCalibrationData(cv::FileStorage& fs) {
             vfn["isPanorama"] >> v.isPanorama;
             vfn["leftCameraIndex"] >> v.cameraIndices[0];
             vfn["rightCameraIndex"] >> v.cameraIndices[1];
-            vfn["stereoTranslationInitialGuess"] >> tmpMat; v.stereoTranslationInitialGuess = glmVec3FromCV(tmpMat);
+            vfn["stereoTranslationInitialGuess"] >> tmpMat;
+            v.stereoTranslationInitialGuess = glmVec3FromCV(tmpMat);
             vfn["stereoRotation"] >> v.stereoRotation;
             vfn["stereoTranslation"] >> v.stereoTranslation;
             //vfn["essentialMatrix"] >> v.essentialMatrix;
             //vfn["fundamentalMatrix"] >> v.fundamentalMatrix;
 
-            vfn["viewTranslation"] >> tmpMat; v.viewTranslation = glmVec3FromCV(tmpMat);
-            vfn["viewRotation"] >> tmpMat; v.viewRotation = glmVec3FromCV(tmpMat);
+            vfn["viewTranslation"] >> tmpMat;
+            v.viewTranslation = glmVec3FromCV(tmpMat);
+            vfn["viewRotation"] >> tmpMat;
+            v.viewRotation = glmVec3FromCV(tmpMat);
           } else {
             vfn["cameraIndex"] >> v.cameraIndices[0];
             v.cameraIndices[1] = v.cameraIndices[0];
@@ -250,10 +256,9 @@ void CameraSystem::saveCalibrationData(cv::FileStorage& fs) {
     } else {
       fs.write("cameraIndex", (int) v.cameraIndices[0]);
     }
-    
+
     fs.endWriteStruct();
   }
-
 }
 
 glm::mat4 CameraSystem::viewWorldTransform(size_t viewIdx) const {
@@ -268,7 +273,6 @@ glm::mat4 CameraSystem::viewWorldTransform(size_t viewIdx) const {
     return vt;
   else
     return viewAtIndex(0).viewLocalTransform() * vt;
-
 }
 
 void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
@@ -278,7 +282,7 @@ void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
   Camera& c = cameraAtIndex(cameraIdx);
 
   // Intrinic-only remap -- no rectification transform, using optimized matrix
-  c.optimizedMatrix = cv::getOptimalNewCameraMatrix(c.intrinsicMatrix, c.distCoeffs, imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/true);
+  c.optimizedMatrix = cv::getOptimalNewCameraMatrix(c.intrinsicMatrix, c.distCoeffs, imageSize, alpha, cv::Size(), NULL, /*centerPrincipalPoint=*/ true);
   cv::initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, cv::noArray(), c.optimizedMatrix, imageSize, CV_32F, map1, map2);
 
   // Compute FOV
@@ -288,7 +292,7 @@ void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
 
     cv::calibrationMatrixValues(c.optimizedMatrix, cv::Size(cameraProvider()->streamWidth(), cameraProvider()->streamHeight()), 0.0, 0.0, c.fovX, c.fovY, focalLength, principalPoint, aspectRatio);
   }
-  
+
   c.intrinsicDistortionMap = generateGPUDistortionMap(map1, map2, imageSize);
 
   m_calibrationDataRevision += 1;
@@ -302,7 +306,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   Camera& rightC = cameraAtIndex(v.cameraIndices[1]);
 
   // Compute rectification/projection transforms from the stereo calibration data
-  float alpha = -1.0f;  //0.25;
+  float alpha = -1.0f; //0.25;
 
   cv::stereoRectify(
     leftC.intrinsicMatrix, leftC.distCoeffs,
@@ -312,16 +316,19 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     v.stereoRectification[0], v.stereoRectification[1],
     v.stereoProjection[0], v.stereoProjection[1],
     v.stereoDisparityToDepth,
-    /*flags=*/cv::CALIB_ZERO_DISPARITY, alpha, cv::Size(),
+    /*flags=*/ cv::CALIB_ZERO_DISPARITY, alpha, cv::Size(),
     &v.stereoValidROI[0], &v.stereoValidROI[1]);
 
   // Camera info dump
   for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
     printf("\n ===== View %zu | %s Camera (%u) ===== \n", viewIdx, eyeIdx == 0 ? "Left" : "Right", v.cameraIndices[eyeIdx]);
 
-    std::cout << "* Stereo Rectification matrix:" << std::endl << v.stereoRectification[eyeIdx] << std::endl;
-    std::cout << "* Stereo Projection matrix:" << std::endl << v.stereoProjection[eyeIdx] << std::endl;
-    std::cout << "* Stereo Valid ROI:" << std::endl << v.stereoValidROI[eyeIdx] << std::endl;
+    std::cout << "* Stereo Rectification matrix:" << std::endl
+              << v.stereoRectification[eyeIdx] << std::endl;
+    std::cout << "* Stereo Projection matrix:" << std::endl
+              << v.stereoProjection[eyeIdx] << std::endl;
+    std::cout << "* Stereo Valid ROI:" << std::endl
+              << v.stereoValidROI[eyeIdx] << std::endl;
 
 
     const double apertureSize = 6.35; // mm, 1/4" sensor. TODO parameterize
@@ -337,8 +344,10 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     printf("* Stereo projection matrix: FOV %.1f x %.1f deg\n", fovX, fovY);
   }
   printf("\n ==================== \n");
-  std::cout << "View " << viewIdx << " Stereo translation:" << std::endl << v.stereoTranslation << std::endl;
-  std::cout << "View " << viewIdx << " Stereo rotation matrix:" << std::endl << v.stereoRotation << std::endl;
+  std::cout << "View " << viewIdx << " Stereo translation:" << std::endl
+            << v.stereoTranslation << std::endl;
+  std::cout << "View " << viewIdx << " Stereo rotation matrix:" << std::endl
+            << v.stereoRotation << std::endl;
 
   {
     // Compute FOV. Should be the same for stereoProjection[0] and [1], so we only keep a single value.
@@ -349,7 +358,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   }
 
   // Check the valid image regions for a failed stereo calibration. A bad calibration will usually result in a valid ROI for one or both views with a 0-pixel dimension.
-/*
+  /*
   if (needStereoCalibration) {
     if (stereoValidROI[0].area() == 0 || stereoValidROI[1].area() == 0) {
       printf("Stereo calibration failed: one or both of the valid image regions has zero area.\n");
@@ -362,7 +371,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     Camera& c = cameraAtIndex(v.cameraIndices[eyeIdx]);
 
     cv::initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], imageSize, CV_32F, map1, map2);
-    
+
     v.stereoDistortionMap[eyeIdx] = generateGPUDistortionMap(map1, map2, imageSize);
   }
 
@@ -441,7 +450,7 @@ cv::Mat CameraSystem::captureGreyscale(size_t cameraIdx, RHISurface::ptr tex, RH
   rhi()->endRenderPass(rt);
 
   cv::Mat res;
-  res.create(/*rows=*/ tex->height(), /*columns=*/tex->width(), CV_8UC1);
+  res.create(/*rows=*/ tex->height(), /*columns=*/ tex->width(), CV_8UC1);
   assert(res.isContinuous());
   rhi()->readbackTexture(tex, 0, kVertexElementTypeUByte1N, res.ptr(0));
   return res;
@@ -462,16 +471,23 @@ CameraSystem::CalibrationContext* CameraSystem::calibrationContextForStereoViewO
 }
 
 
-CameraSystem::CalibrationContext::CalibrationContext(CameraSystem* cs) : m_cameraSystem(cs) {
-
+CameraSystem::CalibrationContext::CalibrationContext(CameraSystem* cs) :
+  m_cameraSystem(cs) {
 }
 
 CameraSystem::CalibrationContext::~CalibrationContext() {
-
 }
 
-CameraSystem::CalibrationContextStateMachineBase::CalibrationContextStateMachineBase(CameraSystem* cs) : CameraSystem::CalibrationContext(cs), 
-  m_captureRequested(false), m_previewRequested(false), m_cancelRequested(false), m_saveCalibrationImages(false), m_inCalibrationPreviewMode(false), m_calibrationPreviewAccepted(false), m_calibrationPreviewRejected(false), m_calibrationFinished(false) {
+CameraSystem::CalibrationContextStateMachineBase::CalibrationContextStateMachineBase(CameraSystem* cs) :
+  CameraSystem::CalibrationContext(cs),
+  m_captureRequested(false),
+  m_previewRequested(false),
+  m_cancelRequested(false),
+  m_saveCalibrationImages(false),
+  m_inCalibrationPreviewMode(false),
+  m_calibrationPreviewAccepted(false),
+  m_calibrationPreviewRejected(false),
+  m_calibrationFinished(false) {
 
 
   char fn[256];
@@ -481,7 +497,6 @@ CameraSystem::CalibrationContextStateMachineBase::CalibrationContextStateMachine
 }
 
 CameraSystem::CalibrationContextStateMachineBase::~CalibrationContextStateMachineBase() {
-
 }
 
 
@@ -505,7 +520,6 @@ void CameraSystem::CalibrationContextStateMachineBase::processUI() {
     m_previewRequested = ImGui::Button("Preview Calibration");
     m_cancelRequested = ImGui::Button("Cancel and Discard");
   }
-
 }
 void CameraSystem::CalibrationContextStateMachineBase::processFrame() {
 
@@ -559,7 +573,6 @@ void CameraSystem::CalibrationContextStateMachineBase::processFrame() {
 
       m_inCalibrationPreviewMode = false;
     }
-
   }
 
   if (m_cancelRequested) {
@@ -591,7 +604,9 @@ void CameraSystem::CalibrationContextStateMachineBase::saveCalibrationImage(cons
 }
 
 static void saveReferenceBoardData(cv::FileStorage& fs) {
-  fs << "referenceBoard" << "{"; {
+  fs << "referenceBoard"
+     << "{";
+  {
     fs << "squareCountX" << ((int) s_charucoBoardSquareCountX);
     fs << "squareCountY" << ((int) s_charucoBoardSquareCountY);
     fs << "squareSideLengthMeters" << s_charucoBoardSquareSideLengthMeters;
@@ -631,15 +646,14 @@ static void saveReferenceBoardData(cv::FileStorage& fs) {
 
     //fs << "rightBottomBorder" << s_charucoBoard->getRightBottomBorder();
 #endif
-  } fs << "}"; // referenceBoard
+  }
+  fs << "}"; // referenceBoard
 }
 
 
-
-
-
-
-CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSystem* cs, size_t cameraIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_cameraIdx(cameraIdx) {
+CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSystem* cs, size_t cameraIdx) :
+  CameraSystem::CalibrationContextStateMachineBase(cs),
+  m_cameraIdx(cameraIdx) {
 
   {
     char buf[64];
@@ -655,7 +669,7 @@ CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSys
   m_fullGreyTex = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
   m_fullGreyRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_fullGreyTex}));
   m_feedbackTex = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-  m_feedbackView.create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/cameraProvider()->streamWidth(), CV_8UC4);
+  m_feedbackView.create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/ cameraProvider()->streamWidth(), CV_8UC4);
 
   m_feedbackRmsError = -1.0;
   m_incrementalUpdateInProgress = false;
@@ -664,7 +678,6 @@ CameraSystem::IntrinsicCalibrationContext::IntrinsicCalibrationContext(CameraSys
 }
 
 CameraSystem::IntrinsicCalibrationContext::~IntrinsicCalibrationContext() {
-
 }
 
 CameraSystem::CalibrationContext::OverlayDistortionSpace CameraSystem::IntrinsicCalibrationContext::overlayDistortionSpace() const {
@@ -692,7 +705,7 @@ void CameraSystem::IntrinsicCalibrationContext::renderStatusUI() {
     ImGui::Text("RMS error: %f", m_feedbackRmsError);
     ImGui::Text("FOV: %.2f x %.2f", m_feedbackFovX, m_feedbackFovY);
     ImGui::Text("Principal Point offset: %.2f, %.2f",
-      static_cast<float>((cameraProvider()->streamWidth() - 1)  / 2) - m_feedbackPrincipalPoint.x,
+      static_cast<float>((cameraProvider()->streamWidth() - 1) / 2) - m_feedbackPrincipalPoint.x,
       static_cast<float>((cameraProvider()->streamHeight() - 1) / 2) - m_feedbackPrincipalPoint.y);
 
     if (ImGui::BeginChild("Per-View Errors", ImVec2(0, 192))) {
@@ -754,9 +767,11 @@ void CameraSystem::IntrinsicCalibrationContext::runIncrementalCalibrationUpdate(
 
   saveReferenceBoardData(fs);
 
-  fs.startWriteStruct("detectedCharucoCorners", cv::FileNode::SEQ, cv::String()); {
+  fs.startWriteStruct("detectedCharucoCorners", cv::FileNode::SEQ, cv::String());
+  {
     for (size_t sampleIdx = 0; sampleIdx < m_allCharucoCorners.size(); ++sampleIdx) {
-      fs.startWriteStruct(cv::String(), cv::FileNode::SEQ, cv::String()); {
+      fs.startWriteStruct(cv::String(), cv::FileNode::SEQ, cv::String());
+      {
         int vectorCount = m_allCharucoCorners[sampleIdx].checkVector(/*channels=*/ 2);
         assert(vectorCount >= 0);
         assert(CV_MAT_DEPTH(m_allCharucoCorners[sampleIdx].type()) == CV_32F);
@@ -764,13 +779,17 @@ void CameraSystem::IntrinsicCalibrationContext::runIncrementalCalibrationUpdate(
         for (int cornerIdx = 0; cornerIdx < vectorCount; ++cornerIdx) {
           cv::write(fs, cv::String(), m_allCharucoCorners[sampleIdx].at<cv::Point2f>(cornerIdx));
         }
-      } fs.endWriteStruct(); // corners sequence
+      }
+      fs.endWriteStruct(); // corners sequence
     }
-  } fs.endWriteStruct(); // detectedCharucoCorners
+  }
+  fs.endWriteStruct(); // detectedCharucoCorners
 
-  fs.startWriteStruct("detectedCharucoIds", cv::FileNode::SEQ, cv::String()); {
+  fs.startWriteStruct("detectedCharucoIds", cv::FileNode::SEQ, cv::String());
+  {
     for (size_t sampleIdx = 0; sampleIdx < m_allCharucoIds.size(); ++sampleIdx) {
-      fs.startWriteStruct(cv::String(), cv::FileNode::SEQ | cv::FileNode::FLOW, cv::String()); {
+      fs.startWriteStruct(cv::String(), cv::FileNode::SEQ | cv::FileNode::FLOW, cv::String());
+      {
         int vectorCount = m_allCharucoIds[sampleIdx].checkVector(/*channels=*/ 1);
         assert(vectorCount >= 0);
         assert(CV_MAT_DEPTH(m_allCharucoIds[sampleIdx].type()) == CV_32S);
@@ -778,12 +797,14 @@ void CameraSystem::IntrinsicCalibrationContext::runIncrementalCalibrationUpdate(
         for (int cornerIdx = 0; cornerIdx < vectorCount; ++cornerIdx) {
           fs.write(cv::String(), m_allCharucoIds[sampleIdx].at<int>(cornerIdx));
         }
-      } fs.endWriteStruct(); // corner IDs sequence
+      }
+      fs.endWriteStruct(); // corner IDs sequence
     }
-  } fs.endWriteStruct(); // detectedCharucoIds
+  }
+  fs.endWriteStruct(); // detectedCharucoIds
 
   m_incrementalUpdateInProgress = true;
-  FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); } );
+  FxThreading::runFunction([this]() { this->asyncUpdateIncrementalCalibration(); });
 }
 
 void CameraSystem::IntrinsicCalibrationContext::didAcceptCalibrationPreview() {
@@ -881,10 +902,10 @@ void CameraSystem::IntrinsicCalibrationContext::asyncUpdateIncrementalCalibratio
 
 
     m_feedbackRmsError = cv::aruco::calibrateCameraCharuco(m_allCharucoCorners, m_allCharucoIds,
-                                   s_charucoBoard, imageSize,
-                                   c.intrinsicMatrix, c.distCoeffs,
-                                   cv::noArray(), cv::noArray(), stdDeviations, cv::noArray(),
-                                   m_perViewErrors, flags);
+      s_charucoBoard, imageSize,
+      c.intrinsicMatrix, c.distCoeffs,
+      cv::noArray(), cv::noArray(), stdDeviations, cv::noArray(),
+      m_perViewErrors, flags);
 
 
     //printf("RMS error reported by calibrateCameraCharuco: %g\n", rms);
@@ -936,7 +957,7 @@ void CameraSystem::IntrinsicCalibrationContext::processFramePreviewMode() {
 
       if (error < 0.25f) {
         color = cv::Scalar(0, 255, 0);
-      }  else if (error < 0.75f) {
+      } else if (error < 0.75f) {
         color = cv::Scalar(0, 0, 255);
       } else {
         color = cv::Scalar(255, 0, 0);
@@ -968,12 +989,10 @@ RHISurface::ptr CameraSystem::IntrinsicCalibrationContext::overlaySurfaceAtIndex
 }
 
 
-
-
-
-
-
-CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* cs, size_t viewIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_viewIdx(viewIdx), m_allowIntrinsicModification(false) {
+CameraSystem::StereoCalibrationContext::StereoCalibrationContext(CameraSystem* cs, size_t viewIdx) :
+  CameraSystem::CalibrationContextStateMachineBase(cs),
+  m_viewIdx(viewIdx),
+  m_allowIntrinsicModification(false) {
 
   CameraSystem::View& v = cameraSystem()->viewAtIndex(m_viewIdx);
 
@@ -1123,14 +1142,12 @@ void CameraSystem::StereoCalibrationContext::internalUpdateCaptureState() {
     feedbackRect[0], feedbackRect[1],
     feedbackProj[0], feedbackProj[1],
     feedbackQ,
-    /*flags=*/cv::CALIB_ZERO_DISPARITY, /*alpha=*/ -1.0f, cv::Size(),
+    /*flags=*/ cv::CALIB_ZERO_DISPARITY, /*alpha=*/ -1.0f, cv::Size(),
     &m_feedbackValidROI[0], &m_feedbackValidROI[1]);
-
 }
 
 
 void CameraSystem::StereoCalibrationContext::processFramePreviewMode() {
-
 }
 
 bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
@@ -1173,7 +1190,8 @@ bool CameraSystem::StereoCalibrationContext::cookCalibrationDataForPreview() {
       v.stereoRotation, v.stereoTranslation, E, F, perViewErrors, flags);
 
     printf("RMS error reported by stereoCalibrate: %g\n", rms);
-    std::cout << " Per-view error: " << std::endl << perViewErrors << std::endl;
+    std::cout << " Per-view error: " << std::endl
+              << perViewErrors << std::endl;
 
     cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[0]);
     cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[1]);
@@ -1239,10 +1257,10 @@ RHISurface::ptr CameraSystem::StereoCalibrationContext::overlaySurfaceAtIndex(si
 }
 
 
-
-
-
-CameraSystem::StereoViewOffsetCalibrationContext::StereoViewOffsetCalibrationContext(CameraSystem* cs, size_t referenceViewIdx, size_t viewIdx) : CameraSystem::CalibrationContextStateMachineBase(cs), m_referenceViewIdx(referenceViewIdx), m_viewIdx(viewIdx) {
+CameraSystem::StereoViewOffsetCalibrationContext::StereoViewOffsetCalibrationContext(CameraSystem* cs, size_t referenceViewIdx, size_t viewIdx) :
+  CameraSystem::CalibrationContextStateMachineBase(cs),
+  m_referenceViewIdx(referenceViewIdx),
+  m_viewIdx(viewIdx) {
 
   {
     char buf[64];
@@ -1288,10 +1306,10 @@ void CameraSystem::StereoViewOffsetCalibrationContext::renderStatusUI() {
 
   ImGui::Checkbox("Use linear remap", &m_useLinearRemap);
   ImGui::Text("(Less accurate, but does not require common board-points across all views)");
-
 }
 
-template <typename T> static std::vector<T> flattenVector(const std::vector<std::vector<T> >& in) {
+template <typename T>
+static std::vector<T> flattenVector(const std::vector<std::vector<T>>& in) {
   std::vector<T> res;
   size_t s = 0;
   for (size_t i = 0; i < in.size(); ++i) {
@@ -1308,7 +1326,7 @@ template <typename T> static std::vector<T> flattenVector(const std::vector<std:
 
 int triangulationDisparityScaleInv = 16;
 
-std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints) {
+std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f>>& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f>>& rightCalibrationPoints) {
   std::vector<glm::vec3> res;
 
   auto lp = flattenVector(leftCalibrationPoints);
@@ -1360,7 +1378,7 @@ std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, 
 
   cv::Mat inH = triangulatedPointsH.t(); // transpose to make point components sequential in each row
   inH.reshape(/*channels=*/ 4); // reshape to convert columns to components
-  //triangulatedPointsH.reshape(/*channels=*/4, /*rows=*/1);
+  //triangulatedPointsH.reshape(/*channels=*/ 4, /*rows=*/ 1);
 
   cv::Mat dest;
   cv::convertPointsFromHomogeneous(inH, dest);
@@ -1580,7 +1598,6 @@ void CameraSystem::StereoViewOffsetCalibrationContext::processFrameCaptureMode()
 }
 
 void CameraSystem::StereoViewOffsetCalibrationContext::processFramePreviewMode() {
-
 }
 
 bool CameraSystem::StereoViewOffsetCalibrationContext::cookCalibrationDataForPreview() {

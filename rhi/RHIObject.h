@@ -8,4 +8,3 @@ public:
   typedef boost::intrusive_ptr<RHIObject> ptr;
   virtual ~RHIObject();
 };
-

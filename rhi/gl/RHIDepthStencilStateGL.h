@@ -8,7 +8,7 @@ public:
   virtual ~RHIDepthStencilStateGL();
 
   const RHIDepthStencilStateDescriptor& descriptor() const { return m_descriptor; }
+
 protected:
   RHIDepthStencilStateDescriptor m_descriptor;
 };
-

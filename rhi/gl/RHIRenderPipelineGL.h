@@ -17,7 +17,10 @@ public:
   const RHIRenderPipelineDescriptor& descriptor() const { return m_descriptor; }
 
   struct StreamBufferDescriptor {
-    StreamBufferDescriptor() : index(-1), stride(-1), elementFrequency(kVertexElementFrequencyVertex) {}
+    StreamBufferDescriptor() :
+      index(-1),
+      stride(-1),
+      elementFrequency(kVertexElementFrequencyVertex) {}
 
     int index;
     int stride;
@@ -34,4 +37,3 @@ protected:
   std::vector<StreamBufferDescriptor> m_streamBufferDescriptors;
   GLuint m_vao;
 };
-

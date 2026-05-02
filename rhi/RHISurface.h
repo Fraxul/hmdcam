@@ -3,7 +3,7 @@
 #include <glm/glm.hpp>
 
 // Forward decl borrowed from <cuda.h>
-typedef struct CUgraphicsResource_st *CUgraphicsResource; /**< CUDA graphics interop resource */
+typedef struct CUgraphicsResource_st* CUgraphicsResource; /**< CUDA graphics interop resource */
 
 enum RHISamplerWrapMode : unsigned char {
   kWrapClamp,
@@ -17,7 +17,11 @@ enum RHISamplerFilterMode : unsigned char {
 };
 
 struct RHISamplerDescriptor {
-  RHISamplerDescriptor() : wrapModeU(kWrapClamp), wrapModeV(kWrapClamp), filter(kFilterNearest), maxAnisotropy(1) {}
+  RHISamplerDescriptor() :
+    wrapModeU(kWrapClamp),
+    wrapModeV(kWrapClamp),
+    filter(kFilterNearest),
+    maxAnisotropy(1) {}
 
   RHISamplerWrapMode wrapModeU, wrapModeV;
   RHISamplerFilterMode filter;
@@ -73,7 +77,12 @@ bool rhiSurfaceFormatHasDepth(RHISurfaceFormat);
 bool rhiSurfaceFormatHasStencil(RHISurfaceFormat);
 
 struct RHISurfaceDescriptor {
-  RHISurfaceDescriptor(RHISurfaceFormat format_ = kSurfaceFormat_Invalid, uint8_t samples_ = 1) : format(format_), samples(samples_), layers(1), createArray(false), createMips(false) {}
+  RHISurfaceDescriptor(RHISurfaceFormat format_ = kSurfaceFormat_Invalid, uint8_t samples_ = 1) :
+    format(format_),
+    samples(samples_),
+    layers(1),
+    createArray(false),
+    createMips(false) {}
 
   static RHISurfaceDescriptor arrayDescriptor(RHISurfaceFormat format_, uint8_t layers_) {
     RHISurfaceDescriptor res(format_);
@@ -126,6 +135,4 @@ class RHISampler : public RHIObject {
 public:
   typedef boost::intrusive_ptr<RHISampler> ptr;
   virtual ~RHISampler();
-
 };
-

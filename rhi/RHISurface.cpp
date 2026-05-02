@@ -81,10 +81,7 @@ bool rhiSurfaceFormatHasStencil(RHISurfaceFormat format) {
 }
 
 RHISurface::~RHISurface() {
-
 }
 
 RHISampler::~RHISampler() {
-
 }
-

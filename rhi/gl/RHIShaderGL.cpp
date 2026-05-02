@@ -28,7 +28,7 @@ static GLenum glEnumForShadingUnit(RHIShaderDescriptor::ShadingUnit unit) {
 GLuint RHIShaderGL::compileShader(RHIShaderDescriptor::ShadingUnit type, const char* source) {
   GLuint shader = GL(glCreateShader(glEnumForShadingUnit(type)));
   if (!shader) return 0;
-  
+
   GL(glShaderSource(shader, 1, &source, NULL));
   GL(glCompileShader(shader));
 
@@ -40,7 +40,7 @@ GLuint RHIShaderGL::compileShader(RHIShaderDescriptor::ShadingUnit type, const c
     fprintf(stderr, "Shader info log: %s\n", buf);
     delete[] buf;
   }
-  
+
   GLint compiled = 0;
   GL(glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled));
   if (!compiled) {
@@ -88,7 +88,10 @@ void RHIShaderGL::internalHandleLinkFailure() {
   assert(false && "Shader link failure");
 }
 
-RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), m_descriptor(descriptor), m_vertexLayout(descriptor.vertexLayout()) {
+RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) :
+  m_program(0),
+  m_descriptor(descriptor),
+  m_vertexLayout(descriptor.vertexLayout()) {
   m_program = GL(glCreateProgram());
 
   std::map<RHIShaderDescriptor::ShadingUnit, std::string> unitSources = m_descriptor.preprocessSource();
@@ -221,9 +224,7 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
 
           break;
       };
-
     }
-
   }
 
   // Uniform blocks
@@ -384,7 +385,6 @@ RHIShaderGL::RHIShaderGL(const RHIShaderDescriptor& descriptor) : m_program(0), 
     for (size_t i = 0; i < 3; ++i)
       m_localWorkgroupSize[i] = workgroupSize[i];
   }
-
 }
 
 RHIShaderGL::~RHIShaderGL() {
@@ -416,7 +416,7 @@ bool RHIShaderGL::samplerAttributeBinding(const FxAtomicString& name, uint32_t& 
   for (size_t i = 0; i < m_samplerAttributes.size(); ++i) {
     if (m_samplerAttributes[i].name == name) {
       outLocation = m_samplerAttributes[i].location;
-      outTextureUnitNumber =  m_samplerAttributes[i].textureUnit;
+      outTextureUnitNumber = m_samplerAttributes[i].textureUnit;
       return true;
     }
   }
@@ -427,7 +427,7 @@ bool RHIShaderGL::imageAttributeBinding(const FxAtomicString& name, uint32_t& ou
   for (size_t i = 0; i < m_imageAttributes.size(); ++i) {
     if (m_imageAttributes[i].name == name) {
       outLocation = m_imageAttributes[i].location;
-      outImageUnitNumber =  m_imageAttributes[i].textureUnit;
+      outImageUnitNumber = m_imageAttributes[i].textureUnit;
       return true;
     }
   }
@@ -441,5 +441,3 @@ int32_t RHIShaderGL::bufferBlockLocation(const FxAtomicString& name) {
   }
   return -1;
 }
-
-

@@ -25,6 +25,4 @@ size_t RHIBlendStateDescriptor::hash() const {
 }
 
 RHIBlendState::~RHIBlendState() {
-
 }
-

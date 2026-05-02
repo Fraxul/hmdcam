@@ -5,4 +5,3 @@
 #include <vector>
 
 void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, float maxValidDisparityRaw, std::vector<cv::cuda::GpuMat>& disparityMinMaxMips, CUstream stream);
-

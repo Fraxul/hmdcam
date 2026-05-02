@@ -28,7 +28,6 @@ bool RHI::s_allowsLayerSelectionFromVertexShader = false;
 bool RHI::s_allowsAsyncUploads = false;
 
 RHI::~RHI() {
-
 }
 
 void RHI::drawFullscreenPass() {
@@ -68,7 +67,7 @@ RHIShader::ptr RHI::compileShader(const RHIShaderDescriptor& descriptor) {
       }
     }
     cacheSlot = this->internalCompileShader(descriptor);
-  } 
+  }
   return cacheSlot;
 }
 
@@ -116,7 +115,8 @@ struct BlitEmulationUniformBlock {
   glm::vec2 destinationRTDimensions;
 
   int sourceLayer;
-  int pad2, pad3, pad4;;
+  int pad2, pad3, pad4;
+  ;
 };
 
 void RHI::blitTex_emulated(RHIRenderTarget::ptr destinationRT, RHISurface::ptr sourceSurface, uint8_t sourceLayer, RHIRect destRect, RHIRect sourceRect) {

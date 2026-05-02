@@ -19,7 +19,6 @@ void drawPDUStatusLine() {
 }
 
 void drawPDUCommandMenu() {
-
 }
 
 void startPDUCommsThread() {
@@ -27,4 +26,3 @@ void startPDUCommsThread() {
     powerState.handleMessage(b, md, timestamp_sec);
   });
 }
-

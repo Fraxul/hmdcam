@@ -13,7 +13,7 @@ class CameraSystem;
 class CharucoMultiViewCalibration;
 class DepthMapGenerator;
 
-std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f> >& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f> >& rightCalibrationPoints);
+std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f>>& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f>>& rightCalibrationPoints);
 std::vector<glm::vec3> transformBoardPointsForView(const glm::mat4& transform);
 
 // computes a linear transform that maps the points in pVec2 to their positions in pVec1 -- translation and rotation only
@@ -38,7 +38,9 @@ public:
 
 
   struct Camera {
-    Camera() : fovX(0), fovY(0) {}
+    Camera() :
+      fovX(0),
+      fovY(0) {}
 
     RHISurface::ptr intrinsicDistortionMap;
     RHISurface::ptr mask;
@@ -49,7 +51,6 @@ public:
 
     bool haveIntrinsicCalibration() const { return (!(intrinsicMatrix.empty() || distCoeffs.empty())); }
     bool haveIntrinsicDistortionMap() const { return (!(optimizedMatrix.empty() || intrinsicDistortionMap.get() == nullptr)); }
-
   };
 
   struct View {
@@ -76,7 +77,7 @@ public:
 
     // Stereo data, only valid if (isStereo)
     glm::vec3 stereoTranslationInitialGuess; // Populated by user from mechanical design parameters, if known.
-    cv::Mat stereoRotation, stereoTranslation;  // Calibrated -- from cv::stereoCalibrate
+    cv::Mat stereoRotation, stereoTranslation; // Calibrated -- from cv::stereoCalibrate
     // cv::Mat essentialMatrix, fundamentalMatrix; // Calibrated -- from cv::stereoCalibrate. Not used.
     cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify
     cv::Mat stereoDisparityToDepth;
@@ -85,11 +86,12 @@ public:
     double fovX = 0, fovY = 0; // Values for the stereo projection, in degrees
 
     bool haveStereoCalibration() const { return (!(stereoRotation.empty() || stereoTranslation.empty())); }
-    bool haveStereoRectificationParameters() const { return (!(
-      stereoRectification[0].empty() || stereoRectification[1].empty() ||
-      stereoProjection[0].empty() || stereoProjection[1].empty() ||
-      stereoDisparityToDepth.empty() ||
-      stereoValidROI[0].empty() || stereoValidROI[1].empty()));
+    bool haveStereoRectificationParameters() const {
+      return (!(
+        stereoRectification[0].empty() || stereoRectification[1].empty() ||
+        stereoProjection[0].empty() || stereoProjection[1].empty() ||
+        stereoDisparityToDepth.empty() ||
+        stereoValidROI[0].empty() || stereoValidROI[1].empty()));
     }
     bool isVerticalStereo() const { return (!stereoTranslation.empty()) && (fabs(stereoTranslation.at<double>(0, 1)) > fabs(stereoTranslation.at<double>(0, 0))); }
 
@@ -115,7 +117,6 @@ public:
         Q[2][3], // focal_len
         Q[3][2]); // 1_over_Tx from stereoRectify
     }
-
   };
 
   size_t createMonoView(size_t cameraIndex);
@@ -145,7 +146,6 @@ public:
 
   class CalibrationContext {
   public:
-
     enum OverlayDistortionSpace {
       kDistortionSpaceUncorrected,
       kDistortionSpaceIntrinsic,
@@ -215,7 +215,6 @@ public:
     bool m_calibrationPreviewRejected;
 
     bool m_calibrationFinished;
-
   };
 
 
@@ -332,7 +331,6 @@ public:
     double m_feedbackRmsError;
     cv::Mat m_perViewErrors;
     cv::Rect m_feedbackValidROI[2];
-
   };
 
 
@@ -351,7 +349,7 @@ public:
       const View& rv = cameraSystem()->viewAtIndex(m_referenceViewIdx);
       const View& v = cameraSystem()->viewAtIndex(m_viewIdx);
       return (cameraIdx == v.cameraIndices[0] || cameraIdx == v.cameraIndices[1] ||
-              cameraIdx == rv.cameraIndices[0] || cameraIdx == rv.cameraIndices[1]);
+        cameraIdx == rv.cameraIndices[0] || cameraIdx == rv.cameraIndices[1]);
     }
 
     virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) {
@@ -435,4 +433,3 @@ private:
   CameraSystem(const CameraSystem&);
   CameraSystem& operator=(const CameraSystem&);
 };
-

@@ -1,7 +1,6 @@
 #include "rhi/egl/RHIEGLStreamSurfaceGL.h"
 
 RHIEGLStreamSurfaceGL::~RHIEGLStreamSurfaceGL() {
-
 }
 
 RHIEGLStreamSurfaceGL::RHIEGLStreamSurfaceGL(uint32_t width_, uint32_t height_, RHISurfaceFormat format_) {
@@ -18,4 +17,3 @@ RHIEGLStreamSurfaceGL::RHIEGLStreamSurfaceGL(uint32_t width_, uint32_t height_, 
   m_rhiFormat = format_;
   m_isArrayTexture = false;
 }
-

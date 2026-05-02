@@ -172,4 +172,3 @@ void GestureMenuTick() {
     EndPiePopup();
   }
 }
-

@@ -7,7 +7,8 @@
 #include <boost/algorithm/string.hpp>
 #include <typeinfo>
 
-template <typename T> bool readEnvironmentVariable(const char* envVarName, T& outVar) {
+template <typename T>
+bool readEnvironmentVariable(const char* envVarName, T& outVar) {
   char* e = getenv(envVarName);
   if (e) {
     try {
@@ -20,7 +21,8 @@ template <typename T> bool readEnvironmentVariable(const char* envVarName, T& ou
   return false;
 }
 
-template <typename T> bool readEnvironmentVariableVector(const char* envVarName, std::vector<T>& outVar) {
+template <typename T>
+bool readEnvironmentVariableVector(const char* envVarName, std::vector<T>& outVar) {
   char* e = getenv(envVarName);
   if (e) {
     try {
@@ -37,4 +39,3 @@ template <typename T> bool readEnvironmentVariableVector(const char* envVarName,
   }
   return false;
 }
-

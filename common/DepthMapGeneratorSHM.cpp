@@ -35,14 +35,15 @@
 
 #define PER_EYE for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx)
 
-DepthMapGeneratorSHM::DepthMapGeneratorSHM(DepthMapGeneratorBackend _backend) : DepthMapGenerator(_backend) {
+DepthMapGeneratorSHM::DepthMapGeneratorSHM(DepthMapGeneratorBackend _backend) :
+  DepthMapGenerator(_backend) {
 
   // running at quarter res, approx
   m_algoDownsampleX = 4;
   m_algoDownsampleY = 4;
   m_maxDisparity = NUM_DISP;
 
-  m_depthMapSHM = SHMSegment<DepthMapSHM>::createSegment("depth-worker", 16*1024*1024);
+  m_depthMapSHM = SHMSegment<DepthMapSHM>::createSegment("depth-worker", 16 * 1024 * 1024);
 
   printf("Waiting for depth worker...\n");
 
@@ -103,7 +104,7 @@ int DepthMapGeneratorSHM::spawnDepthWorker() {
   if (!pid) {
     // spawn child process
     char* argv0 = const_cast<char*>(workerBin.c_str());
-    char* args[] = { const_cast<char*>(argv0), NULL };
+    char* args[] = {const_cast<char*>(argv0), NULL};
     if (-1 == execv(argv0, args)) {
       printf("execv() failed: %s\n", strerror(errno));
       _exit(-1);
@@ -139,7 +140,6 @@ void DepthMapGeneratorSHM::waitForDepthWorkerReady(int pid, sem_t* sem, unsigned
       }
       throw std::runtime_error(err);
     }
-
   }
   throw std::runtime_error("Timed out waiting for Depth worker to initialize");
 }
@@ -180,52 +180,51 @@ void DepthMapGeneratorSHM::internalLoadSettings(cv::FileStorage& fs) {
 #define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_depthMapSHM->segment()->m_##settingName)
 void DepthMapGeneratorSHM::internalSaveSettings(cv::FileStorage& fs) {
   fs.startWriteStruct(cv::String("dgpu"), cv::FileNode::MAP, cv::String());
-    writeNode(fs, algorithm);
-    writeNode(fs, useDisparityFilter);
-    writeNode(fs, disparityFilterRadius);
-    writeNode(fs, disparityFilterIterations);
-    writeNode(fs, sbmBlockSize);
-    writeNode(fs, sbpIterations);
-    writeNode(fs, sbpLevels);
-    writeNode(fs, scsbpNrPlane);
-    writeNode(fs, sgmP1);
-    writeNode(fs, sgmP2);
-    writeNode(fs, sgmUniquenessRatio);
-    writeNode(fs, sgmUseHH4);
+  writeNode(fs, algorithm);
+  writeNode(fs, useDisparityFilter);
+  writeNode(fs, disparityFilterRadius);
+  writeNode(fs, disparityFilterIterations);
+  writeNode(fs, sbmBlockSize);
+  writeNode(fs, sbpIterations);
+  writeNode(fs, sbpLevels);
+  writeNode(fs, scsbpNrPlane);
+  writeNode(fs, sgmP1);
+  writeNode(fs, sgmP2);
+  writeNode(fs, sgmUniquenessRatio);
+  writeNode(fs, sgmUseHH4);
   fs.endWriteStruct();
 
   fs.startWriteStruct(cv::String("depthai"), cv::FileNode::MAP, cv::String());
-    writeNode(fs, confidenceThreshold);
-    writeNode(fs, medianFilter);
-    writeNode(fs, bilateralFilterSigma);
-    writeNode(fs, enableLRCheck);
-    writeNode(fs, leftRightCheckThreshold);
+  writeNode(fs, confidenceThreshold);
+  writeNode(fs, medianFilter);
+  writeNode(fs, bilateralFilterSigma);
+  writeNode(fs, enableLRCheck);
+  writeNode(fs, leftRightCheckThreshold);
   fs.endWriteStruct();
 }
 #undef writeNode
 
 void DepthMapGeneratorSHM::internalUpdateViewData() {
   for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
-      CameraSystem::View& v = m_cameraSystem->viewAtIndex(viewIdx);
-      auto vd = viewDataAtIndex(viewIdx);
+    CameraSystem::View& v = m_cameraSystem->viewAtIndex(viewIdx);
+    auto vd = viewDataAtIndex(viewIdx);
 
-      // Build a half-res undistortRectifyMap to save some processing time
-      unsigned int downsampleFactor = 2;
+    // Build a half-res undistortRectifyMap to save some processing time
+    unsigned int downsampleFactor = 2;
 
-      PER_EYE {
-        CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
-        vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(inputWidth(), inputHeight()), downsampleFactor);
-      }
+    PER_EYE {
+      CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
+      vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(inputWidth(), inputHeight()), downsampleFactor);
+    }
 
-      //Set up what matrices we can to prevent dynamic memory allocation.
-      vd->resizedLeft_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
-      vd->resizedRight_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
+    //Set up what matrices we can to prevent dynamic memory allocation.
+    vd->resizedLeft_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
+    vd->resizedRight_gpu = cv::cuda::GpuMat(internalHeight(), internalWidth(), CV_8U);
 
-      if (vd->m_isVerticalStereo) {
-        vd->resizedTransposedLeft_gpu = cv::cuda::GpuMat(internalWidth(), internalHeight(), CV_8U);
-        vd->resizedTransposedRight_gpu = cv::cuda::GpuMat(internalWidth(), internalHeight(), CV_8U);
-      }
-
+    if (vd->m_isVerticalStereo) {
+      vd->resizedTransposedLeft_gpu = cv::cuda::GpuMat(internalWidth(), internalHeight(), CV_8U);
+      vd->resizedTransposedRight_gpu = cv::cuda::GpuMat(internalWidth(), internalHeight(), CV_8U);
+    }
   }
 }
 
@@ -305,7 +304,7 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     if (vd->m_isVerticalStereo) {
       // cv::cuda::transpose is unusable due to forced CPU-GPU sync when switching the CUDA stream that NPPI is targeting, so we skip the CV wrappers and use NPPI directly.
       NppiSize sz;
-      sz.width  = vd->resizedLeft_gpu.cols;
+      sz.width = vd->resizedLeft_gpu.cols;
       sz.height = vd->resizedLeft_gpu.rows;
 
       nppiTranspose_8u_C1R_Ctx(vd->resizedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedLeft_gpu.step), vd->resizedTransposedLeft_gpu.ptr<Npp8u>(), static_cast<int>(vd->resizedTransposedLeft_gpu.step), sz, m_nppStreamContext);
@@ -368,7 +367,7 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     size_t inputBufferSize = ((viewParams.height * viewParams.inputPitchBytes) + 4095) & (~4095); // rounded up to pagesize
     size_t outputBufferSize = ((viewParams.height * viewParams.outputPitchBytes) + 4095) & (~4095);
 
-    viewParams.inputOffset[0]  = lastOffset;
+    viewParams.inputOffset[0] = lastOffset;
     viewParams.inputOffset[1] = viewParams.inputOffset[0] + inputBufferSize;
     viewParams.outputOffset = viewParams.inputOffset[1] + inputBufferSize;
 
@@ -460,7 +459,7 @@ void DepthMapGeneratorSHM::internalRenderIMGUI() {
 
     switch (shm->m_algorithm) {
       case 0: // StereoBM
-        if ((m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &shm->m_sbmBlockSize, /*step=*/2))) {
+        if ((m_didChangeSettings |= ImGui::InputInt("Block Size (odd)", &shm->m_sbmBlockSize, /*step=*/ 2))) {
           shm->m_sbmBlockSize |= 1; // enforce odd blockSize
         }
         break;
@@ -489,15 +488,20 @@ void DepthMapGeneratorSHM::internalRenderIMGUI() {
     }
   } else if (m_backend == kDepthBackendDepthAI) {
     ImGui::Text("Subpixel Bits");
-    m_didChangeSettings |= ImGui::RadioButton("3", &shm->m_subpixelFractionalBits, 3); ImGui::SameLine();
-    m_didChangeSettings |= ImGui::RadioButton("4", &shm->m_subpixelFractionalBits, 4); ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("3", &shm->m_subpixelFractionalBits, 3);
+    ImGui::SameLine();
+    m_didChangeSettings |= ImGui::RadioButton("4", &shm->m_subpixelFractionalBits, 4);
+    ImGui::SameLine();
     m_didChangeSettings |= ImGui::RadioButton("5", &shm->m_subpixelFractionalBits, 5);
     m_didChangeSettings |= ImGui::SliderInt("Confidence Threshold", &shm->m_confidenceThreshold, 0, 255);
     if (shm->m_subpixelFractionalBits == 3) {
       ImGui::Text("Median Filter");
-      m_didChangeSettings |= ImGui::RadioButton("None", &shm->m_medianFilter, 0); ImGui::SameLine();
-      m_didChangeSettings |= ImGui::RadioButton("3x3", &shm->m_medianFilter, 3); ImGui::SameLine();
-      m_didChangeSettings |= ImGui::RadioButton("5x5", &shm->m_medianFilter, 5); ImGui::SameLine();
+      m_didChangeSettings |= ImGui::RadioButton("None", &shm->m_medianFilter, 0);
+      ImGui::SameLine();
+      m_didChangeSettings |= ImGui::RadioButton("3x3", &shm->m_medianFilter, 3);
+      ImGui::SameLine();
+      m_didChangeSettings |= ImGui::RadioButton("5x5", &shm->m_medianFilter, 5);
+      ImGui::SameLine();
       m_didChangeSettings |= ImGui::RadioButton("7x7", &shm->m_medianFilter, 7);
     }
 
@@ -517,27 +521,27 @@ void DepthMapGeneratorSHM::internalRenderIMGUIPerformanceGraphs() {
 
   int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
 
-  if (ImPlot::BeginPlot("##SHMTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
-      ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
-      ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_profilingDataBuffer.size(), ImPlotCond_Always);
+  if (ImPlot::BeginPlot("##SHMTiming", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
+    ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+    ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_profilingDataBuffer.size(), ImPlotCond_Always);
 
-      ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
-      ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
+    ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+    ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
 
-      // Y2 axis is used for the "Missed Deadline" markers
-      ImPlot::SetupAxis(ImAxis_Y2, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoDecorations);
-      ImPlot::SetupAxisLimits(ImAxis_Y2, 0.0f, 1.0f, ImPlotCond_Always);
+    // Y2 axis is used for the "Missed Deadline" markers
+    ImPlot::SetupAxis(ImAxis_Y2, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoDecorations);
+    ImPlot::SetupAxisLimits(ImAxis_Y2, 0.0f, 1.0f, ImPlotCond_Always);
 
-      ImPlot::SetupFinish();
+    ImPlot::SetupFinish();
 
-      ImPlot::PlotLine("Setup", &m_profilingDataBuffer.data()->m_setupTimeMs, m_profilingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
-      ImPlot::PlotLine("Copy",  &m_profilingDataBuffer.data()->m_copyTimeMs,  m_profilingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
-      ImPlot::PlotLine("Algo",  &m_profilingDataBuffer.data()->m_algoTimeMs,  m_profilingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
+    ImPlot::PlotLine("Setup", &m_profilingDataBuffer.data()->m_setupTimeMs, m_profilingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
+    ImPlot::PlotLine("Copy", &m_profilingDataBuffer.data()->m_copyTimeMs, m_profilingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
+    ImPlot::PlotLine("Algo", &m_profilingDataBuffer.data()->m_algoTimeMs, m_profilingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
 
-      ImPlot::SetAxis(ImAxis_Y2);
-      ImPlot::PlotBars("Missed Deadline", &m_profilingDataBuffer.data()->m_processingTimedOutThisFrame, m_profilingDataBuffer.size(), /*width=*/ 0.7f, /*shift=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
+    ImPlot::SetAxis(ImAxis_Y2);
+    ImPlot::PlotBars("Missed Deadline", &m_profilingDataBuffer.data()->m_processingTimedOutThisFrame, m_profilingDataBuffer.size(), /*width=*/ 0.7f, /*shift=*/ 0, /*flags=*/ 0, m_profilingDataBuffer.offset(), m_profilingDataBuffer.stride());
 
-      ImPlot::EndPlot();
+    ImPlot::EndPlot();
   }
   if (!m_profilingDataBuffer.empty()) {
     const auto& timing = m_profilingDataBuffer.back();
@@ -546,4 +550,3 @@ void DepthMapGeneratorSHM::internalRenderIMGUIPerformanceGraphs() {
 }
 
 #endif // HAVE_OPENCV_CUDA
-

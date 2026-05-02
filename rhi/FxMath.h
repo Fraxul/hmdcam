@@ -27,5 +27,3 @@ static inline uint32_t ceilLogTwo(uint32_t x) {
 static inline uint32_t nextPowerOfTwo(uint32_t x) {
   return 1 << ceilLogTwo(x);
 }
-
-

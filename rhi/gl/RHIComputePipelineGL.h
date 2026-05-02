@@ -18,5 +18,3 @@ protected:
   friend class RHIGL;
   RHIShaderGL::ptr m_shader;
 };
-
-

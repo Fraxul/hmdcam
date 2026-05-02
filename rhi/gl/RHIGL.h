@@ -95,6 +95,7 @@ public:
   virtual bool supportsGeometryShaders();
 
   virtual void populateGlobalShaderDescriptorEnvironment(RHIShaderDescriptor*);
+
 protected:
   virtual RHIShader::ptr internalCompileShader(const RHIShaderDescriptor&);
   virtual RHIRenderPipeline::ptr internalCompileRenderPipeline(RHIShader::ptr, const RHIRenderPipelineDescriptor&);
@@ -134,4 +135,3 @@ protected:
   // Feature flags
   bool m_supportsDiscardFramebufferEXT = false;
 };
-

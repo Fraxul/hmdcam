@@ -15,7 +15,9 @@
 #include <vector>
 
 class RHI;
-namespace vr { struct Texture_t; }
+namespace vr {
+struct Texture_t;
+}
 
 RHI* rhi(); // render thread owned
 
@@ -160,6 +162,7 @@ public:
 
   // overridden, but children call up to parent impl
   virtual void populateGlobalShaderDescriptorEnvironment(RHIShaderDescriptor*);
+
 protected:
   virtual RHIShader::ptr internalCompileShader(const RHIShaderDescriptor&) = 0;
   virtual RHIRenderPipeline::ptr internalCompileRenderPipeline(RHIShader::ptr, const RHIRenderPipelineDescriptor&) = 0;
@@ -174,5 +177,3 @@ protected:
 
   std::map<size_t, RHIShader::ptr> m_shaderCache;
 };
-
-

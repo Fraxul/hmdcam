@@ -312,4 +312,3 @@ void drawTriadGizmosForPoints(RHIBuffer::ptr pointBuf, size_t count, const glm::
   rhi()->loadUniformBlockImmediate(ksTriadGizmoUniformBuffer, &ub, sizeof(ub));
   rhi()->drawPrimitives(0, 6, count);
 }
-

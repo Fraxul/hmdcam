@@ -34,7 +34,11 @@
 #include "common/tegra/NvSciUtil.h"
 #include <unistd.h>
 
-#define CleanupPtr(Fn, Obj, ... ) if (Obj != nullptr) { Fn(Obj  ,## __VA_ARGS__); Obj = nullptr; }
+#define CleanupPtr(Fn, Obj, ...) \
+  if (Obj != nullptr) {          \
+    Fn(Obj, ##__VA_ARGS__);      \
+    Obj = nullptr;               \
+  }
 
 #define CUDLA_CHECK(x) checkCUDLAstatus(x, #x, __FILE__, __LINE__, true)
 #define CUDLA_CHECK_NONFATAL(x) checkCUDLAstatus(x, #x, __FILE__, __LINE__, false)
@@ -99,29 +103,29 @@ CuDLAStandaloneRunner::~CuDLAStandaloneRunner() {
   CleanupPtr(NvSciSyncModuleClose, m_syncModule);
 }
 
-NvSciBufAttrList createTensorBufAttrList(NvSciBufModule module, uint64_t bufSize)
-{
+NvSciBufAttrList createTensorBufAttrList(NvSciBufModule module, uint64_t bufSize) {
   NvSciBufAttrList attrList = nullptr;
   NVSCI_CHECK(NvSciBufAttrListCreate(module, &attrList));
 
-  bool                      needCpuAccess = true;
-  NvSciBufAttrValAccessPerm perm          = NvSciBufAccessPerm_ReadWrite;
-  uint32_t                  dimcount      = 1;
-  uint64_t                  sizes[]       = {bufSize};
-  uint32_t                  alignment[]   = {1};
-  uint32_t                  dataType      = NvSciDataType_Int8;
-  NvSciBufType              type          = NvSciBufType_Tensor;
-  uint64_t                  baseAddrAlign = 512;
+  bool needCpuAccess = true;
+  NvSciBufAttrValAccessPerm perm = NvSciBufAccessPerm_ReadWrite;
+  uint32_t dimcount = 1;
+  uint64_t sizes[] = {bufSize};
+  uint32_t alignment[] = {1};
+  uint32_t dataType = NvSciDataType_Int8;
+  NvSciBufType type = NvSciBufType_Tensor;
+  uint64_t baseAddrAlign = 512;
 
   NvSciBufAttrKeyValuePair setAttrs[] = {
-      {.key = NvSciBufGeneralAttrKey_Types, .value = &type, .len = sizeof(type)},
-      {.key = NvSciBufTensorAttrKey_DataType, .value = &dataType, .len = sizeof(dataType)},
-      {.key = NvSciBufTensorAttrKey_NumDims, .value = &dimcount, .len = sizeof(dimcount)},
-      {.key = NvSciBufTensorAttrKey_SizePerDim, .value = &sizes, .len = sizeof(sizes)},
-      {.key = NvSciBufTensorAttrKey_AlignmentPerDim, .value = &alignment, .len = sizeof(alignment)},
-      {.key = NvSciBufTensorAttrKey_BaseAddrAlign, .value = &baseAddrAlign, .len = sizeof(baseAddrAlign)},
-      {.key = NvSciBufGeneralAttrKey_RequiredPerm, .value = &perm, .len = sizeof(perm)},
-      {.key = NvSciBufGeneralAttrKey_NeedCpuAccess, .value = &needCpuAccess, .len = sizeof(needCpuAccess)}};
+    {         .key = NvSciBufGeneralAttrKey_Types,          .value = &type,          .len = sizeof(type)},
+    {       .key = NvSciBufTensorAttrKey_DataType,      .value = &dataType,      .len = sizeof(dataType)},
+    {        .key = NvSciBufTensorAttrKey_NumDims,      .value = &dimcount,      .len = sizeof(dimcount)},
+    {     .key = NvSciBufTensorAttrKey_SizePerDim,         .value = &sizes,         .len = sizeof(sizes)},
+    {.key = NvSciBufTensorAttrKey_AlignmentPerDim,     .value = &alignment,     .len = sizeof(alignment)},
+    {  .key = NvSciBufTensorAttrKey_BaseAddrAlign, .value = &baseAddrAlign, .len = sizeof(baseAddrAlign)},
+    {  .key = NvSciBufGeneralAttrKey_RequiredPerm,          .value = &perm,          .len = sizeof(perm)},
+    { .key = NvSciBufGeneralAttrKey_NeedCpuAccess, .value = &needCpuAccess, .len = sizeof(needCpuAccess)}
+  };
   size_t length = sizeof(setAttrs) / sizeof(NvSciBufAttrKeyValuePair);
 
   NVSCI_CHECK(NvSciBufAttrListSetAttrs(attrList, setAttrs, length));
@@ -190,15 +194,15 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
   {
     cudlaExternalMemoryHandleDesc memDesc = {0};
     memset(&memDesc, 0, sizeof(memDesc));
-    memDesc.extBufObject = (void *)m_inputBufObj;
-    memDesc.size         = m_inputTensorDesc[0].size;
+    memDesc.extBufObject = (void*) m_inputBufObj;
+    memDesc.size = m_inputTensorDesc[0].size;
     CUDLA_CHECK(cudlaImportExternalMemory(m_devHandle, &memDesc, &m_inputBufObjRegPtr, 0));
 
     NVSCI_CHECK(NvSciBufObjGetCpuPtr(m_inputBufObj, &m_inputBufObjBuffer));
 
     memset(&memDesc, 0, sizeof(memDesc));
-    memDesc.extBufObject = (void *)m_outputBufObj;
-    memDesc.size         = m_outputTensorDesc[0].size;
+    memDesc.extBufObject = (void*) m_outputBufObj;
+    memDesc.size = m_outputTensorDesc[0].size;
     CUDLA_CHECK(cudlaImportExternalMemory(m_devHandle, &memDesc, &m_outputBufObjRegPtr, 0));
 
     NVSCI_CHECK(NvSciBufObjGetCpuPtr(m_outputBufObj, &m_outputBufObjBuffer));
@@ -208,11 +212,11 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
   {
     NvSciSyncAttrList signalerAttrList = nullptr;
     NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &signalerAttrList));
-    CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(signalerAttrList), CUDLA_NVSCISYNC_ATTR_SIGNAL));
+    CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t*>(signalerAttrList), CUDLA_NVSCISYNC_ATTR_SIGNAL));
 
     // Require deterministic fence
     bool rdfValue = true;
-    NvSciSyncAttrKeyValuePair kvp = { NvSciSyncAttrKey_RequireDeterministicFences, &rdfValue, sizeof(rdfValue) };
+    NvSciSyncAttrKeyValuePair kvp = {NvSciSyncAttrKey_RequireDeterministicFences, &rdfValue, sizeof(rdfValue)};
     NVSCI_CHECK(NvSciSyncAttrListSetAttrs(signalerAttrList, &kvp, 1));
 
     NvSciSyncAttrList cudlaSignalerSyncAttrList = ReconcileNvSciSyncAttrLists(signalerAttrList, CreateNvSciSyncCpuWaiterAttrList(m_syncModule));
@@ -230,11 +234,11 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
   {
     NvSciSyncAttrList waiterAttrList = nullptr;
     NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &waiterAttrList));
-    CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t *>(waiterAttrList), CUDLA_NVSCISYNC_ATTR_WAIT));
+    CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t*>(waiterAttrList), CUDLA_NVSCISYNC_ATTR_WAIT));
 
     // Require deterministic fence
     bool rdfValue = true;
-    NvSciSyncAttrKeyValuePair kvp = { NvSciSyncAttrKey_RequireDeterministicFences, &rdfValue, sizeof(rdfValue) };
+    NvSciSyncAttrKeyValuePair kvp = {NvSciSyncAttrKey_RequireDeterministicFences, &rdfValue, sizeof(rdfValue)};
     NVSCI_CHECK(NvSciSyncAttrListSetAttrs(waiterAttrList, &kvp, 1));
 
     NvSciSyncAttrList cudlaWaiterSyncAttrList = ReconcileNvSciSyncAttrLists(waiterAttrList, CreateNvSciSyncCpuSignalerAttrList(m_syncModule));
@@ -252,7 +256,7 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
 
   // Import NvSci Sync objects as external semaphores
   {
-    cudlaExternalSemaphoreHandleDesc semaMemDesc         = {0};
+    cudlaExternalSemaphoreHandleDesc semaMemDesc = {0};
     memset(&semaMemDesc, 0, sizeof(semaMemDesc));
     semaMemDesc.extSyncObject = m_syncWaitObj;
     CUDLA_CHECK(cudlaImportExternalSemaphore(m_devHandle, &semaMemDesc, &m_syncWaitObjRegPtr, 0));
@@ -269,8 +273,8 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
 
     memset(m_preFences, 0, sizeof(m_preFences));
 
-    m_preFences[0].fence      = &m_preFence;
-    m_preFences[0].type       = CUDLA_NVSCISYNC_FENCE;
+    m_preFences[0].fence = &m_preFence;
+    m_preFences[0].type = CUDLA_NVSCISYNC_FENCE;
 
     m_waitEvents.preFences = m_preFences;
   }
@@ -279,7 +283,7 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
   {
     memset(m_signalEventDevPtrs, 0, sizeof(m_signalEventDevPtrs));
 
-    m_signalEventDevPtrs[0]            = m_syncSignalObjRegPtr;
+    m_signalEventDevPtrs[0] = m_syncSignalObjRegPtr;
 
     memset(&m_signalEvents, 0, sizeof(m_signalEvents));
     m_signalEvents.numEvents = 1;
@@ -287,17 +291,17 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
     m_signalEvents.eofFences = m_eofFences;
 
     m_eofFences[0].fence = &m_eofFence;
-    m_eofFences[0].type  = CUDLA_NVSCISYNC_FENCE;
+    m_eofFences[0].type = CUDLA_NVSCISYNC_FENCE;
   }
 
   // Setup task struct, since it'll always be the same
-  m_task.moduleHandle     = m_moduleHandle;
-  m_task.outputTensor     = &m_outputBufObjRegPtr;
+  m_task.moduleHandle = m_moduleHandle;
+  m_task.outputTensor = &m_outputBufObjRegPtr;
   m_task.numOutputTensors = 1;
-  m_task.numInputTensors  = 1;
-  m_task.inputTensor      = &m_inputBufObjRegPtr;
-  m_task.waitEvents       = &m_waitEvents;
-  m_task.signalEvents     = &m_signalEvents;
+  m_task.numInputTensors = 1;
+  m_task.inputTensor = &m_inputBufObjRegPtr;
+  m_task.waitEvents = &m_waitEvents;
+  m_task.signalEvents = &m_signalEvents;
 }
 
 
@@ -315,7 +319,7 @@ void CuDLAStandaloneRunner::asyncStartInference() {
 
 void CuDLAStandaloneRunner::asyncFinishInference() {
   // Wait for operations to finish and bring output buffer to CPU.
-  NVSCI_CHECK(NvSciSyncFenceWait(reinterpret_cast<NvSciSyncFence *>(m_signalEvents.eofFences[0].fence), m_cpuWaitCtx, -1));
+  NVSCI_CHECK(NvSciSyncFenceWait(reinterpret_cast<NvSciSyncFence*>(m_signalEvents.eofFences[0].fence), m_cpuWaitCtx, -1));
 
   // Flush output buffer
   NVSCI_CHECK(NvSciBufObjFlushCpuCacheRange(m_outputBufObj, 0, m_outputTensorDesc[0].size));
@@ -330,4 +334,3 @@ void CuDLAStandaloneRunner::asyncFinishInference() {
 
   // Output is available in outputBufObjBuffer.
 }
-

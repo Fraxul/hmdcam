@@ -46,9 +46,9 @@ public:
   std::vector<cv::Mat> m_feedbackView;
 
   // Per-camera per-frame
-  std::vector<std::vector<std::vector<cv::Point2f> > > m_calibrationPoints; // Points in image space for the 2 views for the relevant corners each frame
+  std::vector<std::vector<std::vector<cv::Point2f>>> m_calibrationPoints; // Points in image space for the 2 views for the relevant corners each frame
 
   // Per-frame
-  std::vector<std::vector<cv::Point3f> > m_objectPoints; // Points from the board definition for the relevant corners each frame
-  std::vector<std::vector<int> > m_objectIds; // Corner IDs from the board definition for the relevant corners each frame
+  std::vector<std::vector<cv::Point3f>> m_objectPoints; // Points from the board definition for the relevant corners each frame
+  std::vector<std::vector<int>> m_objectIds; // Corner IDs from the board definition for the relevant corners each frame
 };

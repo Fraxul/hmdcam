@@ -15,8 +15,16 @@
 #include <cassert>
 #include "rhi/gl/GLCommon.h"
 
-#define CHECK(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); abort(); }
-#define EGL_CHECK(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed (%d)\n", __FILE__, __LINE__, #x, eglGetError()); abort(); }
+#define CHECK(x)                                                                         \
+  if (!(x)) {                                                                            \
+    fprintf(stderr, "%s:%d: %s failed (%s)\n", __FILE__, __LINE__, #x, strerror(errno)); \
+    abort();                                                                             \
+  }
+#define EGL_CHECK(x)                                                                   \
+  if (!(x)) {                                                                          \
+    fprintf(stderr, "%s:%d: %s failed (%d)\n", __FILE__, __LINE__, #x, eglGetError()); \
+    abort();                                                                           \
+  }
 
 // Instantiate the vulkan dynamic loader in this file
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
@@ -28,20 +36,20 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
 // In the absence of any of the advanced Vulkan presentation timing extensions,
 // this provides better accuracy than the CPU-timestamped Vulkan display event codepath.
 extern "C" {
-  struct NvRmHost1xTimestamp {   // out-parameter struct populated by SyncpointWait
-    uint32_t tv_sec;
-    uint32_t _pad;
-    uint32_t tv_nsec;
-    uint32_t clock_id; // library-translated: kernel 0/1 -> 0, kernel 2 -> 1
-  };
+struct NvRmHost1xTimestamp { // out-parameter struct populated by SyncpointWait
+  uint32_t tv_sec;
+  uint32_t _pad;
+  uint32_t tv_nsec;
+  uint32_t clock_id; // library-translated: kernel 0/1 -> 0, kernel 2 -> 1
+};
 
-  uint32_t NvRmHost1xOpen(void** out_handle, uint32_t attrs);
-  void NvRmHost1xClose(void* handle);
-  uint32_t NvRmHost1xGetDefaultOpenAttrs(uint32_t* out_attrs);
-  uint32_t NvRmHost1xSyncpointRead(void* h1x, uint32_t id, uint32_t* out_value);
-  uint32_t NvRmHost1xWaiterAllocate(void** out_waiter, void* h1x);
-  void NvRmHost1xWaiterFree(void* waiter);
-  uint32_t NvRmHost1xSyncpointWait(void* waiter, uint32_t id, uint32_t thresh, uint32_t timeout_us, NvRmHost1xTimestamp* out_ts);
+uint32_t NvRmHost1xOpen(void** out_handle, uint32_t attrs);
+void NvRmHost1xClose(void* handle);
+uint32_t NvRmHost1xGetDefaultOpenAttrs(uint32_t* out_attrs);
+uint32_t NvRmHost1xSyncpointRead(void* h1x, uint32_t id, uint32_t* out_value);
+uint32_t NvRmHost1xWaiterAllocate(void** out_waiter, void* h1x);
+void NvRmHost1xWaiterFree(void* waiter);
+uint32_t NvRmHost1xSyncpointWait(void* waiter, uint32_t id, uint32_t thresh, uint32_t timeout_us, NvRmHost1xTimestamp* out_ts);
 }
 
 // VBlank syncpt, retrieved by hooking ioctl.
@@ -57,7 +65,7 @@ static int (*real_ioctl)(int fd, unsigned long request, ...) = nullptr;
 // Loader function for real_ioctl.
 void init_ioctl_shim() { real_ioctl = reinterpret_cast<decltype(real_ioctl)>(dlsym(RTLD_NEXT, "ioctl")); }
 // Load the real ioctl as early as possible by putting a function pointer into preinit_array.
-__attribute__((section(".preinit_array"), used))static void (*const preinit_ioctl_shim)(void) = init_ioctl_shim;
+__attribute__((section(".preinit_array"), used)) static void (*const preinit_ioctl_shim)(void) = init_ioctl_shim;
 
 
 // NvKmsIoctl helper structs
@@ -68,27 +76,26 @@ struct NvKmsIoctlArg {
 };
 
 struct NvKmsEnableVblankSyncObjectRequest {
-    uint32_t deviceHandle;
-    uint32_t dispHandle;
-    uint32_t head;
+  uint32_t deviceHandle;
+  uint32_t dispHandle;
+  uint32_t head;
 };
 
 struct NvKmsEnableVblankSyncObjectReply {
-    uint32_t vblankHandle;
-    uint32_t syncptId;
+  uint32_t vblankHandle;
+  uint32_t syncptId;
 };
 
 struct NvKmsEnableVblankSyncObjectParams {
-    struct NvKmsEnableVblankSyncObjectRequest request; /*! in */
-    struct NvKmsEnableVblankSyncObjectReply reply;     /*! out */
+  struct NvKmsEnableVblankSyncObjectRequest request; /*! in */
+  struct NvKmsEnableVblankSyncObjectReply reply; /*! out */
 };
 
 constexpr unsigned long kNvKmsIoctlRequest = 0xc0106d00;
 constexpr uint32_t NVKMS_IOCTL_ENABLE_VBLANK_SYNC_OBJECT = 56;
 
 // Cold-path ioctl shim. This will self-disable once it catches the vblank sync object.
-__attribute__((cold, noinline))
-static int ioctl_shim(int fd, unsigned long request, void* arg) {
+__attribute__((cold, noinline)) static int ioctl_shim(int fd, unsigned long request, void* arg) {
   NvKmsIoctlArg* kmsArg = (NvKmsIoctlArg*) arg;
   if (__builtin_expect((request == kNvKmsIoctlRequest && kmsArg->command == NVKMS_IOCTL_ENABLE_VBLANK_SYNC_OBJECT), false)) {
     int res = real_ioctl(fd, request, arg);
@@ -117,8 +124,8 @@ extern "C" int ioctl(int fd, unsigned long request, ...) {
   va_end(ap);
 
   if (__builtin_expect(
-          std::atomic_load_explicit(&ioctl_shim_active, std::memory_order_relaxed), 0)) {
-      return ioctl_shim(fd, request, arg);
+        std::atomic_load_explicit(&ioctl_shim_active, std::memory_order_relaxed), 0)) {
+    return ioctl_shim(fd, request, arg);
   }
   return real_ioctl(fd, request, arg);
 }
@@ -126,12 +133,12 @@ extern "C" int ioctl(int fd, unsigned long request, ...) {
 
 RenderBackend* createVKDirectBackend() { return new RenderBackendVKDirect(); }
 
-template <typename T> bool contains(const std::vector<T>& container, const T& value) {
+template <typename T>
+bool contains(const std::vector<T>& container, const T& value) {
   return std::find(container.begin(), container.end(), value) != container.end();
 }
 
 RenderBackendVKDirect::RenderBackendVKDirect() {
-
 }
 
 const std::vector<const char*> requiredInstanceExtensions = {
@@ -159,62 +166,61 @@ const std::vector<const char*> validationLayers = {
 
 void RenderBackendVKDirect::init() {
   try {
-  // Load library and create instance
-  PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = m_dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
-  VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
+    // Load library and create instance
+    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = m_dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
-  bool enableValidation = false;
-  {
-    const char* s = getenv("VKDIRECT_ENABLE_VALIDATION");
-    if (s) {
-      enableValidation = (atoi(s) != 0);
+    bool enableValidation = false;
+    {
+      const char* s = getenv("VKDIRECT_ENABLE_VALIDATION");
+      if (s) {
+        enableValidation = (atoi(s) != 0);
+      }
     }
-  }
 
-  // Create instance
-  {
-    vk::InstanceCreateInfo createInfo{
+    // Create instance
+    {
+      vk::InstanceCreateInfo createInfo{
         vk::InstanceCreateFlags(),
         /*applicationInfo=*/ nullptr,
         /*enabledLayers=*/ 0, nullptr,
-        uint32_t(requiredInstanceExtensions.size()), requiredInstanceExtensions.data()
-    };
+        uint32_t(requiredInstanceExtensions.size()), requiredInstanceExtensions.data()};
 
-    if (enableValidation) {
-      createInfo.enabledLayerCount = (uint32_t) validationLayers.size();
-      createInfo.ppEnabledLayerNames = validationLayers.data();
+      if (enableValidation) {
+        createInfo.enabledLayerCount = (uint32_t) validationLayers.size();
+        createInfo.ppEnabledLayerNames = validationLayers.data();
+      }
+
+      m_instance = vk::createInstanceUnique(createInfo);
     }
 
-    m_instance = vk::createInstanceUnique(createInfo);
-  }
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(m_instance.get());
 
-  VULKAN_HPP_DEFAULT_DISPATCHER.init(m_instance.get());
-
-  // Select GPU
-  std::vector<vk::PhysicalDevice> devices = m_instance->enumeratePhysicalDevices();
-  printf("%zu devices\n", devices.size());
-  for(const auto& device : devices) {
-    if(!device.getDisplayPropertiesKHR().empty()) {
-      m_gpu = device;
-      break;
+    // Select GPU
+    std::vector<vk::PhysicalDevice> devices = m_instance->enumeratePhysicalDevices();
+    printf("%zu devices\n", devices.size());
+    for (const auto& device : devices) {
+      if (!device.getDisplayPropertiesKHR().empty()) {
+        m_gpu = device;
+        break;
+      }
     }
-  }
 
-  if (!m_gpu) {
-    fprintf(stderr, "No GPU was able to provide display devices via vkGetDisplayPropertiesKHR\n");
-    abort();
-  }
+    if (!m_gpu) {
+      fprintf(stderr, "No GPU was able to provide display devices via vkGetDisplayPropertiesKHR\n");
+      abort();
+    }
 
-  // Select display. TODO: currently using the first available display.
-  {
-    auto displays = m_gpu.getDisplayPropertiesKHR();
-    CHECK(!displays.empty());
+    // Select display. TODO: currently using the first available display.
+    {
+      auto displays = m_gpu.getDisplayPropertiesKHR();
+      CHECK(!displays.empty());
 
-    m_display.m_displayProperties = displays[0];
-    m_display.m_displayKHR = m_display.m_displayProperties.display;
-  }
+      m_display.m_displayProperties = displays[0];
+      m_display.m_displayKHR = m_display.m_displayProperties.display;
+    }
 
-  // Physical device properties enumeration
+    // Physical device properties enumeration
 #if 0 // Disabled for compatibility with L4T r32.2 -- extension isn't present, but we don't really need it anyway
   {
     auto res = m_gpu.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDrmPropertiesEXT>();
@@ -228,397 +234,399 @@ void RenderBackendVKDirect::init() {
   }
 #endif
 
-  // Select mode and target plane; create display surface.
-  {
-    auto modes = m_gpu.getDisplayModePropertiesKHR(m_display.m_displayKHR);
-    m_display.m_modeProperties = modes[0];
-    for(auto& m : modes) {
-      auto i = m.parameters.visibleRegion;
-      auto c = m_display.m_modeProperties.parameters.visibleRegion;
-      // Select for highest refresh rate at highest resolution
-      if (((i.height * i.width) > (c.height * c.width)) ||
-         (((i.height * i.width) == (c.height * c.width)) && m.parameters.refreshRate > m_display.m_modeProperties.parameters.refreshRate)) {
-        m_display.m_modeProperties = m;
+    // Select mode and target plane; create display surface.
+    {
+      auto modes = m_gpu.getDisplayModePropertiesKHR(m_display.m_displayKHR);
+      m_display.m_modeProperties = modes[0];
+      for (auto& m : modes) {
+        auto i = m.parameters.visibleRegion;
+        auto c = m_display.m_modeProperties.parameters.visibleRegion;
+        // Select for highest refresh rate at highest resolution
+        if (((i.height * i.width) > (c.height * c.width)) ||
+          (((i.height * i.width) == (c.height * c.width)) && m.parameters.refreshRate > m_display.m_modeProperties.parameters.refreshRate)) {
+          m_display.m_modeProperties = m;
+        }
       }
-    }
 
-    // Pick first compatible plane
-    auto planes = m_gpu.getDisplayPlanePropertiesKHR();
-    uint32_t planeIndex = 0;
-    bool foundPlane = false;
-    for(uint32_t i = 0; i < planes.size(); ++i) {
-      auto p = planes[i];
+      // Pick first compatible plane
+      auto planes = m_gpu.getDisplayPlanePropertiesKHR();
+      uint32_t planeIndex = 0;
+      bool foundPlane = false;
+      for (uint32_t i = 0; i < planes.size(); ++i) {
+        auto p = planes[i];
 
-      // Skip planes bound to different display
-      if(p.currentDisplay && (p.currentDisplay != m_display.m_displayKHR))
-        continue;
+        // Skip planes bound to different display
+        if (p.currentDisplay && (p.currentDisplay != m_display.m_displayKHR))
+          continue;
 
-      auto supportedDisplays = m_gpu.getDisplayPlaneSupportedDisplaysKHR(i);
+        auto supportedDisplays = m_gpu.getDisplayPlaneSupportedDisplaysKHR(i);
 
-      for (auto& d : supportedDisplays) {
-        if (d == m_display.m_displayKHR) {
-          foundPlane = true;
-          planeIndex = i;
+        for (auto& d : supportedDisplays) {
+          if (d == m_display.m_displayKHR) {
+            foundPlane = true;
+            planeIndex = i;
+            break;
+          }
+        }
+
+        if (foundPlane)
+          break;
+      }
+      CHECK(foundPlane);
+
+      // Find alpha mode bit
+      auto planeCapabilities = m_gpu.getDisplayPlaneCapabilitiesKHR(m_display.m_modeProperties.displayMode, planeIndex);
+      vk::DisplayPlaneAlphaFlagBitsKHR alphaMode = vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque;
+      vk::DisplayPlaneAlphaFlagBitsKHR alphaModes[4] = {
+        vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque,
+        vk::DisplayPlaneAlphaFlagBitsKHR::eGlobal,
+        vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixel,
+        vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixelPremultiplied,
+      };
+      for (uint32_t i = 0; i < (sizeof(alphaModes) / sizeof(alphaModes[0])); ++i) {
+        if (planeCapabilities.supportedAlpha & alphaModes[i]) {
+          alphaMode = alphaModes[i];
           break;
         }
       }
 
-      if (foundPlane)
-        break;
-    }
-    CHECK(foundPlane);
+      vk::DisplaySurfaceCreateInfoKHR surfaceCreateInfo{vk::DisplaySurfaceCreateFlagBitsKHR(),
+        m_display.m_modeProperties.displayMode,
+        planeIndex,
+        planes[planeIndex].currentStackIndex,
+        vk::SurfaceTransformFlagBitsKHR::eIdentity,
+        1.0f,
+        alphaMode,
+        vk::Extent2D(m_display.m_modeProperties.parameters.visibleRegion.width,
+          m_display.m_modeProperties.parameters.visibleRegion.height)};
 
-    // Find alpha mode bit
-    auto planeCapabilities = m_gpu.getDisplayPlaneCapabilitiesKHR(m_display.m_modeProperties.displayMode, planeIndex);
-    vk::DisplayPlaneAlphaFlagBitsKHR alphaMode     = vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque;
-    vk::DisplayPlaneAlphaFlagBitsKHR alphaModes[4] = {
-      vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque,
-      vk::DisplayPlaneAlphaFlagBitsKHR::eGlobal,
-      vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixel,
-      vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixelPremultiplied,
-    };
-    for(uint32_t i = 0; i < (sizeof(alphaModes) / sizeof(alphaModes[0])); ++i)  {
-      if(planeCapabilities.supportedAlpha & alphaModes[i]) {
-        alphaMode = alphaModes[i];
-        break;
-      }
+      m_surface = m_instance->createDisplayPlaneSurfaceKHRUnique(surfaceCreateInfo);
+
+      const auto& d = m_display.m_displayProperties;
+      printf("Using display: %s\n  physical resolution: %i x %i\n", d.displayName, d.physicalResolution.width, d.physicalResolution.height);
+      const auto& m = m_display.m_modeProperties;
+      m_refreshRateHz = static_cast<double>(m.parameters.refreshRate) / 1000.0;
+      printf("Display mode: %i x %i @ %fHz\n", m.parameters.visibleRegion.width, m.parameters.visibleRegion.height, m_refreshRateHz);
     }
 
-    vk::DisplaySurfaceCreateInfoKHR surfaceCreateInfo{vk::DisplaySurfaceCreateFlagBitsKHR(),
-                                                      m_display.m_modeProperties.displayMode,
-                                                      planeIndex,
-                                                      planes[planeIndex].currentStackIndex,
-                                                      vk::SurfaceTransformFlagBitsKHR::eIdentity,
-                                                      1.0f,
-                                                      alphaMode,
-                                                      vk::Extent2D(m_display.m_modeProperties.parameters.visibleRegion.width,
-                                                                   m_display.m_modeProperties.parameters.visibleRegion.height)};
-
-    m_surface = m_instance->createDisplayPlaneSurfaceKHRUnique(surfaceCreateInfo);
-
-    const auto& d = m_display.m_displayProperties;
-    printf("Using display: %s\n  physical resolution: %i x %i\n", d.displayName, d.physicalResolution.width, d.physicalResolution.height);
-    const auto& m = m_display.m_modeProperties;
-    m_refreshRateHz = static_cast<double>(m.parameters.refreshRate) / 1000.0;
-    printf("Display mode: %i x %i @ %fHz\n", m.parameters.visibleRegion.width, m.parameters.visibleRegion.height, m_refreshRateHz);
-  }
-
-  // Create logical device
-  {
-    // find graphics and present queue(s)
-    auto families = m_gpu.getQueueFamilyProperties();
-    bool found = false;
-    for (uint32_t i = 0; i < families.size(); ++i) {
-      if ((families[i].queueFlags & vk::QueueFlagBits::eGraphics) && (m_gpu.getSurfaceSupportKHR(i, m_surface.get()))) {
-        // RFE: implement support for different (graphics != present) families
-        m_presentFamily = i;
-        found           = true;
-      }
-    }
-    CHECK(found && "Found graphics and presentation queues");
-
-    float priority = 1.0f;
-    vk::DeviceQueueCreateInfo queueCreateInfo{vk::DeviceQueueCreateFlags(), m_presentFamily, 1, &priority};
-    vk::PhysicalDeviceFeatures deviceFeatures;
-
-    // create the logical device and the present queue
-    vk::DeviceCreateInfo deviceCreateInfo{vk::DeviceCreateFlags(),
-                                          1,
-                                          &queueCreateInfo,
-                                          0,
-                                          nullptr,
-                                          uint32_t(requiredDeviceExtensions.size()),
-                                          requiredDeviceExtensions.data(),
-                                          &deviceFeatures};
-
-    m_device = m_gpu.createDeviceUnique(deviceCreateInfo);
-    m_presentQueue = m_device->getQueue(m_presentFamily, 0);
-
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(m_device.get());
-  }
-
-  // Create swapchain
-  {
-    auto formats      = m_gpu.getSurfaceFormatsKHR(m_surface.get());
-    auto capabilities = m_gpu.getSurfaceCapabilitiesKHR(m_surface.get());
-    auto presentModes = m_gpu.getSurfacePresentModesKHR(m_surface.get());
-
-    printf("Supported swapchain formats:\n");
-    for (size_t i = 0; i < formats.size(); ++i) {
-      printf("  [%zu] %s %s\n", i, to_string(formats[i].format).c_str(), to_string(formats[i].colorSpace).c_str());
-    }
-
-    // image count depending on capabilities
-    uint32_t imageCount = std::min(capabilities.maxImageCount, capabilities.minImageCount + 1);
-
-    // Pick a format matching the interop textures (R8G8B8A8 / GL_RGBA8) so the
-    // blit can use a straight copy. A8B8G8R8UnormPack32 is byte-identical to
-    // R8G8B8A8Unorm on little-endian. Fall back to B8G8R8A8, then whatever the
-    // display supports.
-    vk::SurfaceFormatKHR preferredFormats[] = {
-      {vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
-      {vk::Format::eA8B8G8R8UnormPack32, vk::ColorSpaceKHR::eSrgbNonlinear},
-      {vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
-    };
-    vk::SurfaceFormatKHR format = formats[0]; // default fallback
-    if (formats.size() == 1 && formats[0].format == vk::Format::eUndefined) {
-      format = preferredFormats[0];
-    } else {
-      for (auto& pf : preferredFormats) {
-        if (contains(formats, pf)) {
-          format = pf;
-          break;
+    // Create logical device
+    {
+      // find graphics and present queue(s)
+      auto families = m_gpu.getQueueFamilyProperties();
+      bool found = false;
+      for (uint32_t i = 0; i < families.size(); ++i) {
+        if ((families[i].queueFlags & vk::QueueFlagBits::eGraphics) && (m_gpu.getSurfaceSupportKHR(i, m_surface.get()))) {
+          // RFE: implement support for different (graphics != present) families
+          m_presentFamily = i;
+          found = true;
         }
       }
+      CHECK(found && "Found graphics and presentation queues");
+
+      float priority = 1.0f;
+      vk::DeviceQueueCreateInfo queueCreateInfo{vk::DeviceQueueCreateFlags(), m_presentFamily, 1, &priority};
+      vk::PhysicalDeviceFeatures deviceFeatures;
+
+      // create the logical device and the present queue
+      vk::DeviceCreateInfo deviceCreateInfo{vk::DeviceCreateFlags(),
+        1,
+        &queueCreateInfo,
+        0,
+        nullptr,
+        uint32_t(requiredDeviceExtensions.size()),
+        requiredDeviceExtensions.data(),
+        &deviceFeatures};
+
+      m_device = m_gpu.createDeviceUnique(deviceCreateInfo);
+      m_presentQueue = m_device->getQueue(m_presentFamily, 0);
+
+      VULKAN_HPP_DEFAULT_DISPATCHER.init(m_device.get());
     }
 
-    printf("Selected swapchain format: %s %s\n", to_string(format.format).c_str(), to_string(format.colorSpace).c_str());
+    // Create swapchain
+    {
+      auto formats = m_gpu.getSurfaceFormatsKHR(m_surface.get());
+      auto capabilities = m_gpu.getSurfaceCapabilitiesKHR(m_surface.get());
+      auto presentModes = m_gpu.getSurfacePresentModesKHR(m_surface.get());
 
-    // use valid extent if available, otherwise derive from display mode
-    vk::Extent2D extent;
-    if (capabilities.currentExtent.width == 0xFFFFFFFF) {
-      extent = m_display.m_modeProperties.parameters.visibleRegion;
+      printf("Supported swapchain formats:\n");
+      for (size_t i = 0; i < formats.size(); ++i) {
+        printf("  [%zu] %s %s\n", i, to_string(formats[i].format).c_str(), to_string(formats[i].colorSpace).c_str());
+      }
 
-      auto clamp = [](int val, int min, int max) { return (val < min) ? min : (val > max) ? max : val; };
-      extent.width  = clamp(extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-      extent.height = clamp(extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
-    } else {
-      extent = capabilities.currentExtent;
-    }
+      // image count depending on capabilities
+      uint32_t imageCount = std::min(capabilities.maxImageCount, capabilities.minImageCount + 1);
 
-    vk::SurfaceTransformFlagBitsKHR pretransform = vk::SurfaceTransformFlagBitsKHR::eIdentity;
-    if((pretransform & capabilities.supportedTransforms) != pretransform) {
-      pretransform = capabilities.currentTransform;
-    }
-
-    printf("Supported presentation modes: ");
-    for (auto& m : presentModes) {
-      printf("%s ", to_string(m).c_str());
-    }
-
-    // Select a suitable presentation mode. eFifo is required to be supported so that'll be our fallback.
-    vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
-    if (contains(presentModes, vk::PresentModeKHR::eMailbox)) { // Mailbox: optimal
-      presentMode = vk::PresentModeKHR::eMailbox;
-    } else if (contains(presentModes, vk::PresentModeKHR::eImmediate)) { // Immediate might tear, but it'll keep latency low
-      presentMode = vk::PresentModeKHR::eImmediate;
-    }
-
-    printf("\nSelected presentation mode: %s\n", to_string(presentMode).c_str());
-
-    // VK_KHR_display
-    // create swapchain using the ddisplay surface created before
-
-    vk::SwapchainCreateInfoKHR swapchainCreateInfo{vk::SwapchainCreateFlagsKHR(),
-                                                   m_surface.get(),
-                                                   imageCount,
-                                                   format.format,
-                                                   format.colorSpace,
-                                                   extent,
-                                                   1,
-                                                   vk::ImageUsageFlags(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst),
-                                                   vk::SharingMode::eExclusive,
-                                                   0,
-                                                   nullptr,
-                                                   pretransform,
-                                                   vk::CompositeAlphaFlagBitsKHR::eOpaque,
-                                                   presentMode,
-                                                   VK_TRUE};
-
-    m_swapchain = m_device->createSwapchainKHRUnique(swapchainCreateInfo);
-    m_swapchainImages = m_device->getSwapchainImagesKHR(m_swapchain.get());
-    CHECK(!m_swapchainImages.empty());
-    m_swapchainExtent = extent;
-    m_swapchainFormat = format.format;
-  }
-
-  // Set up EGL context
-  {
-    EGLint deviceCount = 0;
-    EGL_CHECK(eglQueryDevicesEXT(0, NULL, &deviceCount));
-    CHECK(deviceCount > 0);
-
-    EGLDeviceEXT* eglDevices = new EGLDeviceEXT[deviceCount];
-    EGL_CHECK(eglQueryDevicesEXT(deviceCount, eglDevices, &deviceCount));
-
-    for (int i = 0; i < deviceCount; ++i) {
-      const char* drmName = eglQueryDeviceStringEXT(eglDevices[i], EGL_DRM_DEVICE_FILE_EXT);
-      fprintf(stderr, "EGL device [%d]: DRM file %s\n", i, drmName);
-      if (!drmName)
-        continue;
-
-      if (!strcmp(drmName, "drm-nvdc")) {
-        m_drmFd = drmOpen(drmName, NULL);
+      // Pick a format matching the interop textures (R8G8B8A8 / GL_RGBA8) so the
+      // blit can use a straight copy. A8B8G8R8UnormPack32 is byte-identical to
+      // R8G8B8A8Unorm on little-endian. Fall back to B8G8R8A8, then whatever the
+      // display supports.
+      vk::SurfaceFormatKHR preferredFormats[] = {
+        {      vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+        {vk::Format::eA8B8G8R8UnormPack32, vk::ColorSpaceKHR::eSrgbNonlinear},
+        {      vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+      };
+      vk::SurfaceFormatKHR format = formats[0]; // default fallback
+      if (formats.size() == 1 && formats[0].format == vk::Format::eUndefined) {
+        format = preferredFormats[0];
       } else {
-        m_drmFd = open(drmName, O_RDWR, 0);
-      }
-      if (m_drmFd <= 0) {
-        fprintf(stderr, "Unable to open DRM devices %s\n", drmName);
-        continue;
+        for (auto& pf : preferredFormats) {
+          if (contains(formats, pf)) {
+            format = pf;
+            break;
+          }
+        }
       }
 
-      m_eglDevice = eglDevices[i];
-      fprintf(stderr, " -- Opened DRM device for EGL device %d\n", i);
-      break;
+      printf("Selected swapchain format: %s %s\n", to_string(format.format).c_str(), to_string(format.colorSpace).c_str());
+
+      // use valid extent if available, otherwise derive from display mode
+      vk::Extent2D extent;
+      if (capabilities.currentExtent.width == 0xFFFFFFFF) {
+        extent = m_display.m_modeProperties.parameters.visibleRegion;
+
+        auto clamp = [](int val, int min, int max) { return (val < min) ? min : (val > max) ? max
+                                                                                            : val; };
+        extent.width = clamp(extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+        extent.height = clamp(extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+      } else {
+        extent = capabilities.currentExtent;
+      }
+
+      vk::SurfaceTransformFlagBitsKHR pretransform = vk::SurfaceTransformFlagBitsKHR::eIdentity;
+      if ((pretransform & capabilities.supportedTransforms) != pretransform) {
+        pretransform = capabilities.currentTransform;
+      }
+
+      printf("Supported presentation modes: ");
+      for (auto& m : presentModes) {
+        printf("%s ", to_string(m).c_str());
+      }
+
+      // Select a suitable presentation mode. eFifo is required to be supported so that'll be our fallback.
+      vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
+      if (contains(presentModes, vk::PresentModeKHR::eMailbox)) { // Mailbox: optimal
+        presentMode = vk::PresentModeKHR::eMailbox;
+      } else if (contains(presentModes, vk::PresentModeKHR::eImmediate)) { // Immediate might tear, but it'll keep latency low
+        presentMode = vk::PresentModeKHR::eImmediate;
+      }
+
+      printf("\nSelected presentation mode: %s\n", to_string(presentMode).c_str());
+
+      // VK_KHR_display
+      // create swapchain using the ddisplay surface created before
+
+      vk::SwapchainCreateInfoKHR swapchainCreateInfo{vk::SwapchainCreateFlagsKHR(),
+        m_surface.get(),
+        imageCount,
+        format.format,
+        format.colorSpace,
+        extent,
+        1,
+        vk::ImageUsageFlags(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst),
+        vk::SharingMode::eExclusive,
+        0,
+        nullptr,
+        pretransform,
+        vk::CompositeAlphaFlagBitsKHR::eOpaque,
+        presentMode,
+        VK_TRUE};
+
+      m_swapchain = m_device->createSwapchainKHRUnique(swapchainCreateInfo);
+      m_swapchainImages = m_device->getSwapchainImagesKHR(m_swapchain.get());
+      CHECK(!m_swapchainImages.empty());
+      m_swapchainExtent = extent;
+      m_swapchainFormat = format.format;
     }
 
-    delete[] eglDevices;
-    if (!m_eglDevice) {
-      fprintf(stderr, "Unable to open any DRM device.\n");
-      abort();
-    }
+    // Set up EGL context
+    {
+      EGLint deviceCount = 0;
+      EGL_CHECK(eglQueryDevicesEXT(0, NULL, &deviceCount));
+      CHECK(deviceCount > 0);
 
-    // clang-format off
-    EGLint attrs[] = {
-      EGL_DRM_MASTER_FD_EXT, m_drmFd,
-      EGL_NONE
-    };
-    // clang-format on
-    EGL_CHECK(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, m_eglDevice, attrs));
-    EGL_CHECK(eglInitialize(m_eglDisplay, NULL, NULL));
+      EGLDeviceEXT* eglDevices = new EGLDeviceEXT[deviceCount];
+      EGL_CHECK(eglQueryDevicesEXT(deviceCount, eglDevices, &deviceCount));
 
-    EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
-    eglBindAPI(EGL_OPENGL_ES_API);
+      for (int i = 0; i < deviceCount; ++i) {
+        const char* drmName = eglQueryDeviceStringEXT(eglDevices[i], EGL_DRM_DEVICE_FILE_EXT);
+        fprintf(stderr, "EGL device [%d]: DRM file %s\n", i, drmName);
+        if (!drmName)
+          continue;
 
-    EGL_CHECK(m_eglContext = eglCreateContext(m_eglDisplay, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ctx_attr)); // EGL_KHR_no_config_context
-    EGL_CHECK(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
+        if (!strcmp(drmName, "drm-nvdc")) {
+          m_drmFd = drmOpen(drmName, NULL);
+        } else {
+          m_drmFd = open(drmName, O_RDWR, 0);
+        }
+        if (m_drmFd <= 0) {
+          fprintf(stderr, "Unable to open DRM devices %s\n", drmName);
+          continue;
+        }
 
-    printf("OpenGL Renderer: %s || Version: %s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION));
-  }
+        m_eglDevice = eglDevices[i];
+        fprintf(stderr, " -- Opened DRM device for EGL device %d\n", i);
+        break;
+      }
 
-  // Create sync objects
-  {
-    m_syncData.resize(m_swapchainImages.size());
-    for(auto& s : m_syncData) {
-      // Interop texture
+      delete[] eglDevices;
+      if (!m_eglDevice) {
+        fprintf(stderr, "Unable to open any DRM device.\n");
+        abort();
+      }
 
       // clang-format off
-      vk::StructureChain<vk::ImageCreateInfo, vk::ExternalMemoryImageCreateInfo> imageCreateInfo = {
-        vk::ImageCreateInfo({
-          vk::ImageCreateFlags(),
-           vk::ImageType::e2D,
-           vk::Format::eR8G8B8A8Unorm,
-           vk::Extent3D(m_swapchainExtent, 1),
-           /*mipLevels=*/ 1,
-           /*arrayLayers=*/ 1,
-           vk::SampleCountFlagBits::e1,
-           vk::ImageTiling::eOptimal,
-           vk::ImageUsageFlags(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc),
-           vk::SharingMode::eExclusive,
-           /*queueFamilies=*/ 0, nullptr,
-           /*initialLayout=*/ vk::ImageLayout::eUndefined
-        }),
-        vk::ExternalMemoryImageCreateInfo({
-          vk::ExternalMemoryHandleTypeFlags(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd)
-        })};
-      // clang-format on
-
-      s.m_image = m_device->createImageUnique(imageCreateInfo.get());
-
-      vk::MemoryRequirements memoryRequirements = m_device->getImageMemoryRequirements(s.m_image.get());
-      vk::MemoryAllocateInfo memoryAllocateInfo{memoryRequirements.size, findMemoryType(memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlags())};
-
-      // pass in hint that we want to export this memory
-      vk::ExportMemoryAllocateInfo exportMemoryAllocateInfo(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd);
-      memoryAllocateInfo.setPNext(&exportMemoryAllocateInfo);
-
-      s.m_deviceMemory = m_device->allocateMemoryUnique(memoryAllocateInfo);
-
-      m_device->bindImageMemory(s.m_image.get(), s.m_deviceMemory.get(), 0);
-
-      // create OpenGL interop data
-      vk::MemoryGetFdInfoKHR getHandleInfo = { s.m_deviceMemory.get(), vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd };
-      s.m_handle =  m_device->getMemoryFdKHR(getHandleInfo);
-
-
-      GL(glCreateMemoryObjectsEXT(1, &s.m_memoryObject));
-      GL(glImportMemoryFdEXT(s.m_memoryObject, memoryRequirements.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, s.m_handle));
-
-      glGenTextures(1, &s.m_textureGL);
-      glBindTexture(GL_TEXTURE_2D, s.m_textureGL);
-      GL(glTexStorageMem2DEXT(GL_TEXTURE_2D, /*levels=*/ 1, GL_RGBA8, m_swapchainExtent.width, m_swapchainExtent.height, s.m_memoryObject, /*offset=*/ 0));
-
-      GL(glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, (GLint*) &s.m_internalFormat));
-
-      GL(glGenFramebuffers(1, &s.m_framebufferGL));
-      GL(glBindFramebuffer(GL_FRAMEBUFFER, s.m_framebufferGL));
-      GL(glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, s.m_textureGL, /*level=*/ 0));
-
-      GLenum framebufferStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-      CHECK(framebufferStatus == GL_FRAMEBUFFER_COMPLETE);
-
-
-      // Interop Semaphore
-      vk::SemaphoreCreateInfo       createInfo{};
-      vk::ExportSemaphoreCreateInfo exportCreateInfo{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd};
-      createInfo.setPNext(&exportCreateInfo);
-
-      auto makeSemaphore = [&](vk::UniqueSemaphore& s, int& fd, GLuint& g) {
-        s = m_device->createSemaphoreUnique(createInfo);
-        vk::SemaphoreGetFdInfoKHR getHandleInfo = {s.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd };
-        fd = m_device->getSemaphoreFdKHR(getHandleInfo);
-
-        glGenSemaphoresEXT(1, &g);
-        GL(glImportSemaphoreFdEXT(g, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd));
+      EGLint attrs[] = {
+        EGL_DRM_MASTER_FD_EXT, m_drmFd,
+        EGL_NONE
       };
+      // clang-format on
+      EGL_CHECK(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, m_eglDevice, attrs));
+      EGL_CHECK(eglInitialize(m_eglDisplay, NULL, NULL));
 
-      makeSemaphore(s.m_available, s.m_availableHandle, s.m_availableGL);
-      makeSemaphore(s.m_finished, s.m_finishedHandle, s.m_finishedGL);
+      EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+      eglBindAPI(EGL_OPENGL_ES_API);
+
+      EGL_CHECK(m_eglContext = eglCreateContext(m_eglDisplay, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ctx_attr)); // EGL_KHR_no_config_context
+      EGL_CHECK(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
+
+      printf("OpenGL Renderer: %s || Version: %s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION));
     }
-  }
 
-  // Swapchain management semaphores
-  for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
-    vk::SemaphoreCreateInfo ci{};
-    m_imageAcquiredSemaphores.push_back(m_device->createSemaphoreUnique(ci));
-    m_blitFinishedSemaphores.push_back(m_device->createSemaphoreUnique(ci));
-  }
+    // Create sync objects
+    {
+      m_syncData.resize(m_swapchainImages.size());
+      for (auto& s : m_syncData) {
+        // Interop texture
 
-  // Command pool and command buffers (recorded per-frame in submitTexture)
-  {
-    vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlagBits::eResetCommandBuffer, m_presentFamily};
-    m_commandPool = m_device->createCommandPoolUnique(commandPoolCreateInfo);
+        // clang-format off
+        vk::StructureChain<vk::ImageCreateInfo, vk::ExternalMemoryImageCreateInfo> imageCreateInfo = {
+          vk::ImageCreateInfo({
+            vk::ImageCreateFlags(),
+             vk::ImageType::e2D,
+             vk::Format::eR8G8B8A8Unorm,
+             vk::Extent3D(m_swapchainExtent, 1),
+             /*mipLevels=*/ 1,
+             /*arrayLayers=*/ 1,
+             vk::SampleCountFlagBits::e1,
+             vk::ImageTiling::eOptimal,
+             vk::ImageUsageFlags(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc),
+             vk::SharingMode::eExclusive,
+             /*queueFamilies=*/ 0, nullptr,
+             /*initialLayout=*/ vk::ImageLayout::eUndefined
+          }),
+          vk::ExternalMemoryImageCreateInfo({
+            vk::ExternalMemoryHandleTypeFlags(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd)
+          }),
+        };
+        // clang-format on
 
-    vk::CommandBufferAllocateInfo commandBufferAllocateInfo = {m_commandPool.get(), vk::CommandBufferLevel::ePrimary, uint32_t(m_swapchainImages.size())};
-    m_blitCommandBuffers = m_device->allocateCommandBuffers(commandBufferAllocateInfo);
-  }
+        s.m_image = m_device->createImageUnique(imageCreateInfo.get());
 
-  m_unsignaledFrames = static_cast<uint32_t>(m_swapchainImages.size());
+        vk::MemoryRequirements memoryRequirements = m_device->getImageMemoryRequirements(s.m_image.get());
+        vk::MemoryAllocateInfo memoryAllocateInfo{memoryRequirements.size, findMemoryType(memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlags())};
 
-  // Window RT
-  m_windowRenderTarget = new VKDirectSwapchainRenderTarget(this);
-  m_windowRenderTarget->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
+        // pass in hint that we want to export this memory
+        vk::ExportMemoryAllocateInfo exportMemoryAllocateInfo(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd);
+        memoryAllocateInfo.setPNext(&exportMemoryAllocateInfo);
+
+        s.m_deviceMemory = m_device->allocateMemoryUnique(memoryAllocateInfo);
+
+        m_device->bindImageMemory(s.m_image.get(), s.m_deviceMemory.get(), 0);
+
+        // create OpenGL interop data
+        vk::MemoryGetFdInfoKHR getHandleInfo = {s.m_deviceMemory.get(), vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd};
+        s.m_handle = m_device->getMemoryFdKHR(getHandleInfo);
 
 
-  // Scanout timestamp source setup.
+        GL(glCreateMemoryObjectsEXT(1, &s.m_memoryObject));
+        GL(glImportMemoryFdEXT(s.m_memoryObject, memoryRequirements.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, s.m_handle));
+
+        glGenTextures(1, &s.m_textureGL);
+        glBindTexture(GL_TEXTURE_2D, s.m_textureGL);
+        GL(glTexStorageMem2DEXT(GL_TEXTURE_2D, /*levels=*/ 1, GL_RGBA8, m_swapchainExtent.width, m_swapchainExtent.height, s.m_memoryObject, /*offset=*/ 0));
+
+        GL(glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, (GLint*) &s.m_internalFormat));
+
+        GL(glGenFramebuffers(1, &s.m_framebufferGL));
+        GL(glBindFramebuffer(GL_FRAMEBUFFER, s.m_framebufferGL));
+        GL(glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, s.m_textureGL, /*level=*/ 0));
+
+        GLenum framebufferStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        CHECK(framebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+
+
+        // Interop Semaphore
+        vk::SemaphoreCreateInfo createInfo{};
+        vk::ExportSemaphoreCreateInfo exportCreateInfo{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd};
+        createInfo.setPNext(&exportCreateInfo);
+
+        auto makeSemaphore = [&](vk::UniqueSemaphore& s, int& fd, GLuint& g) {
+          s = m_device->createSemaphoreUnique(createInfo);
+          vk::SemaphoreGetFdInfoKHR getHandleInfo = {s.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd};
+          fd = m_device->getSemaphoreFdKHR(getHandleInfo);
+
+          glGenSemaphoresEXT(1, &g);
+          GL(glImportSemaphoreFdEXT(g, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd));
+        };
+
+        makeSemaphore(s.m_available, s.m_availableHandle, s.m_availableGL);
+        makeSemaphore(s.m_finished, s.m_finishedHandle, s.m_finishedGL);
+      }
+    }
+
+    // Swapchain management semaphores
+    for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
+      vk::SemaphoreCreateInfo ci{};
+      m_imageAcquiredSemaphores.push_back(m_device->createSemaphoreUnique(ci));
+      m_blitFinishedSemaphores.push_back(m_device->createSemaphoreUnique(ci));
+    }
+
+    // Command pool and command buffers (recorded per-frame in submitTexture)
+    {
+      vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlagBits::eResetCommandBuffer, m_presentFamily};
+      m_commandPool = m_device->createCommandPoolUnique(commandPoolCreateInfo);
+
+      vk::CommandBufferAllocateInfo commandBufferAllocateInfo = {m_commandPool.get(), vk::CommandBufferLevel::ePrimary, uint32_t(m_swapchainImages.size())};
+      m_blitCommandBuffers = m_device->allocateCommandBuffers(commandBufferAllocateInfo);
+    }
+
+    m_unsignaledFrames = static_cast<uint32_t>(m_swapchainImages.size());
+
+    // Window RT
+    m_windowRenderTarget = new VKDirectSwapchainRenderTarget(this);
+    m_windowRenderTarget->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
+
+
+    // Scanout timestamp source setup.
 #ifdef IS_TEGRA
-  // Tegra: host1x vblank syncpoint. If init fails, leave the worker thread
-  // unstarted; lastPresentationTimestamp stays at 0. The render loop will
-  // continue to function; only consumers that depend on the timestamp are
-  // affected.
+    // Tegra: host1x vblank syncpoint. If init fails, leave the worker thread
+    // unstarted; lastPresentationTimestamp stays at 0. The render loop will
+    // continue to function; only consumers that depend on the timestamp are
+    // affected.
 
-  // We first need to render a frame to the device to get the output configured;
-  // without this, the ioctl hook can't catch the vblank syncpt ID.
-  {
-    VKGLSyncData* frame = acquireTexture();
-    glBindFramebuffer(GL_FRAMEBUFFER, frame->m_framebufferGL);
-    glViewport(0, 0, surfaceWidth(), surfaceHeight());
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glFlush();
-    submitTexture(frame);
-  }
+    // We first need to render a frame to the device to get the output configured;
+    // without this, the ioctl hook can't catch the vblank syncpt ID.
+    {
+      VKGLSyncData* frame = acquireTexture();
+      glBindFramebuffer(GL_FRAMEBUFFER, frame->m_framebufferGL);
+      glViewport(0, 0, surfaceWidth(), surfaceHeight());
+      glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+      glClear(GL_COLOR_BUFFER_BIT);
+      glFlush();
+      submitTexture(frame);
+    }
 
-  if (initScanoutSyncpt()) {
-    m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
-  } else {
-    fprintf(stderr, "RenderBackendVKDirect: host1x syncpt init failed; lastPresentationTimestamp will remain 0\n");
-  }
+    if (initScanoutSyncpt()) {
+      m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+    } else {
+      fprintf(stderr, "RenderBackendVKDirect: host1x syncpt init failed; lastPresentationTimestamp will remain 0\n");
+    }
 #else
-  // Non-Tegra: Vulkan display-event fence path.
-  m_scanoutEventFd = eventfd(0, 0);
-  CHECK(m_scanoutEventFd >= 0);
-  m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+    // Non-Tegra: Vulkan display-event fence path.
+    m_scanoutEventFd = eventfd(0, 0);
+    CHECK(m_scanoutEventFd >= 0);
+    m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
 #endif
 
   } catch (const std::exception& ex) {
@@ -733,15 +741,17 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
       {
         struct timespec mts;
         uint64_t cntvct_before, cntvct_after;
-        asm volatile("mrs %0, cntvct_el0" : "=r"(cntvct_before));
+        asm volatile("mrs %0, cntvct_el0"
+                     : "=r"(cntvct_before));
         clock_gettime(CLOCK_MONOTONIC, &mts);
-        asm volatile("mrs %0, cntvct_el0" : "=r"(cntvct_after));
+        asm volatile("mrs %0, cntvct_el0"
+                     : "=r"(cntvct_after));
         uint64_t cntvct_mid_ns = tscTimestampToNs((cntvct_before + cntvct_after) / 2);
         uint64_t mono_ns = (uint64_t) mts.tv_sec * 1000000000ULL + mts.tv_nsec;
         monoToTscOffsetNs = (int64_t) cntvct_mid_ns - (int64_t) mono_ns;
       }
 
-      uint64_t tsc_ns    = (uint64_t) ((int64_t) kernel_ns + monoToTscOffsetNs);
+      uint64_t tsc_ns = (uint64_t) ((int64_t) kernel_ns + monoToTscOffsetNs);
       m_lastPresentationTimestamp.store(tsc_ns, std::memory_order_release);
     }
     // Re-read the current value so the next threshold is always "next
@@ -800,30 +810,33 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
           // Block for the bulk of the wait. Convert to Vulkan timeout (nanoseconds).
           uint64_t blockNs = expectedScanout - now - kScanoutSpinMarginNs;
           // Timeout is intentional — we spin-poll for the final stretch below.
-          (void)m_device->waitForFences(fence, VK_TRUE, blockNs);
+          (void) m_device->waitForFences(fence, VK_TRUE, blockNs);
         }
       } else {
         // No prior timestamp — first frame. Use a coarse blocking wait that leaves
         // margin for the spin phase (one full refresh period minus the spin margin).
         uint64_t blockNs = refreshPeriodNs > kScanoutSpinMarginNs
-                             ? refreshPeriodNs - kScanoutSpinMarginNs : 0;
+          ? refreshPeriodNs - kScanoutSpinMarginNs
+          : 0;
         if (blockNs > 0)
           // Timeout is intentional — we spin-poll for the final stretch below.
-          (void)m_device->waitForFences(fence, VK_TRUE, blockNs);
+          (void) m_device->waitForFences(fence, VK_TRUE, blockNs);
       }
 
       // WFE spin-poll: power-gate the core between status checks.
       while (m_device->getFenceStatus(fence) == vk::Result::eNotReady) {
 #ifdef __aarch64__
-        asm volatile("wfe" ::: "memory");
+        asm volatile("wfe" ::
+                       : "memory");
 #else
         // x86 fallback — yield to the hyperthread / save a tiny bit of power
-        asm volatile("pause" ::: "memory");
+        asm volatile("pause" ::
+                       : "memory");
 #endif
       }
     } else {
       // Basic waitForFences strategy. Infinite timeout; result is always eSuccess.
-      (void)m_device->waitForFences(fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
+      (void) m_device->waitForFences(fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
     }
 
     m_lastPresentationTimestamp.store(currentTimeNs(), std::memory_order_release);
@@ -877,7 +890,7 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   {
     auto& b = m_blitCommandBuffers[m_frameIndex];
     b.reset();
-    b.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+    b.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     vk::ImageSubresourceRange subresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
 
@@ -902,14 +915,20 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
       /*buffer memory barriers=*/ nullptr,
       /*image memory barriers=*/ swapchainTransferDstBarrier);
 
-    std::array<vk::Offset3D, 2> srcoffsets{ vk::Offset3D{0, 0, 0}, vk::Offset3D{int32_t(m_swapchainExtent.width), int32_t(m_swapchainExtent.height), 1} };
-    std::array<vk::Offset3D, 2> dstoffsets{ vk::Offset3D{0, int32_t(m_swapchainExtent.height), 0}, vk::Offset3D{int32_t(m_swapchainExtent.width), 0, 1} };
+    std::array<vk::Offset3D, 2> srcoffsets{
+      vk::Offset3D{                               0,                                 0, 0},
+      vk::Offset3D{int32_t(m_swapchainExtent.width), int32_t(m_swapchainExtent.height), 1}
+    };
+    std::array<vk::Offset3D, 2> dstoffsets{
+      vk::Offset3D{                               0, int32_t(m_swapchainExtent.height), 0},
+      vk::Offset3D{int32_t(m_swapchainExtent.width),                                 0, 1}
+    };
     vk::ImageSubresourceLayers layers{vk::ImageAspectFlagBits::eColor, 0, 0, 1};
     vk::ImageBlit region{layers, srcoffsets, layers, dstoffsets};
 
     b.blitImage(m_syncData[m_frameIndex].m_image.get(), vk::ImageLayout::eTransferSrcOptimal,
-                m_swapchainImages[swapchainIndex], vk::ImageLayout::eTransferDstOptimal,
-                vk::ArrayProxy<const vk::ImageBlit>{1, &region}, vk::Filter::eNearest);
+      m_swapchainImages[swapchainIndex], vk::ImageLayout::eTransferDstOptimal,
+      vk::ArrayProxy<const vk::ImageBlit>{1, &region}, vk::Filter::eNearest);
 
     // clang-format off
     vk::ImageMemoryBarrier swapchainPresentSrcBarrier = {
@@ -938,16 +957,15 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   // Submit the blit.
   // Wait: "finished" (GL done) + "imageAcquired" (swapchain image ready).
   // Signal: "blitFinished" (for present) + "available" (GL can reuse this interop texture).
-  std::array<vk::Semaphore, 2> blitWaitSemaphores { m_syncData[m_frameIndex].m_finished.get(), m_imageAcquiredSemaphores[m_frameIndex].get() };
-  std::array<vk::PipelineStageFlags, 2> blitWaitStages { vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTopOfPipe };
+  std::array<vk::Semaphore, 2> blitWaitSemaphores{m_syncData[m_frameIndex].m_finished.get(), m_imageAcquiredSemaphores[m_frameIndex].get()};
+  std::array<vk::PipelineStageFlags, 2> blitWaitStages{vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTopOfPipe};
 
-  std::array<vk::Semaphore, 2> blitSignalSemaphores {m_blitFinishedSemaphores[m_frameIndex].get(), m_syncData[m_frameIndex].m_available.get()};
+  std::array<vk::Semaphore, 2> blitSignalSemaphores{m_blitFinishedSemaphores[m_frameIndex].get(), m_syncData[m_frameIndex].m_available.get()};
 
   vk::SubmitInfo submitInfo{blitWaitSemaphores,
-                            blitWaitStages,
-                            m_blitCommandBuffers[m_frameIndex],
-                            blitSignalSemaphores
-  };
+    blitWaitStages,
+    m_blitCommandBuffers[m_frameIndex],
+    blitSignalSemaphores};
 
   m_presentQueue.submit(submitInfo, vk::Fence{});
 
@@ -991,7 +1009,8 @@ uint32_t RenderBackendVKDirect::findMemoryType(uint32_t typeFilter, vk::MemoryPr
   throw std::runtime_error("failed to find suitable memory type!");
 }
 
-VKDirectSwapchainRenderTarget::VKDirectSwapchainRenderTarget(RenderBackendVKDirect* backend) : m_backend(backend) {
+VKDirectSwapchainRenderTarget::VKDirectSwapchainRenderTarget(RenderBackendVKDirect* backend) :
+  m_backend(backend) {
 
   m_width = m_backend->surfaceWidth();
   m_height = m_backend->surfaceHeight();

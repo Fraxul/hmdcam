@@ -42,7 +42,7 @@ public:
   const Buffer& currentBuffer() const { return m_buffers[m_currentBufferIdx]; }
 
 protected:
-  bool tryIoctl_(unsigned long request, const char* requestStr, void *param);
+  bool tryIoctl_(unsigned long request, const char* requestStr, void* param);
   void closeDevice();
 
   uint64_t m_tscToMonotonicRawOffset = 0;
@@ -80,6 +80,4 @@ protected:
   NvSciSyncFence m_eofFence = NvSciSyncFenceInitializer;
 
   cv::Mat m_lumaPlane;
-
 };
-

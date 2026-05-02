@@ -22,4 +22,3 @@ struct FxRenderView {
   // recomputes viewProjectionMatrix and frustum
   void recomputeFrustumData();
 };
-

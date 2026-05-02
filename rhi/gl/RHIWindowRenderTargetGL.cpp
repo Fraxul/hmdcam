@@ -11,7 +11,6 @@ RHIWindowRenderTargetGL::RHIWindowRenderTargetGL() {
 }
 
 RHIWindowRenderTargetGL::~RHIWindowRenderTargetGL() {
-
 }
 
 void RHIWindowRenderTargetGL::platformSetUpdatedWindowDimensions(uint32_t x, uint32_t y) {
@@ -22,4 +21,3 @@ void RHIWindowRenderTargetGL::platformSetUpdatedWindowDimensions(uint32_t x, uin
 bool RHIWindowRenderTargetGL::isWindowRenderTarget() const {
   return true;
 }
-

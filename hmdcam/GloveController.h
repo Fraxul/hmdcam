@@ -20,7 +20,6 @@ public:
   void drawConfigIMGUI();
 
 protected:
-
   struct ControllerState {
 
     // Each received packet pushes the delta-time between the previous and current packets to this.
@@ -45,5 +44,3 @@ protected:
   float m_gyroDeadzoneDPS = 1.0f;
   float m_gyroLog2Gain = -3.3f;
 };
-
-

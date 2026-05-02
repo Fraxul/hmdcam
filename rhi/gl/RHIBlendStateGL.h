@@ -8,6 +8,7 @@ public:
   virtual ~RHIBlendStateGL();
 
   const RHIBlendStateDescriptor& descriptor() const { return m_descriptor; }
+
 protected:
   RHIBlendStateDescriptor m_descriptor;
 };

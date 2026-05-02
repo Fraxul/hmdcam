@@ -56,17 +56,17 @@ NvSciSyncAttrList CreateNvSciSyncCpuSignalerAttrList(NvSciSyncModule syncModule)
   NvSciSyncAttrList list = nullptr;
   NVSCI_CHECK(NvSciSyncAttrListCreate(syncModule, &list));
 
-  bool                      cpuSignaler = true;
+  bool cpuSignaler = true;
   NvSciSyncAttrKeyValuePair keyValue[2];
   memset(keyValue, 0, sizeof(keyValue));
   keyValue[0].attrKey = NvSciSyncAttrKey_NeedCpuAccess;
-  keyValue[0].value   = (void *)&cpuSignaler;
-  keyValue[0].len     = sizeof(cpuSignaler);
+  keyValue[0].value = (void*) &cpuSignaler;
+  keyValue[0].len = sizeof(cpuSignaler);
 
   NvSciSyncAccessPerm cpuPerm = NvSciSyncAccessPerm_SignalOnly;
-  keyValue[1].attrKey         = NvSciSyncAttrKey_RequiredPerm;
-  keyValue[1].value           = (void *)&cpuPerm;
-  keyValue[1].len             = sizeof(cpuPerm);
+  keyValue[1].attrKey = NvSciSyncAttrKey_RequiredPerm;
+  keyValue[1].value = (void*) &cpuPerm;
+  keyValue[1].len = sizeof(cpuPerm);
 
   NVSCI_CHECK(NvSciSyncAttrListSetAttrs(list, keyValue, 2));
   return list;
@@ -76,17 +76,17 @@ NvSciSyncAttrList CreateNvSciSyncCpuWaiterAttrList(NvSciSyncModule syncModule) {
   NvSciSyncAttrList list = nullptr;
   NVSCI_CHECK(NvSciSyncAttrListCreate(syncModule, &list));
 
-  bool                      cpuWaiter = true;
+  bool cpuWaiter = true;
   NvSciSyncAttrKeyValuePair keyValue[2];
   memset(keyValue, 0, sizeof(keyValue));
   keyValue[0].attrKey = NvSciSyncAttrKey_NeedCpuAccess;
-  keyValue[0].value   = (void *)&cpuWaiter;
-  keyValue[0].len     = sizeof(cpuWaiter);
+  keyValue[0].value = (void*) &cpuWaiter;
+  keyValue[0].len = sizeof(cpuWaiter);
 
   NvSciSyncAccessPerm cpuPerm = NvSciSyncAccessPerm_WaitOnly;
-  keyValue[1].attrKey         = NvSciSyncAttrKey_RequiredPerm;
-  keyValue[1].value           = (void *)&cpuPerm;
-  keyValue[1].len             = sizeof(cpuPerm);
+  keyValue[1].attrKey = NvSciSyncAttrKey_RequiredPerm;
+  keyValue[1].value = (void*) &cpuPerm;
+  keyValue[1].len = sizeof(cpuPerm);
 
   NVSCI_CHECK(NvSciSyncAttrListSetAttrs(list, keyValue, 2));
   return list;
@@ -209,4 +209,3 @@ NvSciBufAttrList ReconcileNvSciBufAttrLists(NvSciBufAttrList list1, NvSciBufAttr
 
   return reconciledList;
 }
-

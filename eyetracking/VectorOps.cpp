@@ -158,7 +158,9 @@ void convertGrayToRGBA(const uint8_t* inGray, uint8_t* outRGBA, size_t count) {
     //   .val[1] = G = g   (gray copied to green)
     //   .val[2] = B = g   (gray copied to blue)
     //   .val[3] = A = 0xff
-    uint8x16x4_t rgba = {{g, g, g, alpha}};
+    uint8x16x4_t rgba = {
+      {g, g, g, alpha}
+    };
 
     // Store with 4-lane interleave: takes the struct-of-vectors layout above
     // and writes 64 bytes in array-of-structs (R,G,B,A,R,G,B,A,...) order.
@@ -199,7 +201,9 @@ void areaDownsample6x6(const uint8_t* __restrict inU8, size_t inputRowStride, ui
     // Row 0: initialize partial sums
     {
       const uint8_t* row = baseRow;
-      preload(row); preload(row + 64); preload(row + 128);
+      preload(row);
+      preload(row + 64);
+      preload(row + 128);
       for (size_t outputX = 0, off = 0; outputX < outputWidth; outputX += 8, off += 48) {
         uint8x16x3_t x = vld3q_u8(row + off);
         uint16x8_t s = vpaddlq_u8(x.val[0]);
@@ -212,7 +216,9 @@ void areaDownsample6x6(const uint8_t* __restrict inU8, size_t inputRowStride, ui
     // Rows 1-4: accumulate into partial sums (one row at a time for single-stream DRAM access)
     for (size_t rowIdx = 1; rowIdx < 5; ++rowIdx) {
       const uint8_t* row = baseRow + rowIdx * inputRowStride;
-      preload(row); preload(row + 64); preload(row + 128);
+      preload(row);
+      preload(row + 64);
+      preload(row + 128);
       for (size_t outputX = 0, off = 0; outputX < outputWidth; outputX += 8, off += 48) {
         uint16x8_t s = vld1q_u16(partialBuf + outputX);
         uint8x16x3_t x = vld3q_u8(row + off);
@@ -226,7 +232,9 @@ void areaDownsample6x6(const uint8_t* __restrict inU8, size_t inputRowStride, ui
     // Row 5 + divide: merge last accumulation with division
     {
       const uint8_t* row = baseRow + 5 * inputRowStride;
-      preload(row); preload(row + 64); preload(row + 128);
+      preload(row);
+      preload(row + 64);
+      preload(row + 128);
       for (size_t outputX = 0, off = 0; outputX < outputWidth; outputX += 8, off += 48) {
         uint16x8_t s = vld1q_u16(partialBuf + outputX);
         uint8x16x3_t x = vld3q_u8(row + off);
@@ -241,4 +249,3 @@ void areaDownsample6x6(const uint8_t* __restrict inU8, size_t inputRowStride, ui
   }
 #undef preload
 }
-

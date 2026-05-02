@@ -91,7 +91,6 @@ void FaceTrackingService::ProcessingState::loadTrackingEngine() {
     // Only support same input and output types
     assert(m_trackingModel->inputTensorDescriptor(0).dataType == desc.dataType);
   }
-
 }
 
 bool FaceTrackingService::loadCalibrationData() {
@@ -138,7 +137,6 @@ void FaceTrackingService::saveCalibrationData(cv::FileStorage& fs) {
   writeNode(fs, filterBetaExponent);
   writeNode(fs, filterDCutoff);
   fs.write("faceCamera", m_processingState.m_cameraDeviceName);
-
 }
 #undef writeNode
 
@@ -309,7 +307,7 @@ void FaceTrackingService::renderIMGUI() {
   if (ImGui::CollapsingHeader("Data graphs")) {
     int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
 
-    if (ImPlot::BeginPlot("##BrowPosition", ImVec2(-1,150), /*flags=*/ plotFlags)) {
+    if (ImPlot::BeginPlot("##BrowPosition", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
       ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
       ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_Lock);
       ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_processingState.m_graphData.size(), ImPlotCond_Always);
@@ -411,7 +409,6 @@ void FaceTrackingService::requestCapture() {
   if (ps.processingThreadAlive()) {
     ps.m_captureFileIndex = captureIndex;
   }
-
 }
 
 bool FaceTrackingService::processFrame() {
@@ -447,4 +444,3 @@ void FaceTrackingService::applyCalibrationData() {
   m_processingState.m_browPositionFilter.beta = powf(10.0f, m_filterBetaExponent);
   m_processingState.m_browPositionFilter.dcutoff = m_filterDCutoff;
 }
-

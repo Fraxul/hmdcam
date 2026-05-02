@@ -6,4 +6,3 @@ void FxRenderView::recomputeFrustumData() {
   viewProjectionMatrix = projectionMatrix * viewMatrix;
   //frustum = FxFrustum(viewProjectionMatrix);
 }
-

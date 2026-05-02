@@ -28,7 +28,12 @@ enum RHIStencilOperation : unsigned char {
 };
 
 struct RHIStencilTestStateDescriptor {
-  RHIStencilTestStateDescriptor() : failOp(kStencilKeep), depthFailOp(kStencilKeep), passOp(kStencilKeep), compareFunc(kCompareAlways), referenceValue(0) {}
+  RHIStencilTestStateDescriptor() :
+    failOp(kStencilKeep),
+    depthFailOp(kStencilKeep),
+    passOp(kStencilKeep),
+    compareFunc(kCompareAlways),
+    referenceValue(0) {}
 
   RHIStencilOperation failOp : 3;
   RHIStencilOperation depthFailOp : 3;
@@ -38,7 +43,14 @@ struct RHIStencilTestStateDescriptor {
 };
 
 struct RHIDepthStencilStateDescriptor {
-  RHIDepthStencilStateDescriptor() : depthBoundsMin(0.0f), depthBoundsMax(1.0f), depthTestEnable(false), depthWriteEnable(true), stencilTestEnable(false), depthFunction(kCompareLess), stencilMask(0xff) {}
+  RHIDepthStencilStateDescriptor() :
+    depthBoundsMin(0.0f),
+    depthBoundsMax(1.0f),
+    depthTestEnable(false),
+    depthWriteEnable(true),
+    stencilTestEnable(false),
+    depthFunction(kCompareLess),
+    stencilMask(0xff) {}
 
   RHIStencilTestStateDescriptor stencilFront;
   RHIStencilTestStateDescriptor stencilBack;
@@ -58,6 +70,4 @@ class RHIDepthStencilState : public RHIObject {
 public:
   typedef boost::intrusive_ptr<RHIDepthStencilState> ptr;
   virtual ~RHIDepthStencilState();
-
 };
-

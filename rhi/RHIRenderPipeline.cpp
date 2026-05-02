@@ -2,7 +2,6 @@
 #include <boost/functional/hash.hpp>
 
 RHIRenderPipeline::~RHIRenderPipeline() {
-
 }
 
 size_t RHIRenderPipelineDescriptor::hash() const {
@@ -14,4 +13,3 @@ size_t RHIRenderPipelineDescriptor::hash() const {
   boost::hash_combine(h, boost::hash_value(primitiveRestartEnabled));
   return h;
 }
-

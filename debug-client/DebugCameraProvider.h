@@ -48,7 +48,10 @@ protected:
   bool m_doCudaGLInterop = true;
   int m_fd = -1;
 
-  static void* streamThreadEntryPoint(void* x) { reinterpret_cast<DebugCameraProvider*>(x)->streamThreadFn(); return NULL; }
+  static void* streamThreadEntryPoint(void* x) {
+    reinterpret_cast<DebugCameraProvider*>(x)->streamThreadFn();
+    return NULL;
+  }
   void streamThreadFn();
   pthread_t m_streamThread = 0;
   pthread_mutex_t m_frameConsumedMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -105,4 +108,3 @@ protected:
   std::vector<cv::Mat> m_stereoDisparityInputRecvMats[2];
   std::vector<cv::Mat> m_stereoDisparityRecvMats;
 };
-

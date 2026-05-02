@@ -38,7 +38,11 @@ protected:
 };
 
 struct RHIRenderTargetDescriptorElement {
-  RHIRenderTargetDescriptorElement(RHISurface::ptr surface_ = RHISurface::ptr(), uint8_t level_ = 0) : surface(surface_), singleLayer(false), layerIndex(0), level(level_) {}
+  RHIRenderTargetDescriptorElement(RHISurface::ptr surface_ = RHISurface::ptr(), uint8_t level_ = 0) :
+    surface(surface_),
+    singleLayer(false),
+    layerIndex(0),
+    level(level_) {}
 
   static RHIRenderTargetDescriptorElement singleLayerElement(RHISurface::ptr surface_, uint8_t layerIndex_, uint8_t level_ = 0) {
     RHIRenderTargetDescriptorElement res(surface_, level_);
@@ -56,8 +60,11 @@ struct RHIRenderTargetDescriptorElement {
 struct RHIRenderTargetDescriptor {
   RHIRenderTargetDescriptor() {}
 
-  RHIRenderTargetDescriptor(const std::initializer_list<RHIRenderTargetDescriptorElement>& colorTargets_, RHIRenderTargetDescriptorElement depthStencilTarget_ = RHIRenderTargetDescriptorElement()) : colorTargets(colorTargets_.begin(), colorTargets_.end()), depthStencilTarget(depthStencilTarget_) {}
-  RHIRenderTargetDescriptor(const std::initializer_list<RHISurface::ptr>& colorTargets_, RHISurface::ptr depthStencilTarget_ = RHISurface::ptr()) : depthStencilTarget(depthStencilTarget_) {
+  RHIRenderTargetDescriptor(const std::initializer_list<RHIRenderTargetDescriptorElement>& colorTargets_, RHIRenderTargetDescriptorElement depthStencilTarget_ = RHIRenderTargetDescriptorElement()) :
+    colorTargets(colorTargets_.begin(), colorTargets_.end()),
+    depthStencilTarget(depthStencilTarget_) {}
+  RHIRenderTargetDescriptor(const std::initializer_list<RHISurface::ptr>& colorTargets_, RHISurface::ptr depthStencilTarget_ = RHISurface::ptr()) :
+    depthStencilTarget(depthStencilTarget_) {
     for (std::initializer_list<RHISurface::ptr>::const_iterator it = colorTargets_.begin(); it != colorTargets_.end(); ++it) {
       colorTargets.push_back(RHIRenderTargetDescriptorElement(*it));
     }
@@ -66,4 +73,3 @@ struct RHIRenderTargetDescriptor {
   boost::container::static_vector<RHIRenderTargetDescriptorElement, kRHIMaxColorRenderTargets> colorTargets;
   RHIRenderTargetDescriptorElement depthStencilTarget;
 };
-

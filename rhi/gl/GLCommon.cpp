@@ -25,13 +25,11 @@ void initGL() {
   printf("epoxy_is_desktop_gl: %s", epoxy_is_desktop_gl() ? "true" : "false");
   printf("epoxy_has_egl: %s", epoxy_has_egl() ? "true" : "false");
 
-/*
+  /*
   GLenum glewErr = glewInit();
   if (glewErr != GLEW_OK) {
     fprintf(stderr, "GLEW initialization failed: %s", glewGetErrorString(glewErr));
     assert(false && "initGL(): GLEW initialization failed");
   }
 */
-
 }
-

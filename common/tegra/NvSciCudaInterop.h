@@ -45,4 +45,3 @@ public:
   NvSciSyncFence m_nvSciSyncFence = NvSciSyncFenceInitializer;
   CUexternalSemaphore m_cuSem;
 };
-

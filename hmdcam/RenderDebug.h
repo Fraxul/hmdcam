@@ -6,4 +6,3 @@ bool RenderDebugSubsystemEnabled();
 RHISurface::ptr renderAcquireDebugSurface();
 void renderSubmitDebugSurface(RHISurface::ptr);
 const char* renderDebugURL();
-

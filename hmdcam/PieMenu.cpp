@@ -5,13 +5,13 @@
 
 
 struct PieMenuContext {
-  static const int  c_iMaxPieMenuStack = 8;
-  static const int  c_iMaxPieItemCount = 12;
-  static const int  c_iRadiusEmpty = 30;
-  static const int  c_iRadiusMin = 30;
-  static const int  c_iRadiusPadding = 10; // Padding added to computed menu height (max of diameters of all items in that menu level)
-  static const int  c_iMinItemCount = 3;
-  static const int  c_iMinItemCountPerLevel = 3;
+  static const int c_iMaxPieMenuStack = 8;
+  static const int c_iMaxPieItemCount = 12;
+  static const int c_iRadiusEmpty = 30;
+  static const int c_iRadiusMin = 30;
+  static const int c_iRadiusPadding = 10; // Padding added to computed menu height (max of diameters of all items in that menu level)
+  static const int c_iMinItemCount = 3;
+  static const int c_iMinItemCountPerLevel = 3;
 
   static const int c_iDelayIndicatorSize = 60;
   static const int c_iDelayIndicatorThickness = 6;
@@ -19,26 +19,26 @@ struct PieMenuContext {
   static const int c_iDelayFrames = 30; // Number of frames to delay opening of the menu and instead show a progress indicator. Set to 0 to open instantly.
 
   struct PieMenu {
-    int             m_iCurrentIndex;
-    float           m_fMaxItemSqrDiameter;
-    float           m_fLastMaxItemSqrDiameter;
-    int             m_iHoveredItem;
-    int             m_iLastHoveredItem;
-    int             m_iClickedItem;
-    bool            m_oItemIsSubMenu[c_iMaxPieItemCount];
-    ImVector<char>  m_oItemNames[c_iMaxPieItemCount];
-    ImVec2          m_oItemSizes[c_iMaxPieItemCount];
-    bool            m_oItemIsEnabled[c_iMaxPieItemCount];
+    int m_iCurrentIndex;
+    float m_fMaxItemSqrDiameter;
+    float m_fLastMaxItemSqrDiameter;
+    int m_iHoveredItem;
+    int m_iLastHoveredItem;
+    int m_iClickedItem;
+    bool m_oItemIsSubMenu[c_iMaxPieItemCount];
+    ImVector<char> m_oItemNames[c_iMaxPieItemCount];
+    ImVec2 m_oItemSizes[c_iMaxPieItemCount];
+    bool m_oItemIsEnabled[c_iMaxPieItemCount];
   };
 
-  PieMenu   m_oPieMenuStack[c_iMaxPieMenuStack];
-  int       m_iCurrentStackIndex = -1;
-  int       m_iMaxStackIndex = -1;
-  int       m_iLastRenderedFrame = 0;
-  int       m_iDelayTimerFrame = 0;
-  ImVec2    m_oCenter;
-  int       m_iMouseButton = 0;
-  bool      m_bClose = false;
+  PieMenu m_oPieMenuStack[c_iMaxPieMenuStack];
+  int m_iCurrentStackIndex = -1;
+  int m_iMaxStackIndex = -1;
+  int m_iLastRenderedFrame = 0;
+  int m_iDelayTimerFrame = 0;
+  ImVec2 m_oCenter;
+  int m_iMouseButton = 0;
+  bool m_bClose = false;
 };
 
 static PieMenuContext s_oPieMenuContext;
@@ -46,15 +46,15 @@ static PieMenuContext s_oPieMenuContext;
 
 // Adapted from https://github.com/AnClark/ImGui_Arc_ProgressBar
 void DrawArc(float size, float max_angle_factor, float fill_fraction, float thickness, ImVec2 pos) {
-  ImDrawList *draw_list = ImGui::GetForegroundDrawList();
+  ImDrawList* draw_list = ImGui::GetForegroundDrawList();
 
-  float x = pos.x, y = pos.y;    // Position
+  float x = pos.x, y = pos.y; // Position
 
-  constexpr float ONE_DIV_360f = 1.0f / 360.0f;   // Performance tweak
+  constexpr float ONE_DIV_360f = 1.0f / 360.0f; // Performance tweak
 
   float a_min_factor, a_max_factor, a_max_factor_100percentage;
-  a_min_factor = -1.5f + ((360.0f - max_angle_factor) * ONE_DIV_360f);    // Angle PI*-1.5f resides in the bottom point of circle
-  a_max_factor_100percentage = (a_min_factor + 1.0f) * -1.0f;       // Arc max factor on 100% percentage state
+  a_min_factor = -1.5f + ((360.0f - max_angle_factor) * ONE_DIV_360f); // Angle PI*-1.5f resides in the bottom point of circle
+  a_max_factor_100percentage = (a_min_factor + 1.0f) * -1.0f; // Arc max factor on 100% percentage state
 
   float a_factor_delta = (a_max_factor_100percentage - a_min_factor) * fill_fraction;
   a_max_factor = a_min_factor + a_factor_delta;
@@ -78,7 +78,7 @@ void BeginPieMenuEx() {
   PieMenuContext::PieMenu& oPieMenu = s_oPieMenuContext.m_oPieMenuStack[s_oPieMenuContext.m_iCurrentStackIndex];
   oPieMenu.m_iCurrentIndex = 0;
   oPieMenu.m_fMaxItemSqrDiameter = 0.f;
-  if( !ImGui::IsMouseReleased( s_oPieMenuContext.m_iMouseButton ) )
+  if (!ImGui::IsMouseReleased(s_oPieMenuContext.m_iMouseButton))
     oPieMenu.m_iHoveredItem = -1;
 }
 
@@ -102,7 +102,7 @@ bool BeginPiePopup(const char* pName, int iMouseButton) {
     }
     s_oPieMenuContext.m_bClose = false;
 
-    ImGui::SetNextWindowPos( ImVec2( -100.f, -100.f ), ImGuiCond_Appearing );
+    ImGui::SetNextWindowPos(ImVec2(-100.f, -100.f), ImGuiCond_Appearing);
     bool bOpened = ImGui::BeginPopup(pName, ImGuiWindowFlags_NoBackground);
     if (bOpened) {
       int iCurrentFrame = ImGui::GetFrameCount();
@@ -161,11 +161,11 @@ void EndPiePopup() {
 
   const ImVec2 oMousePos = ImGui::GetIO().MousePos;
   const ImVec2 oDragDelta = ImVec2(oMousePos.x - s_oPieMenuContext.m_oCenter.x, oMousePos.y - s_oPieMenuContext.m_oCenter.y);
-  const float fDragDistSqr = oDragDelta.x*oDragDelta.x + oDragDelta.y*oDragDelta.y;
+  const float fDragDistSqr = oDragDelta.x * oDragDelta.x + oDragDelta.y * oDragDelta.y;
 
-  float fCurrentRadius = (float)PieMenuContext::c_iRadiusEmpty;
+  float fCurrentRadius = (float) PieMenuContext::c_iRadiusEmpty;
 
-  ImRect oArea = ImRect( s_oPieMenuContext.m_oCenter, s_oPieMenuContext.m_oCenter );
+  ImRect oArea = ImRect(s_oPieMenuContext.m_oCenter, s_oPieMenuContext.m_oCenter);
 
   bool bItemHovered = false;
 
@@ -185,43 +185,43 @@ void EndPiePopup() {
     const float item_arc_span = 2 * IM_PI / ImMax(PieMenuContext::c_iMinItemCount + PieMenuContext::c_iMinItemCountPerLevel * iIndex, oPieMenu.m_iCurrentIndex);
     float drag_angle = atan2f(oDragDelta.y, oDragDelta.x);
 
-    float fRotate = fLastRotate - item_arc_span * ( oPieMenu.m_iCurrentIndex - 1.f ) / 2.f;
+    float fRotate = fLastRotate - item_arc_span * (oPieMenu.m_iCurrentIndex - 1.f) / 2.f;
     int item_hovered = -1;
-    for( int item_n = 0; item_n < oPieMenu.m_iCurrentIndex; item_n++ ) {
-      const char* item_label = oPieMenu.m_oItemNames[ item_n ].Data;
+    for (int item_n = 0; item_n < oPieMenu.m_iCurrentIndex; item_n++) {
+      const char* item_label = oPieMenu.m_oItemNames[item_n].Data;
       // const float inner_spacing = oStyle.ItemInnerSpacing.x / fMinRadius / 2;
-      const float fMinInnerSpacing = oStyle.ItemInnerSpacing.x / ( fMinRadius * 2.f );
-      const float fMaxInnerSpacing = oStyle.ItemInnerSpacing.x / ( fMaxRadius * 2.f );
-      const float item_inner_ang_min = item_arc_span * ( item_n - 0.5f + fMinInnerSpacing ) + fRotate;
-      const float item_inner_ang_max = item_arc_span * ( item_n + 0.5f - fMinInnerSpacing ) + fRotate;
-      const float item_outer_ang_min = item_arc_span * ( item_n - 0.5f + fMaxInnerSpacing ) + fRotate;
-      const float item_outer_ang_max = item_arc_span * ( item_n + 0.5f - fMaxInnerSpacing ) + fRotate;
+      const float fMinInnerSpacing = oStyle.ItemInnerSpacing.x / (fMinRadius * 2.f);
+      const float fMaxInnerSpacing = oStyle.ItemInnerSpacing.x / (fMaxRadius * 2.f);
+      const float item_inner_ang_min = item_arc_span * (item_n - 0.5f + fMinInnerSpacing) + fRotate;
+      const float item_inner_ang_max = item_arc_span * (item_n + 0.5f - fMinInnerSpacing) + fRotate;
+      const float item_outer_ang_min = item_arc_span * (item_n - 0.5f + fMaxInnerSpacing) + fRotate;
+      const float item_outer_ang_max = item_arc_span * (item_n + 0.5f - fMaxInnerSpacing) + fRotate;
 
       // Hit-test mouse cursor vs. item
       bool hovered = false;
       // Pointer is allowed to exit fMaxRadius if we're on the outer ring of the menu.
       // This implements a "gesture" style, where you can drag past the outer ring to select.
       if ((fDragDistSqr >= (fMinRadius * fMinRadius)) && ((iIndex == s_oPieMenuContext.m_iMaxStackIndex) || (fDragDistSqr < (fMaxRadius * fMaxRadius)))) {
-        while( ( drag_angle - item_inner_ang_min ) < 0.f )
+        while ((drag_angle - item_inner_ang_min) < 0.f)
           drag_angle += 2.f * IM_PI;
-        while( ( drag_angle - item_inner_ang_min ) > 2.f * IM_PI )
+        while ((drag_angle - item_inner_ang_min) > 2.f * IM_PI)
           drag_angle -= 2.f * IM_PI;
 
-        if( drag_angle >= item_inner_ang_min && drag_angle < item_inner_ang_max ) {
+        if (drag_angle >= item_inner_ang_min && drag_angle < item_inner_ang_max) {
           hovered = true;
-          bItemHovered = !oPieMenu.m_oItemIsSubMenu[ item_n ];
+          bItemHovered = !oPieMenu.m_oItemIsSubMenu[item_n];
         }
       }
 
-      int arc_segments = (int)( 32 * item_arc_span / ( 2 * IM_PI ) ) + 1;
+      int arc_segments = (int) (32 * item_arc_span / (2 * IM_PI)) + 1;
 
       //ImU32 iColor = hovered ? ImColor( 100, 100, 150 ) : ImColor( 70, 70, 70 );
       //iColor = ImGui::GetColorU32( hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg );
-      ImU32 iColor = ImGui::GetColorU32( hovered ? ImGuiCol_Button : ImGuiCol_ButtonHovered );
+      ImU32 iColor = ImGui::GetColorU32(hovered ? ImGuiCol_Button : ImGuiCol_ButtonHovered);
       //iColor |= 0xFF000000;
 
       const float fAngleStepInner = (item_inner_ang_max - item_inner_ang_min) / arc_segments;
-      const float fAngleStepOuter = ( item_outer_ang_max - item_outer_ang_min ) / arc_segments;
+      const float fAngleStepOuter = (item_outer_ang_max - item_outer_ang_min) / arc_segments;
       pDrawList->PrimReserve(arc_segments * 6, (arc_segments + 1) * 2);
       for (int iSeg = 0; iSeg <= arc_segments; ++iSeg) {
         float fCosInner = cosf(item_inner_ang_min + fAngleStepInner * iSeg);
@@ -241,9 +241,9 @@ void EndPiePopup() {
         pDrawList->PrimWriteVtx(ImVec2(s_oPieMenuContext.m_oCenter.x + fCosOuter * (fMaxRadius - oStyle.ItemInnerSpacing.x), s_oPieMenuContext.m_oCenter.y + fSinOuter * (fMaxRadius - oStyle.ItemInnerSpacing.x)), vTexUvWhitePixel, iColor);
       }
 
-      float fRadCenter = ( item_arc_span * item_n ) + fRotate;
-      ImVec2 oOuterCenter = ImVec2( s_oPieMenuContext.m_oCenter.x + cosf( fRadCenter ) * fMaxRadius, s_oPieMenuContext.m_oCenter.y + sinf( fRadCenter ) * fMaxRadius );
-      oArea.Add( oOuterCenter );
+      float fRadCenter = (item_arc_span * item_n) + fRotate;
+      ImVec2 oOuterCenter = ImVec2(s_oPieMenuContext.m_oCenter.x + cosf(fRadCenter) * fMaxRadius, s_oPieMenuContext.m_oCenter.y + sinf(fRadCenter) * fMaxRadius);
+      oArea.Add(oOuterCenter);
 
       if (oPieMenu.m_oItemIsSubMenu[item_n]) {
         ImVec2 oTrianglePos[3];
@@ -251,12 +251,12 @@ void EndPiePopup() {
         float fRadLeft = fRadCenter - 5.f / fMaxRadius;
         float fRadRight = fRadCenter + 5.f / fMaxRadius;
 
-        oTrianglePos[ 0 ].x = s_oPieMenuContext.m_oCenter.x + cosf( fRadCenter ) * ( fMaxRadius - 5.f );
-        oTrianglePos[ 0 ].y = s_oPieMenuContext.m_oCenter.y + sinf( fRadCenter ) * ( fMaxRadius - 5.f );
-        oTrianglePos[ 1 ].x = s_oPieMenuContext.m_oCenter.x + cosf( fRadLeft ) * ( fMaxRadius - 10.f );
-        oTrianglePos[ 1 ].y = s_oPieMenuContext.m_oCenter.y + sinf( fRadLeft ) * ( fMaxRadius - 10.f );
-        oTrianglePos[ 2 ].x = s_oPieMenuContext.m_oCenter.x + cosf( fRadRight ) * ( fMaxRadius - 10.f );
-        oTrianglePos[ 2 ].y = s_oPieMenuContext.m_oCenter.y + sinf( fRadRight ) * ( fMaxRadius - 10.f );
+        oTrianglePos[0].x = s_oPieMenuContext.m_oCenter.x + cosf(fRadCenter) * (fMaxRadius - 5.f);
+        oTrianglePos[0].y = s_oPieMenuContext.m_oCenter.y + sinf(fRadCenter) * (fMaxRadius - 5.f);
+        oTrianglePos[1].x = s_oPieMenuContext.m_oCenter.x + cosf(fRadLeft) * (fMaxRadius - 10.f);
+        oTrianglePos[1].y = s_oPieMenuContext.m_oCenter.y + sinf(fRadLeft) * (fMaxRadius - 10.f);
+        oTrianglePos[2].x = s_oPieMenuContext.m_oCenter.x + cosf(fRadRight) * (fMaxRadius - 10.f);
+        oTrianglePos[2].y = s_oPieMenuContext.m_oCenter.y + sinf(fRadRight) * (fMaxRadius - 10.f);
 
         pDrawList->AddTriangleFilled(oTrianglePos[0], oTrianglePos[1], oTrianglePos[2], ImColor(255, 255, 255));
       }
@@ -286,29 +286,29 @@ void EndPiePopup() {
     oPieMenu.m_iLastHoveredItem = item_hovered;
 
     fLastRotate = item_arc_span * oPieMenu.m_iLastHoveredItem + fRotate;
-    if( item_hovered == -1 || !oPieMenu.m_oItemIsSubMenu[item_hovered] )
+    if (item_hovered == -1 || !oPieMenu.m_oItemIsSubMenu[item_hovered])
       break;
   }
 
   pDrawList->PopClipRect();
 
-  if( oArea.Min.x < 0.f ) {
-    s_oPieMenuContext.m_oCenter.x = ( s_oPieMenuContext.m_oCenter.x - oArea.Min.x );
+  if (oArea.Min.x < 0.f) {
+    s_oPieMenuContext.m_oCenter.x = (s_oPieMenuContext.m_oCenter.x - oArea.Min.x);
   }
-  if( oArea.Min.y < 0.f ) {
-    s_oPieMenuContext.m_oCenter.y = ( s_oPieMenuContext.m_oCenter.y - oArea.Min.y );
+  if (oArea.Min.y < 0.f) {
+    s_oPieMenuContext.m_oCenter.y = (s_oPieMenuContext.m_oCenter.y - oArea.Min.y);
   }
 
   ImVec2 oDisplaySize = ImGui::GetIO().DisplaySize;
-  if( oArea.Max.x > oDisplaySize.x ) {
-    s_oPieMenuContext.m_oCenter.x = ( s_oPieMenuContext.m_oCenter.x - oArea.Max.x ) + oDisplaySize.x;
+  if (oArea.Max.x > oDisplaySize.x) {
+    s_oPieMenuContext.m_oCenter.x = (s_oPieMenuContext.m_oCenter.x - oArea.Max.x) + oDisplaySize.x;
   }
-  if( oArea.Max.y > oDisplaySize.y ) {
-    s_oPieMenuContext.m_oCenter.y = ( s_oPieMenuContext.m_oCenter.y - oArea.Max.y ) + oDisplaySize.y;
+  if (oArea.Max.y > oDisplaySize.y) {
+    s_oPieMenuContext.m_oCenter.y = (s_oPieMenuContext.m_oCenter.y - oArea.Max.y) + oDisplaySize.y;
   }
 
-  if( s_oPieMenuContext.m_bClose ||
-    ( !bItemHovered && ImGui::IsMouseReleased( s_oPieMenuContext.m_iMouseButton ) ) ) {
+  if (s_oPieMenuContext.m_bClose ||
+    (!bItemHovered && ImGui::IsMouseReleased(s_oPieMenuContext.m_iMouseButton))) {
     ImGui::CloseCurrentPopup();
   }
 
@@ -384,9 +384,8 @@ bool PieMenuItem(const char* pName) {
   bool bActive = oPieMenu.m_iCurrentIndex == oPieMenu.m_iHoveredItem;
   ++oPieMenu.m_iCurrentIndex;
 
-  if( bActive )
+  if (bActive)
     s_oPieMenuContext.m_bClose = true;
 
   return bActive && bEnabled;
 }
-

@@ -3,7 +3,6 @@
 #include "stb/stb_image_write.h"
 
 TrackingThreadBase::~TrackingThreadBase() {
-
 }
 
 void TrackingThreadBase::shutdownThread() {
@@ -73,4 +72,3 @@ void TrackingThreadBase::processingThreadFn() {
 
   m_processingThreadAlive = false;
 }
-

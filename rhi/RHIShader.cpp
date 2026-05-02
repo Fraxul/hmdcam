@@ -33,12 +33,11 @@ const std::string& lookupShaderSourceCache(const std::string& path, bool forceRe
   return source;
 }
 
-RHIShader::RHIShader() : m_localWorkgroupSize(glm::uvec3(0)) {
-
+RHIShader::RHIShader() :
+  m_localWorkgroupSize(glm::uvec3(0)) {
 }
 
 RHIShader::~RHIShader() {
-
 }
 
 RHIShaderDescriptor::RHIShaderDescriptor() {
@@ -237,10 +236,10 @@ std::map<RHIShaderDescriptor::ShadingUnit, std::string> RHIShaderDescriptor::pre
         std::string outFilename = namebuf; //FxVFS::expandCachePath(std::string(namebuf));
 
         std::ofstream of(outFilename);
-        of << res[unit_it->first];;
+        of << res[unit_it->first];
+        ;
         printf("RHI: wrote preprocessed shader dump to %s\n", outFilename.c_str());
       }
-
     }
   }
   return res;
@@ -288,4 +287,3 @@ void RHIShaderDescriptor::debugDumpSourceMap() const {
     fprintf(stderr, "[%s] %s\n", flag_it->first.c_str(), flag_it->second.c_str());
   }
 }
-

@@ -7,7 +7,6 @@ public:
   virtual ~DepthMapGeneratorMock();
 
 protected:
-
   virtual void internalLoadSettings(cv::FileStorage&);
   virtual void internalSaveSettings(cv::FileStorage&);
   virtual void internalProcessFrame();
@@ -31,4 +30,3 @@ protected:
 private:
   ViewDataMock* viewDataAtIndex(size_t index) { return static_cast<ViewDataMock*>(m_viewData[index]); }
 };
-

@@ -7,7 +7,11 @@
 #include <cstdlib>
 #include <cassert>
 
-#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
+#define die(msg, ...)                         \
+  do {                                        \
+    fprintf(stderr, msg "\n", ##__VA_ARGS__); \
+    abort();                                  \
+  } while (0)
 
 extern CUdevice cudaDevice;
 
@@ -32,13 +36,13 @@ NvSciCudaInteropBuffer::NvSciCudaInteropBuffer(NvSciBufAttrList attrList) {
   NVSCI_CHECK(NvSciBufObjAlloc(attrList, &m_nvSciBuf));
 
   // Query some of the NvSciBuf attrs to set up CUDA interop
-  NvSciBufAttrKeyValuePair queryAttrs[] {
-    { NvSciBufImageAttrKey_Size, nullptr, 0 },
-    { NvSciBufImageAttrKey_PlaneWidth, nullptr, 0 },
-    { NvSciBufImageAttrKey_PlaneHeight, nullptr, 0 },
-    { NvSciBufImageAttrKey_PlaneBitsPerPixel, nullptr, 0 },
-    { NvSciBufImageAttrKey_PlaneDatatype, nullptr, 0 },
-    { NvSciBufImageAttrKey_PlaneChannelCount, nullptr, 0 },
+  NvSciBufAttrKeyValuePair queryAttrs[]{
+    {             NvSciBufImageAttrKey_Size, nullptr, 0},
+    {       NvSciBufImageAttrKey_PlaneWidth, nullptr, 0},
+    {      NvSciBufImageAttrKey_PlaneHeight, nullptr, 0},
+    {NvSciBufImageAttrKey_PlaneBitsPerPixel, nullptr, 0},
+    {    NvSciBufImageAttrKey_PlaneDatatype, nullptr, 0},
+    {NvSciBufImageAttrKey_PlaneChannelCount, nullptr, 0},
   };
 
   NVSCI_CHECK(NvSciBufAttrListGetAttrs(attrList, queryAttrs, sizeof(queryAttrs) / sizeof(queryAttrs[0])));
@@ -69,7 +73,7 @@ NvSciCudaInteropBuffer::NvSciCudaInteropBuffer(NvSciBufAttrList attrList) {
     memset(&desc, 0, sizeof(desc));
     desc.offset = 0;
     desc.arrayDesc.Width = m_width;
-    desc.arrayDesc.Height =  m_height;
+    desc.arrayDesc.Height = m_height;
     desc.arrayDesc.Depth = 0; // Depth=0 for 2D Array
     switch (planeDataType) {
       case NvSciDataType_Int8: desc.arrayDesc.Format = CU_AD_FORMAT_SIGNED_INT8; break;
@@ -90,7 +94,6 @@ NvSciCudaInteropBuffer::NvSciCudaInteropBuffer(NvSciBufAttrList attrList) {
   }
   // Get CUarray handle to level 0 of the mipmapped array
   CUDA_CHECK(cuMipmappedArrayGetLevel(&m_cuArray, m_cuMipmappedArray, /*level=*/ 0));
-
 }
 
 NvSciCudaInteropBuffer::~NvSciCudaInteropBuffer() {
@@ -99,7 +102,8 @@ NvSciCudaInteropBuffer::~NvSciCudaInteropBuffer() {
   NvSciBufObjFree(m_nvSciBuf);
 }
 
-NvSciCudaInteropSync::NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction, NvMediaIofa* iofa) : m_direction(direction) {
+NvSciCudaInteropSync::NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction, NvMediaIofa* iofa) :
+  m_direction(direction) {
   static NvSciSyncAttrList interopSyncAttrList[kNvSciCudaInteropSyncDirection_Count];
 
   // Demand-create the attribute list for this sync direction
@@ -152,4 +156,3 @@ void NvSciCudaInteropSync::waitNvSciToCuda(CUstream hStream) {
   params.params.nvSciSync.fence = &m_nvSciSyncFence;
   CUDA_CHECK(cuWaitExternalSemaphoresAsync(&m_cuSem, &params, /*numExtSems=*/ 1, /*stream=*/ hStream));
 }
-

@@ -31,8 +31,7 @@
 
 #include <Argus/Argus.h>
 
-namespace ArgusHelpers
-{
+namespace ArgusHelpers {
 
 
 /**
@@ -41,8 +40,7 @@ namespace ArgusHelpers
  * @param[in] cameraProvider The CameraProvider to get the device from.
  * @param[in] cameraDeviceIndex The index of the device to get.
  */
-Argus::CameraDevice* getCameraDevice(Argus::CameraProvider* cameraProvider,
-                                     uint32_t cameraDeviceIndex);
+Argus::CameraDevice* getCameraDevice(Argus::CameraProvider* cameraProvider, uint32_t cameraDeviceIndex);
 
 /**
  * Returns the SensorMode of a given index from a CameraProvider.
@@ -50,8 +48,7 @@ Argus::CameraDevice* getCameraDevice(Argus::CameraProvider* cameraProvider,
  * @param[in] cameraDevice The CameraDevice to get the sensor mode from.
  * @param[in] sensorModendex The index of the sensor mode to get.
  */
-Argus::SensorMode* getSensorMode(Argus::CameraDevice* cameraDevice,
-                                 uint32_t sensorModeIndex);
+Argus::SensorMode* getSensorMode(Argus::CameraDevice* cameraDevice, uint32_t sensorModeIndex);
 
 /**
  * Return the first available WDR (DOL or PWL) sensor mode from a CameraDevice.

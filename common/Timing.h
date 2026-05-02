@@ -15,7 +15,8 @@ static inline uint64_t tscTimestampToNs(uint64_t tscTimestamp) {
 
 static inline uint64_t currentTimeNs() {
   uint64_t tscCounter;
-  asm volatile("mrs %0, cntvct_el0" : "=r"(tscCounter));
+  asm volatile("mrs %0, cntvct_el0"
+               : "=r"(tscCounter));
   return tscTimestampToNs(tscCounter);
 }
 #else
@@ -74,4 +75,3 @@ public:
   uint64_t startTimeNs;
   uint64_t lastCheckpointTimeNs;
 };
-

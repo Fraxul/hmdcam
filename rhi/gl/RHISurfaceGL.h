@@ -12,6 +12,7 @@ public:
   GLuint glId() const { return m_glId; }
 
   RHISamplerGL(const RHISamplerDescriptor&);
+
 protected:
   GLuint m_glId;
 };
@@ -45,7 +46,7 @@ public:
 
   bool isGLRenderbuffer() const { return m_glTarget == GL_RENDERBUFFER; }
   bool isGLTexture() const { return !isGLRenderbuffer(); }
-  
+
 protected:
   RHISurfaceGL();
 

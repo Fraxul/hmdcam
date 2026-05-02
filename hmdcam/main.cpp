@@ -166,7 +166,7 @@ static void signal_handler(int) {
   want_quit = true;
 
   // Restore signal handlers so the program is still interruptable if clean shutdown gets stuck
-  signal(SIGINT,  SIG_DFL);
+  signal(SIGINT, SIG_DFL);
   signal(SIGTERM, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
 }
@@ -197,7 +197,7 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
   } else if (!distortionMap) {
     // no distortion or overlay
     rhi()->bindRenderPipeline(camTexturedQuadPipeline);
-      
+
   } else {
     rhi()->bindRenderPipeline(camUndistortMaskPipeline);
     useClippedQuadUB = true;
@@ -480,11 +480,11 @@ int main(int argc, char* argv[]) {
 #endif
 
 
-  signal(SIGINT,  signal_handler);
+  signal(SIGINT, signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
 
-  // Load masks. 
+  // Load masks.
 #if 1
   // TODO move mask loading to CameraSystem
   for (size_t cameraIdx = 0; cameraIdx < cameraSystem->cameras(); ++cameraIdx) {
@@ -527,7 +527,7 @@ int main(int argc, char* argv[]) {
         rhi()->readbackTexture(cameraMask[cameraIdx], 0, kVertexElementTypeUByte1N, maskData);
         char templateFilename[32];
         sprintf(templateFilename, "camera%zu_mask_template.png", cameraIdx);
-        stbi_write_png(templateFilename, s_cameraWidth, s_cameraHeight, 1, maskData, /*rowBytes=*/s_cameraWidth);
+        stbi_write_png(templateFilename, s_cameraWidth, s_cameraHeight, 1, maskData, /*rowBytes=*/ s_cameraWidth);
 
         // Fill a completely white mask for upload
         memset(maskData, 0xff, x * y);
@@ -555,6 +555,7 @@ int main(int argc, char* argv[]) {
     loadSettings();
 
     // Accumulators to track frame timing statistics
+    // clang-format off
     uint64_t frameCounter = 0;
     boost::accumulators::accumulator_set<double, boost::accumulators::stats<
         boost::accumulators::tag::min,
@@ -585,6 +586,7 @@ int main(int argc, char* argv[]) {
         boost::accumulators::tag::mean,
         boost::accumulators::tag::median
       > > presentToCaptureLatency;
+    // clang-format on
 
     io.DeltaTime = 1.0f / 60.0f; // Will be updated during frame-timing computation
 
@@ -592,7 +594,7 @@ int main(int argc, char* argv[]) {
     RHISurface::ptr guiTex;
 
     guiTex = rhi()->newTexture2D(io.DisplaySize.x * io.DisplayFramebufferScale.x, io.DisplaySize.y * io.DisplayFramebufferScale.y, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    guiRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ guiTex }));
+    guiRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({guiTex}));
 
     double currentCaptureLatencyMs = 0.0;
     double currentCaptureIntervalMs = 0.0;
@@ -653,7 +655,7 @@ int main(int argc, char* argv[]) {
         ImGui::NewFrame();
 
         // Sync-wait status window.
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y*0.5f), 0, /*pivot=*/ImVec2(0.5f, 0.5f)); // center aligned
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), 0, /*pivot=*/ ImVec2(0.5f, 0.5f)); // center aligned
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents, since we don't provide a way to resize the UI
         ImGui::Begin("SyncStatus", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
         ImGui::Text("Waiting for sync: %.2f seconds elapsed", deltaTimeMs(syncWaitStartTime, frameStartTime) / 1000.0f);
@@ -782,7 +784,7 @@ int main(int argc, char* argv[]) {
       uint64_t frameStartTimeNs = currentTimeNs();
 
       if (ImGui::IsKeyPressed(ImGuiKey_Menu, /*repeat=*/ false) ||
-          ImGui::IsKeyPressed(ImGuiKey_F1, /*repeat=*/ false)) {
+        ImGui::IsKeyPressed(ImGuiKey_F1, /*repeat=*/ false)) {
 
         drawUI = !drawUI;
       }
@@ -904,7 +906,7 @@ int main(int argc, char* argv[]) {
       if (calibrationContext || drawUI) {
         nvtxMarkA("ImGUI (full)");
         // GUI support
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y), 0, /*pivot=*/ ImVec2(0.5f, 1.0f)); // bottom-center aligned
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents, since we don't provide a way to resize the UI
         ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
@@ -952,7 +954,7 @@ int main(int argc, char* argv[]) {
               char caption[captionLen];
               char* captionPtr = caption;
 
-              captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr , "Calibrate camera %zu", cameraIdx);
+              captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr, "Calibrate camera %zu", cameraIdx);
               for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
                 CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
                 if (v.isStereo) {
@@ -994,9 +996,12 @@ int main(int argc, char* argv[]) {
               }
               {
                 static int speed = 1;
-                ImGui::RadioButton("x0.01", &speed, 1); ImGui::SameLine();
-                ImGui::RadioButton("x0.1", &speed, 10); ImGui::SameLine();
-                ImGui::RadioButton("x1", &speed, 100); ImGui::SameLine();
+                ImGui::RadioButton("x0.01", &speed, 1);
+                ImGui::SameLine();
+                ImGui::RadioButton("x0.1", &speed, 10);
+                ImGui::SameLine();
+                ImGui::RadioButton("x1", &speed, 100);
+                ImGui::SameLine();
                 ImGui::RadioButton("x10", &speed, 1000);
 
                 float fSpeed = static_cast<float>(speed) * 0.01f;
@@ -1008,7 +1013,7 @@ int main(int argc, char* argv[]) {
                 if (ImGui::DragFloat3("Tx", &txMM[0], /*speed=*/ fSpeed, /*min=*/ -500.0f, /*max=*/ 500.0f, speed == 1 ? "%.2fmm" : "%.1fmm")) {
                   v.viewTranslation = txMM / 1000.0f;
                 }
-                ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/fSpeed, /*min=*/ -180.0f, /*max=*/ 180.0f, speed == 1 ? "%.2fdeg" : "%.1fdeg");
+                ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/ fSpeed, /*min=*/ -180.0f, /*max=*/ 180.0f, speed == 1 ? "%.2fdeg" : "%.1fdeg");
               }
 
               ImGui::PopID(); // viewIdx
@@ -1055,55 +1060,55 @@ int main(int argc, char* argv[]) {
         {
           const auto& meta = argusCamera->frameMetadata(0);
           ImGui::Text("Dur=1/%usec Exp=1/%usec %uISO DGain=%f AGain=%f",
-            (unsigned int) (1000000.0f / static_cast<float>(meta.frameDurationNs/1000)), (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs/1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
+            (unsigned int) (1000000.0f / static_cast<float>(meta.frameDurationNs / 1000)), (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs / 1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
         }
 
         // Skip perf data to save UI space if we're calibrating
         if (!calibrationContext && ImGui::CollapsingHeader("Performance")) {
           int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
 
-          if (ImPlot::BeginPlot("##FrameTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
-              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
-              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
-              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
-              ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
-              ImPlot::SetupFinish();
+          if (ImPlot::BeginPlot("##FrameTiming", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
+            ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+            ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
+            ImPlot::SetupFinish();
 
-              ImPlot::PlotLine("Capture", &s_timingDataBuffer.data()[0].captureTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::PlotLine("Submit",  &s_timingDataBuffer.data()[0].submitTimeMs,  s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::EndPlot();
+            ImPlot::PlotLine("Capture", &s_timingDataBuffer.data()[0].captureTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::PlotLine("Submit", &s_timingDataBuffer.data()[0].submitTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::EndPlot();
           }
-          if (ImPlot::BeginPlot("##PresentationTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
-              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
-              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
-              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
-              ImPlot::SetupAxisLimits(ImAxis_Y1, -12.0f, 12.0f, ImPlotCond_Always);
-              ImPlot::SetupFinish();
+          if (ImPlot::BeginPlot("##PresentationTiming", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
+            ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+            ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, -12.0f, 12.0f, ImPlotCond_Always);
+            ImPlot::SetupFinish();
 
-              ImPlot::PlotLine("Present-Capture Offset", &s_timingDataBuffer.data()[0].presentToCaptureOffsetMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::EndPlot();
+            ImPlot::PlotLine("Present-Capture Offset", &s_timingDataBuffer.data()[0].presentToCaptureOffsetMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::EndPlot();
           }
-          if (debugRenderTiming && ImPlot::BeginPlot("##RenderTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
-              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
-              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
-              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
-              ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
-              ImPlot::SetupFinish();
+          if (debugRenderTiming && ImPlot::BeginPlot("##RenderTiming", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
+            ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+            ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
+            ImPlot::SetupFinish();
 
-              ImPlot::PlotLine("View Render", &s_timingDataBuffer.data()[0].viewRenderTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::PlotLine("HMD Distortion",  &s_timingDataBuffer.data()[0].distortionRenderTimeMs,  s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::EndPlot();
+            ImPlot::PlotLine("View Render", &s_timingDataBuffer.data()[0].viewRenderTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::PlotLine("HMD Distortion", &s_timingDataBuffer.data()[0].distortionRenderTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::EndPlot();
           }
-          if (ImPlot::BeginPlot("###CaptureLatencyInterval", ImVec2(-1,150), /*flags=*/ plotFlags)) {
-              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
-              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
-              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
-              ImPlot::SetupFinish();
+          if (ImPlot::BeginPlot("###CaptureLatencyInterval", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
+            ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+            ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+            ImPlot::SetupFinish();
 
-              ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureTimingAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::EndPlot();
+            ImPlot::PlotBars("Adjustments", &s_timingDataBuffer.data()[0].captureTimingAdjustmentMarker, s_timingDataBuffer.size(), /*width=*/ 0.67, /*shift=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::PlotLine("Capture Latency", &s_timingDataBuffer.data()[0].captureLatencyMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::PlotLine("Capture Interval", &s_timingDataBuffer.data()[0].captureIntervalMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::EndPlot();
           }
 
           settingsDirty |= argusCamera->renderPerformanceTuningIMGUI();
@@ -1207,7 +1212,7 @@ int main(int argc, char* argv[]) {
 
       } else if (drawStatusBar) {
         nvtxMarkA("ImGUI (statusbar)");
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, 0), 0, /*pivot=*/ImVec2(0.5f, 0.0f)); // top-center aligned
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, 0), 0, /*pivot=*/ ImVec2(0.5f, 0.0f)); // top-center aligned
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents
         ImGui::Begin("StatusBar", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
@@ -1215,18 +1220,21 @@ int main(int argc, char* argv[]) {
         time_t t = time(NULL);
         strftime(timebuf, 64, "%a %b %e %T", localtime(&t));
         ImGui::TextUnformatted(timebuf);
-        ImGui::SameLine(); ImGui::Separator(); ImGui::SameLine();
+        ImGui::SameLine();
+        ImGui::Separator();
+        ImGui::SameLine();
         ImGui::Text("Lat=%.1fms (%.1fms-%.1fms) %.1fFPS", currentCaptureLatencyMs, boost::accumulators::min(captureLatency), boost::accumulators::max(captureLatency), io.Framerate);
         if (tempSensorFd >= 0) {
           if ((frameCounter & 0x7fUL) == 0) {
             char buf[32];
             ssize_t l = pread(tempSensorFd, buf, sizeof(buf), 0);
-            if (l > 0)  {
+            if (l > 0) {
               buf[l] = 0;
               tempSensorReading = static_cast<float>(strtol(buf, NULL, 10)) / 1000.0f;
             }
           }
-          ImGui::SameLine(); ImGui::Text(" %.1fC", tempSensorReading);
+          ImGui::SameLine();
+          ImGui::Text(" %.1fC", tempSensorReading);
         }
         if (enableCANBus) {
           drawPDUStatusLine();
@@ -1294,7 +1302,6 @@ int main(int argc, char* argv[]) {
             boost::accumulators::max(presentToCaptureLatency),
             boost::accumulators::mean(presentToCaptureLatency),
             boost::accumulators::median(presentToCaptureLatency));
-
         }
 
         captureLatency = {};
@@ -1437,7 +1444,6 @@ int main(int argc, char* argv[]) {
                 // Drawing this camera as a mono view
                 distortionTex = cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).intrinsicDistortionMap;
                 drawFlags = DRAW_FLAGS_USE_MASK;
-
               }
 
               rhi()->setViewport(eyeViewports[eyeIdx]);
@@ -1451,7 +1457,7 @@ int main(int argc, char* argv[]) {
       if (debugRenderTiming)
         rhi()->endTimerQuery(viewRenderQuery);
 
-/*
+        /*
       if (renderSBS && sbsSeparatorWidth) {
         rhi()->bindRenderPipeline(solidQuadPipeline);
         SolidQuadUniformBlock ub;
@@ -1537,7 +1543,7 @@ int main(int argc, char* argv[]) {
               // No-distortion / direct passthrough
             }
 
-            renderDrawCamera(cameraIdx, /*drawFlags=*/0, distortionTex, overlayTex, /*mvp=*/glm::mat4(1.0f) /*identity*/);
+            renderDrawCamera(cameraIdx, /*drawFlags=*/ 0, distortionTex, overlayTex, /*mvp=*/ glm::mat4(1.0f) /*identity*/);
           }
 
           // Depth-map overlays for stereo views, if present
@@ -1692,7 +1698,7 @@ int main(int argc, char* argv[]) {
 
 
   // Restore signal handlers
-  signal(SIGINT,  SIG_DFL);
+  signal(SIGINT, SIG_DFL);
   signal(SIGTERM, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
 
@@ -1710,4 +1716,3 @@ int main(int argc, char* argv[]) {
 
   return 0;
 }
-

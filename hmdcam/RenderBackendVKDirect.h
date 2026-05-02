@@ -18,10 +18,10 @@ class RenderBackendVKDirect;
 
 struct VKGLSyncData {
   // VK texture
-  vk::UniqueImage         m_image;
-  vk::UniqueDeviceMemory  m_deviceMemory;
-  int                     m_handle;
-  GLuint                  m_memoryObject;
+  vk::UniqueImage m_image;
+  vk::UniqueDeviceMemory m_deviceMemory;
+  int m_handle;
+  GLuint m_memoryObject;
 
   // GL texture
   GLuint m_textureGL;
@@ -30,13 +30,13 @@ struct VKGLSyncData {
 
   // VK semaphores
   vk::UniqueSemaphore m_available; // signal when image is available
-  vk::UniqueSemaphore m_finished;  // wait for GL to be finished
-  int                 m_availableHandle;
-  int                 m_finishedHandle;
+  vk::UniqueSemaphore m_finished; // wait for GL to be finished
+  int m_availableHandle;
+  int m_finishedHandle;
 
   // GL semaphores
-  GLuint              m_availableGL;
-  GLuint              m_finishedGL;
+  GLuint m_availableGL;
+  GLuint m_finishedGL;
 };
 
 class VKDirectSwapchainRenderTarget : public RHIWindowRenderTargetGL {
@@ -74,7 +74,6 @@ public:
   virtual uint64_t lastPresentationTimestamp() const { return m_lastPresentationTimestamp.load(std::memory_order_acquire); }
 
 protected:
-
   uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags);
 
   double m_refreshRateHz = 0;
@@ -107,13 +106,13 @@ protected:
   vk::UniqueSwapchainKHR m_swapchain;
   std::vector<vk::Image> m_swapchainImages;
   vk::Extent2D m_swapchainExtent;
-  vk::Format m_swapchainFormat{ vk::Format::eUndefined };
+  vk::Format m_swapchainFormat{vk::Format::eUndefined};
   uint32_t m_frameIndex = 0;
   std::vector<VKGLSyncData> m_syncData;
   std::vector<vk::UniqueSemaphore> m_imageAcquiredSemaphores;
   std::vector<vk::UniqueSemaphore> m_blitFinishedSemaphores;
   vk::UniqueCommandPool m_commandPool;
-  std::vector<vk::CommandBuffer>  m_blitCommandBuffers;
+  std::vector<vk::CommandBuffer> m_blitCommandBuffers;
 
   friend class VKDirectSwapchainRenderTarget;
   VKGLSyncData* acquireTexture();
@@ -132,7 +131,7 @@ protected:
   // If the Host1x init fails, lastPresentationTimestamp will stay at 0.
   std::atomic<bool> m_scanoutShutdown{false};
   void* m_nvrmHost1x = nullptr; // NvRmHost1xOpen() session
-  bool initScanoutSyncpt();  // returns true if the syncpt path is usable
+  bool initScanoutSyncpt(); // returns true if the syncpt path is usable
 #else
   // VK_EXT_display_control: scanout timestamp tracking via worker thread.
   // Atomic mailbox: main thread exchanges in a new fence, worker thread picks
@@ -146,4 +145,3 @@ protected:
 
   void scanoutThreadFunc();
 };
-

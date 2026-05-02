@@ -10,7 +10,8 @@
 using namespace cv;
 using namespace cv::cuda;
 
-template <typename T> __global__ void medianFilter3x3_kernel(PtrStepSz<T> src, PtrStep<T> dst) {
+template <typename T>
+__global__ void medianFilter3x3_kernel(PtrStepSz<T> src, PtrStep<T> dst) {
 
   const int x = blockDim.x * blockIdx.x + threadIdx.x;
   const int y = blockDim.y * blockIdx.y + threadIdx.y;
@@ -31,7 +32,7 @@ template <typename T> __global__ void medianFilter3x3_kernel(PtrStepSz<T> src, P
     for (int16_t kernelY = 0; kernelY < 3; ++kernelY) {
       const T* rowPtr = src.ptr(yMin + kernelY) + xMin;
       for (int16_t kernelX = 0; kernelX < 3; ++kernelX) {
-        *(samplePtr++) =  rowPtr[kernelX];
+        *(samplePtr++) = rowPtr[kernelX];
       }
     }
   }
@@ -39,14 +40,36 @@ template <typename T> __global__ void medianFilter3x3_kernel(PtrStepSz<T> src, P
   // Reducing algorithm from <https://www.casual-effects.com/research/McGuire2008Median/median.pix>
 
   T temp;
-  #define s2(a, b)                temp = a; a = std::min<T>(a, b); b = std::max<T>(temp, b);
-  #define mn3(a, b, c)            s2(a, b); s2(a, c);
-  #define mx3(a, b, c)            s2(b, c); s2(a, c);
+#define s2(a, b)         \
+  temp = a;              \
+  a = std::min<T>(a, b); \
+  b = std::max<T>(temp, b);
+#define mn3(a, b, c) \
+  s2(a, b);          \
+  s2(a, c);
+#define mx3(a, b, c) \
+  s2(b, c);          \
+  s2(a, c);
 
-  #define mnmx3(a, b, c)          mx3(a, b, c); s2(a, b);                                   // 3 exchanges
-  #define mnmx4(a, b, c, d)        s2(a, b); s2(c, d); s2(a, c); s2(b, d);                  // 4 exchanges
-  #define mnmx5(a, b, c, d, e)    s2(a, b); s2(c, d); mn3(a, c, e); mx3(b, d, e);           // 6 exchanges
-  #define mnmx6(a, b, c, d, e, f) s2(a, d); s2(b, e); s2(c, f); mn3(a, b, c); mx3(d, e, f); // 7 exchanges
+#define mnmx3(a, b, c) \
+  mx3(a, b, c);        \
+  s2(a, b); // 3 exchanges
+#define mnmx4(a, b, c, d) \
+  s2(a, b);               \
+  s2(c, d);               \
+  s2(a, c);               \
+  s2(b, d); // 4 exchanges
+#define mnmx5(a, b, c, d, e) \
+  s2(a, b);                  \
+  s2(c, d);                  \
+  mn3(a, c, e);              \
+  mx3(b, d, e); // 6 exchanges
+#define mnmx6(a, b, c, d, e, f) \
+  s2(a, d);                     \
+  s2(b, e);                     \
+  s2(c, f);                     \
+  mn3(a, b, c);                 \
+  mx3(d, e, f); // 7 exchanges
 
   // Starting with a subset of size 6, remove the min and max each time
   mnmx6(v[0], v[1], v[2], v[3], v[4], v[5]);
@@ -67,4 +90,3 @@ void medianFilter3x3_u16(cv::cuda::GpuMat& src, cv::cuda::GpuMat& dst, CUstream 
     PtrStepSz<uint16_t>(src.rows, src.cols, (uint16_t*) src.cudaPtr(), src.step),
     PtrStep<uint16_t>((uint16_t*) dst.cudaPtr(), dst.step));
 }
-

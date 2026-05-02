@@ -75,5 +75,5 @@ void copySurfaceToGpuMat(RHISurface::ptr surface, cv::cuda::GpuMat& gpuMat, CUst
 }
 
 
-};
+}; // namespace RHICUDA
 #endif // HAVE_CUDA

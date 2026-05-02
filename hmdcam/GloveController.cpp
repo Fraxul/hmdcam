@@ -144,9 +144,7 @@ void GloveController::processFrame() {
 
     io.AddMousePosEvent(absPosition.x, absPosition.y);
     // printf("[%s] Rel=[%.3f, %.3f] Abs=[%.3f, %.3f]\n", (controllerId == kLeftController) ? "L" : "R", gyroMouseXY.x, gyroMouseXY.y, absPosition.x, absPosition.y);
-
   }
-
 }
 
 void GloveController::drawConfigIMGUI() {
@@ -173,14 +171,14 @@ void GloveController::drawConfigIMGUI() {
 
 
     constexpr int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
-    if (ImPlot::BeginPlot("###PacketDeltaTimes", ImVec2(-1,150), /*flags=*/ plotFlags)) {
-        ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
-        ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
-        ImPlot::SetupAxisLimits(ImAxis_X1, 0, state.packetDeltaTimesMs.size(), ImPlotCond_Always);
-        ImPlot::SetupFinish();
+    if (ImPlot::BeginPlot("###PacketDeltaTimes", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
+      ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+      ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+      ImPlot::SetupAxisLimits(ImAxis_X1, 0, state.packetDeltaTimesMs.size(), ImPlotCond_Always);
+      ImPlot::SetupFinish();
 
-        ImPlot::PlotLine("Packet arrival interval (ms)", state.packetDeltaTimesMs.data(), state.packetDeltaTimesMs.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, state.packetDeltaTimesMs.offset(), sizeof(float));
-        ImPlot::EndPlot();
+      ImPlot::PlotLine("Packet arrival interval (ms)", state.packetDeltaTimesMs.data(), state.packetDeltaTimesMs.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, state.packetDeltaTimesMs.offset(), sizeof(float));
+      ImPlot::EndPlot();
     }
 
 
@@ -203,4 +201,3 @@ void GloveController::drawConfigIMGUI() {
     ImGui::PopID();
   }
 }
-

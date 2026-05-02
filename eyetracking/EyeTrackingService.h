@@ -111,7 +111,7 @@ public:
     // Crosshair state tracking for runs of valid/invalid frames
     bool m_shouldShowCrosshair = true;
 
-    ScrollingBuffer<cv::RotatedRect> m_calibrationSamples {60};
+    ScrollingBuffer<cv::RotatedRect> m_calibrationSamples{60};
     singleeyefitter::Circle3D<double> m_centerPupilCircle;
 
     glm::vec3 centerPupilNormal() const {
@@ -183,7 +183,7 @@ public:
       float deltaAngle = 0.0f;
     };
     bool m_freezeGraphData = false;
-    ScrollingBuffer<GraphData> m_graphData { 120 /*samples*/ };
+    ScrollingBuffer<GraphData> m_graphData{120 /*samples*/};
   };
 
 
@@ -191,7 +191,6 @@ public:
   ProcessingState m_processingState[2];
 
 protected:
-
   void CANTransmitEyeAngles(); // called in processFrame()
 
   // Blink tracking settings
@@ -244,4 +243,3 @@ protected:
   uint32_t m_roiOutputWidth = 0, m_roiOutputHeight = 0;
   uint32_t m_roiOutputRowStrideElements = 0;
 };
-

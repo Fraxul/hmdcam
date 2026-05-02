@@ -75,4 +75,3 @@ protected:
   // Set in derived class
   bool m_didAdjustCaptureTimingThisFrame = false;
 };
-

@@ -106,8 +106,19 @@ RHISamplerGL::~RHISamplerGL() {
   glDeleteSamplers(1, &m_glId);
 }
 
-RHISurfaceGL::RHISurfaceGL() : m_glId(0), m_glTarget(0), m_glInternalFormat(0), m_width(0), m_height(0), m_depth(0), m_layers(1), m_samples(1), m_levels(1), m_rhiFormat(kSurfaceFormat_Invalid), m_isArrayTexture(false), m_cuGraphicsResource(NULL) {
-
+RHISurfaceGL::RHISurfaceGL() :
+  m_glId(0),
+  m_glTarget(0),
+  m_glInternalFormat(0),
+  m_width(0),
+  m_height(0),
+  m_depth(0),
+  m_layers(1),
+  m_samples(1),
+  m_levels(1),
+  m_rhiFormat(kSurfaceFormat_Invalid),
+  m_isArrayTexture(false),
+  m_cuGraphicsResource(NULL) {
 }
 
 RHISurfaceGL::~RHISurfaceGL() {
@@ -280,4 +291,3 @@ CUgraphicsResource& RHISurfaceGL::cuGraphicsResource() const {
 
   return m_cuGraphicsResource;
 }
-

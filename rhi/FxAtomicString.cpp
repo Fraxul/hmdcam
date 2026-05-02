@@ -43,12 +43,11 @@ size_t FxAtomicString::length() const {
 }
 
 namespace boost {
-  size_t hash_value(const FxAtomicString& str) {
-    size_t hv = 0;
-    for (const char* p = str.data(); *p; ++p) {
-      boost::hash_combine(hv, *p);
-    }
-    return hv;
+size_t hash_value(const FxAtomicString& str) {
+  size_t hv = 0;
+  for (const char* p = str.data(); *p; ++p) {
+    boost::hash_combine(hv, *p);
   }
+  return hv;
 }
-
+} // namespace boost

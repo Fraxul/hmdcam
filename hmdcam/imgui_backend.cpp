@@ -59,7 +59,6 @@ void ImGui_ImplFxRHI_Init() {
     }), kPrimitiveTopologyTriangleList);
     // clang-format on
   }
-
 }
 
 void ImGui_ImplFxRHI_NewFrame() {
@@ -109,7 +108,7 @@ void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawDat
       ImVec2 clip_scale = draw_data->FramebufferScale; // (1,1) unless using retina display which are often (2,2)
 
       // ortho projection matrix
-      glm::mat4 mvp = glm::ortho<float>(/*left=*/0.0f, /*right=*/renderTarget->width() / drawData->FramebufferScale.x, /*bottom=*/renderTarget->height() / drawData->FramebufferScale.y, /*top=*/0.0f);
+      glm::mat4 mvp = glm::ortho<float>(/*left=*/ 0.0f, /*right=*/ renderTarget->width() / drawData->FramebufferScale.x, /*bottom=*/ renderTarget->height() / drawData->FramebufferScale.y, /*top=*/ 0.0f);
       rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &mvp, sizeof(glm::mat4));
 
       for (const ImDrawCmd& drawCmd : drawCommands) {
@@ -127,7 +126,7 @@ void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawDat
           rhi()->setScissorRect(scissor);
           rhi()->loadTexture(ksTexture, static_cast<RHISurface*>(drawCmd.TextureId), linearClampSampler);
 
-          rhi()->bindStreamBuffer(0, uiVertexBuffer, /*offsetBytes=*/drawCmd.VtxOffset * sizeof(ImDrawVert));
+          rhi()->bindStreamBuffer(0, uiVertexBuffer, /*offsetBytes=*/ drawCmd.VtxOffset * sizeof(ImDrawVert));
           rhi()->drawIndexedPrimitives(uiIndexBuffer, kIndexBufferTypeUInt16, drawCmd.ElemCount, drawCmd.IdxOffset);
         }
       }
@@ -137,4 +136,3 @@ void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawDat
     delete[] indexData;
   }
 }
-

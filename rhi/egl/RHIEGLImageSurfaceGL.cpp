@@ -1,7 +1,6 @@
 #include "rhi/egl/RHIEGLImageSurfaceGL.h"
 
 RHIEGLImageSurfaceGL::~RHIEGLImageSurfaceGL() {
-
 }
 
 /*static*/ RHIEGLImageSurfaceGL::ptr RHIEGLImageSurfaceGL::newTextureExternalOES(EGLImage img, uint32_t width, uint32_t height, RHISurfaceFormat reportedRHIFormat) {
@@ -12,7 +11,8 @@ RHIEGLImageSurfaceGL::~RHIEGLImageSurfaceGL() {
   return res;
 }
 
-RHIEGLImageSurfaceGL::RHIEGLImageSurfaceGL(EGLImage img, GLenum target) : m_eglImage(img) {
+RHIEGLImageSurfaceGL::RHIEGLImageSurfaceGL(EGLImage img, GLenum target) :
+  m_eglImage(img) {
 
   m_glTarget = target;
 
@@ -29,4 +29,3 @@ void RHIEGLImageSurfaceGL::internalQueryTextureInfo() {
   GL(glGetTexLevelParameteriv(m_glTarget, 0, GL_TEXTURE_INTERNAL_FORMAT, (GLint*) &m_glInternalFormat));
   GL(glGetTexLevelParameteriv(m_glTarget, 0, GL_TEXTURE_SAMPLES, (GLint*) &m_samples));
 }
-

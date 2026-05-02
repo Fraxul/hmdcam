@@ -9,4 +9,3 @@ void fp16ThresholdToU8Mask(const _Float16* inFP16, _Float16 thresholdValue, uint
 _Float16 fp16VectorMax(const _Float16* inFP16, size_t elementCount);
 void convertGrayToRGBA(const uint8_t* inGray, uint8_t* outRGBA, size_t count);
 void areaDownsample6x6(const uint8_t* __restrict inU8, size_t inputRowStride, uint8_t* __restrict outU8, size_t outputWidth, size_t outputHeight, size_t outputRowStride);
-

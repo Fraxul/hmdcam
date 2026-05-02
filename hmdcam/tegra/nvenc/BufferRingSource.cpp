@@ -11,7 +11,9 @@ BufferRingSource* BufferRingSource::createNew(UsageEnvironment& env, NvEncSessio
 
 EventTriggerId BufferRingSource::eventTriggerId = 0;
 
-BufferRingSource::BufferRingSource(UsageEnvironment& env, NvEncSession* session) : FramedSource(env), m_nvencSession(session) {
+BufferRingSource::BufferRingSource(UsageEnvironment& env, NvEncSession* session) :
+  FramedSource(env),
+  m_nvencSession(session) {
 
   // Any instance-specific initialization of the device would be done here:
   pthread_mutex_init(&m_qLock, NULL);
@@ -42,7 +44,6 @@ BufferRingSource::BufferRingSource(UsageEnvironment& env, NvEncSession* session)
     });
   }
   session->start();
-
 }
 
 BufferRingSource::~BufferRingSource() {
@@ -87,7 +88,7 @@ void BufferRingSource::doGetNextFrame() {
 }
 
 void BufferRingSource::deliverFrame0(void* clientData) {
-  ((BufferRingSource*)clientData)->deliverFrame();
+  ((BufferRingSource*) clientData)->deliverFrame();
 }
 
 void BufferRingSource::deliverFrame() {
@@ -184,7 +185,7 @@ void BufferRingSource::asyncDeliverFrame(TaskScheduler* taskScheduler, const cha
     m_filledBuffers.pop_front();
 
     //if (!m_buffersOverflowing) {
-    printf("BufferRingSource::asyncDeliverFrame: Buffer queue is full and old buffers are being overwritten. Droppping a buffer with PTS=%zu.%lu\n", b->pts.tv_sec, b->pts.tv_usec/1000UL);
+    printf("BufferRingSource::asyncDeliverFrame: Buffer queue is full and old buffers are being overwritten. Droppping a buffer with PTS=%zu.%lu\n", b->pts.tv_sec, b->pts.tv_usec / 1000UL);
     //}
     //m_buffersOverflowing = true;
   }
@@ -199,4 +200,3 @@ void BufferRingSource::asyncDeliverFrame(TaskScheduler* taskScheduler, const cha
 
   taskScheduler->triggerEvent(eventTriggerId, this);
 }
-

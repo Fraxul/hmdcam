@@ -16,7 +16,11 @@
 #include <string>
 #include <atomic>
 
-#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
+#define die(msg, ...)                         \
+  do {                                        \
+    fprintf(stderr, msg "\n", ##__VA_ARGS__); \
+    abort();                                  \
+  } while (0)
 
 std::atomic<bool> buttonState[kButtonCount];
 static std::map<std::string, int> keyboardDevices;
@@ -78,7 +82,7 @@ void udevProcessDevice(struct udev_device* dev) {
       }
 
       // Grab input
-      if(ioctl(fd, EVIOCGRAB, (void*)1) == -1) {
+      if (ioctl(fd, EVIOCGRAB, (void*) 1) == -1) {
         printf("Failed to grab input for device %s: %s\n", devicePath, strerror(errno));
         close(fd);
         fd = -1;
@@ -137,7 +141,7 @@ void* inputListenerThread(void*) {
   // Set up udev monitoring
   struct udev* udev = udev_new();
   struct udev_monitor* mon = udev_monitor_new_from_netlink(udev, "udev");
-  
+
   udev_monitor_filter_add_match_subsystem_devtype(mon, "input", NULL);
   udev_monitor_enable_receiving(mon);
 
@@ -163,9 +167,9 @@ void* inputListenerThread(void*) {
   struct udev_list_entry* entry;
 
   udev_list_entry_foreach(entry, devices) {
-      const char* path = udev_list_entry_get_name(entry);
-      struct udev_device* dev = udev_device_new_from_syspath(udev, path);
-      udevProcessDevice(dev);
+    const char* path = udev_list_entry_get_name(entry);
+    struct udev_device* dev = udev_device_new_from_syspath(udev, path);
+    udevProcessDevice(dev);
   }
 
   udev_enumerate_unref(enumerate);
@@ -219,7 +223,7 @@ void* inputListenerThread(void*) {
 
           continue;
         }
-        
+
         if (ev.type != EV_KEY) continue; // Looking for KEY events...
         if (ev.value != 1) continue; // ...where the key is being pressed. (value={0, 1, 2} is {released, pressed, repeat})
 
@@ -288,7 +292,7 @@ void* inputListenerThread(void*) {
             break;
 
           default:
-          // case BTN_TR2: // 8BitDo Zero 2: Start -- Unused.
+            // case BTN_TR2: // 8BitDo Zero 2: Start -- Unused.
             break;
         };
       } // keyboard event processing
@@ -337,7 +341,7 @@ static const char* inputKeyName(unsigned int v) {
   // grep -oE "#define\s+([a-zA-Z0-9_]+)\s+([0-9]+|0[xX][0-9a-fA-F]+)" /usr/include/linux/input-event-codes.h | awk '{print "case " $2 ": return \""$2"\";"}'
   static char buf[64];
   switch (v) {
-/* Synchronization events
+      /* Synchronization events
     case SYN_REPORT: return "SYN_REPORT";
     case SYN_CONFIG: return "SYN_CONFIG";
     case SYN_MT_REPORT: return "SYN_MT_REPORT";
@@ -609,7 +613,7 @@ static const char* inputKeyName(unsigned int v) {
     case BTN_FORWARD: return "BTN_FORWARD";
     case BTN_BACK: return "BTN_BACK";
     case BTN_TASK: return "BTN_TASK";
-    
+
     // Joystick
     case BTN_TRIGGER: return "BTN_TRIGGER";
     case BTN_THUMB: return "BTN_THUMB";
@@ -906,8 +910,9 @@ static const char* inputKeyName(unsigned int v) {
     case BTN_TRIGGER_HAPPY38: return "BTN_TRIGGER_HAPPY38";
     case BTN_TRIGGER_HAPPY39: return "BTN_TRIGGER_HAPPY39";
     case BTN_TRIGGER_HAPPY40: return "BTN_TRIGGER_HAPPY40";
-    case KEY_MAX: return "KEY_MAX";
-/* Relative axes
+    case KEY_MAX:
+      return "KEY_MAX";
+      /* Relative axes
     case REL_X: return "REL_X";
     case REL_Y: return "REL_Y";
     case REL_Z: return "REL_Z";
@@ -923,7 +928,7 @@ static const char* inputKeyName(unsigned int v) {
     case REL_HWHEEL_HI_RES: return "REL_HWHEEL_HI_RES";
     case REL_MAX: return "REL_MAX";
 */
-/* Absolute axes
+      /* Absolute axes
     case ABS_X: return "ABS_X";
     case ABS_Y: return "ABS_Y";
     case ABS_Z: return "ABS_Z";
@@ -968,7 +973,7 @@ static const char* inputKeyName(unsigned int v) {
     case ABS_MT_TOOL_Y: return "ABS_MT_TOOL_Y";
     case ABS_MAX: return "ABS_MAX";
 */
-/* Switch events
+      /* Switch events
     case SW_LID: return "SW_LID";
     case SW_TABLET_MODE: return "SW_TABLET_MODE";
     case SW_HEADPHONE_INSERT: return "SW_HEADPHONE_INSERT";
@@ -988,7 +993,7 @@ static const char* inputKeyName(unsigned int v) {
     case SW_MACHINE_COVER: return "SW_MACHINE_COVER";
     case SW_MAX: return "SW_MAX";
 */
-/* Misc events
+      /* Misc events
     case MSC_SERIAL: return "MSC_SERIAL";
     case MSC_PULSELED: return "MSC_PULSELED";
     case MSC_GESTURE: return "MSC_GESTURE";
@@ -997,7 +1002,7 @@ static const char* inputKeyName(unsigned int v) {
     case MSC_TIMESTAMP: return "MSC_TIMESTAMP";
     case MSC_MAX: return "MSC_MAX";
 */
-/* LEDs
+      /* LEDs
     case LED_NUML: return "LED_NUML";
     case LED_CAPSL: return "LED_CAPSL";
     case LED_SCROLLL: return "LED_SCROLLL";
@@ -1018,4 +1023,3 @@ static const char* inputKeyName(unsigned int v) {
   buf[63] = '\0';
   return buf;
 }
-

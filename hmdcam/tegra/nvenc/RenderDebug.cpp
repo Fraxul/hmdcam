@@ -13,7 +13,11 @@
 #include "BufferRingSource.h"
 #include "H264VideoNvEncSessionServerMediaSubsession.h"
 
-#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
+#define die(msg, ...)                         \
+  do {                                        \
+    fprintf(stderr, msg "\n", ##__VA_ARGS__); \
+    abort();                                  \
+  } while (0)
 
 // Streaming server / NvEnc state
 std::string rtspURL;
@@ -125,4 +129,3 @@ void renderSubmitDebugSurface(RHISurface::ptr debugSurface) {
 const char* renderDebugURL() {
   return rtspURL.c_str();
 }
-

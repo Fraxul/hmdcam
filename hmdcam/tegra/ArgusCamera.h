@@ -86,10 +86,7 @@ private:
   uint64_t m_previousSensorTimestampNs;
   unsigned int m_samplesAtCurrentDuration;
 
-  typedef boost::accumulators::accumulator_set<double, boost::accumulators::stats<
-      boost::accumulators::tag::rolling_mean,
-      boost::accumulators::tag::rolling_count
-    > > CaptureIntervalStats_t;
+  typedef boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::rolling_mean, boost::accumulators::tag::rolling_count>> CaptureIntervalStats_t;
   CaptureIntervalStats_t m_captureIntervalStats;
 
   void setCaptureDurationNs(uint64_t captureDurationNs);
@@ -101,8 +98,16 @@ private:
 
   struct BufferPool {
     struct Entry {
-      Entry() : argusBuffer(NULL), nativeBuffer(-1), eglImage(NULL), cudaResource(NULL) {}
-      Entry(Argus::Buffer* b_, int nb_, EGLImageKHR egl_, CUgraphicsResource cr_) : argusBuffer(b_), nativeBuffer(nb_), eglImage(egl_), cudaResource(cr_) {}
+      Entry() :
+        argusBuffer(NULL),
+        nativeBuffer(-1),
+        eglImage(NULL),
+        cudaResource(NULL) {}
+      Entry(Argus::Buffer* b_, int nb_, EGLImageKHR egl_, CUgraphicsResource cr_) :
+        argusBuffer(b_),
+        nativeBuffer(nb_),
+        eglImage(egl_),
+        cudaResource(cr_) {}
 
       Argus::Buffer* argusBuffer;
       int nativeBuffer;
@@ -129,7 +134,6 @@ private:
       }
       assert(false && "ArgusCamera::BufferPool::setActiveBufferIndex(): buffer not in pool");
     }
-
   };
 
 
@@ -195,4 +199,3 @@ private:
   ArgusCamera(const ArgusCamera&);
   ArgusCamera& operator=(const ArgusCamera&);
 };
-

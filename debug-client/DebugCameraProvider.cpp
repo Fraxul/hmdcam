@@ -53,8 +53,8 @@ bool safe_read(int fd, void* buffer, size_t length) {
   return true;
 }
 
-DebugCameraProvider::DebugCameraProvider() : DepthMapGenerator(kDepthBackendMock) {
-
+DebugCameraProvider::DebugCameraProvider() :
+  DepthMapGenerator(kDepthBackendMock) {
 }
 
 bool DebugCameraProvider::connect(const char* debugHost) {
@@ -66,7 +66,7 @@ bool DebugCameraProvider::connect(const char* debugHost) {
   // Resolve host / establish connection
   {
     struct addrinfo hints;
-    struct addrinfo *result = nullptr;
+    struct addrinfo* result = nullptr;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
     hints.ai_socktype = SOCK_STREAM;
@@ -425,11 +425,9 @@ CUtexObject DebugCameraProvider::cudaChromaTexObject(size_t streamIdx) const {
 
 
 void DebugCameraProvider::internalLoadSettings(cv::FileStorage& fs) {
-
 }
 
 void DebugCameraProvider::internalSaveSettings(cv::FileStorage& fs) {
-
 }
 
 
@@ -498,4 +496,3 @@ void DebugCameraProvider::internalRenderIMGUI() {
 
 void DebugCameraProvider::internalRenderIMGUIPerformanceGraphs() {
 }
-

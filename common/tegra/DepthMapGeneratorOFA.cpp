@@ -37,7 +37,11 @@ static const uint32_t kOFAMaxDisparity = 128; // must be {128, 256}
 static const uint32_t kOFAGridSizeShift = 1;
 extern CUdevice cudaDevice;
 
-#define die(msg, ...) do { fprintf(stderr, msg"\n" , ##__VA_ARGS__); abort(); }while(0)
+#define die(msg, ...)                         \
+  do {                                        \
+    fprintf(stderr, msg "\n", ##__VA_ARGS__); \
+    abort();                                  \
+  } while (0)
 
 void setSinglePlaneImageAttrs(NvSciBufAttrList inAttrList, uint32_t width, uint32_t height, NvSciBufAttrValColorFmt fmt, /*optional*/ NvSciBufAttrValColorStd std = (NvSciBufAttrValColorStd) -1) {
   NvSciBufType bufType = NvSciBufType_Image;
@@ -49,11 +53,11 @@ void setSinglePlaneImageAttrs(NvSciBufAttrList inAttrList, uint32_t width, uint3
   NvSciBufAttrValColorStd planecolorstds[] = {std};
 
   NvSciBufAttrKeyValuePair imgBufAttrs[] = {
-    {NvSciBufGeneralAttrKey_Types, &bufType, sizeof(bufType)},
-    {NvSciBufImageAttrKey_PlaneCount, &planeCount, sizeof(planeCount)},
+    {         NvSciBufGeneralAttrKey_Types,       &bufType,        sizeof(bufType)},
+    {      NvSciBufImageAttrKey_PlaneCount,    &planeCount,     sizeof(planeCount)},
     {NvSciBufImageAttrKey_PlaneColorFormat, planecolorfmts, sizeof(planecolorfmts)},
-    {NvSciBufImageAttrKey_PlaneWidth, planeWidths, sizeof(planeWidths)},
-    {NvSciBufImageAttrKey_PlaneHeight, planeHeights, sizeof(planeHeights)},
+    {      NvSciBufImageAttrKey_PlaneWidth,    planeWidths,    sizeof(planeWidths)},
+    {     NvSciBufImageAttrKey_PlaneHeight,   planeHeights,   sizeof(planeHeights)},
   };
 
   NVSCI_CHECK(NvSciBufAttrListSetAttrs(inAttrList, imgBufAttrs, sizeof(imgBufAttrs) / sizeof(NvSciBufAttrKeyValuePair)));
@@ -76,12 +80,12 @@ NvSciBufAttrList finishAndReconcileBufAttrList(NvSciBufAttrList inAttrList) {
   CUDA_CHECK(cuDeviceGetUuid(&devUUID, cudaDevice));
 
   NvSciBufAttrKeyValuePair imgBufAttrs[] = {
-    {NvSciBufImageAttrKey_Layout, &layout, sizeof(layout)},
-    {NvSciBufGeneralAttrKey_RequiredPerm, &perm, sizeof(perm)},
-    {NvSciBufImageAttrKey_ScanType, planescantype, sizeof(planescantype)},
+    {        NvSciBufImageAttrKey_Layout,       &layout,        sizeof(layout)},
+    {NvSciBufGeneralAttrKey_RequiredPerm,         &perm,          sizeof(perm)},
+    {      NvSciBufImageAttrKey_ScanType, planescantype, sizeof(planescantype)},
 
-    // CUDA device UUID attribute is required to map the NvSciBuf into CUDA
-    {NvSciBufGeneralAttrKey_GpuId, &devUUID, sizeof(devUUID)},
+ // CUDA device UUID attribute is required to map the NvSciBuf into CUDA
+    {       NvSciBufGeneralAttrKey_GpuId,      &devUUID,       sizeof(devUUID)},
   };
 
 
@@ -104,7 +108,8 @@ NvSciBufAttrList finishAndReconcileBufAttrList(NvSciBufAttrList inAttrList) {
 }
 
 
-DepthMapGeneratorOFA::DepthMapGeneratorOFA() : DepthMapGenerator(kDepthBackendOFA) {
+DepthMapGeneratorOFA::DepthMapGeneratorOFA() :
+  DepthMapGenerator(kDepthBackendOFA) {
   m_algoDownsampleX = 4;
   m_algoDownsampleY = 4;
   m_maxDisparity = kOFAMaxDisparity;
@@ -131,9 +136,7 @@ DepthMapGeneratorOFA::DepthMapGeneratorOFA() : DepthMapGenerator(kDepthBackendOF
     memset(&iofaVersion, 0, sizeof(iofaVersion));
     NVMEDIA_CHECK(NvMediaIOFAGetVersion(&iofaVersion));
     printf("IOFA version: %u.%u.%u\n", iofaVersion.major, iofaVersion.minor, iofaVersion.patch);
-    if ( (iofaVersion.major != NVMEDIA_IOFA_VERSION_MAJOR)
-      || (iofaVersion.minor != NVMEDIA_IOFA_VERSION_MINOR)
-      || (iofaVersion.patch != NVMEDIA_IOFA_VERSION_PATCH)) {
+    if ((iofaVersion.major != NVMEDIA_IOFA_VERSION_MAJOR) || (iofaVersion.minor != NVMEDIA_IOFA_VERSION_MINOR) || (iofaVersion.patch != NVMEDIA_IOFA_VERSION_PATCH)) {
 
       printf("!!!WARNING: NvMedia IOFA Header version mismatch -- expected %u.%u.%u\n",
         NVMEDIA_IOFA_VERSION_MAJOR,
@@ -235,8 +238,8 @@ void DepthMapGeneratorOFA::internalLoadSettings(cv::FileStorage& fs) {
 #define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_##settingName)
 void DepthMapGeneratorOFA::internalSaveSettings(cv::FileStorage& fs) {
   fs.startWriteStruct(cv::String("ofa"), cv::FileNode::MAP, cv::String());
-    // fs.write("confidenceThreshold", m_params.confidenceThreshold);
-    // fs.write("quality", m_params.quality);
+  // fs.write("confidenceThreshold", m_params.confidenceThreshold);
+  // fs.write("quality", m_params.quality);
   fs.endWriteStruct();
 }
 #undef writeNode
@@ -285,7 +288,7 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
 
     vd->m_ofaPreSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncCudaSignalerToNvSciWaiter, m_iofa);
     NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(m_iofa, NVMEDIA_PRESYNCOBJ, vd->m_ofaPreSync->m_nvSciSync));
-    
+
     vd->m_ofaEofSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncNvSciSignalerToCudaWaiter, m_iofa);
     NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(m_iofa, NVMEDIA_EOFSYNCOBJ, vd->m_ofaEofSync->m_nvSciSync));
 
@@ -495,4 +498,3 @@ void DepthMapGeneratorOFA::internalRenderIMGUIPerformanceGraphs() {
   // TODO: graphs
   ImGui::Text("Setup %.1fms OFA %.3fms", m_preOfaFrameTimeMs, m_ofaFrameTimeMs);
 }
-

@@ -31,9 +31,12 @@ H264VideoNvEncSessionServerMediaSubsession::createNew(UsageEnvironment& env, NvE
   return new H264VideoNvEncSessionServerMediaSubsession(env, source);
 }
 
-H264VideoNvEncSessionServerMediaSubsession::H264VideoNvEncSessionServerMediaSubsession(UsageEnvironment& env, NvEncSession* source)
-  : OnDemandServerMediaSubsession(env, /*reuseFirstSource=*/ true),
-    fAuxSDPLine(NULL), fDoneFlag(0), fDummyRTPSink(NULL), fNvEncSession(source) {
+H264VideoNvEncSessionServerMediaSubsession::H264VideoNvEncSessionServerMediaSubsession(UsageEnvironment& env, NvEncSession* source) :
+  OnDemandServerMediaSubsession(env, /*reuseFirstSource=*/ true),
+  fAuxSDPLine(NULL),
+  fDoneFlag(0),
+  fDummyRTPSink(NULL),
+  fNvEncSession(source) {
 }
 
 H264VideoNvEncSessionServerMediaSubsession::~H264VideoNvEncSessionServerMediaSubsession() {
@@ -41,7 +44,7 @@ H264VideoNvEncSessionServerMediaSubsession::~H264VideoNvEncSessionServerMediaSub
 }
 
 static void afterPlayingDummy(void* clientData) {
-  H264VideoNvEncSessionServerMediaSubsession* subsess = (H264VideoNvEncSessionServerMediaSubsession*)clientData;
+  H264VideoNvEncSessionServerMediaSubsession* subsess = (H264VideoNvEncSessionServerMediaSubsession*) clientData;
   subsess->afterPlayingDummy1();
 }
 
@@ -53,7 +56,7 @@ void H264VideoNvEncSessionServerMediaSubsession::afterPlayingDummy1() {
 }
 
 static void checkForAuxSDPLine(void* clientData) {
-  H264VideoNvEncSessionServerMediaSubsession* subsess = (H264VideoNvEncSessionServerMediaSubsession*)clientData;
+  H264VideoNvEncSessionServerMediaSubsession* subsess = (H264VideoNvEncSessionServerMediaSubsession*) clientData;
   subsess->checkForAuxSDPLine1();
 }
 
@@ -74,7 +77,7 @@ void H264VideoNvEncSessionServerMediaSubsession::checkForAuxSDPLine1() {
     // try again after a brief delay:
     int uSecsToDelay = 100000; // 100 ms
     nextTask() = envir().taskScheduler().scheduleDelayedTask(uSecsToDelay,
-			      (TaskFunc*)checkForAuxSDPLine, this);
+      (TaskFunc*) checkForAuxSDPLine, this);
   }
 }
 
@@ -109,9 +112,8 @@ FramedSource* H264VideoNvEncSessionServerMediaSubsession::createNewStreamSource(
   return H264VideoStreamDiscreteFramer::createNew(envir(), BufferRingSource::createNew(envir(), fNvEncSession));
 }
 
-RTPSink* H264VideoNvEncSessionServerMediaSubsession
-::createNewRTPSink(Groupsock* rtpGroupsock,
-		   unsigned char rtpPayloadTypeIfDynamic,
-		   FramedSource* /*inputSource*/) {
+RTPSink* H264VideoNvEncSessionServerMediaSubsession ::createNewRTPSink(Groupsock* rtpGroupsock,
+  unsigned char rtpPayloadTypeIfDynamic,
+  FramedSource* /*inputSource*/) {
   return H264VideoRTPSink::createNew(envir(), rtpGroupsock, rtpPayloadTypeIfDynamic);
 }

@@ -38,7 +38,6 @@ ArgusCameraMock::ArgusCameraMock(size_t sensorCount, unsigned int w, unsigned in
 }
 
 ArgusCameraMock::~ArgusCameraMock() {
-
 }
 
 bool ArgusCameraMock::readFrame() {
@@ -167,24 +166,27 @@ bool ArgusCameraMock::readFrame() {
 
     if (!haveImageData) {
       // If we didn't load mock data for this camera, clear the surface to a solid color.
-      RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor( { srf } ));
+      RHIRenderTarget::ptr rt = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({srf}));
 
       switch (cameraIdx) {
         case 0:
-          rhi()->setClearColor(glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)); break;
+          rhi()->setClearColor(glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
+          break;
         case 1:
-          rhi()->setClearColor(glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)); break;
+          rhi()->setClearColor(glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
+          break;
         case 2:
-          rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)); break;
+          rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 1.0f, 1.0f));
+          break;
         case 3:
         default:
-          rhi()->setClearColor(glm::vec4(1.0f, 0.0f, 1.0f, 1.0f)); break;
+          rhi()->setClearColor(glm::vec4(1.0f, 0.0f, 1.0f, 1.0f));
+          break;
       };
 
       rhi()->beginRenderPass(rt, kLoadClear);
       rhi()->endRenderPass(rt);
     }
-
   }
 
   m_previousFrameReadTime = now;

@@ -10,12 +10,20 @@
 #include <math.h>
 #include <unistd.h>
 
-#define EGL_CHECK_BOOL(x) if (!(x)) { fprintf(stderr, "%s:%d: %s failed (%d)\n", __FILE__, __LINE__, #x, eglGetError()); abort(); }
-#define CheckExtension(extStr) if (!epoxy_has_egl_extension(m_eglDisplay, extStr)) { fprintf(stderr, "Missing required EGL extension %s.\n\nExtension string: %s\n\n", extStr, eglQueryString(m_eglDisplay, EGL_EXTENSIONS)); abort(); }
+#define EGL_CHECK_BOOL(x)                                                              \
+  if (!(x)) {                                                                          \
+    fprintf(stderr, "%s:%d: %s failed (%d)\n", __FILE__, __LINE__, #x, eglGetError()); \
+    abort();                                                                           \
+  }
+#define CheckExtension(extStr)                                                                                                               \
+  if (!epoxy_has_egl_extension(m_eglDisplay, extStr)) {                                                                                      \
+    fprintf(stderr, "Missing required EGL extension %s.\n\nExtension string: %s\n\n", extStr, eglQueryString(m_eglDisplay, EGL_EXTENSIONS)); \
+    abort();                                                                                                                                 \
+  }
 
 RenderBackend* createSurfacelessBackend() { return new RenderBackendSurfaceless(); }
 
-RenderBackendSurfaceless::RenderBackendSurfaceless() { }
+RenderBackendSurfaceless::RenderBackendSurfaceless() {}
 
 void RenderBackendSurfaceless::init() {
 
@@ -89,6 +97,3 @@ RenderBackendSurfaceless::~RenderBackendSurfaceless() {
   m_eglSurface = NULL;
   m_eglContext = NULL;
 }
-
-
-
