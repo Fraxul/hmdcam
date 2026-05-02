@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Pre-commit hook: auto-format staged C/C++/CUDA files using scripts/format.sh.
+#
+# Safe for partial-stage commits: temporarily stashes unstaged changes so the
+# formatter only operates on the content actually being committed, then
+# restores them afterward. If your unstaged edits overlap with the formatting
+# changes, `git stash pop` will report a merge conflict for you to resolve
+# manually.
+#
+# Install:
+#   ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+FORMAT_SCRIPT="$REPO_ROOT/scripts/format.sh"
+
+if [[ ! -x "$FORMAT_SCRIPT" ]]; then
+  echo "pre-commit: $FORMAT_SCRIPT not found or not executable; skipping format" >&2
+  exit 0
+fi
+
+# Source files staged for this commit (excluding deletions).
+# -z handles paths with spaces/newlines correctly.
+mapfile -d '' -t staged_files < <(
+  git diff --cached --name-only --diff-filter=ACMR -z
+)
+
+# Filter to source extensions
+src_files=()
+for f in "${staged_files[@]}"; do
+  case "$f" in
+    *.c|*.cc|*.cpp|*.cu|*.h|*.hpp) src_files+=("$f") ;;
+  esac
+done
+
+if [[ ${#src_files[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+# Capture the unstaged delta (working-tree vs. index) for just the files we
+# care about. We use an explicit patch instead of `git stash` because
+# `git stash push -- <pathspec>` captures the full working-tree state of
+# those files, which produces phantom conflicts on pop when the formatter
+# changes bytes in a region the unstaged delta didn't touch.
+unstaged_patch=""
+if ! git diff --quiet -- "${src_files[@]}"; then
+  unstaged_patch="$(mktemp -t pre-commit-unstaged.XXXXXX.patch)"
+  git diff --binary -- "${src_files[@]}" > "$unstaged_patch"
+fi
+
+# Reset working tree of the staged files to match the index (discards their
+# unstaged content; we'll reapply via patch later). Other files untouched.
+git checkout-index -f -- "${src_files[@]}"
+
+# Format. Working tree now equals the staged content, so the formatter's
+# changes are exactly what will land in the commit.
+"$FORMAT_SCRIPT" "${src_files[@]}"
+
+# Re-stage any reformatted versions
+git add -- "${src_files[@]}"
+
+# Snapshot the freshly-staged blob hashes so we can restore them after
+# `git apply --3way` (which implicitly --index's the patch into staging).
+declare -A staged_hashes
+declare -A staged_modes
+while IFS=$'\t' read -r meta path; do
+  # git ls-files -s emits: <mode> <hash> <stage>\t<path>
+  read -r mode hash _stage <<< "$meta"
+  staged_modes["$path"]="$mode"
+  staged_hashes["$path"]="$hash"
+done < <(git ls-files -s -- "${src_files[@]}")
+
+# Cleanup on exit: reapply the unstaged delta on top of the formatted tree,
+# then revert the index to the formatted-only state (so the unstaged delta
+# stays unstaged, as the user intended).
+restore_unstaged() {
+  if [[ -n "$unstaged_patch" && -s "$unstaged_patch" ]]; then
+    apply_failed=0
+    if ! git apply --3way --whitespace=nowarn "$unstaged_patch" 2>/dev/null; then
+      apply_failed=1
+    fi
+
+    # Always restore the index to the formatted-only state, regardless of
+    # whether --3way succeeded or left conflict markers. This ensures the
+    # unstaged delta does not silently get committed.
+    for path in "${!staged_hashes[@]}"; do
+      git update-index --cacheinfo "${staged_modes[$path]},${staged_hashes[$path]},$path"
+    done
+
+    if [[ $apply_failed -eq 1 ]]; then
+      cp "$unstaged_patch" "$REPO_ROOT/.git/pre-commit-unstaged.patch"
+      echo "" >&2
+      echo "pre-commit: your unstaged edits conflict with the formatter's changes." >&2
+      echo "  The formatted versions have been staged for commit." >&2
+      echo "  Working-tree files contain conflict markers from the 3-way merge." >&2
+      echo "  Your original unstaged patch is saved at:" >&2
+      echo "    .git/pre-commit-unstaged.patch" >&2
+      echo "  After resolving conflicts in the working tree, you can apply" >&2
+      echo "  the saved patch on top of a clean tree with:" >&2
+      echo "    git apply --3way .git/pre-commit-unstaged.patch" >&2
+      rm -f "$unstaged_patch"
+      exit 1
+    fi
+  fi
+  rm -f "$unstaged_patch" 2>/dev/null || true
+}
+trap restore_unstaged EXIT
