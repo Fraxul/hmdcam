@@ -54,6 +54,9 @@ FxAtomicString ksCrosshairUniformBlock("CrosshairUniformBlock");
 RHIVertexLayout positionOnlyVertexLayout;
 
 void initRHIResources() {
+  // There are a lot of manually-aligned initializer lists in this file,
+  // so we just skip the formatter.
+  // clang-format off
 
   {
     // Draws a single triangle that's big enough to get clipped into a screen-filling rectangle.
@@ -286,6 +289,7 @@ void initRHIResources() {
 
   crosshairPipeline = rhi()->compileRenderPipeline("shaders/crosshair.vtx.glsl", "shaders/crosshair.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
 
+  // clang-format on
 }
 
 FxAtomicString ksTriadGizmoUniformBuffer("TriadGizmoUniformBuffer");

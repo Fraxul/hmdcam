@@ -111,7 +111,8 @@ RHIRenderTargetGL::~RHIRenderTargetGL() {
     GL_COLOR_ATTACHMENT12,
     GL_COLOR_ATTACHMENT13,
     GL_COLOR_ATTACHMENT14,
-    GL_COLOR_ATTACHMENT15 };
+    GL_COLOR_ATTACHMENT15,
+  };
 
   // Setup drawBuffers state (which belongs to the FBO)
   // this just picks the first (m_colorBuffersCount) buffers from the array which contains all of the COLOR_ATTACHMENT enums in order.

@@ -159,8 +159,10 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
           depth_ia.push_back(0xffffffff); // strip-restart
 
         for (uint32_t x = 0; x < internalWidth(); x++) {
+          // clang-format off
           depth_ia.push_back(x + ( y      * (internalWidth())));
           depth_ia.push_back(x + ((y + 1) * (internalWidth())));
+          // clang-format on
         }
       }
 
@@ -176,10 +178,12 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
       for (uint32_t y = 0; y < dmym1; y++) {
         for (uint32_t x = 0; x < internalWidth(); x += 2) {
           uint32_t sq = (x + y * dmxm1) * 2;
+          // clang-format off
           depth_ia_lines[sq + 0] = x + y * (internalWidth());
           depth_ia_lines[sq + 1] = (x + 1) + (y) * (internalWidth());
           depth_ia_lines[sq + 2] = (x + 1) + (y + 1) * (internalWidth());
           depth_ia_lines[sq + 3] = (x + 2) + (y + 1) * (internalWidth());
+          // clang-format on
         }
       }
       m_geoDepthMapLineIndexBuffer = rhi()->newBufferWithContents(depth_ia_lines.data(), depth_ia_lines.size() * sizeof(uint32_t), kBufferUsageCPUWriteOnly);
@@ -198,6 +202,7 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
         for (uint32_t x = 0; x < internalWidth(); x++) {
           // [0] is disparity sample coordinates (integer texels)
           // [1] is offset in current prim (0...1 across the quad)
+          // clang-format off
           depth_tc.push_back(x); depth_tc.push_back(y);
           depth_tc.push_back(0); depth_tc.push_back(0);
           depth_ia.push_back(counter++);
@@ -214,7 +219,7 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
           depth_tc.push_back(1); depth_tc.push_back(1);
           depth_ia.push_back(counter++);
           depth_ia.push_back(0xffffffff); // strip-restart
-
+          // clang-format on
         }
       }
       m_geoDepthMapPointTexcoordBuffer = rhi()->newBufferWithContents(depth_tc.data(), depth_tc.size() * sizeof(depth_tc[0]), kBufferUsageCPUWriteOnly);
@@ -227,6 +232,7 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
   }
 
   {
+    // clang-format off
     RHIRenderPipelineDescriptor rpd;
     rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
     rpd.primitiveRestartEnabled = true;
@@ -240,9 +246,11 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     desc.setFlag("DISPARITY_USE_FP16", m_useFP16Disparity);
 
     m_disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
+    // clang-format on
   }
 
   {
+    // clang-format off
     RHIRenderPipelineDescriptor rpd;
     rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
     rpd.primitiveRestartEnabled = true;
@@ -256,6 +264,7 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     desc.setFlag("DISPARITY_USE_FP16", m_useFP16Disparity);
 
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
+    // clang-format on
   }
 
   // Allow derived classes to do additional init after the CameraSystem is known
@@ -428,10 +437,12 @@ void DepthMapGenerator::renderIMGUI() {
   if (m_splitDepthDiscontinuity)
     ImGui::SliderFloat("Depth Discontinuity", &m_maxDepthDiscontinuity, 0.01f, 2.0f);
 
+  // clang-format off
   ImGui::SliderInt("Trim Left",   &m_trimLeft,   0, 64);
   ImGui::SliderInt("Trim Top",    &m_trimTop,    0, 64);
   ImGui::SliderInt("Trim Right",  &m_trimRight,  0, 64);
   ImGui::SliderInt("Trim Bottom", &m_trimBottom, 0, 64);
+  // clang-format on
 
   ImGui::SliderFloat("Min Depth Cutoff", &m_minDepthCutoff, 0.01f, 0.30f);
 
@@ -611,12 +622,14 @@ float DepthMapGenerator::debugPeekDisparityTexel(size_t viewIdx, glm::ivec2 texe
   if (m_useFP16Disparity) {
     disparityRaw = glm::unpackHalf1x16(vd->m_debugCPUDisparity.at<uint16_t>(texelCoord.y, texelCoord.x));
   } else {
+    // clang-format off
     switch (vd->m_debugCPUDisparity.type()) {
       case CV_8U:  disparityRaw = static_cast<float>(vd->m_debugCPUDisparity.at<uint8_t >(texelCoord.y, texelCoord.x)); break;
       case CV_16U: disparityRaw = static_cast<float>(vd->m_debugCPUDisparity.at<uint16_t>(texelCoord.y, texelCoord.x)); break;
       default:
         assert(false && "DepthMapGenerator::debugPeekDisparity: unhandled m_debugCPUDisparity.type()");
     }
+    // clang-format on
   }
   return disparityRaw * m_disparityPrescale;
 }

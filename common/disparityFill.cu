@@ -122,10 +122,12 @@ __global__ void __launch_bounds__(/*maxThreadsPerBlock=*/ 16) disparityFillDowns
   int wgBaseX = threadIdx.x * 2;
   int wgBaseY = threadIdx.y * 2;
 
+  // clang-format off
   sample =              wgSamples[wgBaseY + 0][wgBaseX + 0];
   reduceSamples(sample, wgSamples[wgBaseY + 0][wgBaseX + 1], maxValidDisparityRaw);
   reduceSamples(sample, wgSamples[wgBaseY + 1][wgBaseX + 0], maxValidDisparityRaw);
   reduceSamples(sample, wgSamples[wgBaseY + 1][wgBaseX + 1], maxValidDisparityRaw);
+  // clang-format on
   __syncthreads(); // sync before workgroup write
 
   // Store to WG memory for final mip
@@ -140,14 +142,14 @@ __global__ void __launch_bounds__(/*maxThreadsPerBlock=*/ 16) disparityFillDowns
     return;
 
   // Reduce and store final sample
+  // clang-format off
   sample =              wgSamples[0][0];
   reduceSamples(sample, wgSamples[0][1], maxValidDisparityRaw);
   reduceSamples(sample, wgSamples[1][0], maxValidDisparityRaw);
   reduceSamples(sample, wgSamples[1][1], maxValidDisparityRaw);
+  // clang-format on
   outDisparityMinMaxMip3.ptr(mip1Y / 4)[mip1X / 4] = sample;
 }
-
-
 
 
 __global__ void __launch_bounds__(/*maxThreadsPerBlock=*/ 16) disparityFillDownsample2(uint16_t maxValidDisparityRaw,
@@ -190,10 +192,12 @@ __global__ void __launch_bounds__(/*maxThreadsPerBlock=*/ 16) disparityFillDowns
   int wgBaseX = threadIdx.x * 2;
   int wgBaseY = threadIdx.y * 2;
 
+  // clang-format off
   sample =              wgSamples[wgBaseY + 0][wgBaseX + 0];
   reduceSamples(sample, wgSamples[wgBaseY + 0][wgBaseX + 1], maxValidDisparityRaw);
   reduceSamples(sample, wgSamples[wgBaseY + 1][wgBaseX + 0], maxValidDisparityRaw);
   reduceSamples(sample, wgSamples[wgBaseY + 1][wgBaseX + 1], maxValidDisparityRaw);
+  // clang-format on
 
   __syncthreads(); // sync before workgroup write
 
@@ -209,10 +213,12 @@ __global__ void __launch_bounds__(/*maxThreadsPerBlock=*/ 16) disparityFillDowns
     return;
 
   // Reduce and store final sample
+  // clang-format off
   sample =              wgSamples[0][0];
   reduceSamples(sample, wgSamples[0][1], maxValidDisparityRaw);
   reduceSamples(sample, wgSamples[1][0], maxValidDisparityRaw);
   reduceSamples(sample, wgSamples[1][1], maxValidDisparityRaw);
+  // clang-format on
   outDisparityMinMaxMip3.ptr(mip1Y / 4)[mip1X / 4] = sample;
 }
 
@@ -361,10 +367,12 @@ void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, float 
     // Subsequent passes operate solely on the MinMaxMip chain
     size_t passCount = disparityMinMaxMips.size() / 3;
     for (size_t passIdx = 1; passIdx < passCount; ++passIdx) {
+      // clang-format off
       cv::cuda::GpuMat& inBase  = disparityMinMaxMips[(passIdx * 3) - 1];
       cv::cuda::GpuMat& outMip1 = disparityMinMaxMips[(passIdx * 3) + 0];
       cv::cuda::GpuMat& outMip2 = disparityMinMaxMips[(passIdx * 3) + 1];
       cv::cuda::GpuMat& outMip3 = disparityMinMaxMips[(passIdx * 3) + 2];
+      //clang-format on
 
       dim3 grid(
         cv::cuda::device::divUp(inBase.cols / 2, block.x),
@@ -409,4 +417,3 @@ void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, float 
       PtrStepSz<DispChromaMinMaxSample>(mip0.rows, mip0.cols, (DispChromaMinMaxSample*) mip0.cudaPtr(), mip0.step));
   }
 }
-

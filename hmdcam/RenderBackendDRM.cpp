@@ -335,6 +335,7 @@ void RenderBackendDRM::init() {
     DRM_CHECK(drmModeCreatePropertyBlob(m_drmFd, m_drmModeInfo, sizeof(drmModeModeInfo), &m_drmModeBlobId));
 
     // Look up required property IDs
+    // clang-format off
     uint32_t connCrtcId   = drmGetPropertyId(m_drmFd, m_drmConnector->connector_id, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID");
     uint32_t crtcActiveId = drmGetPropertyId(m_drmFd, m_drmCrtc->crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE");
     uint32_t crtcModeId   = drmGetPropertyId(m_drmFd, m_drmCrtc->crtc_id, DRM_MODE_OBJECT_CRTC, "MODE_ID");
@@ -348,6 +349,7 @@ void RenderBackendDRM::init() {
     uint32_t planeSrcY    = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "SRC_Y");
     uint32_t planeSrcW    = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "SRC_W");
     uint32_t planeSrcH    = drmGetPropertyId(m_drmFd, m_drmPlane->plane_id, DRM_MODE_OBJECT_PLANE, "SRC_H");
+    // clang-format on
 
     if (!connCrtcId || !crtcActiveId || !crtcModeId || !planeFbId || !planeCrtcId ||
         !planeCrtcX || !planeCrtcY || !planeCrtcW || !planeCrtcH ||
@@ -365,6 +367,7 @@ void RenderBackendDRM::init() {
       abort();
     }
 
+    // clang-format off
     // Connector: link to CRTC
     drmModeAtomicAddProperty(req, m_drmConnector->connector_id, connCrtcId, m_drmCrtc->crtc_id);
 
@@ -384,6 +387,7 @@ void RenderBackendDRM::init() {
     drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeSrcY, 0);
     drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeSrcW, (uint64_t)surfaceWidth() << 16);
     drmModeAtomicAddProperty(req, m_drmPlane->plane_id, planeSrcH, (uint64_t)surfaceHeight() << 16);
+    // clang-format on
 
     int ret = drmModeAtomicCommit(m_drmFd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
     drmModeAtomicFree(req);
@@ -396,10 +400,12 @@ void RenderBackendDRM::init() {
 
   // Set up the EGL display
   {
+    // clang-format off
     EGLint attrs[] = {
       EGL_DRM_MASTER_FD_EXT, m_drmFd,
       EGL_NONE
     };
+    // clang-format on
     DRM_CHECK_PTR(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, m_eglDevice, attrs));
 
     EGLint major, minor;
@@ -414,6 +420,7 @@ void RenderBackendDRM::init() {
   CheckExtension("EGL_EXT_stream_consumer_egloutput");
 
   // Choose a config and create a context
+  // clang-format off
   EGLint cfg_attr[] = {
     EGL_SURFACE_TYPE, EGL_STREAM_BIT_KHR,
     EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
@@ -423,6 +430,7 @@ void RenderBackendDRM::init() {
     EGL_ALPHA_SIZE, 0,
     EGL_NONE
   };
+  // clang-format on
 
   int n;
   EGL_CHECK_BOOL(eglChooseConfig(m_eglDisplay, cfg_attr, &m_eglConfig, 1, &n));
@@ -436,25 +444,31 @@ void RenderBackendDRM::init() {
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
 
   // Get the layer for this plane
+  // clang-format off
   EGLAttrib layer_attr[] = {
     EGL_DRM_PLANE_EXT, m_drmPlane->plane_id,
     EGL_NONE
   };
+  // clang-format on
 
   EGL_CHECK_BOOL(eglGetOutputLayersEXT(m_eglDisplay, layer_attr, &m_eglOutputLayer, 1, &n));
 
   // Create output stream
+  // clang-format off
   EGLint stream_attr[] = {
     EGL_STREAM_FIFO_LENGTH_KHR, 0, // Mailbox mode
     EGL_NONE};
+  // clang-format on
   DRM_CHECK_PTR(m_eglStream = eglCreateStreamKHR(m_eglDisplay, stream_attr));
   EGL_CHECK_BOOL(eglStreamConsumerOutputEXT(m_eglDisplay, m_eglStream, m_eglOutputLayer));
 
   // Create surface to feed the stream
+  // clang-format off
   EGLint srf_attr[] = {
     EGL_WIDTH, (EGLint) surfaceWidth(),
     EGL_HEIGHT, (EGLint) surfaceHeight(),
     EGL_NONE};
+  // clang-format on
 
   DRM_CHECK_PTR(m_eglSurface = eglCreateStreamProducerSurfaceKHR(m_eglDisplay, m_eglConfig, m_eglStream, srf_attr));
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext));

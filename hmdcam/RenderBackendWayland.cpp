@@ -23,17 +23,17 @@
 RenderBackend* createWaylandBackend() { return new RenderBackendWayland(); }
 
 struct wl_registry_listener RenderBackendWayland::registry_listener = {
-    registry_handle_global,
-    registry_handle_global_remove
+  registry_handle_global,
+  registry_handle_global_remove,
 };
 
 struct wl_keyboard_listener RenderBackendWayland::keyboard_listener = {
-    keyboard_keymap,
-    keyboard_enter,
-    keyboard_leave,
-    keyboard_key,
-    keyboard_modifiers,
-    keyboard_repeat_info
+  keyboard_keymap,
+  keyboard_enter,
+  keyboard_leave,
+  keyboard_key,
+  keyboard_modifiers,
+  keyboard_repeat_info,
 };
 
 // Listeners up through version 5 of wl_pointer, which is what we request in wl_registry_bind() for the seat and its associated interfaces.
@@ -50,8 +50,8 @@ struct wl_pointer_listener RenderBackendWayland::pointer_listener = {
 };
 
 struct wl_seat_listener RenderBackendWayland::seat_listener = {
-    seat_capabilities,
-    seat_name
+  seat_capabilities,
+  seat_name,
 };
 
 static void shell_surface_handle_ping(void *data, struct wl_shell_surface *wlShellSurface, uint32_t serial) {
@@ -121,6 +121,7 @@ void RenderBackendWayland::init() {
   CHECK_PTR(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_WAYLAND_EXT, (EGLNativeDisplayType) m_wlDisplay, NULL));
   EGL_CHECK_BOOL(eglInitialize(m_eglDisplay, NULL, NULL));
 
+  // clang-format off
   EGLint cfg_attr[] = {
     EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
     EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
@@ -130,6 +131,7 @@ void RenderBackendWayland::init() {
     EGL_ALPHA_SIZE, 8,
     EGL_NONE
   };
+  // clang-format on
 
   int n;
   EGL_CHECK_BOOL(eglChooseConfig(m_eglDisplay, cfg_attr, &m_eglConfig, 1, &n));
@@ -144,10 +146,12 @@ void RenderBackendWayland::init() {
   // Set optional surface attributes
   eglSurfaceAttrib(m_eglDisplay, m_eglSurface, EGL_SWAP_BEHAVIOR, EGL_BUFFER_DESTROYED);
 
+  // clang-format off
   EGLint ctx_attr[] = {
     EGL_CONTEXT_CLIENT_VERSION, 3,
     EGL_NONE
   };
+  // clang-format on
 
   eglBindAPI(EGL_OPENGL_API);
   CHECK_PTR(m_eglContext = eglCreateContext(m_eglDisplay, m_eglConfig, EGL_NO_CONTEXT, ctx_attr));
@@ -252,10 +256,10 @@ void RenderBackendWayland::registryHandleGlobalRemove( struct wl_registry *regis
 
 
 struct wl_output_listener RenderBackendWayland::output_listener = {
-    outputGeometry,
-    outputMode,
-    outputDone,
-    outputScale
+  outputGeometry,
+  outputMode,
+  outputDone,
+  outputScale,
 };
 
 void RenderBackendWayland::didAddOutput(OutputData* outputData) {

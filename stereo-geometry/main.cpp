@@ -101,6 +101,7 @@ int main(int argc, char** argv) {
   windowRenderTarget = new RHISDLWindowRenderTargetGL(window);
   sceneCamera = new FxCamera();
 
+  // clang-format off
   meshVertexColorPipeline = rhi()->compileRenderPipeline("shaders/meshVertexColor.vtx.glsl", "shaders/meshVertexColor.frag.glsl", RHIVertexLayout({
       RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position", 0,                 sizeof(float) * 7),
       RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "color",    sizeof(float) * 3, sizeof(float) * 7)
@@ -144,6 +145,7 @@ int main(int argc, char** argv) {
     };
     frustumVisualizeVBO = rhi()->newBufferWithContents(frustumBoxData, sizeof(float) * 72);
   }
+  // clang-format on
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();

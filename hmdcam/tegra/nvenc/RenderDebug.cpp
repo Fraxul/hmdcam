@@ -28,9 +28,12 @@ void* rtspServerThreadEntryPoint(void* arg) {
   pthread_setname_np(pthread_self(), "RTSP-Server");
 
   // Initialize EGL share context and CUDA
+  // clang-format off
   EGLint ctxAttrs[] = {
-    EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE
+    EGL_CONTEXT_CLIENT_VERSION, 3,
+    EGL_NONE
   };
+  // clang-format on
 
   EGLContext eglCtx = eglCreateContext(renderBackend->eglDisplay(), renderBackend->eglConfig(), renderBackend->eglContext(), ctxAttrs);
   if (!eglCtx) {

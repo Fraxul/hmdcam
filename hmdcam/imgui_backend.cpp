@@ -51,11 +51,13 @@ void ImGui_ImplFxRHI_Init() {
     imguiBlendState = rhi()->compileBlendState(RHIBlendStateDescriptorElement(kBlendSourceAlpha, kBlendOneMinusSourceAlpha, kBlendOne, kBlendOneMinusSourceAlpha));
   }
   if (!imguiPipeline) {
+    // clang-format off
     imguiPipeline = rhi()->compileRenderPipeline("shaders/imgui.vtx.glsl", "shaders/imgui.frag.glsl", RHIVertexLayout({
       RHIVertexLayoutElement(0, kVertexElementTypeFloat2,  "Position", offsetof(ImDrawVert, pos), sizeof(ImDrawVert)),
       RHIVertexLayoutElement(0, kVertexElementTypeFloat2,  "UV",       offsetof(ImDrawVert, uv),  sizeof(ImDrawVert)),
       RHIVertexLayoutElement(0, kVertexElementTypeUByte4N, "Color",    offsetof(ImDrawVert, col), sizeof(ImDrawVert))
     }), kPrimitiveTopologyTriangleList);
+    // clang-format on
   }
 
 }

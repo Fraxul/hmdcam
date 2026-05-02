@@ -148,7 +148,6 @@ bool RenderInit(ERenderBackend backendType) {
     eye_width = (((hmd->views[0].viewport.w_pixels * 3) / 2) + 0xf) & ~0xfUL;
     eye_height = (((hmd->views[0].viewport.h_pixels * 3) / 2) + 0xf) & ~0xfUL;
     printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
-
   }
 
   // EGL/DRM setup
@@ -177,28 +176,34 @@ bool RenderInit(ERenderBackend backendType) {
   solidQuadPipeline = rhi()->compileRenderPipeline("shaders/solidQuad.vtx.glsl", "shaders/solidQuad.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);
 
   {
-    RHIVertexLayout vtx;
-    vtx.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "position_Ruv", 0, 16));
+    // clang-format off
+    RHIVertexLayout vtx({
+      RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "position_Ruv", 0, 16)
+    });
     RHIShaderDescriptor desc(
-          "shaders/meshDistortion.vtx.glsl",
-          "shaders/meshDistortion.frag.glsl",
-          vtx);
+      "shaders/meshDistortion.vtx.glsl",
+      "shaders/meshDistortion.frag.glsl",
+      vtx);
     desc.setFlag("CHROMA_CORRECTION", false);
 
     mesh1chDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+    // clang-format on
   }
 
   {
-    RHIVertexLayout vtx;
-    vtx.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "position_Ruv", 0,  32));
-    vtx.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "Guv_Buv",      16, 32));
+    // clang-format off
+    RHIVertexLayout vtx({
+      RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "position_Ruv",  0, 32),
+      RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "Guv_Buv",      16, 32),
+    });
 
     RHIShaderDescriptor desc(
-          "shaders/meshDistortion.vtx.glsl",
-          "shaders/meshDistortion.frag.glsl",
-          vtx);
+      "shaders/meshDistortion.vtx.glsl",
+      "shaders/meshDistortion.frag.glsl",
+      vtx);
     desc.setFlag("CHROMA_CORRECTION", true);
     mesh3chDistortionPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
+    // clang-format on
   }
 
   {
@@ -240,10 +245,10 @@ bool RenderInit(ERenderBackend backendType) {
     // Compute post-distortion viewports
     for (int eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
       eyePostDistortionViewports[eyeIndex] = RHIRect::xywh(
-          hmd->views[eyeIndex].viewport.x_pixels,
-          hmd->views[eyeIndex].viewport.y_pixels,
-          hmd->views[eyeIndex].viewport.w_pixels,
-          hmd->views[eyeIndex].viewport.h_pixels);
+        hmd->views[eyeIndex].viewport.x_pixels,
+        hmd->views[eyeIndex].viewport.y_pixels,
+        hmd->views[eyeIndex].viewport.w_pixels,
+        hmd->views[eyeIndex].viewport.h_pixels);
     }
   } // Monado distortion setup
 
@@ -259,8 +264,10 @@ bool RenderInit(ERenderBackend backendType) {
     eye_width = hmd_width / 2;
     eye_height = hmd_height;
     // Reset the viewports
+    // clang-format off
     eyePostDistortionViewports[0] = RHIRect::xywh(        0, 0, eye_width, eye_height);
     eyePostDistortionViewports[1] = RHIRect::xywh(eye_width, 0, eye_width, eye_height);
+    // clang-format on
   }
 
   if (!(windowRenderTarget->width() == hmd_width && windowRenderTarget->height() == hmd_height)) {
@@ -270,9 +277,11 @@ bool RenderInit(ERenderBackend backendType) {
   // Create FBOs and viewports for eye rendering (pre distortion)
   eyeTex = rhi()->newTexture2D(eye_width * 2, eye_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
   eyeDepthRenderbuffer = rhi()->newRenderbuffer2D(eye_width * 2, eye_height, RHISurfaceDescriptor(kSurfaceFormat_Depth32f));
-  eyeRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ eyeTex }, eyeDepthRenderbuffer));
-  eyeViewports[0] = RHIRect::xywh(0, 0, eye_width, eye_height);
+  eyeRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({eyeTex}, eyeDepthRenderbuffer));
+  // clang-format off
+  eyeViewports[0] = RHIRect::xywh(        0, 0, eye_width, eye_height);
   eyeViewports[1] = RHIRect::xywh(eye_width, 0, eye_width, eye_height);
+  // clang-format on
 
   return true;
 }
@@ -297,12 +306,13 @@ void recomputeHMDParameters() {
 
   // from renderer_get_view_projection (compositor/main/comp_renderer.c)
   struct xrt_vec3 eye_relation = {
-      0.063000f, /* TODO: get actual ipd_meters */
-      0.0f,
-      0.0f,
+    0.063000f, /* TODO: get actual ipd_meters */
+    0.0f,
+    0.0f,
   };
 
   for (uint32_t eyeIdx = 0; eyeIdx < 2; eyeIdx++) {
+    // clang-format off
     struct xrt_fov* fov = &xrtHMDevice->hmd->distortion.fov[eyeIdx];
 
     // from comp_layer_renderer_set_fov
@@ -350,14 +360,17 @@ void recomputeHMDParameters() {
       v[ 4], v[ 5], v[ 6], v[ 7],
       v[ 8], v[ 9], v[10], v[11],
       v[12], v[13], v[14], v[15]);
+    // clang-format on
   }
 
   for (size_t i = 0; i < 2; ++i) {
+    // clang-format off
     printf("Eye %zu projection matrix:\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n  % .3f % .3f % .3f % .3f\n\n", i,
       eyeProjection[i][0][0], eyeProjection[i][0][1], eyeProjection[i][0][2], eyeProjection[i][0][3],
       eyeProjection[i][1][0], eyeProjection[i][1][1], eyeProjection[i][1][2], eyeProjection[i][1][3],
       eyeProjection[i][2][0], eyeProjection[i][2][1], eyeProjection[i][2][2], eyeProjection[i][2][3],
       eyeProjection[i][3][0], eyeProjection[i][3][1], eyeProjection[i][3][2], eyeProjection[i][3][3]);
+    // clang-format on
   }
 }
 
@@ -391,4 +404,3 @@ void renderHMDFrame() {
 
   rhi()->swapBuffers(windowRenderTarget);
 }
-

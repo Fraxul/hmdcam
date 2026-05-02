@@ -146,19 +146,23 @@ std::vector<FxRenderView> FxCamera::toRenderViews(float renderTargetAspectRatio,
 
 #if 0
 glm::mat4 convertMatrix(vr::HmdMatrix44_t mat) {
+  // clang-format off
   return glm::mat4(
     mat.m[0][0], mat.m[1][0], mat.m[2][0], mat.m[3][0],
     mat.m[0][1], mat.m[1][1], mat.m[2][1], mat.m[3][1],
     mat.m[0][2], mat.m[1][2], mat.m[2][2], mat.m[3][2],
     mat.m[0][3], mat.m[1][3], mat.m[2][3], mat.m[3][3]);
+  // clang-format on
 }
 
 glm::mat4 convertMatrix(vr::HmdMatrix34_t mat) {
+  // clang-format off
   return glm::mat4(
     mat.m[0][0], mat.m[1][0], mat.m[2][0], 0.0f,
     mat.m[0][1], mat.m[1][1], mat.m[2][1], 0.0f,
     mat.m[0][2], mat.m[1][2], mat.m[2][2], 0.0f,
     mat.m[0][3], mat.m[1][3], mat.m[2][3], 1.0f);
+  // clang-format on
 }
 #endif
 
@@ -177,36 +181,36 @@ FxRenderView FxCamera::toRenderView(float renderTargetAspectRatio, int forStereo
   }
 
 
-  res.viewMatrix = glm::lookAtRH(res.worldEyePosition, /*center=*/target, m_upVec);
+  res.viewMatrix = glm::lookAtRH(res.worldEyePosition, /*center=*/ target, m_upVec);
 
   res.fov = m_fovX;
   res.fovY = m_fovX / renderTargetAspectRatio;
   res.aspect = renderTargetAspectRatio;
 
+  // clang-format off
   glm::vec2 projScale = glm::vec2(
     1.0f / glm::tan(glm::radians(res.fov  * 0.5f)),
-    1.0f / glm::tan(glm::radians(res.fovY * 0.5f)) );
+    1.0f / glm::tan(glm::radians(res.fovY * 0.5f)));
   glm::vec2 projOffset = glm::vec2(0.0f);
 
   if (m_useInfiniteZ) {
     // Right-handed infinite-Z far plane
     res.projectionMatrix = glm::mat4(
-      glm::vec4(projScale.x,    0.0f,        projOffset.x,     0.0f),
-      glm::vec4(0.0f,           projScale.y, projOffset.y,     0.0f),
-      glm::vec4(0.0f,           0.0f,        0.0f,            -1.0f),
-      glm::vec4(0.0f,           0.0f,        m_zNear,          0.0f)
-    );
+      glm::vec4(projScale.x,        0.0f, projOffset.x,  0.0f),
+      glm::vec4(       0.0f, projScale.y, projOffset.y,  0.0f),
+      glm::vec4(       0.0f,        0.0f,         0.0f, -1.0f),
+      glm::vec4(       0.0f,        0.0f,      m_zNear,  0.0f));
   } else {
     // bounded-Z far plane
     float z1 = m_zNear / (m_zNear - m_zFar);
     float z2 = -m_zFar * z1;
     res.projectionMatrix = glm::mat4(
-      glm::vec4(projScale.x,    0.0f,        projOffset.x,  0.0f),
-      glm::vec4(0.0f,           projScale.y, projOffset.y,  0.0f),
-      glm::vec4(0.0f,           0.0f,        z1,           -1.0f),
-      glm::vec4(0.0f,           0.0f,        z2,            0.0f)
-    );
+      glm::vec4(projScale.x,        0.0f, projOffset.x,  0.0f),
+      glm::vec4(       0.0f, projScale.y, projOffset.y,  0.0f),
+      glm::vec4(       0.0f,        0.0f,           z1, -1.0f),
+      glm::vec4(       0.0f,        0.0f,           z2,  0.0f));
   }
+  // clang-format on
 
   res.zNear = m_zNear;
   res.zFar = m_zFar;
@@ -221,6 +225,7 @@ FxRenderView FxCamera::toRenderView(float renderTargetAspectRatio, int forStereo
       float projLeft, projRight, projTop, projBottom;
       FxEngine::vrSystem()->GetProjectionRaw(eEye, &projLeft, &projRight, &projTop, &projBottom);
 
+      // clang-format off
       float idx = 1.0f / (projRight - projLeft);
       float idy = 1.0f / (projBottom - projTop);
       float sx = projRight + projLeft;
@@ -231,7 +236,7 @@ FxRenderView FxCamera::toRenderView(float renderTargetAspectRatio, int forStereo
         0.0f,      2.0f*idy,  0.0f,             0.0f,
         sx*idx,    sy*idy,    0.0f,            -1.0f,
         0.0f,      0.0f,      r_zNear.value(),  0.0f);
-
+      // clang-format on
     }
 
     glm::mat4 eyeToHead = convertMatrix(FxEngine::vrSystem()->GetEyeToHeadTransform(eEye));

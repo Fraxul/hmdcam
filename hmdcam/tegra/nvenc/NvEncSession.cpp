@@ -82,10 +82,12 @@ NvEncSession::NvEncSession(uint32_t _width, uint32_t _height) :
     RHISurface::ptr srf = rhi()->newTexture2D(m_width, m_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
     m_rhiSurfaces.push_back(srf);
 #if 0
+    // clang-format off
     EGLAttrib attrs[] = {
       EGL_GL_TEXTURE_LEVEL, 0,
       EGL_NONE
     };
+    // clang-format on
 
     EGLImage img;
     CHECK_NOT_NULL(img = eglCreateImage(renderBackend->eglDisplay(), eglThreadCtx, EGL_GL_TEXTURE_2D, (EGLClientBuffer) ((/*eliminate size conversion warning*/ intptr_t) static_cast<RHISurfaceGL*>(srf.get())->glId()), attrs));
@@ -242,9 +244,12 @@ void NvEncSession::cudaWorker() {
   prctl(PR_SET_NAME, "NvEncSessn-CUDA", 0, 0, 0);
 
   // Setup an EGL share context
+  // clang-format off
   EGLint ctxAttrs[] = {
-    EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE
+    EGL_CONTEXT_CLIENT_VERSION, 3,
+    EGL_NONE
   };
+  // clang-format on
 
   EGLContext eglCtx = eglCreateContext(renderBackend->eglDisplay(), renderBackend->eglConfig(), renderBackend->eglContext(), ctxAttrs);
   if (!eglCtx) {

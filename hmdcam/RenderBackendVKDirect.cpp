@@ -154,7 +154,7 @@ const std::vector<const char*> requiredDeviceExtensions = {
 };
 
 const std::vector<const char*> validationLayers = {
-  "VK_LAYER_LUNARG_standard_validation"
+  "VK_LAYER_LUNARG_standard_validation",
 };
 
 void RenderBackendVKDirect::init() {
@@ -271,10 +271,12 @@ void RenderBackendVKDirect::init() {
     // Find alpha mode bit
     auto planeCapabilities = m_gpu.getDisplayPlaneCapabilitiesKHR(m_display.m_modeProperties.displayMode, planeIndex);
     vk::DisplayPlaneAlphaFlagBitsKHR alphaMode     = vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque;
-    vk::DisplayPlaneAlphaFlagBitsKHR alphaModes[4] = {vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque,
-                                                      vk::DisplayPlaneAlphaFlagBitsKHR::eGlobal,
-                                                      vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixel,
-                                                      vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixelPremultiplied};
+    vk::DisplayPlaneAlphaFlagBitsKHR alphaModes[4] = {
+      vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque,
+      vk::DisplayPlaneAlphaFlagBitsKHR::eGlobal,
+      vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixel,
+      vk::DisplayPlaneAlphaFlagBitsKHR::ePerPixelPremultiplied,
+    };
     for(uint32_t i = 0; i < (sizeof(alphaModes) / sizeof(alphaModes[0])); ++i)  {
       if(planeCapabilities.supportedAlpha & alphaModes[i]) {
         alphaMode = alphaModes[i];
@@ -466,10 +468,12 @@ void RenderBackendVKDirect::init() {
       abort();
     }
 
+    // clang-format off
     EGLint attrs[] = {
       EGL_DRM_MASTER_FD_EXT, m_drmFd,
       EGL_NONE
     };
+    // clang-format on
     EGL_CHECK(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, m_eglDevice, attrs));
     EGL_CHECK(eglInitialize(m_eglDisplay, NULL, NULL));
 
@@ -488,6 +492,7 @@ void RenderBackendVKDirect::init() {
     for(auto& s : m_syncData) {
       // Interop texture
 
+      // clang-format off
       vk::StructureChain<vk::ImageCreateInfo, vk::ExternalMemoryImageCreateInfo> imageCreateInfo = {
         vk::ImageCreateInfo({
           vk::ImageCreateFlags(),
@@ -506,6 +511,7 @@ void RenderBackendVKDirect::init() {
         vk::ExternalMemoryImageCreateInfo({
           vk::ExternalMemoryHandleTypeFlags(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd)
         })};
+      // clang-format on
 
       s.m_image = m_device->createImageUnique(imageCreateInfo.get());
 
@@ -875,6 +881,7 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
 
     vk::ImageSubresourceRange subresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
 
+    // clang-format off
     vk::ImageMemoryBarrier swapchainTransferDstBarrier = {
       /*srcAccessMask=*/ vk::AccessFlagBits::eNone,
       /*dstAccessMask=*/ vk::AccessFlagBits::eTransferWrite,
@@ -885,6 +892,7 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
       /*image=*/ m_swapchainImages[swapchainIndex],
       /*subresourceRange=*/ subresourceRange
     };
+    // clang-format on
 
     b.pipelineBarrier(
       /*srcStageMask=*/ vk::PipelineStageFlagBits::eTopOfPipe,
@@ -903,6 +911,7 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
                 m_swapchainImages[swapchainIndex], vk::ImageLayout::eTransferDstOptimal,
                 vk::ArrayProxy<const vk::ImageBlit>{1, &region}, vk::Filter::eNearest);
 
+    // clang-format off
     vk::ImageMemoryBarrier swapchainPresentSrcBarrier = {
       /*srcAccessMask=*/ vk::AccessFlagBits::eTransferWrite,
       /*dstAccessMask=*/ vk::AccessFlagBits::eNone,
@@ -913,6 +922,7 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
       /*image=*/ m_swapchainImages[swapchainIndex],
       /*subresourceRange=*/ subresourceRange
     };
+    // clang-format on
 
     b.pipelineBarrier(
       /*srcStageMask=*/ vk::PipelineStageFlagBits::eTransfer,

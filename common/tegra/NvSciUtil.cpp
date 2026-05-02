@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-
+// clang-format off
 const char* kNvMediaStatusStr[] = {
   "NVMEDIA_STATUS_OK",                      //  0
   "NVMEDIA_STATUS_BAD_PARAMETER",           //  1
@@ -24,6 +24,7 @@ const char* kNvMediaStatusStr[] = {
   "NVMEDIA_STATUS_INVALID_STATE",           // 15
 };
 constexpr uint32_t kNvMediaStatusCount = (sizeof(kNvMediaStatusStr) / sizeof(kNvMediaStatusStr[0]));
+// clang-format on
 
 bool checkNvMediaStatus(NvMediaStatus res, const char* op, const char* file, int line, bool fatal) {
   if (res != NVMEDIA_STATUS_OK) {

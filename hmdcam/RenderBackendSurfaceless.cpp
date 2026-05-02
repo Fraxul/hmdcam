@@ -21,9 +21,11 @@ void RenderBackendSurfaceless::init() {
 
   // Set up the EGL display
   {
+    // clang-format off
     EGLint attrs[] = {
       EGL_NONE
     };
+    // clang-format on
     EGL_CHECK_BOOL(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_SURFACELESS_MESA, m_eglDevice, attrs));
 
     EGLint major, minor;
@@ -43,6 +45,7 @@ void RenderBackendSurfaceless::init() {
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
 
 
+  // clang-format off
   EGLint cfg_attr[] = {
     EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
     EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
@@ -50,7 +53,8 @@ void RenderBackendSurfaceless::init() {
     EGL_GREEN_SIZE, 8,
     EGL_BLUE_SIZE, 8,
     EGL_NONE
-  };    
+  };
+  // clang-format on
 
   int numConfigs;
   EGL_CHECK_BOOL(eglChooseConfig(m_eglDisplay, cfg_attr, &m_eglConfig, 1, &numConfigs));
@@ -59,11 +63,13 @@ void RenderBackendSurfaceless::init() {
   m_surfaceWidth = 1280;
   m_surfaceHeight = 720;
 
+  // clang-format off
   EGLint pbuffer_attr[] = {
     EGL_WIDTH, (EGLint) m_surfaceWidth,
     EGL_HEIGHT, (EGLint) m_surfaceHeight,
-    EGL_NONE,
+    EGL_NONE
   };
+  // clang-format on
 
   EGL_CHECK_BOOL(m_eglSurface = eglCreatePbufferSurface(m_eglDisplay, m_eglConfig, pbuffer_attr));
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext));

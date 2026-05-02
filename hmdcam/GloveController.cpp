@@ -13,7 +13,7 @@ constexpr uint8_t maskForButton(uint8_t idx) { return (1 << idx); }
 const char* kControllerName[] = {
   "Left",
   "Right",
-  "<max>"
+  "<max>",
 };
 
 
