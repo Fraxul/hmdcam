@@ -1,0 +1,90 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# Indentation
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+ContinuationIndentWidth: 2
+ConstructorInitializerIndentWidth: 2
+AccessModifierOffset: -2
+NamespaceIndentation: Inner
+IndentCaseLabels: true
+IndentPPDirectives: None
+
+# Line length: effectively unlimited. Several existing files have lines well
+# over 200 columns by design (long Argus/OpenCV/Vulkan signatures, ASCII
+# diagrams in comments). A hard limit would force destructive reflows.
+ColumnLimit: 0
+
+# Braces: K&R / attached
+BreakBeforeBraces: Attach
+
+# Allow dense inline declarations.
+# Empty (not Always) for short blocks: a bare `if (x) {}` may collapse, but a
+# block containing a comment is not "empty" and stays multi-line, so the
+# pattern of leaving an empty if-body with an explanatory comment is preserved.
+AllowShortFunctionsOnASingleLine: All
+AllowShortBlocksOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortEnumsOnASingleLine: false
+
+# Pointer / reference style
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+
+# Don't auto-pack: keep author's choice of one-per-line vs all-on-one-line
+BinPackArguments: true
+BinPackParameters: true
+BreakConstructorInitializers: AfterColon
+PackConstructorInitializers: CurrentLine
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+
+# Don't try to align across lines (it tends to fight long signatures)
+AlignAfterOpenBracket: DontAlign
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignConsecutiveMacros: None
+AlignTrailingComments: false
+AlignOperands: DontAlign
+
+# Array-of-structures style: try to align the commas
+AlignArrayOfStructures: Right
+
+# Includes are hand-ordered, don't touch them
+SortIncludes: Never
+SortUsingDeclarations: false
+
+# Comments
+ReflowComments: false
+SpacesBeforeTrailingComments: 1
+
+# Spaces
+SpaceAfterCStyleCast: true
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Empty lines
+KeepEmptyLinesAtTheStartOfBlocks: true
+MaxEmptyLinesToKeep: 2
+
+# Misc
+Cpp11BracedListStyle: true
+FixNamespaceComments: true
+Standard: c++17
