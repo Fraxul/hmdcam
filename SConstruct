@@ -3,6 +3,7 @@ import platform
 import sys
 import re
 import SCons
+import SCons.Util
 
 vars = Variables(None, ARGUMENTS)
 vars.Add(BoolVariable('debug', 'Set to build in debug mode (no optimization)', 0))
@@ -10,7 +11,7 @@ vars.Add(BoolVariable('nsight', 'Set to build for NSight compatibility (disables
 vars.Add(BoolVariable('cuda_debug', 'Set to build CUDA kernels in debug mode', 0))
 
 
-env_tools = ['clang', 'clangxx', 'link', 'cuda']
+env_tools = ['clang', 'clangxx', 'link', 'cuda', 'ar']
 
 scons_version_major = int(SCons.__version__.split('.')[0])
 if (scons_version_major >= 4):
@@ -68,6 +69,31 @@ if (scons_version_major < 4):
 # Fix for clang colored diagnostics
 env['ENV']['TERM'] = os.environ['TERM']
 env.Decider('MD5-timestamp')
+
+# Wrap one or more static library Nodes (results of env.StaticLibrary()) with
+# linker --whole-archive / --no-whole-archive so every object gets pulled in,
+# not just those that resolve an undefined symbol. Use this for libraries that
+# rely on static-initializer side effects (self-registering constructors).
+#
+# WholeArchive() returns a list of LINKFLAGS contributions; the caller is
+# responsible for also registering Depends() so SCons rebuilds the program
+# when the library changes. ProgramWithWholeArchive() does both in one call:
+#     env.ProgramWithWholeArchive(target=..., source=[...],
+#                                 whole_archive_libs=[librhi, libimgui])
+def WholeArchive(env, libs):
+  libs = SCons.Util.flatten([libs])
+  paths = [n.abspath for n in libs]
+  return [env.Literal('-Wl,--whole-archive')] + paths + [env.Literal('-Wl,--no-whole-archive')]
+
+def ProgramWithWholeArchive(env, target, source, whole_archive_libs, **kw):
+  libs = SCons.Util.flatten([whole_archive_libs])
+  kw['LINKFLAGS'] = kw.get('LINKFLAGS', env['LINKFLAGS']) + env.WholeArchive(libs)
+  prog = env.Program(target=target, source=source, **kw)
+  env.Depends(prog, libs)
+  return prog
+
+env.AddMethod(WholeArchive, 'WholeArchive')
+env.AddMethod(ProgramWithWholeArchive, 'ProgramWithWholeArchive')
 
 is_tegra = (platform.machine() == 'aarch64')
 tegra_release = 0
@@ -145,6 +171,36 @@ env['CERES_LIBS'] = ['ceres', 'cholmod', 'lapack', 'spqr', 'glog', 'gflags']
 
 # Finally, export environment for individual component build scripts to clone and modify.
 Export('env')
+
+##### Build common libraries #####
+
+# RHI library. This has no config dependencies besides <opencv2/config.h> (for rhi/cuda/RHICVInterop)
+# Map RHI source tree to the build location
+env.VariantDir('build/librhi', 'rhi', duplicate=False)
+# source inputs are from the VariantDir mapping, otherwise the object files end up in the source tree.
+librhi = env.StaticLibrary(
+  target = '#build/lib/rhi',
+  source = Glob('build/librhi/*.cpp') +
+    Glob('build/librhi/cuda/*.cpp') +
+    Glob('build/librhi/gl/*.cpp') +
+    Glob('build/librhi/egl/*.cpp')
+)
+Export('librhi')
+
+# We build imgui and implot together into a single static library.
+# This is also where the imgui config directives live.
+env.Append(CPPDEFINES=['IMGUI_DISABLE_OBSOLETE_KEYIO', 'IMGUI_DISABLE_OBSOLETE_FUNCTIONS'])
+# Map imgui and implot source trees to their build locations
+env.VariantDir('build/libimgui/imgui', 'imgui', duplicate=False)
+env.VariantDir('build/libimgui/implot', 'implot', duplicate=False)
+libimgui = env.StaticLibrary(
+  target = '#build/lib/imgui',
+  source = Glob('build/libimgui/imgui/*.cpp') + Glob('build/libimgui/implot/*.cpp')
+)
+Export('libimgui')
+
+
+##### Build binaries #####
 
 build_dgpu = True
 if (is_tegra and (not os.path.isdir('/usr/local/nvidia-dgpu-support'))):

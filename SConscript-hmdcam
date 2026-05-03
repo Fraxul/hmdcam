@@ -2,6 +2,7 @@ import os
 import platform
 import sys
 Import('env')
+Import('librhi', 'libimgui')
 
 # Building on Tegra; build hmdcam application
 tegraEnv = env.Clone()
@@ -14,7 +15,6 @@ if not os.path.exists(str(Dir(MONADO_BUILD))):
   sys.exit('Monado build artifacts are not present. Please run ./build-monado.sh first.')
 
 tegraEnv.Append(
-  CPPDEFINES=['IMGUI_DISABLE_OBSOLETE_KEYIO', 'IMGUI_DISABLE_OBSOLETE_FUNCTIONS'],
   CPPPATH=[
     'hmdcam',
     'wayland',
@@ -140,19 +140,13 @@ if (env['HAVE_OPENCV_CUDA']):
   tegraEnv.Append(LIBS=['opencv_cudafilters'])
 
 tegraEnv.CompilationDatabase()
-tegraEnv.Program(
+tegraEnv.ProgramWithWholeArchive(
   target = '../bin/hmdcam', # relative to build/hmdcam
   source = Glob('hmdcam/*.cpp')
     + Glob('hmdcam/*.c')
     + Glob('hmdcam/*.cu')
     + Glob('common/*.cpp')
     + Glob('common/*.cu')
-    + Glob('rhi/*.cpp')
-    + Glob('rhi/cuda/*.cpp')
-    + Glob('rhi/gl/*.cpp')
-    + Glob('rhi/egl/*.cpp')
-    + Glob('imgui/*.cpp')
-    + Glob('implot/*.cpp')
     + Glob('wayland/*.c')
     + Glob('canbus/common/*.cpp')
     + Glob('canbus/socketcan/*.c')
@@ -161,5 +155,6 @@ tegraEnv.Program(
     + tegra_mmapi_src
     + liveMediaStatics
     + monadoStatics,
+  whole_archive_libs = [librhi, libimgui]
 )
 

@@ -1,4 +1,5 @@
 Import('env')
+Import('librhi', 'libimgui')
 
 debugClientEnv = env.Clone()
 
@@ -33,8 +34,13 @@ if debugClientEnv['IS_TEGRA']:
   tegraSrc = Glob('common/tegra/*.cpp')
 
 debugClientEnv.CompilationDatabase()
-debugClientEnv.Program(
+debugClientEnv.ProgramWithWholeArchive(
   target = '../bin/debug-client', # relative to build/debug-client
-  source = Glob('debug-client/*.cpp') + Glob('debug-client/*.cu') + Glob('common/*.cpp') + Glob('common/*.cu') + Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('imgui/*.cpp') + Glob('implot/*.cpp') + tegraSrc,
+  source = Glob('debug-client/*.cpp')
+    + Glob('debug-client/*.cu')
+    + Glob('common/*.cpp')
+    + Glob('common/*.cu')
+    + tegraSrc,
+  whole_archive_libs = [librhi, libimgui]
 )
 
