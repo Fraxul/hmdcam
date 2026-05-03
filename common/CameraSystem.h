@@ -49,8 +49,8 @@ public:
     cv::Mat optimizedMatrix; // Computed by cv::getOptimalNewCameraMatrix from cameraIntrinsicMatrix and distCoeffs
     double fovX, fovY; // Values for the optimized camera matrix, in degrees
 
-    bool haveIntrinsicCalibration() const { return (!(intrinsicMatrix.empty() || distCoeffs.empty())); }
-    bool haveIntrinsicDistortionMap() const { return (!(optimizedMatrix.empty() || intrinsicDistortionMap.get() == nullptr)); }
+    bool hasIntrinsicCalibration() const { return (!(intrinsicMatrix.empty() || distCoeffs.empty())); }
+    bool hasIntrinsicDistortionMap() const { return (!(optimizedMatrix.empty() || intrinsicDistortionMap.get() == nullptr)); }
   };
 
   struct View {
@@ -85,8 +85,8 @@ public:
     RHISurface::ptr stereoDistortionMap[2]; // Combined intrinsic and stereo distortion
     double fovX = 0, fovY = 0; // Values for the stereo projection, in degrees
 
-    bool haveStereoCalibration() const { return (!(stereoRotation.empty() || stereoTranslation.empty())); }
-    bool haveStereoRectificationParameters() const {
+    bool hasStereoCalibration() const { return (!(stereoRotation.empty() || stereoTranslation.empty())); }
+    bool hasStereoRectificationParameters() const {
       return (!(
         stereoRectification[0].empty() || stereoRectification[1].empty() ||
         stereoProjection[0].empty() || stereoProjection[1].empty() ||
@@ -161,7 +161,6 @@ public:
     virtual RHISurface::ptr overlaySurfaceAtIndex(size_t) = 0;
     virtual bool isCameraContext() { return false; }
     virtual bool isViewContext() { return false; }
-    virtual size_t getCameraOrViewIndex() = 0;
 
     virtual bool involvesCamera(size_t cameraIdx) = 0;
     virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) = 0;
@@ -229,7 +228,6 @@ public:
     virtual RHISurface::ptr overlaySurfaceAtIndex(size_t);
 
     virtual bool isCameraContext() { return true; }
-    virtual size_t getCameraOrViewIndex() { return m_cameraIdx; }
 
     virtual bool involvesCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx; }
     virtual size_t overlaySurfaceIndexForCamera(size_t cameraIdx) { return cameraIdx == m_cameraIdx ? 0 : -1; }
@@ -282,7 +280,6 @@ public:
     virtual RHISurface::ptr overlaySurfaceAtIndex(size_t);
 
     virtual bool isViewContext() { return true; }
-    virtual size_t getCameraOrViewIndex() { return m_viewIdx; }
 
     virtual bool involvesCamera(size_t cameraIdx) {
       View& v = cameraSystem()->viewAtIndex(m_viewIdx);
@@ -343,7 +340,6 @@ public:
     virtual RHISurface::ptr overlaySurfaceAtIndex(size_t);
 
     virtual bool isViewContext() { return true; }
-    virtual size_t getCameraOrViewIndex() { return m_viewIdx; }
 
     virtual bool involvesCamera(size_t cameraIdx) {
       const View& rv = cameraSystem()->viewAtIndex(m_referenceViewIdx);

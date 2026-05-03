@@ -180,7 +180,7 @@ bool CameraSystem::loadCalibrationData(cv::FileStorage& fs) {
 
   for (size_t cameraIdx = 0; cameraIdx < m_cameras.size(); ++cameraIdx) {
     Camera& c = cameraAtIndex(cameraIdx);
-    if (c.haveIntrinsicCalibration()) {
+    if (c.hasIntrinsicCalibration()) {
       updateCameraIntrinsicDistortionParameters(cameraIdx);
       printf("CameraSystem::loadCalibrationData: Camera %zu: Loaded intrinsic calibration\n", cameraIdx);
     } else {
@@ -191,7 +191,7 @@ bool CameraSystem::loadCalibrationData(cv::FileStorage& fs) {
   for (size_t viewIdx = 0; viewIdx < m_views.size(); ++viewIdx) {
     View& v = viewAtIndex(viewIdx);
     if (v.isStereo) {
-      if (v.haveStereoCalibration()) {
+      if (v.hasStereoCalibration()) {
         updateViewStereoDistortionParameters(viewIdx);
         printf("CameraSystem::loadCalibrationData: View %zu: Loaded stereo calibration\n", viewIdx);
       } else {
@@ -227,7 +227,7 @@ void CameraSystem::saveCalibrationData(cv::FileStorage& fs) {
   for (size_t cameraIdx = 0; cameraIdx < m_cameras.size(); ++cameraIdx) {
     fs.startWriteStruct(cv::String(), cv::FileNode::MAP, cv::String());
     Camera& c = cameraAtIndex(cameraIdx);
-    if (c.haveIntrinsicCalibration()) {
+    if (c.hasIntrinsicCalibration()) {
       fs.write("intrinsicMatrix", c.intrinsicMatrix);
       fs.write("distortionCoeffs", c.distCoeffs);
     }
@@ -245,7 +245,7 @@ void CameraSystem::saveCalibrationData(cv::FileStorage& fs) {
       fs.write("leftCameraIndex", (int) v.cameraIndices[0]);
       fs.write("rightCameraIndex", (int) v.cameraIndices[1]);
       fs.write("stereoTranslationInitialGuess", cv::Mat(cvVec3FromGlm(v.stereoTranslationInitialGuess)));
-      if (v.haveStereoCalibration()) {
+      if (v.hasStereoCalibration()) {
         fs.write("stereoRotation", v.stereoRotation);
         fs.write("stereoTranslation", v.stereoTranslation);
         //fs.write("essentialMatrix", v.essentialMatrix);
@@ -1243,7 +1243,7 @@ void CameraSystem::StereoCalibrationContext::didCancelCalibrationSession() {
   cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[0]);
   cameraSystem()->updateCameraIntrinsicDistortionParameters(v.cameraIndices[1]);
 
-  if (cameraSystem()->viewAtIndex(m_viewIdx).haveStereoCalibration())
+  if (cameraSystem()->viewAtIndex(m_viewIdx).hasStereoCalibration())
     cameraSystem()->updateViewStereoDistortionParameters(m_viewIdx);
 }
 

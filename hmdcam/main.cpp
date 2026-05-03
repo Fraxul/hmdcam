@@ -1416,7 +1416,7 @@ int main(int argc, char* argv[]) {
                 float fovX = 75.0f; // default guess if no calibration
 
                 // Compute FOV-based prescaling -- figure out the billboard size in world units based on the render depth and FOV
-                if (v.isStereo ? v.haveStereoRectificationParameters() : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).haveIntrinsicCalibration()) {
+                if (v.isStereo ? v.hasStereoRectificationParameters() : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).hasIntrinsicCalibration()) {
                   fovX = v.isStereo ? v.fovX : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).fovX;
                 }
 
