@@ -32,6 +32,7 @@ public:
   virtual void internalProcessFrame();
   virtual void internalRenderIMGUI();
   virtual void internalRenderIMGUIPerformanceGraphs();
+  virtual void internalPostInitWithCameraSystem();
 
 
   // -- Other DebugCameraProvider-specific functions
@@ -94,6 +95,7 @@ protected:
 
     cv::Mat receivedDisparityInput[2];
     cv::Mat receivedDisparity;
+    cv::Mat receivedDisparityDebugResidual;
   };
 
   virtual ViewData* newEmptyViewData() { return new ViewDataDebug(); }
@@ -103,8 +105,11 @@ protected:
   uint32_t m_stereoViewCount = 0;
   uint32_t m_stereoDisparityInputSizeBytes = 0;
   uint32_t m_stereoDisparitySizeBytes = 0;
+  uint32_t m_stereoDisparityDebugResidualSizeBytes = 0;
   uint32_t m_disparityWidth = 0, m_disparityHeight = 0;
+  uint32_t m_recvAlgoInputWidth = 0, m_recvAlgoInputHeight = 0;
 
   std::vector<cv::Mat> m_stereoDisparityInputRecvMats[2];
   std::vector<cv::Mat> m_stereoDisparityRecvMats;
+  std::vector<cv::Mat> m_stereoDisparityDebugResidualRecvMats;
 };

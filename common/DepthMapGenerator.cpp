@@ -125,8 +125,12 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
   m_cameraSystem = cs;
 
   // Compute internal dimensions
-  m_internalWidth = inputWidth() / m_algoDownsampleX;
-  m_internalHeight = inputHeight() / m_algoDownsampleY;
+  m_internalWidth = cameraStreamWidth() / m_algoDownsampleX;
+  m_internalHeight = cameraStreamHeight() / m_algoDownsampleY;
+
+  // Algorithm input size defaults to the same as internalWidth/internalHeight.
+  m_algoInputWidth = m_internalWidth;
+  m_algoInputHeight = m_internalHeight;
 
   // Create depth map geometry buffers
   {
@@ -549,9 +553,19 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
     // Copy filtered disparity to render texture
     RHICUDA::copyGpuMatToSurface(*workMat, vd->m_disparityTexture, m_globalStream);
 
+    // Populate debug-residual texture.
+    if (m_populateDebugTextures) {
+      if (!vd->m_debugResidual)
+        vd->m_debugResidual = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+
+      RHICUDA::copyGpuMatToSurface(vd->m_disparityDebugResidual, vd->m_debugResidual, (CUstream) m_globalStream.cudaPtr());
+    }
+
     if (debugDisparityCPUAccessEnabled()) {
       // Copy filtered disparity to CPU-visible view
       workMat->download(vd->m_debugCPUDisparity, m_globalStream);
+      // Copy residual to CPU-visible view
+      vd->m_disparityDebugResidual.download(vd->m_debugCPUDisparityResidual, m_globalStream);
     }
   }
 }
@@ -580,6 +594,10 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
 
   // Pre-allocate CPU debug view, identical in size/format to GPU copy
   m_debugCPUDisparity.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+
+  // Pre-allocate GPU and CPU debug residuals. Always CV_8U.
+  m_disparityDebugResidual.create(/*rows=*/ h, /*cols=*/ w, CV_8U);
+  m_debugCPUDisparityResidual.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ CV_8U);
 
   // Pre-allocate CPU debug view of L/R inputs
   for (size_t i = 0; i < 2; ++i) {

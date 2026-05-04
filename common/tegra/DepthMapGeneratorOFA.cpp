@@ -163,16 +163,16 @@ void DepthMapGeneratorOFA::internalPostInitWithCameraSystem() {
   // Finish initializing the hardware now that we know the dimensions
 
   // Compute OFA input width/height from output size and grid shift
-  m_ofaInputWidth = internalWidth() * (1 << kOFAGridSizeShift);
-  m_ofaInputHeight = internalHeight() * (1 << kOFAGridSizeShift);
+  m_algoInputWidth = internalWidth() * (1 << kOFAGridSizeShift);
+  m_algoInputHeight = internalHeight() * (1 << kOFAGridSizeShift);
 
   // Hardware settings
   NvMediaIofaInitParams iofaParams;
   memset(&iofaParams, 0, sizeof(iofaParams));
   iofaParams.ofaMode = NVMEDIA_IOFA_MODE_STEREO;
   iofaParams.ofaPydLevel = 0;
-  iofaParams.width[0] = m_ofaInputWidth;
-  iofaParams.height[0] = m_ofaInputHeight;
+  iofaParams.width[0] = m_algoInputWidth;
+  iofaParams.height[0] = m_algoInputHeight;
   iofaParams.gridSize[0] = (NvMediaIofaGridSize) kOFAGridSizeShift;
   iofaParams.outWidth[0] = internalWidth();
   iofaParams.outHeight[0] = internalHeight();
@@ -198,7 +198,7 @@ void DepthMapGeneratorOFA::internalPostInitWithCameraSystem() {
   {
     NvSciBufAttrList attrList = nullptr;
     NVSCI_CHECK(NvSciBufAttrListCreate(gBufModule(), &attrList));
-    setSinglePlaneImageAttrs(attrList, m_ofaInputWidth, m_ofaInputHeight, NvSciColor_Y8, NvSciColorStd_REC709_ER);
+    setSinglePlaneImageAttrs(attrList, m_algoInputWidth, m_algoInputHeight, NvSciColor_Y8, NvSciColorStd_REC709_ER);
     m_inputBufferAttrList = finishAndReconcileBufAttrList(attrList);
   }
 
@@ -265,11 +265,11 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
 
     PER_EYE {
       CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
-      vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(inputWidth(), inputHeight()), downsampleFactor);
+      vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(cameraStreamWidth(), cameraStreamHeight()), downsampleFactor);
     }
 
     // Output from remapArray
-    PER_EYE vd->m_rectifiedMat[eyeIdx].create(cv::Size(m_ofaInputWidth, m_ofaInputHeight), CV_8U);
+    PER_EYE vd->m_rectifiedMat[eyeIdx].create(cv::Size(m_algoInputWidth, m_algoInputHeight), CV_8U);
 
     // OFA input buffers
     PER_EYE {
@@ -395,10 +395,10 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
 
     if (m_populateDebugTextures) {
       if (!vd->m_leftGray)
-        vd->m_leftGray = rhi()->newTexture2D(m_ofaInputWidth, m_ofaInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_leftGray = rhi()->newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
 
       if (!vd->m_rightGray)
-        vd->m_rightGray = rhi()->newTexture2D(m_ofaInputWidth, m_ofaInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_rightGray = rhi()->newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
 
       copyNvSciBufToSurface(vd->m_ofaInputBuffer[0], vd->m_leftGray, (CUstream) m_globalStream.cudaPtr());
       copyNvSciBufToSurface(vd->m_ofaInputBuffer[1], vd->m_rightGray, (CUstream) m_globalStream.cudaPtr());
@@ -427,7 +427,7 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
       continue;
 
     // Remap for distortion correction
-    cv::Size inputSize = cv::Size(inputWidth(), inputHeight());
+    cv::Size inputSize = cv::Size(cameraStreamWidth(), cameraStreamHeight());
 
     // We pick a downsampleFactor based on the grid size shift, assuming that the undistortRectifyMap is half-res at grid size shifts of <= 1.
     // We only need to downsample again if the OFA grid size shift is zero, to get a total 4x downsample.

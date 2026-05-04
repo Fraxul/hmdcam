@@ -305,8 +305,11 @@ int main(int argc, char** argv) {
   bool enableCharucoDetection = false; // default-off for interaction performance
 
   // CV processing init
-  if (!depthMapGenerator)
+  bool usingRemoteDisparity = false;
+  if (!depthMapGenerator) {
     depthMapGenerator = cameraProvider; // Using disparity streamed from the remote system
+    usingRemoteDisparity = true;
+  }
 
   depthMapGenerator->setDebugDisparityCPUAccessEnabled(true);
   depthMapGenerator->initWithCameraSystem(cameraSystem);
@@ -523,9 +526,19 @@ int main(int argc, char** argv) {
         depthMapGenerator->loadSettings();
       }
 
-      depthMapGenerator->renderIMGUI();
+      if (usingRemoteDisparity) {
+        if (!cudaGLInteropOK) {
+          ImGui::Text("CUDA-GL interop not possible on this platform.");
+          ImGui::Text("Disparity is being streamed from the remote machine.");
+        }
+        ImGui::BeginDisabled(!cudaGLInteropOK);
+        depthMapGenerator->renderIMGUI();
+        ImGui::EndDisabled();
+      } else {
+        depthMapGenerator->renderIMGUI();
 
-      depthMapGenerator->renderIMGUIPerformanceGraphs();
+        depthMapGenerator->renderIMGUIPerformanceGraphs();
+      }
 
       ImGui::ColorEdit3("clear color", (float*) &clear_color); // Edit 3 floats representing a color
 
@@ -678,6 +691,10 @@ int main(int argc, char** argv) {
         static glm::vec2 disparityHoverUV = glm::vec2(0.0f, 0.0f);
         ImGui_Image(disparityScaleSurface);
         bool hoverLeft = updateHoverPositionForLastItem(disparityHoverUV);
+        drawDisparityImageCursorOverlay(disparityHoverUV);
+
+        // Debug output
+        ImGui_Image(depthMapGenerator->debugResidualSurface(internalsTargetView));
         drawDisparityImageCursorOverlay(disparityHoverUV);
 
         float disparitySample = depthMapGenerator->debugPeekDisparityUV(internalsTargetView, disparityHoverUV);

@@ -45,6 +45,7 @@ public:
   RHISurface::ptr disparitySurface(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_disparityTexture : RHISurface::ptr(); }
   RHISurface::ptr leftGrayscale(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_leftGray : RHISurface::ptr(); }
   RHISurface::ptr rightGrayscale(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_rightGray : RHISurface::ptr(); }
+  RHISurface::ptr debugResidualSurface(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_debugResidual : RHISurface::ptr(); }
 
   // controls availability of leftGrayscale and rightGrayscale
   void setPopulateDebugTextures(bool value) { m_populateDebugTextures = value; }
@@ -88,6 +89,7 @@ protected:
   virtual void internalPostInitWithCameraSystem(); // optional override, called after initWithCameraSystem()
 
   // Data format controls that should be set in the backend
+  uint32_t m_algoInputWidth, m_algoInputHeight; // Defaults to m_internalWidth / m_internalHeight
   uint32_t m_algoDownsampleX = 1;
   uint32_t m_algoDownsampleY = 1;
   uint32_t m_maxDisparityPixels = 128; // pixel units
@@ -96,9 +98,16 @@ protected:
   float m_debugDisparityScale = 1.0f;
   bool m_debugDisparityCPUAccessEnabled = false;
 
-  uint32_t inputWidth() const { return m_cameraSystem->cameraProvider()->streamWidth(); }
-  uint32_t inputHeight() const { return m_cameraSystem->cameraProvider()->streamHeight(); }
+  // Convenience accessors for the size of the input camera stream.
+  uint32_t cameraStreamWidth() const { return m_cameraSystem->cameraProvider()->streamWidth(); }
+  uint32_t cameraStreamHeight() const { return m_cameraSystem->cameraProvider()->streamHeight(); }
 
+  // Input size of the L/R camera surfaces for the depth algorithm. Usually the same as internalWidth/internalHeight.
+  // The debug L/R views will be this size.
+  uint32_t algoInputWidth() const { return m_algoInputWidth; }
+  uint32_t algoInputHeight() const { return m_algoInputHeight; }
+
+  // Algorithm internal width/height. Processing happens at this resolution, disparity output is at this size.
   uint32_t internalWidth() const { return m_internalWidth; }
   uint32_t internalHeight() const { return m_internalHeight; }
 
@@ -125,14 +134,16 @@ protected:
     std::vector<cv::cuda::GpuMat> m_disparityMinMaxMips;
 
     cv::cuda::GpuMat m_disparityGpuMat;
+    cv::cuda::GpuMat m_disparityDebugResidual;
 
     cv::cuda::GpuMat m_disparityMedianFilterDestGpuMat;
 
     RHISurface::ptr m_disparityTexture;
-    RHISurface::ptr m_leftGray, m_rightGray;
+    RHISurface::ptr m_leftGray, m_rightGray, m_debugResidual;
 
     cv::Mat m_debugCPUDisparityInput[2]; // L/R inputs to stereo matching algorithm
     cv::Mat m_debugCPUDisparity;
+    cv::Mat m_debugCPUDisparityResidual; // Generic debugging output from the disparity generation process for the debug server; CV_8U / uint8_t.
 
   private:
     ViewData(const ViewData&);

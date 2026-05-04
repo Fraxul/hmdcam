@@ -215,7 +215,7 @@ void DepthMapGeneratorSHM::internalUpdateViewData() {
 
     PER_EYE {
       CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
-      vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(inputWidth(), inputHeight()), downsampleFactor);
+      vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(cameraStreamWidth(), cameraStreamHeight()), downsampleFactor);
     }
 
     //Set up what matrices we can to prevent dynamic memory allocation.
@@ -299,8 +299,8 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     auto leftLumaTexObj = m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[0]);
     auto rightLumaTexObj = m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[1]);
 
-    remapArray(leftLumaTexObj, cv::Size(inputWidth(), inputHeight()), vd->m_undistortRectifyMap_gpu[0], vd->resizedLeft_gpu, (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ 2);
-    remapArray(rightLumaTexObj, cv::Size(inputWidth(), inputHeight()), vd->m_undistortRectifyMap_gpu[1], vd->resizedRight_gpu, (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ 2);
+    remapArray(leftLumaTexObj, cv::Size(cameraStreamWidth(), cameraStreamHeight()), vd->m_undistortRectifyMap_gpu[0], vd->resizedLeft_gpu, (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ 2);
+    remapArray(rightLumaTexObj, cv::Size(cameraStreamWidth(), cameraStreamHeight()), vd->m_undistortRectifyMap_gpu[1], vd->resizedRight_gpu, (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ 2);
 
     if (vd->m_isVerticalStereo) {
       // cv::cuda::transpose is unusable due to forced CPU-GPU sync when switching the CUDA stream that NPPI is targeting, so we skip the CV wrappers and use NPPI directly.

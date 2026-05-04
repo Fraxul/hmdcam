@@ -72,6 +72,9 @@ protected:
   std::vector<cv::Mat> m_disparityStreams;
   uint32_t m_disparityStreamSizeBytes = 0;
 
+  std::vector<cv::Mat> m_disparityDebugResidualStreams;
+  uint32_t m_disparityDebugResidualStreamSizeBytes = 0;
+
   SerializationBuffer m_streamHeader;
   cv::String m_cameraSystemConfig;
 };

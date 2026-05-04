@@ -172,6 +172,9 @@ bool DebugCameraProvider::connect(const char* debugHost) {
   // Depth map generator settings
   m_stereoViewCount = cfg.get_u32();
   if (m_stereoViewCount) {
+    m_recvAlgoInputWidth = cfg.get_u32();
+    m_recvAlgoInputHeight = cfg.get_u32();
+
     m_disparityWidth = cfg.get_u32();
     m_disparityHeight = cfg.get_u32();
 
@@ -181,23 +184,29 @@ bool DebugCameraProvider::connect(const char* debugHost) {
     m_maxDisparityPixels = cfg.get_u32();
     m_disparitySubpixelBits = cfg.get_u32();
 
-    m_stereoDisparityInputSizeBytes = m_disparityWidth * m_disparityHeight * sizeof(uint8_t);
+    m_stereoDisparityInputSizeBytes = m_recvAlgoInputWidth * m_recvAlgoInputHeight * sizeof(uint8_t);
     m_stereoDisparitySizeBytes = m_disparityWidth * m_disparityHeight * sizeof(uint16_t);
+    m_stereoDisparityDebugResidualSizeBytes = m_disparityWidth * m_disparityHeight * sizeof(uint8_t);
 
-    printf("Disp: %ux%u Downsample: %ux%u maxDisp=%u subpixelBits=%u inputSizeBytes=%u sizeBytes=%u\n",
-      m_disparityWidth, m_disparityHeight, m_algoDownsampleX, m_algoDownsampleY,
-      m_maxDisparityPixels, m_disparitySubpixelBits, m_stereoDisparityInputSizeBytes, m_stereoDisparitySizeBytes);
+    printf("Algo: %ux%u Disp: %ux%u Downsample: %ux%u maxDisp=%u subpixelBits=%u inputSizeBytes=%u dispSizeBytes=%u residualSizeBytes=%u\n",
+      m_recvAlgoInputWidth, m_recvAlgoInputHeight, m_disparityWidth, m_disparityHeight, m_algoDownsampleX, m_algoDownsampleY,
+      m_maxDisparityPixels, m_disparitySubpixelBits, m_stereoDisparityInputSizeBytes, m_stereoDisparitySizeBytes, m_stereoDisparityDebugResidualSizeBytes);
 
     for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
       m_stereoDisparityInputRecvMats[eyeIdx].resize(m_stereoViewCount);
       for (uint32_t viewIdx = 0; viewIdx < m_stereoViewCount; ++viewIdx) {
-        m_stereoDisparityInputRecvMats[eyeIdx][viewIdx].create(m_disparityHeight, m_disparityWidth, CV_8U);
+        m_stereoDisparityInputRecvMats[eyeIdx][viewIdx].create(m_recvAlgoInputHeight, m_recvAlgoInputWidth, CV_8U);
       }
     }
 
     m_stereoDisparityRecvMats.resize(m_stereoViewCount);
     for (uint32_t viewIdx = 0; viewIdx < m_stereoViewCount; ++viewIdx) {
       m_stereoDisparityRecvMats[viewIdx].create(m_disparityHeight, m_disparityWidth, CV_16UC1);
+    }
+
+    m_stereoDisparityDebugResidualRecvMats.resize(m_stereoViewCount);
+    for (uint32_t viewIdx = 0; viewIdx < m_stereoViewCount; ++viewIdx) {
+      m_stereoDisparityDebugResidualRecvMats[viewIdx].create(m_disparityHeight, m_disparityWidth, CV_8U);
     }
   }
 
@@ -283,6 +292,7 @@ void DebugCameraProvider::streamThreadFn() {
       if (!safe_read(m_fd, m_stereoDisparityInputRecvMats[0][stereoViewIdx].data, m_stereoDisparityInputSizeBytes)) goto cleanup;
       if (!safe_read(m_fd, m_stereoDisparityInputRecvMats[1][stereoViewIdx].data, m_stereoDisparityInputSizeBytes)) goto cleanup;
       if (!safe_read(m_fd, m_stereoDisparityRecvMats[stereoViewIdx].data, m_stereoDisparitySizeBytes)) goto cleanup;
+      if (!safe_read(m_fd, m_stereoDisparityDebugResidualRecvMats[stereoViewIdx].data, m_stereoDisparityDebugResidualSizeBytes)) goto cleanup;
     }
 
     pthread_mutex_lock(&m_frameConsumedMutex);
@@ -386,6 +396,7 @@ void DebugCameraProvider::updateSurfaces() {
     memcpy(vd->receivedDisparityInput[0].data, m_stereoDisparityInputRecvMats[0][srcStereoViewIdx].data, m_stereoDisparityInputSizeBytes);
     memcpy(vd->receivedDisparityInput[1].data, m_stereoDisparityInputRecvMats[1][srcStereoViewIdx].data, m_stereoDisparityInputSizeBytes);
     memcpy(vd->receivedDisparity.data, m_stereoDisparityRecvMats[srcStereoViewIdx].data, m_stereoDisparitySizeBytes);
+    memcpy(vd->receivedDisparityDebugResidual.data, m_stereoDisparityDebugResidualRecvMats[srcStereoViewIdx].data, m_stereoDisparityDebugResidualSizeBytes);
 
     ++srcStereoViewIdx;
   }
@@ -440,10 +451,13 @@ void DebugCameraProvider::internalUpdateViewData() {
 
     vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
-    // Create receive Mats for the disparity inputs and outputs
-    vd->receivedDisparityInput[0].create(m_disparityHeight, m_disparityWidth, CV_8U);
-    vd->receivedDisparityInput[1].create(m_disparityHeight, m_disparityWidth, CV_8U);
+    // Create receive Mats for the disparity inputs (algoInput size)
+    vd->receivedDisparityInput[0].create(m_recvAlgoInputHeight, m_recvAlgoInputWidth, CV_8U);
+    vd->receivedDisparityInput[1].create(m_recvAlgoInputHeight, m_recvAlgoInputWidth, CV_8U);
+
+    // Create receive Mats for the disparity outputs (internal size)
     vd->receivedDisparity.create(m_disparityHeight, m_disparityWidth, CV_16UC1);
+    vd->receivedDisparityDebugResidual.create(m_disparityHeight, m_disparityWidth, CV_8U);
 
     // These can directly alias the receivedDisparityInput to save a copy
     vd->m_debugCPUDisparityInput[0] = vd->receivedDisparityInput[0];
@@ -470,13 +484,17 @@ void DebugCameraProvider::internalProcessFrame() {
 
     if (m_populateDebugTextures) {
       if (!vd->m_leftGray)
-        vd->m_leftGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_leftGray = rhi()->newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
 
       if (!vd->m_rightGray)
-        vd->m_rightGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_rightGray = rhi()->newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+
+      if (!vd->m_debugResidual)
+        vd->m_debugResidual = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
 
       rhi()->loadTextureData(vd->m_leftGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[0].ptr());
       rhi()->loadTextureData(vd->m_rightGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[1].ptr());
+      rhi()->loadTextureData(vd->m_debugResidual, kVertexElementTypeUByte1N, vd->receivedDisparityDebugResidual.ptr());
     }
 
     if (!m_doCudaGLInterop) {
@@ -494,4 +512,11 @@ void DebugCameraProvider::internalRenderIMGUI() {
 }
 
 void DebugCameraProvider::internalRenderIMGUIPerformanceGraphs() {
+}
+
+void DebugCameraProvider::internalPostInitWithCameraSystem() {
+  // Algorithm dimensions are supposed to be computed in initWithCameraSystem.
+  // Update them with the values we received.
+  m_algoInputWidth = m_recvAlgoInputWidth;
+  m_algoInputHeight = m_recvAlgoInputHeight;
 }

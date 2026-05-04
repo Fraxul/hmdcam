@@ -166,6 +166,9 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
 
   cfg.put_u32(stereoViews); // Stereo view count, or 0 if we don't have a depth map generator
   if (stereoViews) {
+    cfg.put_u32(m_depthMapGenerator->algoInputWidth());
+    cfg.put_u32(m_depthMapGenerator->algoInputHeight());
+
     cfg.put_u32(m_depthMapGenerator->internalWidth());
     cfg.put_u32(m_depthMapGenerator->internalHeight());
 
@@ -175,11 +178,11 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
     cfg.put_u32(m_depthMapGenerator->m_maxDisparityPixels);
     cfg.put_u32(m_depthMapGenerator->m_disparitySubpixelBits);
 
-    m_disparityInputStreamSizeBytes = m_depthMapGenerator->internalWidth() * m_depthMapGenerator->internalHeight() * sizeof(uint8_t);
+    m_disparityInputStreamSizeBytes = m_depthMapGenerator->algoInputWidth() * m_depthMapGenerator->algoInputHeight() * sizeof(uint8_t);
     for (uint32_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
       m_disparityInputStreams[eyeIdx].resize(stereoViews);
       for (uint32_t viewIdx = 0; viewIdx < stereoViews; ++viewIdx) {
-        m_disparityInputStreams[eyeIdx][viewIdx].create(m_depthMapGenerator->internalHeight(), m_depthMapGenerator->internalWidth(), CV_8U);
+        m_disparityInputStreams[eyeIdx][viewIdx].create(m_depthMapGenerator->algoInputHeight(), m_depthMapGenerator->algoInputWidth(), CV_8U);
       }
     }
 
@@ -187,6 +190,12 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
     m_disparityStreams.resize(stereoViews);
     for (uint32_t i = 0; i < stereoViews; ++i) {
       m_disparityStreams[i].create(m_depthMapGenerator->internalHeight(), m_depthMapGenerator->internalWidth(), CV_16UC1);
+    }
+
+    m_disparityDebugResidualStreamSizeBytes = m_depthMapGenerator->internalWidth() * m_depthMapGenerator->internalHeight() * sizeof(uint8_t);
+    m_disparityDebugResidualStreams.resize(stereoViews);
+    for (uint32_t i = 0; i < stereoViews; ++i) {
+      m_disparityDebugResidualStreams[i].create(m_depthMapGenerator->internalHeight(), m_depthMapGenerator->internalWidth(), CV_8U);
     }
   }
 
@@ -277,6 +286,8 @@ void DebugServer::frameProcessingEnded() {
         memcpy(m_disparityInputStreams[eyeIdx][dispStreamIdx].data, vd->m_debugCPUDisparityInput[eyeIdx].ptr(), m_disparityInputStreamSizeBytes);
 
       memcpy(m_disparityStreams[dispStreamIdx].data, vd->m_debugCPUDisparity.ptr(), m_disparityStreamSizeBytes);
+
+      memcpy(m_disparityDebugResidualStreams[dispStreamIdx].data, vd->m_debugCPUDisparityResidual.ptr(), m_disparityDebugResidualStreamSizeBytes);
 
       ++dispStreamIdx;
     }
@@ -377,6 +388,7 @@ void DebugServer::streamThreadFn() {
           if (!safe_write(clientFd, m_disparityInputStreams[0][dispStreamIdx].data, m_disparityInputStreamSizeBytes)) goto cleanup;
           if (!safe_write(clientFd, m_disparityInputStreams[1][dispStreamIdx].data, m_disparityInputStreamSizeBytes)) goto cleanup;
           if (!safe_write(clientFd, m_disparityStreams[dispStreamIdx].data, m_disparityStreamSizeBytes)) goto cleanup;
+          if (!safe_write(clientFd, m_disparityDebugResidualStreams[dispStreamIdx].data, m_disparityDebugResidualStreamSizeBytes)) goto cleanup;
         }
       } // frame loop
     }
