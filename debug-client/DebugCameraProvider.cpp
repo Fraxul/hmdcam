@@ -480,7 +480,7 @@ void DebugCameraProvider::internalProcessFrame() {
     if (!vd->m_isStereoView)
       continue;
 
-    vd->m_disparityGpuMat.upload(vd->receivedDisparity);
+    vd->currentDisparityMat().upload(vd->receivedDisparity);
 
     if (m_populateDebugTextures) {
       if (!vd->m_leftGray)

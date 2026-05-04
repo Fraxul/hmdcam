@@ -12,6 +12,7 @@
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
 #include "common/disparityFill.h"
+#include "common/disparityTemporalFilter.h"
 #include "common/medianFilter.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -434,6 +435,14 @@ void DepthMapGenerator::renderIMGUI() {
   // Common processing settings
   ImGui::Checkbox("Median filter", &m_useMedianFilter);
   ImGui::Checkbox("Hole-filling pass", &m_useHoleFillingPass);
+  ImGui::Checkbox("Temporal filter", &m_useTemporalFilter);
+
+  if (m_useTemporalFilter) {
+    const uint8_t alphaMin = 0, alphaMax = 255;
+    ImGui::DragScalar("Temporal Filter Alpha", ImGuiDataType_U8, &m_temporalFilterAlpha, /*v_speed=*/ 16, &alphaMin, &alphaMax, "%u", /*flags=*/ 0);
+
+    ImGui::DragFloat("Stable Threshold", &m_temporalFilterStableThreshold, /*v_speed=*/ 0.25f, /*v_min=*/ 0.0f, /*v_max=*/ 32.0f, "%.2fpx", /*flags=*/ 0);
+  }
 
   // Common render settings -- these don't affect the algorithm.
   ImGui::Checkbox("Split depth discontinuity", &m_splitDepthDiscontinuity);
@@ -514,11 +523,16 @@ void DepthMapGenerator::processFrame() {
     printf("DepthMapGenerator: viewData update took %.3f ms\n", deltaTimeMs(startTimeNs, endTimeNs));
   }
 
-  // Update stream failure flags
+  // Various housekeeping tasks that must happen every frame
   for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
     ViewData* vd = m_viewData[viewIdx];
+
+    // Update stream failure flags
     vd->m_leftCameraStreamFailed = m_cameraSystem->cameraProvider()->isStreamFailed(vd->m_leftCameraIndex);
     vd->m_rightCameraStreamFailed = m_cameraSystem->cameraProvider()->isStreamFailed(vd->m_rightCameraIndex);
+
+    // Swap double-buffered mats
+    vd->swapCurrentAndPreviousDisparity();
   }
 
   this->internalProcessFrame();
@@ -532,7 +546,7 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       continue;
 
 
-    cv::cuda::GpuMat* workMat = &vd->m_disparityGpuMat;
+    cv::cuda::GpuMat* workMat = &vd->currentDisparityMat();
 
     if (m_useMedianFilter) {
       // Run 3x3 median filter to smooth speckles and edge discontinuities
@@ -548,6 +562,22 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       auto chromaTex = m_cameraSystem->cameraProvider()->cudaChromaTexObject(vd->m_leftCameraIndex);
 
       disparityFill(chromaTex, *workMat, maxDisparityRaw(), vd->m_disparityMinMaxMips, (CUstream) m_globalStream.cudaPtr());
+    }
+
+    if (m_useTemporalFilter) {
+      // Run temporal filter between current and previous disparity.
+      // This always writes to currentDisparityMat, but reads from workMat to avoid a copy
+      // in the case where we ran the median filter earlier (which cannot work in-place).
+      // (it's OK if workMat and currentDisparityMat are the same mat)
+
+      uint16_t stableThresholdRaw = static_cast<uint16_t>(m_temporalFilterStableThreshold * static_cast<float>(1 << m_disparitySubpixelBits));
+      disparityTemporalFilter(maxDisparityRaw(), /*stableDepthThreshold=*/ stableThresholdRaw, /*defaultAlpha*/ m_temporalFilterAlpha,
+        /*currentFrameInput=*/ *workMat, /*previousFrameInput=*/ vd->previousDisparityMat(),
+        /*output=*/ vd->currentDisparityMat(), (CUstream) m_globalStream.cudaPtr(),
+        /*debugMat=*/ &vd->m_disparityDebugResidual);
+
+      // back to reading from currentDisparityMat, since the temporal filter always writes to that.
+      workMat = &vd->currentDisparityMat();
     }
 
     // Copy filtered disparity to render texture
@@ -590,7 +620,9 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
       assert(false && "updateDisparityTexture: unhandled RHISurfaceFormat");
   };
 
-  m_disparityGpuMat.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+  // Create disparity mats
+  m_disparityGpuMat[0].create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+  m_disparityGpuMat[1].create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
 
   // Pre-allocate CPU debug view, identical in size/format to GPU copy
   m_debugCPUDisparity.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);

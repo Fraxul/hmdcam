@@ -126,6 +126,11 @@ protected:
     bool m_rightCameraStreamFailed = false;
     bool anyCameraStreamFailed() const { return m_leftCameraStreamFailed || m_rightCameraStreamFailed; }
 
+    // Controls which disparity mat we're writing to.
+    uint8_t m_currentMatWriteIndex = 0;
+    // Called every frame before allowing the derived impl to write to currentDisparityMat
+    void swapCurrentAndPreviousDisparity() { m_currentMatWriteIndex = 1 - m_currentMatWriteIndex; }
+
     glm::mat3 m_R1;
     glm::vec4 m_depthParameters; // Parameters extracted from the view's stereoDisparityToDepth matrix
 
@@ -133,7 +138,11 @@ protected:
     void updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat);
     std::vector<cv::cuda::GpuMat> m_disparityMinMaxMips;
 
-    cv::cuda::GpuMat m_disparityGpuMat;
+    // Current and previous frame mats
+    cv::cuda::GpuMat& currentDisparityMat() { return m_disparityGpuMat[m_currentMatWriteIndex]; }
+    cv::cuda::GpuMat& previousDisparityMat() { return m_disparityGpuMat[1 - m_currentMatWriteIndex]; }
+
+    cv::cuda::GpuMat m_disparityGpuMat[2];
     cv::cuda::GpuMat m_disparityDebugResidual;
 
     cv::cuda::GpuMat m_disparityMedianFilterDestGpuMat;
@@ -167,6 +176,9 @@ protected:
   // Processing settings
   bool m_useMedianFilter = true;
   bool m_useHoleFillingPass = true;
+  bool m_useTemporalFilter = true;
+  float m_temporalFilterStableThreshold = 8.0f;
+  uint8_t m_temporalFilterAlpha = 48;
 
   // Render settings
   int m_trimLeft = 8, m_trimTop = 8;

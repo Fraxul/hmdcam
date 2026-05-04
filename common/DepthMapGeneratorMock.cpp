@@ -83,7 +83,7 @@ void DepthMapGeneratorMock::internalProcessFrame() {
     if (!vd->m_isStereoView)
       continue;
 
-    vd->m_disparityGpuMat.upload(vd->fakeDisparity);
+    vd->currentDisparityMat().upload(vd->fakeDisparity);
 
 #if 0
     if (m_populateDebugTextures) {

@@ -391,7 +391,7 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
-    copyNvSciBufToGpuMat(vd->m_ofaOutputDisparityBuffer, vd->m_disparityGpuMat, (CUstream) m_globalStream.cudaPtr());
+    copyNvSciBufToGpuMat(vd->m_ofaOutputDisparityBuffer, vd->currentDisparityMat(), (CUstream) m_globalStream.cudaPtr());
 
     if (m_populateDebugTextures) {
       if (!vd->m_leftGray)

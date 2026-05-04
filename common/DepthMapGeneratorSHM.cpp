@@ -413,11 +413,11 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     if (vd->m_isVerticalStereo) {
       cv::Mat transposedDispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
       cv::Mat dispMat = transposedDispMat.t(); // TODO might be more efficient to transpose in the DGPUWorker while the data is still on the GPU
-      vd->m_disparityGpuMat.upload(dispMat);
+      vd->currentDisparityMat().upload(dispMat);
 
     } else {
       cv::Mat dispMat(viewParams.height, viewParams.width, (m_disparityBytesPerPixel == 1) ? CV_8UC1 : CV_16UC1, m_depthMapSHM->segment()->data() + viewParams.outputOffset, viewParams.outputPitchBytes);
-      vd->m_disparityGpuMat.upload(dispMat);
+      vd->currentDisparityMat().upload(dispMat);
     }
 
     if (m_populateDebugTextures) {
