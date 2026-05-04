@@ -54,9 +54,9 @@ public:
 
   DepthMapGeneratorBackend backend() const { return m_backend; }
 
-  uint32_t maxDisparity() const { return m_maxDisparity; } // maximum disparity value supported by the backend, pixel units
-  float disparityPrescale() const { return m_disparityPrescale; } // multiplier to convert the raw values in disparitySurface to pixel units
-  bool isFP16Disparity() const { return m_useFP16Disparity; }
+  uint32_t maxDisparityPixels() const { return m_maxDisparityPixels; } // maximum disparity value supported by the backend -- pixel units
+  uint32_t maxDisparityRaw() const { return m_maxDisparityPixels << m_disparitySubpixelBits; } // maximum disparity value supported by the backend -- raw/subpixel units
+  float disparityPrescale() const { return 1.0f / static_cast<float>(1 << m_disparitySubpixelBits); } // multiplier to convert the raw values in disparitySurface to pixel units, accounting for the subpixel bits.
 
   void setDebugDisparityCPUAccessEnabled(bool v) { m_debugDisparityCPUAccessEnabled = v; }
   bool debugDisparityCPUAccessEnabled() const { return m_debugDisparityCPUAccessEnabled; }
@@ -90,9 +90,8 @@ protected:
   // Data format controls that should be set in the backend
   uint32_t m_algoDownsampleX = 1;
   uint32_t m_algoDownsampleY = 1;
-  uint32_t m_maxDisparity = 128;
-  float m_disparityPrescale = 1.0f;
-  bool m_useFP16Disparity = false;
+  uint32_t m_maxDisparityPixels = 128; // pixel units
+  uint32_t m_disparitySubpixelBits = 0; // subpixel bits in raw disparity
 
   float m_debugDisparityScale = 1.0f;
   bool m_debugDisparityCPUAccessEnabled = false;

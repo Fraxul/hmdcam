@@ -4,4 +4,4 @@
 #include <opencv2/core/cuda.hpp>
 #include <vector>
 
-void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, float maxValidDisparityRaw, std::vector<cv::cuda::GpuMat>& disparityMinMaxMips, CUstream stream);
+void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, uint16_t maxValidDisparityRaw, std::vector<cv::cuda::GpuMat>& disparityMinMaxMips, CUstream stream);

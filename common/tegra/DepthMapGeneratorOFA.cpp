@@ -112,12 +112,12 @@ DepthMapGeneratorOFA::DepthMapGeneratorOFA() :
   DepthMapGenerator(kDepthBackendOFA) {
   m_algoDownsampleX = 4;
   m_algoDownsampleY = 4;
-  m_maxDisparity = kOFAMaxDisparity;
+  m_maxDisparityPixels = kOFAMaxDisparity;
   // NvMediaIOFA docs say:
   // Returned [disparity] values are in Q10.5 format, i.e., signed fixed point with 5 fractional bits.
-  // Divide it by 32.0f to convert it to floating point.
   // The disparity values are relative to the OFA input size, so we also need to account for any grid size scaling here.
-  m_disparityPrescale = (1.0f / static_cast<float>(32 << kOFAGridSizeShift));
+  // Since grid size scales are powers of two, we just tweak the subpixel bits to account for the grid size scale.
+  m_disparitySubpixelBits = 5 + kOFAGridSizeShift;
 
   CUDA_CHECK(cuEventCreate(&m_masterFrameStartEvent, CU_EVENT_DEFAULT));
   CUDA_CHECK(cuEventCreate(&m_ofaHandoffCompleteEvent, CU_EVENT_DEFAULT));

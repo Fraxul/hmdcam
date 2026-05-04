@@ -172,9 +172,8 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
     cfg.put_u32(m_depthMapGenerator->m_algoDownsampleX);
     cfg.put_u32(m_depthMapGenerator->m_algoDownsampleY);
 
-    cfg.put_u32(m_depthMapGenerator->m_maxDisparity);
-    cfg.put_float(m_depthMapGenerator->m_disparityPrescale);
-    cfg.put_u32(m_depthMapGenerator->m_useFP16Disparity);
+    cfg.put_u32(m_depthMapGenerator->m_maxDisparityPixels);
+    cfg.put_u32(m_depthMapGenerator->m_disparitySubpixelBits);
 
     m_disparityInputStreamSizeBytes = m_depthMapGenerator->internalWidth() * m_depthMapGenerator->internalHeight() * sizeof(uint8_t);
     for (uint32_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {

@@ -6,17 +6,10 @@
 layout(location = 0) in uvec2 disparitySampleCoordinates; // integer texels, fixed to the left-top value
 layout(location = 1) in uvec2 quadCoordOffset; // 0...1, varies over the quad
 
-#if DISPARITY_USE_FP16
-uniform sampler2D disparityTex;
-float sampleDisparity(ivec2 mipCoords) {
-  return texelFetch(disparityTex, mipCoords, 0).r;
-}
-#else
 uniform highp usampler2D disparityTex;
 float sampleDisparity(ivec2 mipCoords) {
   return float(texelFetch(disparityTex, mipCoords, 0).r);
 }
-#endif
 
 out V2F {
   vec2 texCoord;

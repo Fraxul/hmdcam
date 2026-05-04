@@ -7,17 +7,10 @@
 // zw is disparity map coordinates (integer texels)
 layout(location = 0) in vec4 textureCoordinates;
 
-#if DISPARITY_USE_FP16
-uniform sampler2D disparityTex;
-float sampleDisparity(ivec2 mipCoords) {
-  return texelFetch(disparityTex, mipCoords, 0).r;
-}
-#else
 uniform highp usampler2D disparityTex;
 float sampleDisparity(ivec2 mipCoords) {
   return float(texelFetch(disparityTex, mipCoords, 0).r);
 }
-#endif
 
 out V2G {
   vec4 P;

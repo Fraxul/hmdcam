@@ -344,7 +344,7 @@ __global__ void disparityFillFinalMat(CUtexObject chromaTex, uint16_t maxValidDi
   disparityMat.ptr(y)[x] = centerDisp;
 }
 
-void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, float maxValidDisparityRaw, std::vector<cv::cuda::GpuMat>& disparityMinMaxMips, CUstream stream) {
+void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, uint16_t maxValidDisparityRaw, std::vector<cv::cuda::GpuMat>& disparityMinMaxMips, CUstream stream) {
   // Downsample passes
   {
     dim3 block(4, 4);
@@ -357,7 +357,7 @@ void disparityFill(CUtexObject chromaTex, cv::cuda::GpuMat& disparityMat, float 
         cv::cuda::device::divUp(disparityMat.cols / 2, block.x),
         cv::cuda::device::divUp(disparityMat.rows / 2, block.y));
 
-      disparityFillDownsample1<<<grid, block, 0, stream>>>(chromaTex, static_cast<uint16_t>(maxValidDisparityRaw),
+      disparityFillDownsample1<<<grid, block, 0, stream>>>(chromaTex, maxValidDisparityRaw,
         PtrStepSz<uint16_t>(disparityMat.rows, disparityMat.cols, (uint16_t*) disparityMat.cudaPtr(), disparityMat.step),
         PtrStep<DispChromaMinMaxSample>((DispChromaMinMaxSample*) disparityMinMaxMips[0].cudaPtr(), disparityMinMaxMips[0].step),
         PtrStep<DispChromaMinMaxSample>((DispChromaMinMaxSample*) disparityMinMaxMips[1].cudaPtr(), disparityMinMaxMips[1].step),

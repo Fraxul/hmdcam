@@ -178,16 +178,15 @@ bool DebugCameraProvider::connect(const char* debugHost) {
     m_algoDownsampleX = cfg.get_u32();
     m_algoDownsampleY = cfg.get_u32();
 
-    m_maxDisparity = cfg.get_u32();
-    m_disparityPrescale = cfg.get_float();
-    m_useFP16Disparity = cfg.get_u32();
+    m_maxDisparityPixels = cfg.get_u32();
+    m_disparitySubpixelBits = cfg.get_u32();
 
     m_stereoDisparityInputSizeBytes = m_disparityWidth * m_disparityHeight * sizeof(uint8_t);
     m_stereoDisparitySizeBytes = m_disparityWidth * m_disparityHeight * sizeof(uint16_t);
 
-    printf("Disp: %ux%u Downsample: %ux%u maxDisp=%u prescale=%f useFP16=%u inputSizeBytes=%u sizeBytes=%u\n",
+    printf("Disp: %ux%u Downsample: %ux%u maxDisp=%u subpixelBits=%u inputSizeBytes=%u sizeBytes=%u\n",
       m_disparityWidth, m_disparityHeight, m_algoDownsampleX, m_algoDownsampleY,
-      m_maxDisparity, m_disparityPrescale, m_useFP16Disparity, m_stereoDisparityInputSizeBytes, m_stereoDisparitySizeBytes);
+      m_maxDisparityPixels, m_disparitySubpixelBits, m_stereoDisparityInputSizeBytes, m_stereoDisparitySizeBytes);
 
     for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
       m_stereoDisparityInputRecvMats[eyeIdx].resize(m_stereoViewCount);

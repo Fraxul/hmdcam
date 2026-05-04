@@ -38,9 +38,8 @@ DepthMapGeneratorMock::DepthMapGeneratorMock() :
   // running at quarter res, approx
   m_algoDownsampleX = 4;
   m_algoDownsampleY = 4;
-  m_maxDisparity = 128;
-  m_disparityPrescale = (1.0f / 16.0f); // emulating 4 subpixel bits
-  m_useFP16Disparity = false;
+  m_maxDisparityPixels = 128;
+  m_disparitySubpixelBits = 4; // emulated subpixel bits
 }
 
 DepthMapGeneratorMock::~DepthMapGeneratorMock() {

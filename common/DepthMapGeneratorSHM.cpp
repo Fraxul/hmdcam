@@ -41,7 +41,8 @@ DepthMapGeneratorSHM::DepthMapGeneratorSHM(DepthMapGeneratorBackend _backend) :
   // running at quarter res, approx
   m_algoDownsampleX = 4;
   m_algoDownsampleY = 4;
-  m_maxDisparity = NUM_DISP;
+  m_maxDisparityPixels = NUM_DISP;
+  m_disparitySubpixelBits = 0; // Will be updated by config changes
 
   m_depthMapSHM = SHMSegment<DepthMapSHM>::createSegment("depth-worker", 16 * 1024 * 1024);
 
@@ -251,20 +252,20 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
           m_depthMapSHM->segment()->m_algorithm = 0;
         case 0:
           // uses CV_8UC1 disparity
-          m_disparityPrescale = 1.0f; // / 16.0f;
+          m_disparitySubpixelBits = 0;
           m_disparityBytesPerPixel = 1;
           break;
         case 1: {
-          m_disparityPrescale = 1.0f; // / 16.0f;
+          m_disparitySubpixelBits = 0;
           m_disparityBytesPerPixel = 2;
         } break;
         case 2:
-          m_disparityPrescale = 1.0f / 16.0f; // TODO: not sure if this is correct -- matches results from CSBP, roughly.
+          m_disparitySubpixelBits = 4; // TODO: not sure if this is correct -- matches results from CSBP, roughly.
           m_disparityBytesPerPixel = 2;
           break;
       };
     } else if (m_backend == kDepthBackendDepthAI) {
-      m_disparityPrescale = 1.0f / static_cast<float>(1 << m_depthMapSHM->segment()->m_subpixelFractionalBits);
+      m_disparitySubpixelBits = m_depthMapSHM->segment()->m_subpixelFractionalBits;
       m_disparityBytesPerPixel = 2;
     } else {
       assert(false && "DepthMapGenerator::processFrame(): settings update not implemented for this depth backend");

@@ -256,7 +256,6 @@ int main(int argc, char** argv) {
   RHISurface::ptr disparityScaleSurface;
   RHIRenderTarget::ptr disparityScaleTarget;
   RHIRenderPipeline::ptr disparityScalePipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
-  RHIRenderPipeline::ptr disparityScaleFP16Pipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScaleFP16.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
 
 
   // CUDA init
@@ -662,18 +661,15 @@ int main(int argc, char** argv) {
         }
 
         rhi()->beginRenderPass(disparityScaleTarget, kLoadInvalidate);
-        if (depthMapGenerator->isFP16Disparity())
-          rhi()->bindRenderPipeline(disparityScaleFP16Pipeline);
-        else
-          rhi()->bindRenderPipeline(disparityScalePipeline);
+        rhi()->bindRenderPipeline(disparityScalePipeline);
 
         rhi()->loadTexture(ksImageTex, disparitySurface);
         DisparityScaleUniformBlock ub;
         ub.viewportOffsetX = 0;
         ub.viewportOffsetY = 0;
-        ub.disparityScale = depthMapGenerator->disparityPrescale() * depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparity()));
+        ub.disparityScale = depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparityRaw()));
         ub.sourceLevel = disparityScaleSourceLevel;
-        ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(depthMapGenerator->maxDisparity() - 1) / depthMapGenerator->disparityPrescale());
+        ub.maxValidDisparityRaw = depthMapGenerator->maxDisparityRaw();
         rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
         rhi()->drawFullscreenPass();
         rhi()->endRenderPass(disparityScaleTarget);
@@ -711,7 +707,7 @@ int main(int argc, char** argv) {
           localP.x, localP.y, localP.z);
 
         static int sampleDisp = 1;
-        ImGui::SliderInt("Test Disp", &sampleDisp, 1, depthMapGenerator->maxDisparity());
+        ImGui::SliderInt("Test Disp", &sampleDisp, 1, depthMapGenerator->maxDisparityPixels());
         ImGui::Text("Sample Disp Depth: %.3fmm\n", 1000.0f * depthMapGenerator->debugComputeDepthForDisparity(internalsTargetView, (float) sampleDisp));
       }
 

@@ -244,7 +244,6 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMap.geom.glsl");
 
     desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
-    desc.setFlag("DISPARITY_USE_FP16", m_useFP16Disparity);
 
     m_disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
     // clang-format on
@@ -262,7 +261,6 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
       }));
 
     desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
-    desc.setFlag("DISPARITY_USE_FP16", m_useFP16Disparity);
 
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
     // clang-format on
@@ -377,8 +375,8 @@ bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.trim_maxXY = glm::vec2((vd->m_disparityTexture->width() - 1) - m_trimRight, (vd->m_disparityTexture->height() - 1) - m_trimBottom);
 
   ub.renderStereo = (stereo ? 1 : 0);
-  ub.maxValidDisparityPixels = m_maxDisparity - 1;
-  ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale);
+  ub.maxValidDisparityPixels = maxDisparityPixels() - 1;
+  ub.maxValidDisparityRaw = maxDisparityRaw();
   ub.maxDepthDiscontinuity = m_splitDepthDiscontinuity ? m_maxDepthDiscontinuity : FLT_MAX;
 
   ub.texCoordStep = glm::vec2(
@@ -535,7 +533,7 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
     if (m_useMedianFilter) {
       // Run 3x3 median filter to smooth speckles and edge discontinuities
 
-      medianFilter3x3_u16(vd->m_disparityGpuMat, vd->m_disparityMedianFilterDestGpuMat, (CUstream) m_globalStream.cudaPtr());
+      medianFilter3x3_u16(*workMat, vd->m_disparityMedianFilterDestGpuMat, (CUstream) m_globalStream.cudaPtr());
 
       // Work on the median filter destination mat
       workMat = &vd->m_disparityMedianFilterDestGpuMat;
@@ -543,10 +541,9 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
 
     if (m_useHoleFillingPass) {
       // Filter and attempt to reconstruct invalid disparities. This writes in-place.
-      float maxValidDisparityRaw = static_cast<float>(m_maxDisparity - 1) / m_disparityPrescale;
       auto chromaTex = m_cameraSystem->cameraProvider()->cudaChromaTexObject(vd->m_leftCameraIndex);
 
-      disparityFill(chromaTex, *workMat, maxValidDisparityRaw, vd->m_disparityMinMaxMips, (CUstream) m_globalStream.cudaPtr());
+      disparityFill(chromaTex, *workMat, maxDisparityRaw(), vd->m_disparityMinMaxMips, (CUstream) m_globalStream.cudaPtr());
     }
 
     // Copy filtered disparity to render texture
@@ -572,8 +569,6 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
       cvType = CV_8U;
       break;
 
-    case kSurfaceFormat_R16f:
-      // CV doesn't have a dedicated type enum for fp16, so we just use uint16_t
     case kSurfaceFormat_R16i:
       cvType = CV_16U;
       break;
@@ -620,19 +615,15 @@ float DepthMapGenerator::debugPeekDisparityTexel(size_t viewIdx, glm::ivec2 texe
   float disparityRaw = 0;
 
   // .at(row, col) -- Y rows, X columns.
-  if (m_useFP16Disparity) {
-    disparityRaw = glm::unpackHalf1x16(vd->m_debugCPUDisparity.at<uint16_t>(texelCoord.y, texelCoord.x));
-  } else {
-    // clang-format off
-    switch (vd->m_debugCPUDisparity.type()) {
-      case CV_8U:  disparityRaw = static_cast<float>(vd->m_debugCPUDisparity.at<uint8_t >(texelCoord.y, texelCoord.x)); break;
-      case CV_16U: disparityRaw = static_cast<float>(vd->m_debugCPUDisparity.at<uint16_t>(texelCoord.y, texelCoord.x)); break;
-      default:
-        assert(false && "DepthMapGenerator::debugPeekDisparity: unhandled m_debugCPUDisparity.type()");
-    }
-    // clang-format on
+  // clang-format off
+  switch (vd->m_debugCPUDisparity.type()) {
+    case CV_8U:  disparityRaw = static_cast<float>(vd->m_debugCPUDisparity.at<uint8_t >(texelCoord.y, texelCoord.x)); break;
+    case CV_16U: disparityRaw = static_cast<float>(vd->m_debugCPUDisparity.at<uint16_t>(texelCoord.y, texelCoord.x)); break;
+    default:
+      assert(false && "DepthMapGenerator::debugPeekDisparity: unhandled m_debugCPUDisparity.type()");
   }
-  return disparityRaw * m_disparityPrescale;
+  // clang-format on
+  return disparityRaw * disparityPrescale();
 }
 
 float DepthMapGenerator::debugPeekDisparityUV(size_t viewIdx, glm::vec2 uv) const {

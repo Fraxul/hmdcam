@@ -233,7 +233,6 @@ RHIRenderPipeline::ptr camUndistortMaskPipeline;
 RHIRenderPipeline::ptr camUndistortOverlayPipeline;
 RHIRenderPipeline::ptr camCopyPipeline;
 RHIRenderPipeline::ptr disparityScalePipeline;
-RHIRenderPipeline::ptr disparityScaleFP16Pipeline;
 
 static FxAtomicString ksDisparityScaleUniformBlock("DisparityScaleUniformBlock");
 struct DisparityScaleUniformBlock {
@@ -420,7 +419,6 @@ int main(int argc, char* argv[]) {
     }
 
     disparityScalePipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
-    disparityScaleFP16Pipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScaleFP16.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
   }
 
 
@@ -1563,15 +1561,15 @@ int main(int argc, char* argv[]) {
               overlayRegion.height = disparitySurface->height();
               rhi()->setViewport(overlayRegion);
 
-              rhi()->bindRenderPipeline(depthMapGenerator->isFP16Disparity() ? disparityScaleFP16Pipeline : disparityScalePipeline);
+              rhi()->bindRenderPipeline(disparityScalePipeline);
               rhi()->loadTexture(ksImageTex, disparitySurface);
               {
                 DisparityScaleUniformBlock ub;
                 ub.viewportOffsetX = overlayRegion.x;
                 ub.viewportOffsetY = overlayRegion.y;
-                ub.disparityScale = depthMapGenerator->disparityPrescale() * depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparity()));
+                ub.disparityScale = depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparityRaw()));
                 ub.sourceLevel = 0; // disparityScaleSourceLevel;
-                ub.maxValidDisparityRaw = static_cast<uint32_t>(static_cast<float>(depthMapGenerator->maxDisparity() - 1) / depthMapGenerator->disparityPrescale());
+                ub.maxValidDisparityRaw = depthMapGenerator->maxDisparityRaw();
                 rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
               }
               rhi()->drawFullscreenPass();
