@@ -76,9 +76,17 @@ struct DisparityScaleUniformBlock {
   uint32_t sourceLevel;
 
   uint32_t maxValidDisparityRaw;
-  float pad2;
+  uint32_t colorMapMode;
   float pad3;
   float pad4;
+};
+
+static FxAtomicString ksColorMapUniformBlock("ColorMapUniformBlock");
+struct ColorMapUniformBlock {
+  float displayRangeMin;
+  float displayRangeMax;
+  uint32_t sourceLevel;
+  uint32_t colorMapMode;
 };
 
 static FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
@@ -256,6 +264,10 @@ int main(int argc, char** argv) {
   RHISurface::ptr disparityScaleSurface;
   RHIRenderTarget::ptr disparityScaleTarget;
   RHIRenderPipeline::ptr disparityScalePipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
+
+  RHISurface::ptr disparityDebugColorMapSurface;
+  RHIRenderTarget::ptr disparityDebugColorMapTarget;
+  RHIRenderPipeline::ptr colorMapPipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/colorMap.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
 
 
   // CUDA init
@@ -658,8 +670,10 @@ int main(int argc, char** argv) {
         disparitySurface = depthMapGenerator->disparitySurface(internalsTargetView);
 
       if (disparitySurface) {
+        ImGui::PushID("DisparitySurface");
 
         static int disparityScaleSourceLevel = 0;
+        static int disparityScaleColorMapMode = 0;
 
         float debugDisparityScale = depthMapGenerator->debugDisparityScale();
         if (ImGui::SliderFloat("Debug Disparity Scale", &debugDisparityScale, 0.0f, 2.0f)) {
@@ -667,25 +681,29 @@ int main(int argc, char** argv) {
         }
 
         ImGui::SliderInt("Source Level", &disparityScaleSourceLevel, 0, disparitySurface->mipLevels() - 1);
+        ImGui::SliderInt("Color Map Mode", &disparityScaleColorMapMode, 0, 1);
 
-        if (!disparityScaleTarget) {
-          disparityScaleSurface = rhi()->newTexture2D(disparitySurface->width(), disparitySurface->height(), kSurfaceFormat_RGBA8);
-          disparityScaleTarget = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({disparityScaleSurface}));
+        {
+          if (!disparityScaleTarget) {
+            disparityScaleSurface = rhi()->newTexture2D(disparitySurface->width(), disparitySurface->height(), kSurfaceFormat_RGBA8);
+            disparityScaleTarget = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({disparityScaleSurface}));
+          }
+
+          rhi()->beginRenderPass(disparityScaleTarget, kLoadInvalidate);
+          rhi()->bindRenderPipeline(disparityScalePipeline);
+
+          rhi()->loadTexture(ksImageTex, disparitySurface);
+          DisparityScaleUniformBlock ub;
+          ub.viewportOffsetX = 0;
+          ub.viewportOffsetY = 0;
+          ub.disparityScale = depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparityRaw()));
+          ub.sourceLevel = disparityScaleSourceLevel;
+          ub.maxValidDisparityRaw = depthMapGenerator->maxDisparityRaw();
+          ub.colorMapMode = disparityScaleColorMapMode;
+          rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
+          rhi()->drawFullscreenPass();
+          rhi()->endRenderPass(disparityScaleTarget);
         }
-
-        rhi()->beginRenderPass(disparityScaleTarget, kLoadInvalidate);
-        rhi()->bindRenderPipeline(disparityScalePipeline);
-
-        rhi()->loadTexture(ksImageTex, disparitySurface);
-        DisparityScaleUniformBlock ub;
-        ub.viewportOffsetX = 0;
-        ub.viewportOffsetY = 0;
-        ub.disparityScale = depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparityRaw()));
-        ub.sourceLevel = disparityScaleSourceLevel;
-        ub.maxValidDisparityRaw = depthMapGenerator->maxDisparityRaw();
-        rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
-        rhi()->drawFullscreenPass();
-        rhi()->endRenderPass(disparityScaleTarget);
 
         // normalized (UV) coordinates of mouseover of any of the disparity views
         static glm::vec2 disparityHoverUV = glm::vec2(0.0f, 0.0f);
@@ -693,9 +711,46 @@ int main(int argc, char** argv) {
         bool hoverLeft = updateHoverPositionForLastItem(disparityHoverUV);
         drawDisparityImageCursorOverlay(disparityHoverUV);
 
+        ImGui::PopID(); // DisparitySurface
+
         // Debug output
-        ImGui_Image(depthMapGenerator->debugResidualSurface(internalsTargetView));
-        drawDisparityImageCursorOverlay(disparityHoverUV);
+        RHISurface::ptr debugResidual = depthMapGenerator->debugResidualSurface(internalsTargetView);
+        if (debugResidual) {
+          ImGui::PushID("DebugResidual");
+          if (!disparityDebugColorMapTarget) {
+            disparityDebugColorMapSurface = rhi()->newTexture2D(debugResidual->width(), debugResidual->height(), kSurfaceFormat_RGBA8);
+            disparityDebugColorMapTarget = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({disparityDebugColorMapSurface}));
+          }
+
+          static float debugMinValue = 0.0f, debugMaxValue = 1.0f;
+          static int debugColorMapMode = 0;
+
+          ImGui::SliderFloat("Display Range Min", &debugMinValue, 0.0f, 1.0f);
+          ImGui::SliderFloat("Display Range Max", &debugMaxValue, 0.0f, 1.0f);
+          if (debugMinValue > debugMaxValue) {
+            // Enforce ordering
+            std::swap(debugMinValue, debugMaxValue);
+          }
+          ImGui::SliderInt("Color Map Mode", &debugColorMapMode, 0, 6);
+
+          rhi()->beginRenderPass(disparityDebugColorMapTarget, kLoadInvalidate);
+          rhi()->bindRenderPipeline(colorMapPipeline);
+
+          rhi()->loadTexture(ksImageTex, debugResidual);
+          ColorMapUniformBlock ub;
+          ub.displayRangeMin = debugMinValue;
+          ub.displayRangeMax = debugMaxValue;
+          ub.sourceLevel = 0; // No mips on this source
+          ub.colorMapMode = debugColorMapMode;
+          rhi()->loadUniformBlockImmediate(ksColorMapUniformBlock, &ub, sizeof(ub));
+          rhi()->drawFullscreenPass();
+          rhi()->endRenderPass(disparityDebugColorMapTarget);
+
+          ImGui_Image(disparityDebugColorMapSurface);
+          hoverLeft |= updateHoverPositionForLastItem(disparityHoverUV);
+          drawDisparityImageCursorOverlay(disparityHoverUV);
+          ImGui::PopID();
+        }
 
         float disparitySample = depthMapGenerator->debugPeekDisparityUV(internalsTargetView, disparityHoverUV);
         float disparitySampleNormalized = disparitySample / static_cast<float>(disparitySurface->width());

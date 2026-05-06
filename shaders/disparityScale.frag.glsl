@@ -1,5 +1,7 @@
 #version 310 es
 precision highp float;
+#include "colorMap.h"
+
 in vec2 fragTexCoord;
 layout(location = 0) out vec4 outColor;
 uniform highp isampler2D imageTex;
@@ -10,7 +12,7 @@ layout(std140) uniform DisparityScaleUniformBlock {
   int sourceLevel;
 
   int maxValidDisparityRaw;
-  float pad2;
+  int colorMapMode;
   float pad3;
   float pad4;
 };
@@ -23,10 +25,9 @@ void main() {
     // Highlight invalid disparity in red
     outColor = vec4(1.0f, 0.0f, 0.0f, 1.0f);
   } else {
-    outColor = vec4(vec3(float(disparity_raw) * disparityScale), 1.0f);
+    outColor = vec4(applyColormap(float(disparity_raw) * disparityScale, colorMapMode), 1.0f);
   }
 
   // convert to luma
 }
-
 

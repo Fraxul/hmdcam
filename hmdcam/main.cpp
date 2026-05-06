@@ -242,7 +242,7 @@ struct DisparityScaleUniformBlock {
   uint32_t sourceLevel;
 
   uint32_t maxValidDisparityRaw;
-  float pad2;
+  uint32_t colorMapMode;
   float pad3;
   float pad4;
 };
@@ -1570,6 +1570,7 @@ int main(int argc, char* argv[]) {
                 ub.disparityScale = depthMapGenerator->debugDisparityScale() * (1.0f / static_cast<float>(depthMapGenerator->maxDisparityRaw()));
                 ub.sourceLevel = 0; // disparityScaleSourceLevel;
                 ub.maxValidDisparityRaw = depthMapGenerator->maxDisparityRaw();
+                ub.colorMapMode = 0; // TODO: expose as parameter
                 rhi()->loadUniformBlockImmediate(ksDisparityScaleUniformBlock, &ub, sizeof(ub));
               }
               rhi()->drawFullscreenPass();
