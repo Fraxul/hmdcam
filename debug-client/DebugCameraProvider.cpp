@@ -489,16 +489,18 @@ void DebugCameraProvider::internalProcessFrame() {
       if (!vd->m_rightGray)
         vd->m_rightGray = rhi()->newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
 
-      if (!vd->m_debugResidual)
-        vd->m_debugResidual = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
-
       rhi()->loadTextureData(vd->m_leftGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[0].ptr());
       rhi()->loadTextureData(vd->m_rightGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[1].ptr());
-      rhi()->loadTextureData(vd->m_debugResidual, kVertexElementTypeUByte1N, vd->receivedDisparityDebugResidual.ptr());
     }
 
     if (!m_doCudaGLInterop) {
-      // Skip CUDA filtering, just upload the disparity directly
+      // Skip CUDA filtering, just upload the disparity and debug-residual directly
+      if (m_populateDebugTextures) {
+        if (!vd->m_debugResidual)
+          vd->m_debugResidual = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+
+        rhi()->loadTextureData(vd->m_debugResidual, kVertexElementTypeUByte1N, vd->receivedDisparityDebugResidual.ptr());
+      }
       rhi()->loadTextureData(vd->m_disparityTexture, kVertexElementTypeShort1, vd->receivedDisparity.data);
     }
   }
