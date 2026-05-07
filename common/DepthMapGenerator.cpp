@@ -120,6 +120,14 @@ DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) :
   memset(&m_nppStreamContext, 0, sizeof(m_nppStreamContext));
   NPP_CHECK(nppSetStream((CUstream) m_globalStream.cudaPtr()));
   NPP_CHECK(nppGetStreamContext(&m_nppStreamContext));
+
+  CUDA_CHECK(cuEventCreate(&m_finalizeDisparityStartEvent, CU_EVENT_DEFAULT));
+  CUDA_CHECK(cuEventCreate(&m_finalizeDisparityFinishedEvent, CU_EVENT_DEFAULT));
+
+  // Set up a good initial state for the frame timing events
+  CUDA_CHECK_NONFATAL(cuEventRecord(m_finalizeDisparityStartEvent, (CUstream) m_globalStream.cudaPtr()));
+  CUDA_CHECK_NONFATAL(cuEventRecord(m_finalizeDisparityFinishedEvent, (CUstream) m_globalStream.cudaPtr()));
+
 }
 
 void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
@@ -349,6 +357,9 @@ DepthMapGenerator::~DepthMapGenerator() {
     delete vd; // ensure resources are released
   }
   m_viewData.clear();
+
+  cuEventDestroy(m_finalizeDisparityStartEvent);
+  cuEventDestroy(m_finalizeDisparityFinishedEvent);
 }
 
 bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1) {
@@ -508,6 +519,8 @@ void DepthMapGenerator::renderIMGUI() {
 void DepthMapGenerator::renderIMGUIPerformanceGraphs() {
   ImGui::PushID(this);
   this->internalRenderIMGUIPerformanceGraphs();
+
+  ImGui::Text("Finalize: %.1fms", m_finalizeDisparityTimeMs);
   ImGui::PopID();
 }
 
@@ -574,6 +587,11 @@ void DepthMapGenerator::processFrame() {
 }
 
 void DepthMapGenerator::internalFinalizeDisparityTexture() {
+
+  // Collect profiling data from previous frame
+  cuEventElapsedTime(&m_finalizeDisparityTimeMs, m_finalizeDisparityStartEvent, m_finalizeDisparityFinishedEvent);
+
+  CUDA_CHECK(cuEventRecord(m_finalizeDisparityStartEvent, (CUstream) m_globalStream.cudaPtr()));
 
   for (size_t viewIdx = 0; viewIdx < m_cameraSystem->views(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
@@ -681,6 +699,8 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       vd->m_disparityDebugResidual.download(vd->m_debugCPUDisparityResidual, m_globalStream);
     }
   }
+
+  CUDA_CHECK(cuEventRecord(m_finalizeDisparityFinishedEvent, (CUstream) m_globalStream.cudaPtr()));
 }
 
 

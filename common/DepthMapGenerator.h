@@ -225,6 +225,11 @@ protected:
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
   RHIRenderPipeline::ptr m_disparityDepthMapAdaptivePipeline;
 
+  // Profiling data
+  CUevent m_finalizeDisparityStartEvent;
+  CUevent m_finalizeDisparityFinishedEvent;
+  float m_finalizeDisparityTimeMs = 0.0f;
+
 private:
   ViewData* viewDataAtIndex(size_t index) const { return m_viewData[index]; }
   uint32_t m_internalWidth, m_internalHeight;
