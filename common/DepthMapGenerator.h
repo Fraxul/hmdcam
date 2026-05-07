@@ -3,6 +3,7 @@
 #include "common/FxRenderView.h"
 #include "common/DepthMapSHM.h"
 #include "common/SHMSegment.h"
+#include "common/depthMeshAdaptive.h"
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
 #include "rhi/cuda/CudaUtil.h"
@@ -161,6 +162,15 @@ protected:
     cv::Mat m_debugCPUConfidence;
     cv::Mat m_debugCPUDisparityResidual; // Generic debugging output from the disparity generation process for the debug server; CV_8U / uint8_t.
 
+    // Adaptive-mesh path: variable-size triangle mesh built per-frame in CUDA from the
+    // post-processed disparity. Buffers are GPU-private and CUDA-mapped during the build,
+    // then drawn via glDrawElementsIndirect. Sized for the worst case (every cell is its
+    // own quad) so they never need reallocation.
+    RHIBuffer::ptr m_adaptiveVertexBuffer;
+    RHIBuffer::ptr m_adaptiveIndexBuffer;
+    RHIBuffer::ptr m_adaptiveIndirectArgsBuffer; // 2x DrawElementsIndirectCommand: [stereo, mono]
+    DepthMeshAdaptiveScratch m_adaptiveScratch;
+
   private:
     ViewData(const ViewData&);
     ViewData& operator=(const ViewData&);
@@ -193,8 +203,18 @@ protected:
   bool m_splitDepthDiscontinuity = false;
   float m_maxDepthDiscontinuity = 1.0f;
   float m_minDepthCutoff = 0.050f;
-  bool m_usePointRendering = true;
+  bool m_usePointRendering = false;
   float m_pointScale = 1.0f;
+
+  // Adaptive-mesh path: maximum (max - min) raw disparity within a block that still
+  // counts as flat. Smaller = more subdivision (more triangles); larger = coarser merges
+  // and more visible cracks at level transitions.
+  int m_adaptiveFlatnessThreshold = 24;
+
+  // Adaptive-mesh path: max |sampled - lerped| disparity at a level-transition edge that
+  // still gets T-junction stitched. Steps larger than this stay as cracks so genuine
+  // depth discontinuities remain visible.
+  int m_adaptiveDepthDiscontinuityThreshold = 40;
 
   bool m_populateDebugTextures = false;
 
@@ -202,8 +222,8 @@ protected:
   int m_debugFixedDisparityValue = 1;
 
   bool internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1);
-  RHIRenderPipeline::ptr m_disparityDepthMapPipeline;
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
+  RHIRenderPipeline::ptr m_disparityDepthMapAdaptivePipeline;
 
 private:
   ViewData* viewDataAtIndex(size_t index) const { return m_viewData[index]; }

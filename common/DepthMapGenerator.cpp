@@ -238,23 +238,7 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
   }
 
   {
-    // clang-format off
-    RHIRenderPipelineDescriptor rpd;
-    rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
-    rpd.primitiveRestartEnabled = true;
-
-    RHIShaderDescriptor desc("shaders/meshDisparityDepthMap.vtx.glsl", "shaders/meshDisparityDepthMap.frag.glsl", RHIVertexLayout({
-        RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "textureCoordinates", 0, sizeof(float) * 4)
-      }));
-    desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/meshDisparityDepthMap.geom.glsl");
-
-    desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
-
-    m_disparityDepthMapPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
-    // clang-format on
-  }
-
-  {
+    // Basic point-rendering pipeline: each disparity texel is mapped to a quad.
     // clang-format off
     RHIRenderPipelineDescriptor rpd;
     rpd.primitiveTopology = kPrimitiveTopologyTriangleStrip;
@@ -268,6 +252,26 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
 
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
+    // clang-format on
+  }
+
+  {
+    // Adaptive-mesh pipeline: a triangle list assembled per-frame in CUDA from the
+    // post-processed disparity. Each emitted patch is a 2-triangle quad whose corner
+    // disparities are sampled at the corner positions.
+    // clang-format off
+    RHIRenderPipelineDescriptor rpd;
+    rpd.primitiveTopology = kPrimitiveTopologyTriangleList;
+    rpd.primitiveRestartEnabled = false;
+
+    RHIShaderDescriptor desc("shaders/meshDisparityDepthMapAdaptive.vtx.glsl", "shaders/meshDisparityDepthMapAdaptive.frag.glsl", RHIVertexLayout({
+        RHIVertexLayoutElement(0, kVertexElementTypeUShort2, "gridCoord",      offsetof(AdaptiveMeshVertex, gridX),        sizeof(AdaptiveMeshVertex)),
+        RHIVertexLayoutElement(0, kVertexElementTypeFloat1,  "disparityRawIn", offsetof(AdaptiveMeshVertex, disparityRaw), sizeof(AdaptiveMeshVertex))
+      }));
+
+    desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
+
+    m_disparityDepthMapAdaptivePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
     // clang-format on
   }
 
@@ -297,6 +301,8 @@ bool DepthMapGenerator::loadSettings() {
       readNode(rsn, minDepthCutoff);
       readNode(rsn, usePointRendering);
       readNode(rsn, pointScale);
+      readNode(rsn, adaptiveFlatnessThreshold);
+      readNode(rsn, adaptiveDepthDiscontinuityThreshold);
       readNode(rsn, trimLeft);
       readNode(rsn, trimTop);
       readNode(rsn, trimRight);
@@ -328,6 +334,8 @@ void DepthMapGenerator::saveSettings() {
   writeNode(fs, minDepthCutoff);
   writeNode(fs, usePointRendering);
   writeNode(fs, pointScale);
+  writeNode(fs, adaptiveFlatnessThreshold);
+  writeNode(fs, adaptiveDepthDiscontinuityThreshold);
   writeNode(fs, trimLeft);
   writeNode(fs, trimTop);
   writeNode(fs, trimRight);
@@ -353,8 +361,8 @@ bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
     rhi()->bindRenderPipeline(m_disparityDepthMapPointsPipeline);
     rhi()->bindStreamBuffer(0, m_geoDepthMapPointTexcoordBuffer);
   } else {
-    rhi()->bindRenderPipeline(m_disparityDepthMapPipeline);
-    rhi()->bindStreamBuffer(0, m_geoDepthMapTexcoordBuffer);
+    rhi()->bindRenderPipeline(m_disparityDepthMapAdaptivePipeline);
+    rhi()->bindStreamBuffer(0, vd->m_adaptiveVertexBuffer);
   }
 
   MeshDisparityDepthMapUniformBlock ub;
@@ -411,20 +419,22 @@ void DepthMapGenerator::renderDisparityDepthMapStereo(size_t viewIdx, const FxRe
   if (!internalRenderSetup(viewIdx, /*stereo=*/ true, leftRenderView, rightRenderView))
     return;
 
+  ViewData* vd = m_viewData[viewIdx];
   if (m_usePointRendering)
     rhi()->drawIndexedPrimitives(m_geoDepthMapPointTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapPointTristripIndexCount, /*indexOffsetElements=*/ 0, /*instanceCount=*/ 2);
   else
-    rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
+    rhi()->drawIndexedPrimitivesIndirect(vd->m_adaptiveIndexBuffer, kIndexBufferTypeUInt32, vd->m_adaptiveIndirectArgsBuffer, /*indirectCommandCount=*/ 1, /*indirectCommandArrayOffset=*/ 0); // slot 0 = stereo (instanceCount=2)
 }
 
 void DepthMapGenerator::renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView) {
   if (!internalRenderSetup(viewIdx, /*stereo=*/ false, renderView, renderView))
     return;
 
+  ViewData* vd = m_viewData[viewIdx];
   if (m_usePointRendering)
     rhi()->drawIndexedPrimitives(m_geoDepthMapPointTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapPointTristripIndexCount, /*indexOffsetElements=*/ 0, /*instanceCount=*/ 1);
   else
-    rhi()->drawIndexedPrimitives(m_geoDepthMapTristripIndexBuffer, kIndexBufferTypeUInt32, m_geoDepthMapTristripIndexCount);
+    rhi()->drawIndexedPrimitivesIndirect(vd->m_adaptiveIndexBuffer, kIndexBufferTypeUInt32, vd->m_adaptiveIndirectArgsBuffer, /*indirectCommandCount=*/ 1, /*indirectCommandArrayOffset=*/ 1); // slot 1 = mono (instanceCount=1)
 }
 
 void DepthMapGenerator::renderIMGUI() {
@@ -459,8 +469,33 @@ void DepthMapGenerator::renderIMGUI() {
   ImGui::SliderFloat("Min Depth Cutoff", &m_minDepthCutoff, 0.01f, 0.30f);
 
   ImGui::Checkbox("Point rendering", &m_usePointRendering);
-  if (m_usePointRendering)
+  if (m_usePointRendering) {
     ImGui::SliderFloat("Point Scale", &m_pointScale, 0.5f, 3.0f);
+  } else {
+    ImGui::DragInt("Adaptive flatness threshold (raw)", &m_adaptiveFlatnessThreshold, /*v_speed=*/ 8, 0, 128);
+    ImGui::DragInt("Adaptive discontinuity threshold (raw)", &m_adaptiveDepthDiscontinuityThreshold, /*v_speed=*/ 8, 0, 1024);
+
+    // Per-view emission histogram for the most-recent build. The host-side mirror is
+    // populated by an async DtoH copy at the end of the build.
+    // We don't sync the stream to avoid stalling, and accept the possibility of a torn read.
+    // (it's just a debug display, no big deal if the data is a little stale.)
+    if (!m_viewData.empty()) {
+      for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
+        ViewData* vd = m_viewData[viewIdx];
+        if (!vd || !vd->m_isStereoView)
+          continue;
+
+        const auto& s = vd->m_adaptiveScratch;
+        uint32_t totalQuads = s.h_counters->vertexCounter / 4;
+        ImGui::Text("View %zu: %u quads", viewIdx, totalQuads);
+        for (int L = 0; L < kAdaptiveMeshLevels; ++L) {
+          int sz = 1 << L;
+          ImGui::Text("  L%d (%dx%d): %u (%.1f%%)", L, sz, sz, s.h_counters->levelHistograms[L],
+            totalQuads ? 100.0f * float(s.h_counters->levelHistograms[L]) / float(totalQuads) : 0.0f);
+        }
+      }
+    }
+  }
 
   ImGui::Checkbox("Debug: Fixed disparity", &m_debugUseFixedDisparity);
   if (m_debugUseFixedDisparity)
@@ -583,6 +618,47 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
     // Copy filtered disparity to render texture
     RHICUDA::copyGpuMatToSurface(*workMat, vd->m_disparityTexture, m_globalStream);
 
+    // Build the adaptive triangle mesh from the post-processed disparity. Map the GL-side
+    // VBO/IBO/indirect-args buffers into CUDA, run the kernels, then unmap so subsequent
+    // GL draws can read them.
+    {
+      CUstream cudaStream = (CUstream) m_globalStream.cudaPtr();
+      CUgraphicsResource resources[3] = {
+        vd->m_adaptiveVertexBuffer->cuGraphicsResource(),
+        vd->m_adaptiveIndexBuffer->cuGraphicsResource(),
+        vd->m_adaptiveIndirectArgsBuffer->cuGraphicsResource(),
+      };
+      for (CUgraphicsResource r : resources)
+        CUDA_CHECK(cuGraphicsResourceSetMapFlags(r, CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD));
+      CUDA_CHECK(cuGraphicsMapResources(3, resources, cudaStream));
+
+      CUdeviceptr d_vbo = 0, d_ibo = 0, d_indirect = 0;
+      size_t mappedSize = 0;
+      CUDA_CHECK(cuGraphicsResourceGetMappedPointer(&d_vbo, &mappedSize, resources[0]));
+      CUDA_CHECK(cuGraphicsResourceGetMappedPointer(&d_ibo, &mappedSize, resources[1]));
+      CUDA_CHECK(cuGraphicsResourceGetMappedPointer(&d_indirect, &mappedSize, resources[2]));
+
+      // Disable trim/validity masking when running with a fixed disparity, so the resulting
+      // mesh covers the full grid (matches the legacy fixed-disparity rendering behavior).
+      const bool useFixedDisparity = vd->anyCameraStreamFailed() || m_debugUseFixedDisparity;
+      const int effTrimL = useFixedDisparity ? 0 : m_trimLeft;
+      const int effTrimT = useFixedDisparity ? 0 : m_trimTop;
+      const int effTrimR = useFixedDisparity ? 0 : m_trimRight;
+      const int effTrimB = useFixedDisparity ? 0 : m_trimBottom;
+
+      buildAdaptiveDepthMesh(
+        *workMat,
+        static_cast<uint16_t>(maxDisparityRaw()),
+        static_cast<uint16_t>(m_adaptiveFlatnessThreshold),
+        static_cast<uint16_t>(m_adaptiveDepthDiscontinuityThreshold),
+        effTrimL, effTrimT, effTrimR, effTrimB,
+        d_vbo, d_ibo, d_indirect,
+        vd->m_adaptiveScratch,
+        cudaStream);
+
+      CUDA_CHECK(cuGraphicsUnmapResources(3, resources, cudaStream));
+    }
+
     // Populate debug-residual texture.
     if (m_populateDebugTextures) {
       if (!vd->m_debugResidual)
@@ -661,6 +737,16 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
   }
 
   m_disparityTexture = rhi()->newTexture2D(w, h, RHISurfaceDescriptor(format));
+
+  // Adaptive-mesh buffers. Worst case is one quad per leaf cell (every cell stays at level 0).
+  const size_t worstCaseQuads = size_t(w) * size_t(h);
+  const size_t vboBytes = worstCaseQuads * 4 * sizeof(AdaptiveMeshVertex);
+  const size_t iboBytes = worstCaseQuads * 6 * sizeof(uint32_t);
+  m_adaptiveVertexBuffer = rhi()->newEmptyBuffer(vboBytes, kBufferUsageGPUPrivate);
+  m_adaptiveIndexBuffer = rhi()->newEmptyBuffer(iboBytes, kBufferUsageGPUPrivate);
+  m_adaptiveIndirectArgsBuffer = rhi()->newEmptyBuffer(2 * sizeof(DrawElementsIndirectCommand), kBufferUsageGPUPrivate);
+
+  m_adaptiveScratch.allocate(w, h);
 }
 
 float DepthMapGenerator::debugPeekDisparityTexel(size_t viewIdx, glm::ivec2 texelCoord) const {
@@ -724,7 +810,7 @@ float DepthMapGenerator::debugPeekConfidenceTexel(size_t viewIdx, glm::ivec2 tex
   assert(vd->m_debugCPUConfidence.type() == CV_8U);
 
   texelCoord = glm::clamp(texelCoord, glm::ivec2(0, 0), glm::ivec2(vd->m_debugCPUConfidence.cols - 1, vd->m_debugCPUConfidence.rows - 1));
-  return static_cast<float>(vd->m_debugCPUConfidence.at<uint8_t >(texelCoord.y, texelCoord.x)) / 255.0f;
+  return static_cast<float>(vd->m_debugCPUConfidence.at<uint8_t>(texelCoord.y, texelCoord.x)) / 255.0f;
 }
 
 float DepthMapGenerator::debugPeekConfidenceUV(size_t viewIdx, glm::vec2 uv) const {
@@ -741,7 +827,7 @@ uint8_t DepthMapGenerator::debugPeekResidualTexel(size_t viewIdx, glm::ivec2 tex
   assert(vd->m_debugCPUDisparityResidual.type() == CV_8U);
 
   texelCoord = glm::clamp(texelCoord, glm::ivec2(0, 0), glm::ivec2(vd->m_debugCPUDisparityResidual.cols - 1, vd->m_debugCPUDisparityResidual.rows - 1));
-  return vd->m_debugCPUDisparityResidual.at<uint8_t >(texelCoord.y, texelCoord.x);
+  return vd->m_debugCPUDisparityResidual.at<uint8_t>(texelCoord.y, texelCoord.x);
 }
 
 uint8_t DepthMapGenerator::debugPeekResidualUV(size_t viewIdx, glm::vec2 uv) const {

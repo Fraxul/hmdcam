@@ -1027,6 +1027,30 @@ void RHIGL::drawIndexedPrimitives(RHIBuffer::ptr indexBuffer, RHIIndexBufferType
   }
 }
 
+void RHIGL::drawIndexedPrimitivesIndirect(RHIBuffer::ptr indexBuffer, RHIIndexBufferType indexBufferType, RHIBuffer::ptr indirectBuffer, uint32_t indirectCommandCount, uint32_t indirectCommandArrayOffset) {
+  internalSetupRenderPipelineState();
+
+  RHIBufferGL* glIndexBuffer = static_cast<RHIBufferGL*>(indexBuffer.get());
+  GL(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glIndexBuffer->glId()));
+
+  RHIBufferGL* glIndirectBuffer = static_cast<RHIBufferGL*>(indirectBuffer.get());
+  GL(glBindBuffer(GL_DRAW_INDIRECT_BUFFER, glIndirectBuffer->glId()));
+
+  // DrawElementsIndirectCommand stride is 20 bytes: count, instanceCount, firstIndex, baseVertex, baseInstance
+  void* offset = reinterpret_cast<void*>(indirectCommandArrayOffset * 20);
+
+#ifndef glMultiDrawElementsIndirectEXT
+#define glMultiDrawElementsIndirectEXT glMultiDrawElementsIndirect
+#endif
+  if (indirectCommandCount == 1) {
+    GL(glDrawElementsIndirect(convertPrimitiveTopology(m_activeRenderPipeline->descriptor().primitiveTopology), RHIIndexBufferTypeToGL(indexBufferType), offset));
+  } else {
+    GL(glMultiDrawElementsIndirectEXT(convertPrimitiveTopology(m_activeRenderPipeline->descriptor().primitiveTopology), RHIIndexBufferTypeToGL(indexBufferType), offset, indirectCommandCount, 0));
+  }
+
+  GL(glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0));
+}
+
 RHITimerQuery::ptr RHIGL::newTimerQuery() {
   return RHITimerQuery::ptr(new RHITimerQueryGL());
 }
