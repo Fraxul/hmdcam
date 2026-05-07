@@ -265,9 +265,13 @@ int main(int argc, char** argv) {
   RHIRenderTarget::ptr disparityScaleTarget;
   RHIRenderPipeline::ptr disparityScalePipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
 
+  RHIRenderPipeline::ptr colorMapPipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/colorMap.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
+
   RHISurface::ptr disparityDebugColorMapSurface;
   RHIRenderTarget::ptr disparityDebugColorMapTarget;
-  RHIRenderPipeline::ptr colorMapPipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/colorMap.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
+
+  RHISurface::ptr confidenceColorMapSurface;
+  RHIRenderTarget::ptr confidenceColorMapTarget;
 
 
   // CUDA init
@@ -713,6 +717,37 @@ int main(int argc, char** argv) {
 
         ImGui::PopID(); // DisparitySurface
 
+        // Confidence output
+        RHISurface::ptr confidenceTexture = depthMapGenerator->confidenceSurface(internalsTargetView);
+        if (confidenceTexture) {
+          ImGui::PushID("ConfidenceTexture");
+          if (!confidenceColorMapTarget) {
+            confidenceColorMapSurface = rhi()->newTexture2D(confidenceTexture->width(), confidenceTexture->height(), kSurfaceFormat_RGBA8);
+            confidenceColorMapTarget = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({confidenceColorMapSurface}));
+          }
+
+          static int confidenceColorMapMode = 0;
+          ImGui::SliderInt("Color Map Mode", &confidenceColorMapMode, 0, 1);
+
+          rhi()->beginRenderPass(confidenceColorMapTarget, kLoadInvalidate);
+          rhi()->bindRenderPipeline(colorMapPipeline);
+
+          rhi()->loadTexture(ksImageTex, confidenceTexture);
+          ColorMapUniformBlock ub;
+          ub.displayRangeMin = 0.0f;
+          ub.displayRangeMax = 1.0f;
+          ub.sourceLevel = 0; // No mips on this source
+          ub.colorMapMode = confidenceColorMapMode;
+          rhi()->loadUniformBlockImmediate(ksColorMapUniformBlock, &ub, sizeof(ub));
+          rhi()->drawFullscreenPass();
+          rhi()->endRenderPass(confidenceColorMapTarget);
+
+          ImGui_Image(confidenceColorMapSurface);
+          hoverLeft |= updateHoverPositionForLastItem(disparityHoverUV);
+          drawDisparityImageCursorOverlay(disparityHoverUV);
+          ImGui::PopID();
+        }
+
         // Debug output
         RHISurface::ptr debugResidual = depthMapGenerator->debugResidualSurface(internalsTargetView);
         if (debugResidual) {
@@ -754,6 +789,7 @@ int main(int argc, char** argv) {
 
         float disparitySample = depthMapGenerator->debugPeekDisparityUV(internalsTargetView, disparityHoverUV);
         float disparitySampleNormalized = disparitySample / static_cast<float>(disparitySurface->width());
+        float confidenceSample = depthMapGenerator->debugPeekConfidenceUV(internalsTargetView, disparityHoverUV);
         uint8_t residualSample = depthMapGenerator->debugPeekResidualUV(internalsTargetView, disparityHoverUV);
 
         ImGui_Image(depthMapGenerator->leftGrayscale(internalsTargetView));
@@ -772,11 +808,12 @@ int main(int argc, char** argv) {
         }
 
         glm::vec3 localP = depthMapGenerator->debugPeekLocalPositionUV(internalsTargetView, disparityHoverUV) * 1000.0f;
-        ImGui::Text("Hover UV: {%.2f, %.2f} (%d, %d)\nDisparity: %.3f\nResidual: %u (%.3f)\n, Local P: %.3fmm, %.3fmm, %.3fmm",
+        ImGui::Text("Hover UV: {%.2f, %.2f} (%d, %d)\nDisparity: %.3f\nConfidence: %.3f\nResidual: %u (%.3f)\n, Local P: %.3fmm, %.3fmm, %.3fmm",
           disparityHoverUV.x, disparityHoverUV.y,
           static_cast<int>(disparityHoverUV.x * static_cast<float>(disparityScaleSurface->width())),
           static_cast<int>(disparityHoverUV.y * static_cast<float>(disparityScaleSurface->height())),
           disparitySample,
+          confidenceSample,
           residualSample, static_cast<float>(residualSample) / 255.0f,
           localP.x, localP.y, localP.z);
 

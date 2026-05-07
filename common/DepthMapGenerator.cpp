@@ -574,7 +574,7 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       disparityTemporalFilter(maxDisparityRaw(), /*stableDepthThreshold=*/ stableThresholdRaw, /*defaultAlpha*/ m_temporalFilterAlpha,
         /*currentFrameInput=*/ *workMat, /*previousFrameInput=*/ vd->previousDisparityMat(),
         /*output=*/ vd->currentDisparityMat(), (CUstream) m_globalStream.cudaPtr(),
-        /*debugMat=*/ &vd->m_disparityDebugResidual);
+        /*debugMat=*/ nullptr); // &vd->m_disparityDebugResidual);
 
       // back to reading from currentDisparityMat, since the temporal filter always writes to that.
       workMat = &vd->currentDisparityMat();
@@ -588,12 +588,19 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       if (!vd->m_debugResidual)
         vd->m_debugResidual = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
 
+      if (!vd->m_confidenceTexture)
+        vd->m_confidenceTexture = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+
       RHICUDA::copyGpuMatToSurface(vd->m_disparityDebugResidual, vd->m_debugResidual, (CUstream) m_globalStream.cudaPtr());
+
+      RHICUDA::copyGpuMatToSurface(vd->m_disparityConfidence, vd->m_confidenceTexture, (CUstream) m_globalStream.cudaPtr());
     }
 
     if (debugDisparityCPUAccessEnabled()) {
       // Copy filtered disparity to CPU-visible view
       workMat->download(vd->m_debugCPUDisparity, m_globalStream);
+      // Copy confidence to CPU-visible view
+      vd->m_disparityConfidence.download(vd->m_debugCPUConfidence, m_globalStream);
       // Copy residual to CPU-visible view
       vd->m_disparityDebugResidual.download(vd->m_debugCPUDisparityResidual, m_globalStream);
     }
@@ -623,9 +630,11 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
   // Create disparity mats
   m_disparityGpuMat[0].create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
   m_disparityGpuMat[1].create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+  m_disparityConfidence.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ CV_8U);
 
   // Pre-allocate CPU debug view, identical in size/format to GPU copy
   m_debugCPUDisparity.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+  m_debugCPUConfidence.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ CV_8U);
 
   // Pre-allocate GPU and CPU debug residuals. Always CV_8U.
   m_disparityDebugResidual.create(/*rows=*/ h, /*cols=*/ w, CV_8U);
@@ -704,6 +713,23 @@ float DepthMapGenerator::debugComputeDepthForDisparity(size_t viewIdx, float dis
   const ViewData* vd = viewDataAtIndex(viewIdx);
   float lz = vd->m_depthParameters[2] / (vd->m_depthParameters[3] * disparityPixels * m_algoDownsampleX);
   return lz;
+}
+
+float DepthMapGenerator::debugPeekConfidenceTexel(size_t viewIdx, glm::ivec2 texelCoord) const {
+  const ViewData* vd = viewDataAtIndex(viewIdx);
+
+  if (vd->m_debugCPUConfidence.empty()) {
+    return 0;
+  }
+  assert(vd->m_debugCPUConfidence.type() == CV_8U);
+
+  texelCoord = glm::clamp(texelCoord, glm::ivec2(0, 0), glm::ivec2(vd->m_debugCPUConfidence.cols - 1, vd->m_debugCPUConfidence.rows - 1));
+  return static_cast<float>(vd->m_debugCPUConfidence.at<uint8_t >(texelCoord.y, texelCoord.x)) / 255.0f;
+}
+
+float DepthMapGenerator::debugPeekConfidenceUV(size_t viewIdx, glm::vec2 uv) const {
+  const ViewData* vd = viewDataAtIndex(viewIdx);
+  return debugPeekConfidenceTexel(viewIdx, glm::ivec2(uv * (vd->m_confidenceTexture->dimensions() - glm::vec2(1.0f, 1.0f))));
 }
 
 uint8_t DepthMapGenerator::debugPeekResidualTexel(size_t viewIdx, glm::ivec2 texelCoord) const {

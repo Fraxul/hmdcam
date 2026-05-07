@@ -19,6 +19,7 @@ public:
   CUexternalMemory m_cuMem;
   CUmipmappedArray m_cuMipmappedArray;
   CUarray m_cuArray;
+  CUtexObject m_cuTex;
 
   uint64_t m_bufferSizeBytes;
   uint32_t m_width, m_height;

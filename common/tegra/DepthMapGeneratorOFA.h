@@ -99,11 +99,15 @@ protected:
   NvSciBufAttrList m_disparityBufferAttrList = nullptr;
   NvSciBufAttrList m_costBufferAttrList = nullptr;
 
-
   float m_preOfaFrameTimeMs = 0;
   float m_ofaFrameTimeMs = 0;
 
   bool m_enableProfiling = true;
+
+  // Cost-to-confidence mapping
+  uint8_t m_lowCostThreshold = 4;
+  uint8_t m_highCostThreshold = 48;
+
 
 private:
   ViewDataOFA* viewDataAtIndex(size_t index) { return static_cast<ViewDataOFA*>(m_viewData[index]); }

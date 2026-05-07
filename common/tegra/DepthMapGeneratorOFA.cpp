@@ -4,6 +4,7 @@
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
 #include "common/tegra/NvSciUtil.h"
+#include "common/tegra/ofaCostToConfidence.h"
 #include "common/glmCvInterop.h"
 #include "common/remapArray.h"
 #include "rhi/RHI.h"
@@ -229,6 +230,8 @@ DepthMapGeneratorOFA::~DepthMapGeneratorOFA() {
 void DepthMapGeneratorOFA::internalLoadSettings(cv::FileStorage& fs) {
   cv::FileNode ofa = fs["ofa"];
   if (ofa.isMap()) {
+    cv::read(ofa["lowCostThreshold"], m_lowCostThreshold, m_lowCostThreshold);
+    cv::read(ofa["highCostThreshold"], m_highCostThreshold, m_highCostThreshold);
     // cv::read(ofa["confidenceThreshold"], m_params.confidenceThreshold, m_params.confidenceThreshold);
     // cv::read(ofa["quality"], m_params.quality, m_params.quality);
   }
@@ -238,6 +241,8 @@ void DepthMapGeneratorOFA::internalLoadSettings(cv::FileStorage& fs) {
 #define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_##settingName)
 void DepthMapGeneratorOFA::internalSaveSettings(cv::FileStorage& fs) {
   fs.startWriteStruct(cv::String("ofa"), cv::FileNode::MAP, cv::String());
+  fs.write("lowCostThreshold", m_lowCostThreshold);
+  fs.write("highCostThreshold", m_highCostThreshold);
   // fs.write("confidenceThreshold", m_params.confidenceThreshold);
   // fs.write("quality", m_params.quality);
   fs.endWriteStruct();
@@ -393,6 +398,9 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
 
     copyNvSciBufToGpuMat(vd->m_ofaOutputDisparityBuffer, vd->currentDisparityMat(), (CUstream) m_globalStream.cudaPtr());
 
+    // Process cost map into confidence
+    ofaCostToConfidence(vd->m_ofaOutputCostBuffer->m_cuTex, vd->m_disparityConfidence, m_lowCostThreshold, m_highCostThreshold, (CUstream) m_globalStream.cudaPtr());
+
     if (m_populateDebugTextures) {
       if (!vd->m_leftGray)
         vd->m_leftGray = rhi()->newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
@@ -489,6 +497,10 @@ void DepthMapGeneratorOFA::internalRenderIMGUI() {
 
   // ImGui::SliderInt("Confidence Threshold", &m_params.confidenceThreshold, 0, 65535);
   // ImGui::SliderInt("Quality", &m_params.quality, 1, 255);
+
+  const uint8_t u8Min = 0, u8Max = 255;
+  ImGui::SliderScalar("Cost threshold low", ImGuiDataType_U8, &m_lowCostThreshold, &u8Min, &u8Max, "%u");
+  ImGui::SliderScalar("Cost threshold high", ImGuiDataType_U8, &m_highCostThreshold, &u8Min, &u8Max, "%u");
 }
 
 void DepthMapGeneratorOFA::internalRenderIMGUIPerformanceGraphs() {

@@ -94,9 +94,28 @@ NvSciCudaInteropBuffer::NvSciCudaInteropBuffer(NvSciBufAttrList attrList) {
   }
   // Get CUarray handle to level 0 of the mipmapped array
   CUDA_CHECK(cuMipmappedArrayGetLevel(&m_cuArray, m_cuMipmappedArray, /*level=*/ 0));
+
+  // Wrap the CUarray in a CUtexObject for use in kernels that read via tex2D.
+  {
+    CUDA_RESOURCE_DESC resDesc;
+    memset(&resDesc, 0, sizeof(resDesc));
+    resDesc.resType = CU_RESOURCE_TYPE_ARRAY;
+    resDesc.res.array.hArray = m_cuArray;
+
+    CUDA_TEXTURE_DESC texDesc;
+    memset(&texDesc, 0, sizeof(texDesc));
+    texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
+    texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
+    texDesc.filterMode = CU_TR_FILTER_MODE_POINT;
+    // Return raw integer texels rather than the default normalized-to-float [0,1].
+    texDesc.flags = CU_TRSF_READ_AS_INTEGER;
+
+    CUDA_CHECK(cuTexObjectCreate(&m_cuTex, &resDesc, &texDesc, /*resViewDesc=*/ nullptr));
+  }
 }
 
 NvSciCudaInteropBuffer::~NvSciCudaInteropBuffer() {
+  CUDA_CHECK(cuTexObjectDestroy(m_cuTex));
   CUDA_CHECK(cuMipmappedArrayDestroy(m_cuMipmappedArray));
   CUDA_CHECK(cuDestroyExternalMemory(m_cuMem));
   NvSciBufObjFree(m_nvSciBuf);

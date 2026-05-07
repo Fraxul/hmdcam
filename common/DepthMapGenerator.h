@@ -45,6 +45,7 @@ public:
   RHISurface::ptr disparitySurface(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_disparityTexture : RHISurface::ptr(); }
   RHISurface::ptr leftGrayscale(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_leftGray : RHISurface::ptr(); }
   RHISurface::ptr rightGrayscale(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_rightGray : RHISurface::ptr(); }
+  RHISurface::ptr confidenceSurface(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_confidenceTexture : RHISurface::ptr(); }
   RHISurface::ptr debugResidualSurface(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_debugResidual : RHISurface::ptr(); }
 
   // controls availability of leftGrayscale and rightGrayscale
@@ -67,6 +68,8 @@ public:
   glm::vec3 debugPeekLocalPositionUV(size_t viewIdx, glm::vec2 uv) const;
   glm::vec3 debugPeekLocalPositionTexel(size_t viewIdx, glm::ivec2 texelCoord) const;
   float debugComputeDepthForDisparity(size_t viewIdx, float disparityPixels) const;
+  float debugPeekConfidenceTexel(size_t viewIdx, glm::ivec2 texelCoord) const;
+  float debugPeekConfidenceUV(size_t viewIdx, glm::vec2 uv) const;
   uint8_t debugPeekResidualTexel(size_t viewIdx, glm::ivec2 texelCoord) const;
   uint8_t debugPeekResidualUV(size_t viewIdx, glm::vec2 uv) const;
 
@@ -145,15 +148,17 @@ protected:
     cv::cuda::GpuMat& previousDisparityMat() { return m_disparityGpuMat[1 - m_currentMatWriteIndex]; }
 
     cv::cuda::GpuMat m_disparityGpuMat[2];
+    cv::cuda::GpuMat m_disparityConfidence;
     cv::cuda::GpuMat m_disparityDebugResidual;
 
     cv::cuda::GpuMat m_disparityMedianFilterDestGpuMat;
 
     RHISurface::ptr m_disparityTexture;
-    RHISurface::ptr m_leftGray, m_rightGray, m_debugResidual;
+    RHISurface::ptr m_leftGray, m_rightGray, m_confidenceTexture, m_debugResidual;
 
     cv::Mat m_debugCPUDisparityInput[2]; // L/R inputs to stereo matching algorithm
     cv::Mat m_debugCPUDisparity;
+    cv::Mat m_debugCPUConfidence;
     cv::Mat m_debugCPUDisparityResidual; // Generic debugging output from the disparity generation process for the debug server; CV_8U / uint8_t.
 
   private:

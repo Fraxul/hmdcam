@@ -31,7 +31,7 @@ if debugClientEnv['IS_TEGRA']:
       'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync',
     ],
   )
-  tegraSrc = Glob('common/tegra/*.cpp')
+  tegraSrc = Glob('common/tegra/*.cpp') + Glob('common/tegra/*.cu')
 
 debugClientEnv.CompilationDatabase()
 debugClientEnv.ProgramWithWholeArchive(

@@ -94,6 +94,7 @@ if tegraEnv['IS_TEGRA']:
   tegra_src = \
     Glob('hmdcam/tegra/*.cpp') + \
     Glob('common/tegra/*.cpp') + \
+    Glob('common/tegra/*.cu') + \
     Glob('eyetracking/*.cpp') + \
     Glob('eyetracking/SingleEyeFitter/*.cpp')
 
