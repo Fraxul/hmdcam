@@ -67,6 +67,8 @@ public:
   glm::vec3 debugPeekLocalPositionUV(size_t viewIdx, glm::vec2 uv) const;
   glm::vec3 debugPeekLocalPositionTexel(size_t viewIdx, glm::ivec2 texelCoord) const;
   float debugComputeDepthForDisparity(size_t viewIdx, float disparityPixels) const;
+  uint8_t debugPeekResidualTexel(size_t viewIdx, glm::ivec2 texelCoord) const;
+  uint8_t debugPeekResidualUV(size_t viewIdx, glm::vec2 uv) const;
 
   float debugDisparityScale() const { return m_debugDisparityScale; }
   void setDebugDisparityScale(float v) { m_debugDisparityScale = v; }

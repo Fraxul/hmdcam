@@ -754,6 +754,7 @@ int main(int argc, char** argv) {
 
         float disparitySample = depthMapGenerator->debugPeekDisparityUV(internalsTargetView, disparityHoverUV);
         float disparitySampleNormalized = disparitySample / static_cast<float>(disparitySurface->width());
+        uint8_t residualSample = depthMapGenerator->debugPeekResidualUV(internalsTargetView, disparityHoverUV);
 
         ImGui_Image(depthMapGenerator->leftGrayscale(internalsTargetView));
         hoverLeft |= updateHoverPositionForLastItem(disparityHoverUV);
@@ -771,11 +772,12 @@ int main(int argc, char** argv) {
         }
 
         glm::vec3 localP = depthMapGenerator->debugPeekLocalPositionUV(internalsTargetView, disparityHoverUV) * 1000.0f;
-        ImGui::Text("Hover UV: {%.2f, %.2f} (%d, %d)\nDisparity: %.3f\nLocal P: %.3fmm, %.3fmm, %.3fmm",
+        ImGui::Text("Hover UV: {%.2f, %.2f} (%d, %d)\nDisparity: %.3f\nResidual: %u (%.3f)\n, Local P: %.3fmm, %.3fmm, %.3fmm",
           disparityHoverUV.x, disparityHoverUV.y,
           static_cast<int>(disparityHoverUV.x * static_cast<float>(disparityScaleSurface->width())),
           static_cast<int>(disparityHoverUV.y * static_cast<float>(disparityScaleSurface->height())),
           disparitySample,
+          residualSample, static_cast<float>(residualSample) / 255.0f,
           localP.x, localP.y, localP.z);
 
         static int sampleDisp = 1;

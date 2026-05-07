@@ -705,3 +705,20 @@ float DepthMapGenerator::debugComputeDepthForDisparity(size_t viewIdx, float dis
   float lz = vd->m_depthParameters[2] / (vd->m_depthParameters[3] * disparityPixels * m_algoDownsampleX);
   return lz;
 }
+
+uint8_t DepthMapGenerator::debugPeekResidualTexel(size_t viewIdx, glm::ivec2 texelCoord) const {
+  const ViewData* vd = viewDataAtIndex(viewIdx);
+
+  if (vd->m_debugCPUDisparityResidual.empty()) {
+    return 0;
+  }
+  assert(vd->m_debugCPUDisparityResidual.type() == CV_8U);
+
+  texelCoord = glm::clamp(texelCoord, glm::ivec2(0, 0), glm::ivec2(vd->m_debugCPUDisparityResidual.cols - 1, vd->m_debugCPUDisparityResidual.rows - 1));
+  return vd->m_debugCPUDisparityResidual.at<uint8_t >(texelCoord.y, texelCoord.x);
+}
+
+uint8_t DepthMapGenerator::debugPeekResidualUV(size_t viewIdx, glm::vec2 uv) const {
+  const ViewData* vd = viewDataAtIndex(viewIdx);
+  return debugPeekResidualTexel(viewIdx, glm::ivec2(uv * (vd->m_debugResidual->dimensions() - glm::vec2(1.0f, 1.0f))));
+}
