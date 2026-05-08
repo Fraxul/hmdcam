@@ -1140,13 +1140,38 @@ int main(int argc, char* argv[]) {
           if (debugOverlay)
             debugOverlay->renderIMGUI();
 
-          if (ImGui::Button("Capture frame")) {
+          if (ImGui::Button("Capture frame (Luma)")) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+
+            printf(" --- Capturing luma frames to cameraN_%lu.png\n", ts.tv_sec);
+
+            for (size_t streamIdx = 0; streamIdx < argusCamera->streamCount(); ++streamIdx) {
+              cv::Mat* captureMat = new cv::Mat();
+              argusCamera->gpuMatGreyscale(streamIdx).download(*captureMat);
+
+              char* filenameBuf = new char[64];
+              snprintf(filenameBuf, 64, "camera%zu_%lu.png", streamIdx, ts.tv_sec);
+
+              // Async PNG compression since it's expensive
+              stbi_write_png_compression_level = 3; // Default to make PNG compression faster at the expense of some runtime
+              FxThreading::runFunction([filenameBuf, captureMat]() {
+                stbi_write_png(filenameBuf, captureMat->cols, captureMat->rows, /*components=*/ 1, captureMat->ptr<uint8_t>(), /*rowBytes=*/ captureMat->step);
+                delete[] filenameBuf;
+                delete captureMat;
+              });
+            }
+          }
+
+          if (ImGui::Button("Capture frame (RGB)")) {
 
             RHISurface::ptr snapTex = rhi()->newTexture2D(argusCamera->streamWidth(), argusCamera->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
             RHIRenderTarget::ptr snapRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({snapTex}));
 
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
+
+            printf(" --- Capturing RGB frames to cameraN_%lu.png\n", ts.tv_sec);
 
             for (size_t streamIdx = 0; streamIdx < argusCamera->streamCount(); ++streamIdx) {
               rhi()->beginRenderPass(snapRT, kLoadInvalidate);
@@ -1161,6 +1186,7 @@ int main(int argc, char* argv[]) {
               snprintf(filenameBuf, 64, "camera%zu_%lu.png", streamIdx, ts.tv_sec);
 
               // Async PNG compression since it's expensive
+              stbi_write_png_compression_level = 3; // Default to make PNG compression faster at the expense of some runtime
               FxThreading::runFunction([filenameBuf, imageData]() {
                 stbi_write_png(filenameBuf, argusCamera->streamWidth(), argusCamera->streamHeight(), /*components=*/ 4, imageData, /*rowBytes=*/ argusCamera->streamWidth() * 4);
                 delete[] filenameBuf;
