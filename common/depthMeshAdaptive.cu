@@ -208,6 +208,28 @@ __global__ void emitGeometryKernel(
   float d01 = computeSnappedCornerDisparity(disparity, maxFlatLevel, W, H, x, yBottom, L, discontinuityThresholdRaw);
   float d11 = computeSnappedCornerDisparity(disparity, maxFlatLevel, W, H, xRight, yBottom, L, discontinuityThresholdRaw);
 
+  // Handle large depth discontinuities.
+  // If there's a discontinuity across d00+d01 to d10+d11, then we should flatten it left-to-right (throw away d10/d11, replace with d00/d01)
+  // Same for discontinuity across d00/d10 to d01/d11
+  // Will introduce some cracking on high depth slopes, but that's probably OK.
+
+  bool crackLR = static_cast<uint16_t>(fabs(((d00 + d01) * 0.5f) - ((d10 + d11) * 0.5f))) > discontinuityThresholdRaw;
+  bool crackUD = static_cast<uint16_t>(fabs(((d00 + d10) * 0.5f) - ((d01 + d11) * 0.5f))) > discontinuityThresholdRaw;
+  if (crackLR && crackUD) {
+    // Crack in both directions -- all values become d00
+    d10 = d00;
+    d01 = d00;
+    d11 = d00;
+  } else if (crackLR) {
+    // Crack left-to-right
+    d10 = d00;
+    d11 = d01;
+  } else if (crackUD) {
+    // Crack top-to-bottom
+    d01 = d00;
+    d11 = d10;
+  }
+
   uint32_t vBase = atomicAdd(&counters->vertexCounter, 4u);
   uint32_t iBase = atomicAdd(&counters->indexCounter, 6u);
   atomicAdd(&counters->levelHistograms[L], 1u);
