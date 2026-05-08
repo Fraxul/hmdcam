@@ -28,6 +28,12 @@ That URL is the file-level Doxygen page. Two related URL shapes matter:
 The file page alone is not enough. You need the struct pages for field-level
 docs and the group page for function-level docs.
 
+The group-page URL is not always exactly `group__nvmedia__<foo>__api.html` —
+some modules use a `group__x__nvmedia__<foo>__api.html` shape (note the
+leading `x__`). The 2D module is one example: its group page is
+`group__x__nvmedia__2d__api.html`. Don't guess the URL — the file page links
+to the real group page; follow that link rather than constructing it.
+
 ## The output style
 
 Look at `nvmedia_common_encode.h` and `nvmedia_iep.h` for canonical examples
@@ -211,6 +217,8 @@ claims.
 
 These headers were annotated as part of this work (DriveOS 6.0.10 reference):
 
+- `nvmedia_2d.h`
+- `nvmedia_2d_sci.h`
 - `nvmedia_common_encode.h`
 - `nvmedia_common_encode_decode.h`
 - `nvmedia_common_decode.h`
