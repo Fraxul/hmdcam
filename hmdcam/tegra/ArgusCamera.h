@@ -33,7 +33,7 @@ public:
   // =======================
 
   // === IArgusCamera ===
-  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().cudaResource; }
+  virtual bool fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const;
   virtual bool readFrame();
   virtual void stop();
   virtual void setRepeatCapture(bool);

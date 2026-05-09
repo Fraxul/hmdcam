@@ -19,7 +19,7 @@ public:
   // === IArgusCamera ===
   virtual size_t sessionCount() const = 0;
   virtual size_t sessionIndexForStream(size_t streamIdx) const = 0;
-  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const = 0;
+  virtual bool fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const = 0;
   virtual bool readFrame() = 0;
   virtual void stop() = 0;
   virtual void setRepeatCapture(bool) = 0;

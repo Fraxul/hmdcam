@@ -11,12 +11,6 @@
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/CudaUtil.h"
-#include "rhi/gl/GLCommon.h" // must be included before cudaEGL
-
-#if !defined(IS_WSL2) // CUDA-EGL interop doesn't exist on WSL2
-#include <cudaEGL.h>
-#include <cuda_egl_interop.h>
-#endif
 
 const int kRetryDelaySeconds = 10;
 
@@ -54,81 +48,56 @@ DebugServer::~DebugServer() {
 
 
 bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, DepthMapGenerator* depth) {
-#ifdef IS_WSL2
-  printf("DebugServer::initWithCameraSystem(): Built with IS_WSL2, debug server support is disabled due to missing APIs.\n");
-  return false;
-#else
-
   m_cameraSystem = cs;
   m_cameraProvider = cp;
   m_depthMapGenerator = depth;
-
-  CUeglColorFormat eglColorFormat;
 
   m_streamCount = m_cameraProvider->streamCount();
   m_streamResources = new StreamResource[m_streamCount];
 
   // Check resource types, allocate StreamResource structs and host-side luma/chroma planes
 
-  for (size_t cameraIdx = 0; cameraIdx < m_streamCount; ++cameraIdx) {
-    CUgraphicsResource rsrc = m_cameraProvider->cudaGraphicsResource(cameraIdx);
-    if (!rsrc) {
-      printf("CameraProvider failed to provide CUgraphicsResource for stream %zu\n", cameraIdx);
+  // We assume that all streams have identical buffer types
+
+  {
+    CUtexObject lumaTex = m_cameraProvider->cudaLumaTexObject(0);
+    CUtexObject chromaTex = m_cameraProvider->cudaChromaTexObject(0);
+    if (!lumaTex || !chromaTex) {
+      printf("CameraProvider failed to provide luma or chroma CUtexObject for stream 0\n");
       return false;
     }
 
-    // Using the Runtime API here instead since it gives better information about multiplanar formats
-    cudaEglFrame eglFrame;
-    CUDA_CHECK(cudaGraphicsResourceGetMappedEglFrame(&eglFrame, (cudaGraphicsResource_t) rsrc, /*cubemapIndex=*/ 0, /*mipLevel=*/ 0));
-    assert(eglFrame.frameType == cudaEglFrameTypePitch);
-    assert(eglFrame.planeCount == 2);
+    // Fill resource descriptors from the CUtexObjects.
+    // (we're just going to serialize the contents of these descriptors to populate the config buffer.)
+    CUDA_CHECK(cuTexObjectGetResourceDesc(&m_lumaResourceDescriptor, lumaTex));
+    CUDA_CHECK(cuTexObjectGetResourceDesc(&m_chromaResourceDescriptor, chromaTex));
 
-    if (cameraIdx == 0) {
-      eglColorFormat = (CUeglColorFormat) eglFrame.eglColorFormat; // CUeglColorFormat and cudaEglColorFormat are interchangeable
+    // We pull the data from the pitch2d slot in the resource descriptor.
+    // TODO: It'd be pretty easy to support arrays, also, via cuArrayGetDescriptor
+    assert(m_lumaResourceDescriptor.resType == CU_RESOURCE_TYPE_PITCH2D);
+    assert(m_chromaResourceDescriptor.resType == CU_RESOURCE_TYPE_PITCH2D);
 
-      // Convert eglFrame to resource descriptors.
-      // We don't fill the device pointers, we're just going to serialize the contents
-      // of these descriptors to populate the config buffer.
-      m_lumaResourceDescriptor.resType = CU_RESOURCE_TYPE_PITCH2D;
-      m_lumaResourceDescriptor.res.pitch2D.devPtr = 0;
-      m_lumaResourceDescriptor.res.pitch2D.format = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[0].channelDesc.f; // TODO
-      m_lumaResourceDescriptor.res.pitch2D.numChannels = eglFrame.planeDesc[0].numChannels;
-      m_lumaResourceDescriptor.res.pitch2D.width = eglFrame.planeDesc[0].width;
-      m_lumaResourceDescriptor.res.pitch2D.height = eglFrame.planeDesc[0].height;
-      m_lumaResourceDescriptor.res.pitch2D.pitchInBytes = eglFrame.planeDesc[0].pitch;
+    printf("Stream   Luma: %zu x %zu NumChannels=%u Format=0x%x pitchInBytes=%zu\n",
+      m_lumaResourceDescriptor.res.pitch2D.width, m_lumaResourceDescriptor.res.pitch2D.height,
+      m_lumaResourceDescriptor.res.pitch2D.numChannels,
+      m_lumaResourceDescriptor.res.pitch2D.format,
+      m_lumaResourceDescriptor.res.pitch2D.pitchInBytes);
+    printf("Stream Chroma: %zu x %zu NumChannels=%u Format=0x%x pitchInBytes=%zu\n",
+      m_chromaResourceDescriptor.res.pitch2D.width, m_chromaResourceDescriptor.res.pitch2D.height,
+      m_chromaResourceDescriptor.res.pitch2D.numChannels,
+      m_chromaResourceDescriptor.res.pitch2D.format,
+      m_chromaResourceDescriptor.res.pitch2D.pitchInBytes);
 
-      // TODO hardcoded assumptions about chroma format -- we should be able to get this from the eglColorFormat!
-      m_chromaResourceDescriptor.res.pitch2D.devPtr = 0;
-      m_chromaResourceDescriptor.res.pitch2D.format = CU_AD_FORMAT_UNSIGNED_INT8; // eglFrame.planeDesc[1].channelDesc.f // TODO
-      m_chromaResourceDescriptor.res.pitch2D.numChannels = 2; // eglFrame.planeDesc[1].numChannels; // TODO
-      m_chromaResourceDescriptor.res.pitch2D.width = eglFrame.planeDesc[1].width;
-      m_chromaResourceDescriptor.res.pitch2D.height = eglFrame.planeDesc[1].height;
-      // pitchInBytes NOTE: "...in case of multiplanar *eglFrame, pitch of only first plane is to be considered by the application."
-      // (accessing planeDesc[0] is intentional)
-      m_chromaResourceDescriptor.res.pitch2D.pitchInBytes = eglFrame.planeDesc[0].pitch;
+    // TODO handle other type-sizes
+    assert(m_lumaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_UNSIGNED_INT8 || m_lumaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_SIGNED_INT8);
+    assert(m_chromaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_UNSIGNED_INT8 || m_chromaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_SIGNED_INT8);
 
-      printf("Stream [%zu]:   Luma: %zu x %zu NumChannels=%u ChannelDesc=0x%x (%d,%d,%d,%d) pitchInBytes=%zu\n", cameraIdx,
-        m_lumaResourceDescriptor.res.pitch2D.width, m_lumaResourceDescriptor.res.pitch2D.height,
-        m_lumaResourceDescriptor.res.pitch2D.numChannels,
-        eglFrame.planeDesc[0].channelDesc.f, eglFrame.planeDesc[0].channelDesc.x, eglFrame.planeDesc[0].channelDesc.y,
-        eglFrame.planeDesc[0].channelDesc.z, eglFrame.planeDesc[0].channelDesc.w,
-        m_lumaResourceDescriptor.res.pitch2D.pitchInBytes);
-      printf("Stream [%zu]: Chroma: %zu x %zu NumChannels=%u ChannelDesc=0x%x (%d,%d,%d,%d) pitchInBytes=%zu\n", cameraIdx,
-        m_chromaResourceDescriptor.res.pitch2D.width, m_chromaResourceDescriptor.res.pitch2D.height,
-        m_chromaResourceDescriptor.res.pitch2D.numChannels,
-        eglFrame.planeDesc[1].channelDesc.f, eglFrame.planeDesc[1].channelDesc.x, eglFrame.planeDesc[1].channelDesc.y,
-        eglFrame.planeDesc[1].channelDesc.z, eglFrame.planeDesc[1].channelDesc.w,
-        m_chromaResourceDescriptor.res.pitch2D.pitchInBytes);
+    m_lumaPlaneSizeBytes = m_lumaResourceDescriptor.res.pitch2D.height * m_lumaResourceDescriptor.res.pitch2D.pitchInBytes;
+    m_chromaPlaneSizeBytes = m_chromaResourceDescriptor.res.pitch2D.height * m_chromaResourceDescriptor.res.pitch2D.pitchInBytes;
+  }
 
-      // TODO handle other type-sizes
-      assert(m_lumaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_UNSIGNED_INT8 || m_lumaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_SIGNED_INT8);
-      assert(m_chromaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_UNSIGNED_INT8 || m_chromaResourceDescriptor.res.pitch2D.format == CU_AD_FORMAT_SIGNED_INT8);
-
-      m_lumaPlaneSizeBytes = m_lumaResourceDescriptor.res.pitch2D.height * m_lumaResourceDescriptor.res.pitch2D.pitchInBytes;
-      m_chromaPlaneSizeBytes = m_chromaResourceDescriptor.res.pitch2D.height * m_chromaResourceDescriptor.res.pitch2D.pitchInBytes;
-    }
-
-
+  // Allocate host buffers for chroma/luma plane copies
+  for (size_t cameraIdx = 0; cameraIdx < m_streamCount; ++cameraIdx) {
     CUDA_CHECK(cuMemHostAlloc(&m_streamResources[cameraIdx].m_lumaPlane, m_lumaPlaneSizeBytes, /*flags=*/ 0));
     CUDA_CHECK(cuMemHostAlloc(&m_streamResources[cameraIdx].m_chromaPlane, m_chromaPlaneSizeBytes, /*flags=*/ 0));
   }
@@ -138,8 +107,6 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
   cfg.put_u32(m_cameraProvider->streamCount());
   cfg.put_u32(m_cameraProvider->streamWidth());
   cfg.put_u32(m_cameraProvider->streamHeight());
-
-  cfg.put_u32(eglColorFormat);
 
   cfg.put_u32(m_lumaResourceDescriptor.res.pitch2D.format);
   cfg.put_u32(m_lumaResourceDescriptor.res.pitch2D.numChannels);
@@ -211,12 +178,9 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
   // Start the listener thread
   pthread_create(&m_streamThread, NULL, &streamThreadEntryPoint, (void*) this);
   return true;
-#endif // IS_WSL2
 }
 
 void DebugServer::frameProcessingEnded() {
-#if !IS_WSL2 // Gate this function away from WSL2 due to missing cuGraphicsResourceGetMappedEglFrame API
-
   // Turn on CPU access to disparity only if we have a client connected
   // (this can be freely enabled/disabled without reconfiguring the depth backend,
   // and will take effect next frame)
@@ -231,19 +195,11 @@ void DebugServer::frameProcessingEnded() {
 
   // Copy luma/chroma planes to stream resources
   for (size_t cameraIdx = 0; cameraIdx < m_cameraProvider->streamCount(); ++cameraIdx) {
-    CUeglFrame eglFrame;
-    CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&eglFrame, m_cameraProvider->cudaGraphicsResource(cameraIdx), 0, 0));
-
     { // Luma copy
       CUDA_MEMCPY2D copyDescriptor;
       memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
 
-      copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-      copyDescriptor.srcDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
-      copyDescriptor.srcPitch = m_lumaResourceDescriptor.res.pitch2D.pitchInBytes;
-
-      copyDescriptor.WidthInBytes = m_lumaResourceDescriptor.res.pitch2D.width * 1; //8-bit, 1-channel
-      copyDescriptor.Height = m_lumaResourceDescriptor.res.pitch2D.height;
+      m_cameraProvider->fillCudaMemcpy2DForStreamSource(copyDescriptor, cameraIdx, /*fromChromaPlane= */ false);
 
       copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
       copyDescriptor.dstHost = m_streamResources[cameraIdx].m_lumaPlane;
@@ -256,12 +212,7 @@ void DebugServer::frameProcessingEnded() {
       CUDA_MEMCPY2D copyDescriptor;
       memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
 
-      copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-      copyDescriptor.srcDevice = (CUdeviceptr) eglFrame.frame.pPitch[1];
-      copyDescriptor.srcPitch = m_chromaResourceDescriptor.res.pitch2D.pitchInBytes;
-
-      copyDescriptor.WidthInBytes = m_chromaResourceDescriptor.res.pitch2D.width * 2; //8-bit, 2-channel
-      copyDescriptor.Height = m_chromaResourceDescriptor.res.pitch2D.height;
+      m_cameraProvider->fillCudaMemcpy2DForStreamSource(copyDescriptor, cameraIdx, /*fromChromaPlane= */ true);
 
       copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
       copyDescriptor.dstHost = m_streamResources[cameraIdx].m_chromaPlane;
@@ -298,7 +249,6 @@ void DebugServer::frameProcessingEnded() {
   // Wake the stream thread
   pthread_cond_signal(&m_streamReadyCond);
   pthread_mutex_unlock(&m_streamReadyMutex);
-#endif // !IS_WSL2
 }
 
 bool safe_write(int fd, const void* buffer, size_t length) {

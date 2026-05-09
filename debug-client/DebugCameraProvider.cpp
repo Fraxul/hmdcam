@@ -137,7 +137,6 @@ bool DebugCameraProvider::connect(const char* debugHost) {
   m_streamHeight = cfg.get_u32();
 
   printf("Stream header: %zu cameras, %ux%u\n", m_streamCount, m_streamWidth, m_streamHeight);
-  m_eglColorFormat = (CUeglColorFormat) cfg.get_u32();
 
   memset(&m_lumaResourceDescriptor, 0, sizeof(m_lumaResourceDescriptor));
   m_lumaResourceDescriptor.resType = CU_RESOURCE_TYPE_PITCH2D;

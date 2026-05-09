@@ -1055,6 +1055,34 @@ bool ArgusCamera::isStreamFailed(size_t sensorIndex) const {
   return m_perSessionData[sensorData.m_sessionIdx].m_sessionCaptureFailed;
 }
 
+bool ArgusCamera::fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const {
+  if (sensorIndex >= m_perSensorData.size())
+    return false;
+
+  const BufferPool::Entry& activeBuffer = m_perSensorData[sensorIndex].m_bufferPool.activeBuffer();
+
+  outCopyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+
+  // Luma is 1 byte per pixel, full width; chroma is 2 bytes per pixel, half width.
+  // Width in bytes ends up being the same.
+  outCopyDescriptor.WidthInBytes = activeBuffer.eglFrame.width;
+
+  // Pitch is guaranteed identical between the planes.
+  outCopyDescriptor.srcPitch = activeBuffer.eglFrame.pitch;
+
+  if (fromChromaPlane) {
+    // Chroma plane.
+    outCopyDescriptor.srcDevice = (CUdeviceptr) activeBuffer.eglFrame.frame.pPitch[1];
+    outCopyDescriptor.Height = activeBuffer.eglFrame.height / 2; // Chroma is half-height.
+  } else {
+    // Luma plane.
+    outCopyDescriptor.srcDevice = (CUdeviceptr) activeBuffer.eglFrame.frame.pPitch[0];
+    outCopyDescriptor.Height = activeBuffer.eglFrame.height; // Luma is full-height.
+  }
+
+  return true;
+}
+
 
 /*
 void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {

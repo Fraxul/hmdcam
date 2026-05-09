@@ -200,3 +200,21 @@ CUtexObject ArgusCameraMock::cudaLumaTexObject(size_t sensorIdx) const {
 CUtexObject ArgusCameraMock::cudaChromaTexObject(size_t sensorIdx) const {
   return m_streamData[sensorIdx].cudaChromaTexObject;
 }
+
+bool ArgusCameraMock::fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const {
+  if (sensorIndex >= m_streamData.size())
+    return false;
+
+  const cv::cuda::GpuMat* src = fromChromaPlane ? &m_streamData[sensorIndex].chromaGpuMat : &m_streamData[sensorIndex].lumaGpuMat;
+
+  if (src->empty())
+    return false;
+
+  outCopyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+  outCopyDescriptor.srcDevice = (CUdeviceptr) src->ptr<const uint8_t>();
+  outCopyDescriptor.srcPitch = src->step;
+
+  outCopyDescriptor.WidthInBytes = src->cols * src->elemSize1();
+  outCopyDescriptor.Height = src->rows;
+  return true;
+}

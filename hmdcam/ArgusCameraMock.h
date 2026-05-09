@@ -19,7 +19,7 @@ public:
   virtual size_t sessionCount() const { return 1; }
   virtual size_t sessionIndexForStream(size_t streamIdx) const { return 0; }
 
-  virtual CUgraphicsResource cudaGraphicsResource(size_t sensorIndex) const { return nullptr; }
+  virtual bool fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const;
   virtual bool readFrame();
 
   virtual void stop() {}
