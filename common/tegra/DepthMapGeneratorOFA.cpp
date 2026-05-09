@@ -417,8 +417,6 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     }
   }
 
-  internalFinalizeDisparityTexture();
-
   if (m_enableProfiling) {
     // Collect profiling data from previous frame
     cuEventElapsedTime(&m_preOfaFrameTimeMs, m_masterFrameStartEvent, m_ofaHandoffCompleteEvent);
@@ -472,7 +470,15 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
 
   CUDA_CHECK(cuEventRecord(m_ofaHandoffCompleteEvent, (CUstream) m_globalStream.cudaPtr()));
 
-  // Second pass: wait on OFA processing to finish
+  // Process and filter the previous frame's disparity textures only after handing off
+  // the next frame's work to OFA -- we need those to overlap, or we'll miss our frame timing.
+  // TODO: Moving this here means that we're feeding the wrong frame's luma texture to the
+  // finalize process, since it was overwritten above. Need to double-buffer the rectified luma.
+  internalFinalizeDisparityTexture();
+
+
+  // Wait on the fences for the processing that we kicked off above.
+  // This wait will take effect next time through internalProcessFrame().
   for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
     if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
