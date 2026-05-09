@@ -1,14 +1,8 @@
 #pragma once
-#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include "RenderBackend.h"
-#include <epoxy/egl.h>
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
-
-// vulkan.hpp library triggers a bunch of -Wshadow warnings -- just ignore them since it's third-party code
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wshadow"
-#include "vulkan/vulkan.hpp"
-#pragma clang diagnostic pop
+#include "rhi/vk/RHIVulkan.h" // pulls in vulkan.hpp with the dynamic-dispatch macro
+#include <epoxy/egl.h>
 
 #include <atomic>
 #include <thread>
@@ -58,20 +52,21 @@ public:
   RenderBackendVKDirect();
   virtual ~RenderBackendVKDirect();
 
-  virtual void init();
+  virtual void createGLContext() override;
+  virtual void createPresentation() override;
 
-  virtual uint32_t surfaceWidth() const { return m_swapchainExtent.width; }
-  virtual uint32_t surfaceHeight() const { return m_swapchainExtent.height; }
-  virtual double refreshRateHz() const { return m_refreshRateHz; }
+  virtual uint32_t surfaceWidth() const override { return m_swapchainExtent.width; }
+  virtual uint32_t surfaceHeight() const override { return m_swapchainExtent.height; }
+  virtual double refreshRateHz() const override { return m_refreshRateHz; }
 
-  virtual EGLDisplay eglDisplay() const { return m_eglDisplay; }
-  virtual EGLContext eglContext() const { return m_eglContext; }
-  virtual EGLSurface eglSurface() const { return EGL_NO_SURFACE; }
-  virtual EGLConfig eglConfig() const { return (EGLConfig) 0; }
+  virtual EGLDisplay eglDisplay() const override { return m_eglDisplay; }
+  virtual EGLContext eglContext() const override { return m_eglContext; }
+  virtual EGLSurface eglSurface() const override { return EGL_NO_SURFACE; }
+  virtual EGLConfig eglConfig() const override { return (EGLConfig) 0; }
 
-  virtual RHIRenderTarget::ptr windowRenderTarget() const { return m_windowRenderTarget; }
+  virtual RHIRenderTarget::ptr windowRenderTarget() const override { return m_windowRenderTarget; }
 
-  virtual uint64_t lastPresentationTimestamp() const { return m_lastPresentationTimestamp.load(std::memory_order_acquire); }
+  virtual uint64_t lastPresentationTimestamp() const override { return m_lastPresentationTimestamp.load(std::memory_order_acquire); }
 
 protected:
   uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags);
@@ -79,30 +74,22 @@ protected:
   double m_refreshRateHz = 0;
 
   // EGL state
-  int m_drmFd = -1;
-  EGLDeviceEXT m_eglDevice = NULL;
   EGLDisplay m_eglDisplay = EGL_NO_DISPLAY;
   EGLContext m_eglContext = NULL;
 
   VKDirectSwapchainRenderTarget::ptr m_windowRenderTarget;
 
-  // VK state
-  vk::DynamicLoader m_dl;
-
+  // VK state. Instance, physical device, logical device, queue family index,
+  // and queue all live on rhi()->vk(); only display/surface/swapchain and the
+  // GL-interop sync objects belong to this backend.
   struct Display {
     vk::DisplayKHR m_displayKHR;
     vk::DisplayPropertiesKHR m_displayProperties;
     vk::DisplayModePropertiesKHR m_modeProperties;
   };
 
-
-  vk::UniqueInstance m_instance;
-  vk::PhysicalDevice m_gpu;
   Display m_display;
   vk::UniqueSurfaceKHR m_surface;
-  uint32_t m_presentFamily = 0;
-  vk::Queue m_presentQueue;
-  vk::UniqueDevice m_device;
   vk::UniqueSwapchainKHR m_swapchain;
   std::vector<vk::Image> m_swapchainImages;
   vk::Extent2D m_swapchainExtent;

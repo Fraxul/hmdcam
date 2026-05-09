@@ -22,7 +22,25 @@ public:
   static RenderBackend* create(ERenderBackend rb);
   virtual ~RenderBackend() {}
 
-  virtual void init() = 0;
+  // Three-phase initialization. RenderInit() invokes these in order, with
+  // shared global setup (CUDA, RHI/GL, RHI/Vulkan) interleaved between
+  // phases — see Render.cpp.
+  //
+  // earlyInit(): backend-specific work that must happen before a GL context
+  //   exists. Default empty; backends that need to power on a display, open a
+  //   native display connection, or pre-pick a DRM device override here.
+  //
+  // createGLContext(): create the EGL display and OpenGL context, then
+  //   eglMakeCurrent() it. After this returns, GL calls are valid. Backends
+  //   that receive a host-created GL context (SDL, embedded uses) can leave
+  //   this empty.
+  //
+  // createPresentation(): build the swapchain / window surface that GL will
+  //   render into and that the backend will present from. May use
+  //   rhi()->vk() — RHIVulkan is initialized before this is called.
+  virtual void earlyInit() {}
+  virtual void createGLContext() = 0;
+  virtual void createPresentation() = 0;
 
   virtual uint32_t surfaceWidth() const = 0;
   virtual uint32_t surfaceHeight() const = 0;

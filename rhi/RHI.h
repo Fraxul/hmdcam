@@ -15,6 +15,7 @@
 #include <vector>
 
 class RHI;
+class RHIVulkan;
 namespace vr {
 struct Texture_t;
 }
@@ -22,7 +23,8 @@ struct Texture_t;
 RHI* rhi(); // render thread owned
 
 void initRHI(RHI*);
-void initRHIGL(); // convenience method, defined in RHI/gl/RHIGL.cpp
+void initRHIGL(); // convenience method, defined in rhi/gl/RHIGL.cpp
+void initRHIVulkan(); // convenience method, defined in rhi/vk/RHIVulkan.cpp
 
 enum RHICullState : unsigned char {
   kCullDisabled,
@@ -54,6 +56,11 @@ size_t RHIIndexBufferTypeSize(RHIIndexBufferType);
 class RHI {
 public:
   virtual ~RHI();
+
+  // Headless Vulkan allocator context, shared between presentation backends
+  // and CUDA-GL interop subsystems. May return nullptr if VK initialization
+  // failed; callers that require it should check at use site.
+  RHIVulkan* vk() const;
 
   RHIShader::ptr compileShader(const RHIShaderDescriptor&);
   RHIRenderPipeline::ptr compileRenderPipeline(RHIShader::ptr, const RHIRenderPipelineDescriptor&);

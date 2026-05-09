@@ -5,6 +5,7 @@
 
 #include "RenderBackendVKDirect.h"
 #include "common/Timing.h"
+#include "rhi/RHI.h"
 #include <epoxy/egl.h>
 #include <xf86drm.h>
 #include <fcntl.h>
@@ -25,9 +26,7 @@
     fprintf(stderr, "%s:%d: %s failed (%d)\n", __FILE__, __LINE__, #x, eglGetError()); \
     abort();                                                                           \
   }
-
-// Instantiate the vulkan dynamic loader in this file
-VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
+// Vulkan dispatch loader storage lives in rhi/vk/RHIVulkan.cpp.
 
 #ifdef IS_TEGRA
 // Minimal reverse-engineered libnvrm_host1x syncpoint API.
@@ -141,79 +140,48 @@ bool contains(const std::vector<T>& container, const T& value) {
 RenderBackendVKDirect::RenderBackendVKDirect() {
 }
 
-const std::vector<const char*> requiredInstanceExtensions = {
-  VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-  VK_KHR_SURFACE_EXTENSION_NAME,
-  VK_KHR_DISPLAY_EXTENSION_NAME,
-  VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
-  VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
-  VK_EXT_DISPLAY_SURFACE_COUNTER_EXTENSION_NAME,
-};
+void RenderBackendVKDirect::createGLContext() {
+  // EGL setup. Must run before initRHIVulkan(), since the Vulkan physical device is selected to UUID-match the GL context.
+  // We use the SURFACELESS_MESA platform, since we explicitly do not want this EGL context to take over the display hardware.
+  // (using the DEVICE_EXT platform with a DRM FD will prevent Vulkan from being able to create a swapchain)
+  {
+    // clang-format off
+    EGLint attrs[] = {
+      EGL_NONE
+    };
+    // clang-format on
+    EGL_CHECK(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_SURFACELESS_MESA, /*native_display=*/ nullptr, attrs));
+    EGL_CHECK(eglInitialize(m_eglDisplay, NULL, NULL));
 
-const std::vector<const char*> requiredDeviceExtensions = {
-  VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-  //VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME, // not useful yet
-  VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-  VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-  VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
-  VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
-  VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME,
-};
+    EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+    eglBindAPI(EGL_OPENGL_ES_API);
 
-const std::vector<const char*> validationLayers = {
-  "VK_LAYER_LUNARG_standard_validation",
-};
+    EGL_CHECK(m_eglContext = eglCreateContext(m_eglDisplay, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ctx_attr)); // EGL_KHR_no_config_context
+    EGL_CHECK(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
 
-void RenderBackendVKDirect::init() {
+    printf("OpenGL Renderer: %s || Version: %s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION));
+  }
+}
+
+void RenderBackendVKDirect::createPresentation() {
   try {
-    // Load library and create instance
-    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = m_dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
-
-    bool enableValidation = false;
-    {
-      const char* s = getenv("VKDIRECT_ENABLE_VALIDATION");
-      if (s) {
-        enableValidation = (atoi(s) != 0);
-      }
+    if (!rhi()->vk()) {
+      fprintf(stderr, "RenderBackendVKDirect::createPresentation: rhi()->vk() is null; cannot present\n");
+      abort();
     }
+    vk::Instance instance = rhi()->vk()->instance();
+    vk::PhysicalDevice gpu = rhi()->vk()->physicalDevice();
+    vk::Device device = rhi()->vk()->device();
+    uint32_t queueFamily = rhi()->vk()->queueFamilyIndex();
 
-    // Create instance
-    {
-      vk::InstanceCreateInfo createInfo{
-        vk::InstanceCreateFlags(),
-        /*applicationInfo=*/ nullptr,
-        /*enabledLayers=*/ 0, nullptr,
-        uint32_t(requiredInstanceExtensions.size()), requiredInstanceExtensions.data()};
-
-      if (enableValidation) {
-        createInfo.enabledLayerCount = (uint32_t) validationLayers.size();
-        createInfo.ppEnabledLayerNames = validationLayers.data();
-      }
-
-      m_instance = vk::createInstanceUnique(createInfo);
-    }
-
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(m_instance.get());
-
-    // Select GPU
-    std::vector<vk::PhysicalDevice> devices = m_instance->enumeratePhysicalDevices();
-    printf("%zu devices\n", devices.size());
-    for (const auto& device : devices) {
-      if (!device.getDisplayPropertiesKHR().empty()) {
-        m_gpu = device;
-        break;
-      }
-    }
-
-    if (!m_gpu) {
-      fprintf(stderr, "No GPU was able to provide display devices via vkGetDisplayPropertiesKHR\n");
+    if (gpu.getDisplayPropertiesKHR().empty()) {
+      fprintf(stderr, "VKDirect: selected physical device exposes no displays via vkGetDisplayPropertiesKHR\n");
       abort();
     }
 
     // Select display. TODO: currently using the first available display.
     {
-      auto displays = m_gpu.getDisplayPropertiesKHR();
+      auto displays = gpu.getDisplayPropertiesKHR();
       CHECK(!displays.empty());
 
       m_display.m_displayProperties = displays[0];
@@ -223,7 +191,7 @@ void RenderBackendVKDirect::init() {
     // Physical device properties enumeration
 #if 0 // Disabled for compatibility with L4T r32.2 -- extension isn't present, but we don't really need it anyway
   {
-    auto res = m_gpu.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDrmPropertiesEXT>();
+    auto res = gpu.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDrmPropertiesEXT>();
     vk::PhysicalDeviceProperties& pdp = res.get<vk::PhysicalDeviceProperties2>().properties;
     vk::PhysicalDeviceDrmPropertiesEXT& drmExt = res.get<vk::PhysicalDeviceDrmPropertiesEXT>();
     printf("Device name: %s\n", pdp.deviceName.data());
@@ -236,7 +204,7 @@ void RenderBackendVKDirect::init() {
 
     // Select mode and target plane; create display surface.
     {
-      auto modes = m_gpu.getDisplayModePropertiesKHR(m_display.m_displayKHR);
+      auto modes = gpu.getDisplayModePropertiesKHR(m_display.m_displayKHR);
       m_display.m_modeProperties = modes[0];
       for (auto& m : modes) {
         auto i = m.parameters.visibleRegion;
@@ -249,7 +217,7 @@ void RenderBackendVKDirect::init() {
       }
 
       // Pick first compatible plane
-      auto planes = m_gpu.getDisplayPlanePropertiesKHR();
+      auto planes = gpu.getDisplayPlanePropertiesKHR();
       uint32_t planeIndex = 0;
       bool foundPlane = false;
       for (uint32_t i = 0; i < planes.size(); ++i) {
@@ -259,7 +227,7 @@ void RenderBackendVKDirect::init() {
         if (p.currentDisplay && (p.currentDisplay != m_display.m_displayKHR))
           continue;
 
-        auto supportedDisplays = m_gpu.getDisplayPlaneSupportedDisplaysKHR(i);
+        auto supportedDisplays = gpu.getDisplayPlaneSupportedDisplaysKHR(i);
 
         for (auto& d : supportedDisplays) {
           if (d == m_display.m_displayKHR) {
@@ -275,7 +243,7 @@ void RenderBackendVKDirect::init() {
       CHECK(foundPlane);
 
       // Find alpha mode bit
-      auto planeCapabilities = m_gpu.getDisplayPlaneCapabilitiesKHR(m_display.m_modeProperties.displayMode, planeIndex);
+      auto planeCapabilities = gpu.getDisplayPlaneCapabilitiesKHR(m_display.m_modeProperties.displayMode, planeIndex);
       vk::DisplayPlaneAlphaFlagBitsKHR alphaMode = vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque;
       vk::DisplayPlaneAlphaFlagBitsKHR alphaModes[4] = {
         vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque,
@@ -300,7 +268,7 @@ void RenderBackendVKDirect::init() {
         vk::Extent2D(m_display.m_modeProperties.parameters.visibleRegion.width,
           m_display.m_modeProperties.parameters.visibleRegion.height)};
 
-      m_surface = m_instance->createDisplayPlaneSurfaceKHRUnique(surfaceCreateInfo);
+      m_surface = instance.createDisplayPlaneSurfaceKHRUnique(surfaceCreateInfo);
 
       const auto& d = m_display.m_displayProperties;
       printf("Using display: %s\n  physical resolution: %i x %i\n", d.displayName, d.physicalResolution.width, d.physicalResolution.height);
@@ -309,45 +277,19 @@ void RenderBackendVKDirect::init() {
       printf("Display mode: %i x %i @ %fHz\n", m.parameters.visibleRegion.width, m.parameters.visibleRegion.height, m_refreshRateHz);
     }
 
-    // Create logical device
-    {
-      // find graphics and present queue(s)
-      auto families = m_gpu.getQueueFamilyProperties();
-      bool found = false;
-      for (uint32_t i = 0; i < families.size(); ++i) {
-        if ((families[i].queueFlags & vk::QueueFlagBits::eGraphics) && (m_gpu.getSurfaceSupportKHR(i, m_surface.get()))) {
-          // RFE: implement support for different (graphics != present) families
-          m_presentFamily = i;
-          found = true;
-        }
-      }
-      CHECK(found && "Found graphics and presentation queues");
-
-      float priority = 1.0f;
-      vk::DeviceQueueCreateInfo queueCreateInfo{vk::DeviceQueueCreateFlags(), m_presentFamily, 1, &priority};
-      vk::PhysicalDeviceFeatures deviceFeatures;
-
-      // create the logical device and the present queue
-      vk::DeviceCreateInfo deviceCreateInfo{vk::DeviceCreateFlags(),
-        1,
-        &queueCreateInfo,
-        0,
-        nullptr,
-        uint32_t(requiredDeviceExtensions.size()),
-        requiredDeviceExtensions.data(),
-        &deviceFeatures};
-
-      m_device = m_gpu.createDeviceUnique(deviceCreateInfo);
-      m_presentQueue = m_device->getQueue(m_presentFamily, 0);
-
-      VULKAN_HPP_DEFAULT_DISPATCHER.init(m_device.get());
+    // Verify the queue family selected by RHIVulkan supports presentation on
+    // this surface. The shared queue was selected solely on graphics support;
+    // on Tegra it also supports present, but check rather than assume.
+    if (!gpu.getSurfaceSupportKHR(queueFamily, m_surface.get())) {
+      fprintf(stderr, "VKDirect: shared queue family %u does not support presentation on the display surface\n", queueFamily);
+      abort();
     }
 
     // Create swapchain
     {
-      auto formats = m_gpu.getSurfaceFormatsKHR(m_surface.get());
-      auto capabilities = m_gpu.getSurfaceCapabilitiesKHR(m_surface.get());
-      auto presentModes = m_gpu.getSurfacePresentModesKHR(m_surface.get());
+      auto formats = gpu.getSurfaceFormatsKHR(m_surface.get());
+      auto capabilities = gpu.getSurfaceCapabilitiesKHR(m_surface.get());
+      auto presentModes = gpu.getSurfacePresentModesKHR(m_surface.get());
 
       printf("Supported swapchain formats:\n");
       for (size_t i = 0; i < formats.size(); ++i) {
@@ -432,65 +374,11 @@ void RenderBackendVKDirect::init() {
         presentMode,
         VK_TRUE};
 
-      m_swapchain = m_device->createSwapchainKHRUnique(swapchainCreateInfo);
-      m_swapchainImages = m_device->getSwapchainImagesKHR(m_swapchain.get());
+      m_swapchain = device.createSwapchainKHRUnique(swapchainCreateInfo);
+      m_swapchainImages = device.getSwapchainImagesKHR(m_swapchain.get());
       CHECK(!m_swapchainImages.empty());
       m_swapchainExtent = extent;
       m_swapchainFormat = format.format;
-    }
-
-    // Set up EGL context
-    {
-      EGLint deviceCount = 0;
-      EGL_CHECK(eglQueryDevicesEXT(0, NULL, &deviceCount));
-      CHECK(deviceCount > 0);
-
-      EGLDeviceEXT* eglDevices = new EGLDeviceEXT[deviceCount];
-      EGL_CHECK(eglQueryDevicesEXT(deviceCount, eglDevices, &deviceCount));
-
-      for (int i = 0; i < deviceCount; ++i) {
-        const char* drmName = eglQueryDeviceStringEXT(eglDevices[i], EGL_DRM_DEVICE_FILE_EXT);
-        fprintf(stderr, "EGL device [%d]: DRM file %s\n", i, drmName);
-        if (!drmName)
-          continue;
-
-        if (!strcmp(drmName, "drm-nvdc")) {
-          m_drmFd = drmOpen(drmName, NULL);
-        } else {
-          m_drmFd = open(drmName, O_RDWR, 0);
-        }
-        if (m_drmFd <= 0) {
-          fprintf(stderr, "Unable to open DRM devices %s\n", drmName);
-          continue;
-        }
-
-        m_eglDevice = eglDevices[i];
-        fprintf(stderr, " -- Opened DRM device for EGL device %d\n", i);
-        break;
-      }
-
-      delete[] eglDevices;
-      if (!m_eglDevice) {
-        fprintf(stderr, "Unable to open any DRM device.\n");
-        abort();
-      }
-
-      // clang-format off
-      EGLint attrs[] = {
-        EGL_DRM_MASTER_FD_EXT, m_drmFd,
-        EGL_NONE
-      };
-      // clang-format on
-      EGL_CHECK(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, m_eglDevice, attrs));
-      EGL_CHECK(eglInitialize(m_eglDisplay, NULL, NULL));
-
-      EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
-      eglBindAPI(EGL_OPENGL_ES_API);
-
-      EGL_CHECK(m_eglContext = eglCreateContext(m_eglDisplay, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ctx_attr)); // EGL_KHR_no_config_context
-      EGL_CHECK(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
-
-      printf("OpenGL Renderer: %s || Version: %s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION));
     }
 
     // Create sync objects
@@ -521,22 +409,22 @@ void RenderBackendVKDirect::init() {
         };
         // clang-format on
 
-        s.m_image = m_device->createImageUnique(imageCreateInfo.get());
+        s.m_image = device.createImageUnique(imageCreateInfo.get());
 
-        vk::MemoryRequirements memoryRequirements = m_device->getImageMemoryRequirements(s.m_image.get());
+        vk::MemoryRequirements memoryRequirements = device.getImageMemoryRequirements(s.m_image.get());
         vk::MemoryAllocateInfo memoryAllocateInfo{memoryRequirements.size, findMemoryType(memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlags())};
 
         // pass in hint that we want to export this memory
         vk::ExportMemoryAllocateInfo exportMemoryAllocateInfo(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd);
         memoryAllocateInfo.setPNext(&exportMemoryAllocateInfo);
 
-        s.m_deviceMemory = m_device->allocateMemoryUnique(memoryAllocateInfo);
+        s.m_deviceMemory = device.allocateMemoryUnique(memoryAllocateInfo);
 
-        m_device->bindImageMemory(s.m_image.get(), s.m_deviceMemory.get(), 0);
+        device.bindImageMemory(s.m_image.get(), s.m_deviceMemory.get(), 0);
 
         // create OpenGL interop data
         vk::MemoryGetFdInfoKHR getHandleInfo = {s.m_deviceMemory.get(), vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd};
-        s.m_handle = m_device->getMemoryFdKHR(getHandleInfo);
+        s.m_handle = device.getMemoryFdKHR(getHandleInfo);
 
 
         GL(glCreateMemoryObjectsEXT(1, &s.m_memoryObject));
@@ -562,9 +450,9 @@ void RenderBackendVKDirect::init() {
         createInfo.setPNext(&exportCreateInfo);
 
         auto makeSemaphore = [&](vk::UniqueSemaphore& s, int& fd, GLuint& g) {
-          s = m_device->createSemaphoreUnique(createInfo);
+          s = device.createSemaphoreUnique(createInfo);
           vk::SemaphoreGetFdInfoKHR getHandleInfo = {s.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd};
-          fd = m_device->getSemaphoreFdKHR(getHandleInfo);
+          fd = device.getSemaphoreFdKHR(getHandleInfo);
 
           glGenSemaphoresEXT(1, &g);
           GL(glImportSemaphoreFdEXT(g, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd));
@@ -578,17 +466,17 @@ void RenderBackendVKDirect::init() {
     // Swapchain management semaphores
     for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
       vk::SemaphoreCreateInfo ci{};
-      m_imageAcquiredSemaphores.push_back(m_device->createSemaphoreUnique(ci));
-      m_blitFinishedSemaphores.push_back(m_device->createSemaphoreUnique(ci));
+      m_imageAcquiredSemaphores.push_back(device.createSemaphoreUnique(ci));
+      m_blitFinishedSemaphores.push_back(device.createSemaphoreUnique(ci));
     }
 
     // Command pool and command buffers (recorded per-frame in submitTexture)
     {
-      vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlagBits::eResetCommandBuffer, m_presentFamily};
-      m_commandPool = m_device->createCommandPoolUnique(commandPoolCreateInfo);
+      vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlagBits::eResetCommandBuffer, queueFamily};
+      m_commandPool = device.createCommandPoolUnique(commandPoolCreateInfo);
 
       vk::CommandBufferAllocateInfo commandBufferAllocateInfo = {m_commandPool.get(), vk::CommandBufferLevel::ePrimary, uint32_t(m_swapchainImages.size())};
-      m_blitCommandBuffers = m_device->allocateCommandBuffers(commandBufferAllocateInfo);
+      m_blitCommandBuffers = device.allocateCommandBuffers(commandBufferAllocateInfo);
     }
 
     m_unsignaledFrames = static_cast<uint32_t>(m_swapchainImages.size());
@@ -651,8 +539,19 @@ RenderBackendVKDirect::~RenderBackendVKDirect() {
     m_scanoutThread.join();
 
   // Wait for all in-flight GPU work to complete before destroying VK objects.
-  if (m_device)
-    m_device->waitIdle();
+  // RHIVulkan owns the device; if its allocator context is gone, there's
+  // nothing to wait on.
+  if (rhi() && rhi()->vk()) {
+    vk::Device device = rhi()->vk()->device();
+    device.waitIdle();
+
+#ifndef IS_TEGRA
+    // Destroy any fence left in the mailbox.
+    VkFence leftover = m_scanoutFenceMailbox.load(std::memory_order_acquire);
+    if (leftover != VK_NULL_HANDLE)
+      device.destroyFence(leftover);
+#endif
+  }
 
 #ifdef IS_TEGRA
   // Host1x shutdown
@@ -660,15 +559,7 @@ RenderBackendVKDirect::~RenderBackendVKDirect() {
     NvRmHost1xClose(m_nvrmHost1x);
     m_nvrmHost1x = nullptr;
   }
-#else
-  // Destroy any fence left in the mailbox.
-  VkFence leftover = m_scanoutFenceMailbox.load(std::memory_order_acquire);
-  if (leftover != VK_NULL_HANDLE)
-    m_device->destroyFence(leftover);
 #endif
-
-  if (m_drmFd >= 0)
-    close(m_drmFd);
 }
 
 #ifdef IS_TEGRA
@@ -772,6 +663,7 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
 constexpr uint64_t kScanoutSpinMarginNs = 500000; // 500 µs
 
 void RenderBackendVKDirect::scanoutThreadFunc() {
+  vk::Device device = rhi()->vk()->device();
   const uint64_t refreshPeriodNs = static_cast<uint64_t>(1000000000.0 / m_refreshRateHz);
   bool useAdaptiveBlock = false;
   {
@@ -810,7 +702,7 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
           // Block for the bulk of the wait. Convert to Vulkan timeout (nanoseconds).
           uint64_t blockNs = expectedScanout - now - kScanoutSpinMarginNs;
           // Timeout is intentional — we spin-poll for the final stretch below.
-          (void) m_device->waitForFences(fence, VK_TRUE, blockNs);
+          (void) device.waitForFences(fence, VK_TRUE, blockNs);
         }
       } else {
         // No prior timestamp — first frame. Use a coarse blocking wait that leaves
@@ -820,11 +712,11 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
           : 0;
         if (blockNs > 0)
           // Timeout is intentional — we spin-poll for the final stretch below.
-          (void) m_device->waitForFences(fence, VK_TRUE, blockNs);
+          (void) device.waitForFences(fence, VK_TRUE, blockNs);
       }
 
       // WFE spin-poll: power-gate the core between status checks.
-      while (m_device->getFenceStatus(fence) == vk::Result::eNotReady) {
+      while (device.getFenceStatus(fence) == vk::Result::eNotReady) {
 #ifdef __aarch64__
         asm volatile("wfe" ::
                        : "memory");
@@ -836,12 +728,12 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
       }
     } else {
       // Basic waitForFences strategy. Infinite timeout; result is always eSuccess.
-      (void) m_device->waitForFences(fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
+      (void) device.waitForFences(fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
     }
 
     m_lastPresentationTimestamp.store(currentTimeNs(), std::memory_order_release);
 
-    m_device->destroyFence(fence);
+    device.destroyFence(fence);
   }
 }
 #endif // IS_TEGRA
@@ -860,6 +752,9 @@ VKGLSyncData* RenderBackendVKDirect::acquireTexture() {
 }
 
 void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
+  vk::Device device = rhi()->vk()->device();
+  vk::Queue presentQueue = rhi()->vk()->queue();
+
   // Synchronization overview (all semaphores are VK/GL-shared via EXT_external_semaphore):
   //
   //   acquireTexture:  GL waits on  "available"  -- blocks until VK is done reading the interop texture
@@ -879,7 +774,7 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   GLenum targetLayout = GL_LAYOUT_TRANSFER_SRC_EXT;
   glSignalSemaphoreEXT(m_syncData[m_frameIndex].m_finishedGL, 0, nullptr, 1, &m_syncData[m_frameIndex].m_textureGL, &targetLayout);
 
-  auto r = m_device->acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), m_imageAcquiredSemaphores[m_frameIndex].get(), vk::Fence());
+  auto r = device.acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), m_imageAcquiredSemaphores[m_frameIndex].get(), vk::Fence());
   if (r.result == vk::Result::eSuboptimalKHR)
     fprintf(stderr, "RenderBackendVKDirect: acquireNextImageKHR returned eSuboptimalKHR\n");
   uint32_t swapchainIndex = r.value;
@@ -967,11 +862,11 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
     m_blitCommandBuffers[m_frameIndex],
     blitSignalSemaphores};
 
-  m_presentQueue.submit(submitInfo, vk::Fence{});
+  presentQueue.submit(submitInfo, vk::Fence{});
 
   // Present: waits for the blit to finish before scanning out.
   std::vector<vk::Semaphore> presentWaitSemaphores{m_blitFinishedSemaphores[m_frameIndex].get()};
-  vk::Result presentResult = m_presentQueue.presentKHR({presentWaitSemaphores, m_swapchain.get(), swapchainIndex});
+  vk::Result presentResult = presentQueue.presentKHR({presentWaitSemaphores, m_swapchain.get(), swapchainIndex});
   if (presentResult == vk::Result::eSuboptimalKHR)
     fprintf(stderr, "RenderBackendVKDirect: presentKHR returned eSuboptimalKHR\n");
 
@@ -982,12 +877,12 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   // syncpoint and doesn't need per-frame fence registration.
   {
     vk::DisplayEventInfoEXT eventInfo{vk::DisplayEventTypeEXT::eFirstPixelOut};
-    vk::Fence scanoutFence = m_device->registerDisplayEventEXT(m_display.m_displayKHR, eventInfo);
+    vk::Fence scanoutFence = device.registerDisplayEventEXT(m_display.m_displayKHR, eventInfo);
 
     // Exchange into the mailbox; destroy any stale fence we displaced.
     VkFence prev = m_scanoutFenceMailbox.exchange(static_cast<VkFence>(scanoutFence), std::memory_order_acq_rel);
     if (prev != VK_NULL_HANDLE)
-      m_device->destroyFence(prev);
+      device.destroyFence(prev);
 
     // Wake the worker thread
     uint64_t val = 1;
@@ -999,7 +894,7 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
 }
 
 uint32_t RenderBackendVKDirect::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
-  vk::PhysicalDeviceMemoryProperties memProperties = m_gpu.getMemoryProperties();
+  vk::PhysicalDeviceMemoryProperties memProperties = rhi()->vk()->physicalDevice().getMemoryProperties();
 
   for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
     if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {

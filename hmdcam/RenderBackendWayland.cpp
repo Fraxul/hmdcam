@@ -87,7 +87,7 @@ struct wl_shell_surface_listener RenderBackendWayland::shell_surface_listener = 
 
 RenderBackendWayland::RenderBackendWayland() {}
 
-void RenderBackendWayland::init() {
+void RenderBackendWayland::createGLContext() {
   CHECK_PTR(m_xkbContext = xkb_context_new(XKB_CONTEXT_NO_FLAGS));
   CHECK_PTR(m_wlDisplay = wl_display_connect(NULL));
   CHECK_PTR(m_wlRegistry = wl_display_get_registry(m_wlDisplay));
@@ -170,7 +170,9 @@ void RenderBackendWayland::init() {
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext));
 
   wl_display_roundtrip(m_wlDisplay);
+}
 
+void RenderBackendWayland::createPresentation() {
   m_windowRenderTarget = new WaylandEGLWindowRenderTarget(this);
   m_windowRenderTarget->platformSetUpdatedWindowDimensions(m_surfaceWidth, m_surfaceHeight);
 }

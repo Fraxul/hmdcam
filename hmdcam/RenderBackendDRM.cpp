@@ -91,7 +91,7 @@ static const char* drmConnectorTypeToString(int c) {
 
 RenderBackendDRM::RenderBackendDRM() {}
 
-void RenderBackendDRM::init() {
+void RenderBackendDRM::createGLContext() {
   // This initialization sequence closely follows NVIDIA CUDA sample code.
   // available at https://github.com/NVIDIA/cuda-samples
   // Revision referenced: b312abaa (Feb 3 2022)
@@ -458,6 +458,10 @@ void RenderBackendDRM::init() {
   // (It uses the display returned by eglGetCurrentDisplay() to detect extensions on first use)
   // If we don't do this, then loading EGL_KHR_stream and EGL_EXT_output_base will fail.
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
+}
+
+void RenderBackendDRM::createPresentation() {
+  int n;
 
   // Get the layer for this plane
   // clang-format off

@@ -9,20 +9,21 @@ public:
   RenderBackendDRM();
   virtual ~RenderBackendDRM();
 
-  virtual void init();
+  virtual void createGLContext() override;
+  virtual void createPresentation() override;
 
-  virtual uint32_t surfaceWidth() const { return m_surfaceWidth; }
-  virtual uint32_t surfaceHeight() const { return m_surfaceHeight; }
-  virtual double refreshRateHz() const { return m_refreshRateHz; }
+  virtual uint32_t surfaceWidth() const override { return m_surfaceWidth; }
+  virtual uint32_t surfaceHeight() const override { return m_surfaceHeight; }
+  virtual double refreshRateHz() const override { return m_refreshRateHz; }
 
-  virtual EGLDisplay eglDisplay() const { return m_eglDisplay; }
-  virtual EGLContext eglContext() const { return m_eglContext; }
-  virtual EGLSurface eglSurface() const { return m_eglSurface; }
-  virtual EGLConfig eglConfig() const { return m_eglConfig; }
+  virtual EGLDisplay eglDisplay() const override { return m_eglDisplay; }
+  virtual EGLContext eglContext() const override { return m_eglContext; }
+  virtual EGLSurface eglSurface() const override { return m_eglSurface; }
+  virtual EGLConfig eglConfig() const override { return m_eglConfig; }
 
-  virtual RHIRenderTarget::ptr windowRenderTarget() const { return m_windowRenderTarget; }
+  virtual RHIRenderTarget::ptr windowRenderTarget() const override { return m_windowRenderTarget; }
 
-  virtual uint64_t lastPresentationTimestamp() const { return 0; }
+  virtual uint64_t lastPresentationTimestamp() const override { return 0; }
 
 private:
   uint32_t m_surfaceWidth = 0;

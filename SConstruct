@@ -183,7 +183,8 @@ librhi = env.StaticLibrary(
   source = Glob('build/librhi/*.cpp') +
     Glob('build/librhi/cuda/*.cpp') +
     Glob('build/librhi/gl/*.cpp') +
-    Glob('build/librhi/egl/*.cpp')
+    Glob('build/librhi/egl/*.cpp') +
+    Glob('build/librhi/vk/*.cpp')
 )
 Export('librhi')
 

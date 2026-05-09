@@ -25,7 +25,7 @@ RenderBackend* createSurfacelessBackend() { return new RenderBackendSurfaceless(
 
 RenderBackendSurfaceless::RenderBackendSurfaceless() {}
 
-void RenderBackendSurfaceless::init() {
+void RenderBackendSurfaceless::createGLContext() {
 
   // Set up the EGL display
   {
@@ -34,14 +34,13 @@ void RenderBackendSurfaceless::init() {
       EGL_NONE
     };
     // clang-format on
-    EGL_CHECK_BOOL(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_SURFACELESS_MESA, m_eglDevice, attrs));
+    EGL_CHECK_BOOL(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_SURFACELESS_MESA, /*native_display=*/ nullptr, attrs));
 
     EGLint major, minor;
     EGL_CHECK_BOOL(eglInitialize(m_eglDisplay, &major, &minor));
   }
 
   // printf("Display Extensions: %s\n\n", eglQueryString(m_eglDisplay, EGL_EXTENSIONS));
-  // printf("Device Extensions: %s\n\n", eglQueryDeviceStringEXT(m_eglDevice, EGL_EXTENSIONS));
 
   EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
   eglBindAPI(EGL_OPENGL_ES_API);
@@ -51,8 +50,9 @@ void RenderBackendSurfaceless::init() {
   // (It uses the display returned by eglGetCurrentDisplay() to detect extensions on first use)
   // If we don't do this, then loading EGL_KHR_stream and EGL_EXT_output_base will fail.
   EGL_CHECK_BOOL(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
+}
 
-
+void RenderBackendSurfaceless::createPresentation() {
   // clang-format off
   EGLint cfg_attr[] = {
     EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,

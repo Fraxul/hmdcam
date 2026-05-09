@@ -150,10 +150,13 @@ bool RenderInit(ERenderBackend backendType) {
     printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
   }
 
-  // EGL/DRM setup
+  // RenderBackend bringup is split into three phases so that the GL context
+  // exists before RHI initializes, and RHI's Vulkan allocator (which is
+  // UUID-matched to the GL device) exists before any presentation surface
+  // is built. See RenderBackend.h for details.
   renderBackend = RenderBackend::create(backendType);
-  renderBackend->init();
-  windowRenderTarget = renderBackend->windowRenderTarget();
+  renderBackend->earlyInit();
+  renderBackend->createGLContext();
 
   // CUDA init
   {
@@ -170,6 +173,10 @@ bool RenderInit(ERenderBackend backendType) {
   }
 
   initRHIGL();
+  initRHIVulkan();
+
+  renderBackend->createPresentation();
+  windowRenderTarget = renderBackend->windowRenderTarget();
 
   // Set up shared resources
 
