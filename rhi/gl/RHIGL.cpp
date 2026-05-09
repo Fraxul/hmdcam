@@ -35,7 +35,6 @@ RHIGL::RHIGL() :
 
   // set global options
   if (s_isFirstRHIGLInit) {
-    s_ndcZNearIsNegativeOne = true;
     s_allowsLayerSelectionFromVertexShader = false; // (GLEW_AMD_vertex_shader_layer);
     printf("RHIGL: GL_RENDERER: %s\n", glGetString(GL_RENDERER));
     printf("RHIGL: GL_VERSION: %s\n", glGetString(GL_VERSION));
@@ -58,6 +57,17 @@ RHIGL::RHIGL() :
 
     m_supportsDiscardFramebufferEXT = epoxy_has_gl_extension("GL_EXT_discard_framebuffer");
     printf("RHIGL: supportsDiscardFramebufferEXT = %d\n", m_supportsDiscardFramebufferEXT);
+
+    // Try to use ARB_clip_control to set the depth buffer range from 0...1 (vs. GL's default -1...1)
+    // Improves depth buffer precision when used with the reversed-Z infinite projection.
+    if (epoxy_has_gl_extension("GL_ARB_clip_control")) {
+      GL(glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE));
+      s_ndcZNearIsNegativeOne = false;
+      printf("RHIGL: ARB_clip_control supported, using 0-1 depth range.\n");
+    } else {
+      s_ndcZNearIsNegativeOne = true;
+      printf("RHIGL: ARB_clip_control not supported.\n");
+    }
   }
 
   GLint t;

@@ -302,7 +302,7 @@ void RenderShutdown() {
 }
 
 void recomputeHMDParameters() {
-  float zNear = 0.0f;
+  float zNear = 0.005f;
 
   // from renderer_get_view_projection (compositor/main/comp_renderer.c)
   struct xrt_vec3 eye_relation = {
