@@ -393,6 +393,22 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
   // Copy the results from the previous frame to GL
   for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
+
+    // We wait for the previous submission to clear the fence even if a camera stream has failed
+    // or if the view has since been reconfigured.
+    if (vd->m_ofaSubmissionOK) {
+      vd->m_ofaEofSync->waitNvSciToCuda((CUstream) m_globalStream.cudaPtr());
+
+      // Clear the EOF fence after consumption to release internal NvSciSync references.
+      // Without this, each frame overwrites the old fence in GetEOFNvSciSyncFence without
+      // freeing it, leaking sync resources.
+      NvSciSyncFenceClear(&vd->m_ofaEofSync->m_nvSciSyncFence);
+
+      vd->m_ofaSubmissionOK = false;
+    } else {
+      continue; // No valid submission on the previous frame, so there's no postprocssing to do.
+    }
+
     if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
@@ -417,10 +433,12 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     }
   }
 
+  // Frame finished event occurs after the CUDA stream has waited on all OFA processing
+  CUDA_CHECK(cuEventRecord(m_masterFrameFinishedEvent, (CUstream) m_globalStream.cudaPtr()));
+
   if (m_enableProfiling) {
     // Collect profiling data from previous frame
     cuEventElapsedTime(&m_preOfaFrameTimeMs, m_masterFrameStartEvent, m_ofaHandoffCompleteEvent);
-    cuEventElapsedTime(&m_ofaFrameTimeMs, m_ofaHandoffCompleteEvent, m_masterFrameFinishedEvent);
   }
 
   // Begin new frame
@@ -468,6 +486,11 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
 
   } // view loop
 
+  if (m_enableProfiling) {
+    // Collect profiling data from previous frame
+    cuEventElapsedTime(&m_ofaFrameTimeMs, m_ofaHandoffCompleteEvent, m_masterFrameFinishedEvent);
+  }
+
   CUDA_CHECK(cuEventRecord(m_ofaHandoffCompleteEvent, (CUstream) m_globalStream.cudaPtr()));
 
   // Process and filter the previous frame's disparity textures only after handing off
@@ -475,27 +498,6 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
   // TODO: Moving this here means that we're feeding the wrong frame's luma texture to the
   // finalize process, since it was overwritten above. Need to double-buffer the rectified luma.
   internalFinalizeDisparityTexture();
-
-
-  // Wait on the fences for the processing that we kicked off above.
-  // This wait will take effect next time through internalProcessFrame().
-  for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
-    auto vd = viewDataAtIndex(viewIdx);
-    if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
-      continue;
-
-    if (vd->m_ofaSubmissionOK) {
-      vd->m_ofaEofSync->waitNvSciToCuda((CUstream) m_globalStream.cudaPtr());
-
-      // Clear the EOF fence after consumption to release internal NvSciSync references.
-      // Without this, each frame overwrites the old fence in GetEOFNvSciSyncFence without
-      // freeing it, leaking sync resources.
-      NvSciSyncFenceClear(&vd->m_ofaEofSync->m_nvSciSyncFence);
-    }
-  }
-
-  // Frame finished event occurs after the CUDA stream has waited on all OFA processing
-  CUDA_CHECK(cuEventRecord(m_masterFrameFinishedEvent, (CUstream) m_globalStream.cudaPtr()));
 }
 
 void DepthMapGeneratorOFA::internalRenderIMGUI() {

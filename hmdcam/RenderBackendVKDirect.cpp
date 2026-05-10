@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cassert>
 #include "rhi/gl/GLCommon.h"
+#include <nvtx3/nvToolsExt.h>
 
 #define CHECK(x)                                                                         \
   if (!(x)) {                                                                            \
@@ -617,6 +618,7 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
   while (!m_scanoutShutdown.load(std::memory_order_acquire)) {
     NvRmHost1xTimestamp ts = {};
     uint32_t rc = NvRmHost1xSyncpointWait(waiter, vblankSyncptId, current + 1, kWaitTimeoutUs, &ts);
+    nvtxMarkA("VBlank syncpoint wait finished");
 
     if (rc == 0) {
       // Translate kernel CLOCK_MONOTONIC ns into our CNTVCT-based timebase
@@ -732,6 +734,7 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
     }
 
     m_lastPresentationTimestamp.store(currentTimeNs(), std::memory_order_release);
+    nvtxMarkA("Scanout fence wait finished");
 
     device.destroyFence(fence);
   }
@@ -766,13 +769,13 @@ void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
   //                       blitFinished: gates presentKHR
   //                       available:    unblocks the next acquireTexture for this index
 
-  // Flush GL command stream so the semaphore signal below is submitted to the GPU.
-  glFlush();
-
   // Signal VK that GL is done rendering into the interop texture.
   // The layout transition to TRANSFER_SRC prepares it for the VK blit read.
   GLenum targetLayout = GL_LAYOUT_TRANSFER_SRC_EXT;
   glSignalSemaphoreEXT(m_syncData[m_frameIndex].m_finishedGL, 0, nullptr, 1, &m_syncData[m_frameIndex].m_textureGL, &targetLayout);
+
+  // Flush GL command stream so the semaphore signal is submitted to the GPU.
+  glFlush();
 
   auto r = device.acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), m_imageAcquiredSemaphores[m_frameIndex].get(), vk::Fence());
   if (r.result == vk::Result::eSuboptimalKHR)
