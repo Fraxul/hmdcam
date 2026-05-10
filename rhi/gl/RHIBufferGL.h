@@ -5,7 +5,6 @@
 class RHIBufferGL : public RHIBuffer {
 public:
   typedef boost::intrusive_ptr<RHIBufferGL> ptr;
-  RHIBufferGL();
   RHIBufferGL(GLuint, size_t, RHIBufferUsageMode);
   virtual ~RHIBufferGL();
 
@@ -19,6 +18,7 @@ public:
   void bufferSubData(const void*, size_t length, size_t offset = 0);
 
 protected:
+  RHIBufferGL();
   GLuint m_buffer;
   mutable CUgraphicsResource m_cuGraphicsResource;
 };

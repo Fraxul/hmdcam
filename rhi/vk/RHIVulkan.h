@@ -32,6 +32,47 @@ public:
   uint32_t queueFamilyIndex() const { return m_queueFamily; }
   vk::Queue queue() const { return m_queue; }
 
+  // Helper: pick a memory type satisfying typeFilter and propertyFlags.
+  uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags) const;
+
+  // Allocate a 2D VkImage backed by exportable VkDeviceMemory. The returned
+  // memoryFd is owned by the caller; dup() it for each importer (GL, CUDA).
+  // Layout reports the row pitch and offset queried via
+  // vkGetImageSubresourceLayout — the contractual GL/CUDA-visible layout.
+  // isDedicated is set if the implementation preferred or required a
+  // dedicated allocation; importers (GL, CUDA) must mark their memory
+  // objects accordingly when this is true.
+  struct ExternalImage {
+    vk::UniqueImage image;
+    vk::UniqueDeviceMemory memory;
+    int memoryFd = -1;
+    vk::SubresourceLayout layout;
+    vk::DeviceSize allocationSize = 0;
+    bool isDedicated = false;
+  };
+  ExternalImage allocateExternalImage(
+    uint32_t width, uint32_t height,
+    vk::Format format, vk::ImageUsageFlags usage,
+    vk::ImageTiling tiling = vk::ImageTiling::eLinear) const;
+
+  // Allocate a VkBuffer backed by exportable VkDeviceMemory. As with images,
+  // memoryFd ownership transfers to the caller.
+  struct ExternalBuffer {
+    vk::UniqueBuffer buffer;
+    vk::UniqueDeviceMemory memory;
+    int memoryFd = -1;
+    vk::DeviceSize allocationSize = 0;
+  };
+  ExternalBuffer allocateExternalBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage) const;
+
+  // Allocate a binary VkSemaphore backed by an exportable POSIX FD handle.
+  // The returned fd is owned by the caller; dup() for each importer.
+  struct ExternalSemaphore {
+    vk::UniqueSemaphore semaphore;
+    int fd = -1;
+  };
+  ExternalSemaphore createExternalSemaphore() const;
+
 private:
   RHIVulkan() = default;
 

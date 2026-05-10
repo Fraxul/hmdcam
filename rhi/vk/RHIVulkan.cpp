@@ -29,11 +29,13 @@ const std::vector<const char*> kDeviceExtensions = {
   VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
   VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
   VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+  VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+  VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
   VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME,
 };
 
 const std::vector<const char*> kValidationLayers = {
-  "VK_LAYER_LUNARG_standard_validation",
+  "VK_LAYER_KHRONOS_validation",
 };
 
 bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
@@ -57,14 +59,29 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
       enableValidation = (atoi(s) != 0);
     }
 
+    // When validation is enabled, also turn on synchronization validation —
+    // it's the layer that catches binary-semaphore signal/wait misuse, and
+    // it isn't on by default in the Khronos validation layer.
+    std::vector<const char*> instanceExtensions(kInstanceExtensions.begin(), kInstanceExtensions.end());
+    if (enableValidation) {
+      instanceExtensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+    }
+    static const vk::ValidationFeatureEnableEXT kEnabledValidationFeatures[] = {
+      vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
+    };
+    vk::ValidationFeaturesEXT validationFeatures{
+      uint32_t(sizeof(kEnabledValidationFeatures) / sizeof(kEnabledValidationFeatures[0])), kEnabledValidationFeatures,
+      0, nullptr};
+
     vk::InstanceCreateInfo ici{
       vk::InstanceCreateFlags(),
       /*applicationInfo=*/ nullptr,
       /*enabledLayerCount=*/ 0, /*ppEnabledLayerNames=*/ nullptr,
-      uint32_t(kInstanceExtensions.size()), kInstanceExtensions.data()};
+      uint32_t(instanceExtensions.size()), instanceExtensions.data()};
     if (enableValidation) {
       ici.enabledLayerCount = uint32_t(kValidationLayers.size());
       ici.ppEnabledLayerNames = kValidationLayers.data();
+      ici.setPNext(&validationFeatures);
     }
     v->m_instance = vk::createInstanceUnique(ici);
     VULKAN_HPP_DEFAULT_DISPATCHER.init(v->m_instance.get());
@@ -133,6 +150,144 @@ RHIVulkan::~RHIVulkan() {
   if (m_device) {
     m_device->waitIdle();
   }
+}
+
+uint32_t RHIVulkan::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const {
+  vk::PhysicalDeviceMemoryProperties memProperties = m_gpu.getMemoryProperties();
+  for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+    if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+      return i;
+    }
+  }
+  fprintf(stderr, "RHIVulkan::findMemoryType: no memory type satisfies typeFilter=0x%08x properties=0x%08x\n",
+    typeFilter, static_cast<uint32_t>(properties));
+  abort();
+}
+
+RHIVulkan::ExternalImage RHIVulkan::allocateExternalImage(
+  uint32_t width, uint32_t height,
+  vk::Format format, vk::ImageUsageFlags usage, vk::ImageTiling tiling) const {
+
+  ExternalImage out;
+
+  // clang-format off
+  vk::StructureChain<vk::ImageCreateInfo, vk::ExternalMemoryImageCreateInfo> ici = {
+    vk::ImageCreateInfo{
+      vk::ImageCreateFlags(),
+      vk::ImageType::e2D,
+      format,
+      vk::Extent3D(width, height, 1),
+      /*mipLevels=*/ 1,
+      /*arrayLayers=*/ 1,
+      vk::SampleCountFlagBits::e1,
+      tiling,
+      usage,
+      vk::SharingMode::eExclusive,
+      /*queueFamilies=*/ 0, nullptr,
+      /*initialLayout=*/ vk::ImageLayout::eUndefined
+    },
+    vk::ExternalMemoryImageCreateInfo{
+      vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd
+    }
+  };
+  // clang-format on
+
+  out.image = m_device->createImageUnique(ici.get());
+
+  // Query memory requirements with a MemoryDedicatedRequirements chain so we
+  // can detect cases (common on NVIDIA, especially for linear-tiled external
+  // images) where the implementation needs a dedicated allocation.
+  auto memReqChain = m_device->getImageMemoryRequirements2<vk::MemoryRequirements2, vk::MemoryDedicatedRequirements>(
+    {out.image.get()});
+  const vk::MemoryRequirements& memReq = memReqChain.get<vk::MemoryRequirements2>().memoryRequirements;
+  const vk::MemoryDedicatedRequirements& dedReq = memReqChain.get<vk::MemoryDedicatedRequirements>();
+  out.isDedicated = (dedReq.requiresDedicatedAllocation || dedReq.prefersDedicatedAllocation);
+
+  // One-shot log so the first interop allocation tells you what the driver
+  // wants. Useful for tracking down INVALID_VALUE on glTexStorageMem2DEXT.
+  static bool s_loggedDedicated = false;
+  if (!s_loggedDedicated) {
+    s_loggedDedicated = true;
+    fprintf(stderr, "RHIVulkan::allocateExternalImage: prefersDedicated=%u requiresDedicated=%u (using dedicated=%u)\n",
+      dedReq.prefersDedicatedAllocation, dedReq.requiresDedicatedAllocation, out.isDedicated);
+  }
+
+  vk::MemoryAllocateInfo mai{memReq.size, findMemoryType(memReq.memoryTypeBits, vk::MemoryPropertyFlags())};
+  vk::ExportMemoryAllocateInfo emai(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd);
+  vk::MemoryDedicatedAllocateInfo mdai(out.image.get(), /*buffer=*/ VK_NULL_HANDLE);
+
+  // pNext chain: MemoryAllocateInfo -> ExportMemoryAllocateInfo -> [optional] MemoryDedicatedAllocateInfo.
+  mai.setPNext(&emai);
+  if (out.isDedicated)
+    emai.setPNext(&mdai);
+
+  out.memory = m_device->allocateMemoryUnique(mai);
+  m_device->bindImageMemory(out.image.get(), out.memory.get(), 0);
+
+  vk::MemoryGetFdInfoKHR getFd{out.memory.get(), vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd};
+  out.memoryFd = m_device->getMemoryFdKHR(getFd);
+
+  // Subresource layout is only meaningful for linear-tiled images; for optimal
+  // tiling the values are unspecified. Caller is responsible for not relying
+  // on the pitch in that case.
+  if (tiling == vk::ImageTiling::eLinear) {
+    vk::ImageSubresource subres{vk::ImageAspectFlagBits::eColor, 0, 0};
+    out.layout = m_device->getImageSubresourceLayout(out.image.get(), subres);
+  } else {
+    out.layout = vk::SubresourceLayout{};
+  }
+  out.allocationSize = memReq.size;
+
+  return out;
+}
+
+RHIVulkan::ExternalBuffer RHIVulkan::allocateExternalBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage) const {
+  ExternalBuffer out;
+
+  // clang-format off
+  vk::StructureChain<vk::BufferCreateInfo, vk::ExternalMemoryBufferCreateInfo> bci = {
+    vk::BufferCreateInfo{
+      vk::BufferCreateFlags(),
+      size,
+      usage,
+      vk::SharingMode::eExclusive
+    },
+    vk::ExternalMemoryBufferCreateInfo{
+      vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd
+    }
+  };
+  // clang-format on
+
+  out.buffer = m_device->createBufferUnique(bci.get());
+
+  vk::MemoryRequirements memReq = m_device->getBufferMemoryRequirements(out.buffer.get());
+  vk::MemoryAllocateInfo mai{memReq.size, findMemoryType(memReq.memoryTypeBits, vk::MemoryPropertyFlags())};
+  vk::ExportMemoryAllocateInfo emai(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd);
+  mai.setPNext(&emai);
+
+  out.memory = m_device->allocateMemoryUnique(mai);
+  m_device->bindBufferMemory(out.buffer.get(), out.memory.get(), 0);
+
+  vk::MemoryGetFdInfoKHR getFd{out.memory.get(), vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd};
+  out.memoryFd = m_device->getMemoryFdKHR(getFd);
+  out.allocationSize = memReq.size;
+
+  return out;
+}
+
+RHIVulkan::ExternalSemaphore RHIVulkan::createExternalSemaphore() const {
+  ExternalSemaphore out;
+
+  vk::SemaphoreCreateInfo sci{};
+  vk::ExportSemaphoreCreateInfo esci{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd};
+  sci.setPNext(&esci);
+
+  out.semaphore = m_device->createSemaphoreUnique(sci);
+
+  vk::SemaphoreGetFdInfoKHR getFd{out.semaphore.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd};
+  out.fd = m_device->getSemaphoreFdKHR(getFd);
+
+  return out;
 }
 
 // Singleton ownership lives here so RHI.h can stay free of vulkan.hpp.

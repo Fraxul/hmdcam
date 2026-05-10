@@ -7,7 +7,6 @@ RHIBufferGL::RHIBufferGL() :
   m_buffer(0),
   m_cuGraphicsResource(NULL) {
   m_size = 0;
-  glGenBuffers(1, &m_buffer);
 }
 
 RHIBufferGL::RHIBufferGL(GLuint bufferId, size_t size, RHIBufferUsageMode usageMode_) :
@@ -21,7 +20,8 @@ RHIBufferGL::~RHIBufferGL() {
   if (m_cuGraphicsResource)
     cuGraphicsUnregisterResource(m_cuGraphicsResource);
 
-  glDeleteBuffers(1, &m_buffer);
+  if (m_buffer)
+    glDeleteBuffers(1, &m_buffer);
 }
 
 void RHIBufferGL::map(RHIBufferMapMode mapMode) {

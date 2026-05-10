@@ -479,7 +479,7 @@ void RHIGL::beginRenderPass(RHIRenderTarget::ptr renderTarget, RHIRenderTargetLo
       }
     }
     if (clearBits)
-      glClear(clearBits);
+      GL(glClear(clearBits));
   }
 
 

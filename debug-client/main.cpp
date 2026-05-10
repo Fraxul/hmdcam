@@ -238,6 +238,7 @@ int main(int argc, char** argv) {
   SDL_GL_SetSwapInterval(1); // Enable vsync
 
   initRHIGL();
+  initRHIVulkan();
   windowRenderTarget = new RHISDLWindowRenderTargetGL(window);
   sceneCamera = new FxCamera();
 
