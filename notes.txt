@@ -20,7 +20,7 @@ Build and install OpenCV 4.10 with some extra opencv_contrib modules. (TODO: mor
   git clone https://github.com/opencv/opencv_contrib -b 4.10.0
   # Make a build directory and run Cmake to configure
   mkdir opencv-build; cd opencv-build
-  cmake -G Ninja -DOPENCV_EXTRA_MODULES_PATH=/path/to/opencv_contrib/modules -DWITH_CUDA=ON -DBUILD_LIST=aruco,calib3d,core,cudafilters,cudaimgproc,cudastereo,cudawarping,cudev,imgproc,imgcodecs,objdetect,stereo -DCUDA_ARCH_BIN="8.7" /path/to/opencv
+  cmake -G Ninja -DOPENCV_EXTRA_MODULES_PATH=/path/to/opencv_contrib/modules -DWITH_CUDA=ON -DBUILD_LIST=aruco,calib3d,core,cudafilters,cudaimgproc,cudastereo,cudawarping,cudev,imgproc,imgcodecs,objdetect,stereo,ximgproc -DCUDA_ARCH_BIN="8.7" /path/to/opencv
   # Build and install
   ninja && sudo ninja install
 

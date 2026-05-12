@@ -13,7 +13,7 @@ disparityEnv.Append(
     'dl',
     'pthread', 'rt',
     'cuda', 'cudart',
-    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs',
+    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_ximgproc', 'opencv_cudaarithm',
     'nvmedia_iofa_sci',
     'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync',
   ]

@@ -5,11 +5,14 @@
 #include <cstdlib>
 #include <cassert>
 #include <unistd.h>
+#include <algorithm>
+#include <vector>
 
 #include <boost/core/noncopyable.hpp>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/ximgproc/edge_filter.hpp>
 
 #include "nvscibuf.h"
 #include "nvmedia_core.h"
@@ -17,11 +20,15 @@
 
 #include <cuda.h>
 #include "common/disparityOcclusionMask.h"
+#include "common/fgsFilter.h"
 #include "common/tegra/ofaCostToConfidence.h"
 #include "common/tegra/NvSciUtil.h"
 #include "common/tegra/NvSciCudaInterop.h"
+#include "common/Timing.h"
 #include "readPFM.h"
 #include "rhi/cuda/CudaUtil.h"
+#include <opencv2/core/cuda.hpp>
+#include <opencv2/cudaarithm.hpp>
 
 #define die(msg, ...)                         \
   do {                                        \
@@ -220,6 +227,12 @@ int main(int argc, char* argv[]) {
   uint8_t occlusionMaskConfidenceCeiling = 192;
   bool occlusionMaskSmear = true;
 
+  bool useFGSFilter = false;
+  bool useCudaFGSFilter = false;
+  float fgsLambda = 8000.0f;
+  float fgsSigma = 1.0f;
+
+
   for (int i = 3; i < argc; ++i) {
     if (!strcmp(argv[i], "--ref-disparity")) {
       if (i == (argc - 1)) {
@@ -286,15 +299,35 @@ int main(int argc, char* argv[]) {
       occlusionMaskConfidenceCeiling = static_cast<uint8_t>(v);
     } else if (!strcmp(argv[i], "--no-occlusion-smear")) {
       occlusionMaskSmear = false;
+    } else if (!strcmp(argv[i], "--use-fgs-filter")) {
+      useFGSFilter = true;
+    } else if (!strcmp(argv[i], "--cuda-fgs-filter")) {
+      useFGSFilter = true;
+      useCudaFGSFilter = true;
+    } else if (!strcmp(argv[i], "--fgs-lambda")) {
+      if (i == (argc - 1)) {
+        printf("--fgs-lambda: requires argument\n");
+        return 1;
+      }
+      fgsLambda = atof(argv[++i]);
+    } else if (!strcmp(argv[i], "--fgs-sigma")) {
+      if (i == (argc - 1)) {
+        printf("--fgs-sigma: requires argument\n");
+        return 1;
+      }
+      fgsSigma = atof(argv[++i]);
     } else {
       printf("Unrecognized argument %s\n", argv[i]);
       return 1;
     }
   }
 
-  cv::Mat cvImageLeft = cv::imread(leftImageFilename.c_str(), cv::IMREAD_GRAYSCALE);
-  if (cvImageLeft.empty())
+  // Need an RGB view of the left image for guiding the FGS filter.
+  cv::Mat cvImageLeftRGB = cv::imread(leftImageFilename.c_str());
+  if (cvImageLeftRGB.empty())
     die("Can't open left image %s\n", leftImageFilename.c_str());
+  cv::Mat cvImageLeft;
+  cv::cvtColor(/*src=*/ cvImageLeftRGB, /*dst=*/ cvImageLeft, cv::COLOR_BGR2GRAY);
 
   cv::Mat cvImageRight = cv::imread(rightImageFilename.c_str(), cv::IMREAD_GRAYSCALE);
   if (cvImageRight.empty())
@@ -570,6 +603,127 @@ int main(int argc, char* argv[]) {
     cvDisparityPostMask.copyTo(cvDisparity);
   } else {
     cvDisparityPostMask = cvDisparity;
+  }
+
+
+  if (useFGSFilter) {
+
+    // Apply FGS filter. This is the core of the OpenCV ximgproc WLS filter;
+    // it expects to receive left and right disparity maps and makes a confidence map from them.
+    // We already have a confidence map, so we skip straight to invoking the FastGlobalSmootherFilter, which is
+    // what it does internally.
+
+    cv::Mat confFloat, dispFloat;
+    cvDisparity.convertTo(dispFloat, CV_32FC1, 1.0 / static_cast<double>(32 << gridSizeShift), 0);
+    cvConfidence.convertTo(confFloat, CV_32FC1);
+
+    cv::Mat disp_mul_conf;
+
+#define EPS 1e-43f
+
+    if (useCudaFGSFilter) {
+      // FGS dims must match the guide (cvImageLeft) -- only meaningful at gridSizeShift = 0.
+      assert(cvImageLeft.cols == dispFloat.cols && cvImageLeft.rows == dispFloat.rows);
+
+      // Texture object over the (already-uploaded) left luma surface, point-sampled in
+      // unnormalized coordinates. cudaReadModeNormalizedFloat (the default for 8-bit
+      // surfaces with flags=0) returns [0, 1] floats, so we scale fgsSigma by 1/255 to
+      // match the CPU's 8-bit-difference sigma convention.
+      CUtexObject guideTex;
+      {
+        CUDA_RESOURCE_DESC resDesc;
+        memset(&resDesc, 0, sizeof(resDesc));
+        resDesc.resType = CU_RESOURCE_TYPE_ARRAY;
+        resDesc.res.array.hArray = leftInputBuffer->m_cuArray;
+
+        CUDA_TEXTURE_DESC texDesc;
+        memset(&texDesc, 0, sizeof(texDesc));
+        texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
+        texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
+        texDesc.filterMode = CU_TR_FILTER_MODE_POINT;
+        texDesc.flags = 0;
+        CUDA_CHECK(cuTexObjectCreate(&guideTex, &resDesc, &texDesc, /*resViewDesc=*/ nullptr));
+      }
+
+      cv::cuda::GpuMat dispGpu, confGpu, dispMulConfGpu, confFilteredGpu, dispFilteredGpu, finalDispGpu, fusedPair;
+      dispGpu.upload(dispFloat);
+      confGpu.upload(confFloat);
+      cv::cuda::multiply(confGpu, dispGpu, dispMulConfGpu);
+      cuStreamSynchronize(hStream);
+
+      static FGSFilterState fgsState;
+      uint64_t startTime = currentTimeNs();
+      const int partitionIters = getenv("FGS_ITERS") ? atoi(getenv("FGS_ITERS")) : 3;
+      const bool useFloat2 = !getenv("FGS_SINGLE_CHANNEL");
+      if (useFloat2) {
+        // Pack (disp*conf, conf) into a CV_32FC2 in one kernel pass.
+        fgsPackDispConfMul(dispGpu, confGpu, fusedPair, hStream);
+        // Fused two-channel filter: one Thomas factorization, both data lanes.
+        fgsFilter(fgsState, guideTex, fusedPair, fusedPair, fgsLambda, fgsSigma / 255.0f, /*lambda_attenuation=*/ 0.25f, /*num_iter=*/ partitionIters, hStream);
+        // Recover the filtered disparity: pair.x / (pair.y + EPS).
+        fgsUnpackDivideEps(fusedPair, finalDispGpu, EPS, hStream);
+      } else {
+        fgsFilter(fgsState, guideTex, dispMulConfGpu, dispFilteredGpu, fgsLambda, fgsSigma / 255.0f, /*lambda_attenuation=*/ 0.25f, /*num_iter=*/ partitionIters, hStream);
+        fgsFilter(fgsState, guideTex, confGpu, confFilteredGpu, fgsLambda, fgsSigma / 255.0f, /*lambda_attenuation=*/ 0.25f, /*num_iter=*/ partitionIters, hStream);
+        fgsDivideEpsPair(dispFilteredGpu, confFilteredGpu, finalDispGpu, EPS, hStream);
+      }
+      cuStreamSynchronize(hStream);
+      uint64_t endTime = currentTimeNs();
+      printf("FGS filter time: %.3f ms\n", deltaTimeMs(startTime, endTime));
+
+      finalDispGpu.download(confFloat);
+      CUDA_CHECK(cuTexObjectDestroy(guideTex));
+
+      // Run the CPU path on the same inputs and report max abs diff for validation.
+      {
+        cv::Mat refDispFloat, refConfFloat;
+        cvDisparity.convertTo(refDispFloat, CV_32FC1, 1.0 / static_cast<double>(32 << gridSizeShift), 0);
+        cvConfidence.convertTo(refConfFloat, CV_32FC1);
+        cv::Mat ref_disp_mul_conf = refConfFloat.mul(refDispFloat);
+        cv::Mat ref_conf_filtered;
+        cv::Ptr<cv::ximgproc::FastGlobalSmootherFilter> fgs = cv::ximgproc::createFastGlobalSmootherFilter(/*src (guide)=*/ cvImageLeft, fgsLambda, fgsSigma, /*lambda_attenuation=*/ 0.25, /*num_iter=*/ partitionIters);
+        fgs->filter(ref_disp_mul_conf, ref_disp_mul_conf);
+        fgs->filter(refConfFloat, ref_conf_filtered);
+        cv::Mat ref_result = ref_disp_mul_conf.mul(1 / (ref_conf_filtered + EPS));
+
+        cv::Mat absdiff;
+        cv::absdiff(confFloat, ref_result, absdiff);
+        double maxDiff, meanDiff;
+        cv::Point maxLoc;
+        cv::minMaxLoc(absdiff, /*minVal=*/ nullptr, &maxDiff, /*minLoc=*/ nullptr, &maxLoc);
+        meanDiff = cv::mean(absdiff)[0];
+        double refMin, refMax;
+        cv::minMaxLoc(ref_result, &refMin, &refMax);
+        printf("CUDA-vs-CPU FGS diff: max=%.6f mean=%.6f at (col=%d row=%d) -- ours=%f ref=%f (reference value range [%.3f, %.3f])\n",
+          maxDiff, meanDiff, maxLoc.x, maxLoc.y,
+          confFloat.at<float>(maxLoc.y, maxLoc.x), ref_result.at<float>(maxLoc.y, maxLoc.x),
+          refMin, refMax);
+        // Show diff stats by percentile.
+        std::vector<float> diffs;
+        diffs.reserve(absdiff.total());
+        for (int yy = 0; yy < absdiff.rows; ++yy) {
+          const float* row = absdiff.ptr<float>(yy);
+          for (int xx = 0; xx < absdiff.cols; ++xx) diffs.push_back(row[xx]);
+        }
+        std::sort(diffs.begin(), diffs.end());
+        auto pct = [&](double p) { return diffs[std::min<size_t>(diffs.size() - 1, static_cast<size_t>(p * diffs.size()))]; };
+        printf("CUDA-vs-CPU diff percentiles: 50%%=%.6f 90%%=%.6f 99%%=%.6f 99.9%%=%.6f 99.99%%=%.6f\n",
+          pct(0.50), pct(0.90), pct(0.99), pct(0.999), pct(0.9999));
+      }
+    } else {
+      // CPU baseline FGS filter
+      uint64_t startTime = currentTimeNs();
+      disp_mul_conf = confFloat.mul(dispFloat);
+      cv::Mat conf_filtered;
+      cv::Ptr<cv::ximgproc::FastGlobalSmootherFilter> fgs = cv::ximgproc::createFastGlobalSmootherFilter(/*src (guide)=*/ cvImageLeft, fgsLambda, fgsSigma, /*lambda_attenuation=*/ 0.25, /*num_iter=*/ 3);
+      fgs->filter(disp_mul_conf, disp_mul_conf);
+      fgs->filter(confFloat, conf_filtered);
+      confFloat = disp_mul_conf.mul(1 / (conf_filtered + EPS));
+      uint64_t endTime = currentTimeNs();
+      printf("FGS filter time: %.3f ms\n", deltaTimeMs(startTime, endTime));
+    }
+
+    confFloat.convertTo(cvDisparity, CV_16U, static_cast<double>(32 << gridSizeShift));
   }
 
 
