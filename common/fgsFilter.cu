@@ -166,7 +166,7 @@ namespace {
 // Build the horizontal-weight buffer in image-native row-major layout (no
 // transpose). Used by the cuSPARSE path where weights feed a diagonal-
 // builder kernel rather than an in-place Thomas pass.
-__global__ void computeChorRowMajorKernel(CUtexObject guideTex, PtrStepSz<float> Chor, float sigmaColor) {
+__global__ void computeChorRowMajorKernel(CUtexObject guideTex, float guideTexScale, PtrStepSz<float> Chor, float sigmaColor) {
   const int j = blockIdx.x * blockDim.x + threadIdx.x; // image column
   const int i = blockIdx.y * blockDim.y + threadIdx.y; // image row
   if (j >= Chor.cols || i >= Chor.rows) {
@@ -176,8 +176,8 @@ __global__ void computeChorRowMajorKernel(CUtexObject guideTex, PtrStepSz<float>
   if (j == Chor.cols - 1) {
     w = 0.0f;
   } else {
-    const float p1 = tex2D<float>(guideTex, static_cast<float>(j) + 0.5f, static_cast<float>(i) + 0.5f);
-    const float p2 = tex2D<float>(guideTex, static_cast<float>(j) + 1.5f, static_cast<float>(i) + 0.5f);
+    const float p1 = tex2D<float>(guideTex, (static_cast<float>(j) + 0.5f) * guideTexScale, (static_cast<float>(i) + 0.5f) * guideTexScale);
+    const float p2 = tex2D<float>(guideTex, (static_cast<float>(j) + 1.5f) * guideTexScale, (static_cast<float>(i) + 0.5f) * guideTexScale);
     w = -__expf(-fabsf(p1 - p2) / sigmaColor);
   }
   Chor.ptr(i)[j] = w;
@@ -187,7 +187,7 @@ __global__ void computeChorRowMajorKernel(CUtexObject guideTex, PtrStepSz<float>
 // CvertT[j][i] = vertical weight between guide(i, j) and guide(i+1, j).
 // Storing transposed lets the V pass reuse the H-pass partition kernel
 // after a cur transpose -- no specialized V kernel needed.
-__global__ void computeCvertTKernel(CUtexObject guideTex, PtrStepSz<float> CvertT, float sigmaColor) {
+__global__ void computeCvertTKernel(CUtexObject guideTex, float guideTexScale, PtrStepSz<float> CvertT, float sigmaColor) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x; // image row    (= col in transposed)
   const int j = blockIdx.y * blockDim.y + threadIdx.y; // image column (= row in transposed)
   const int imageHeight = CvertT.cols;
@@ -199,8 +199,8 @@ __global__ void computeCvertTKernel(CUtexObject guideTex, PtrStepSz<float> Cvert
   if (i == imageHeight - 1) {
     w = 0.0f;
   } else {
-    const float p1 = tex2D<float>(guideTex, static_cast<float>(j) + 0.5f, static_cast<float>(i) + 0.5f);
-    const float p2 = tex2D<float>(guideTex, static_cast<float>(j) + 0.5f, static_cast<float>(i) + 1.5f);
+    const float p1 = tex2D<float>(guideTex, (static_cast<float>(j) + 0.5f) * guideTexScale, (static_cast<float>(i) + 0.5f) * guideTexScale);
+    const float p2 = tex2D<float>(guideTex, (static_cast<float>(j) + 0.5f) * guideTexScale, (static_cast<float>(i) + 1.5f) * guideTexScale);
     w = -__expf(-fabsf(p1 - p2) / sigmaColor);
   }
   CvertT.ptr(j)[i] = w;
@@ -592,6 +592,7 @@ void FGSFilterState::release() {
 void fgsFilter(
   FGSFilterState& state,
   CUtexObject guideTex,
+  float guideTexScale,
   cv::cuda::GpuMat& src_dst,
   float lambda,
   float sigmaColor,
@@ -612,12 +613,12 @@ void fgsFilter(
   {
     dim3 block(32, 8);
     dim3 grid(divUp(W, static_cast<int>(block.x)), divUp(H, static_cast<int>(block.y)));
-    computeChorRowMajorKernel<<<grid, block, 0, stream>>>(guideTex, state.Chor, sigmaColor);
+    computeChorRowMajorKernel<<<grid, block, 0, stream>>>(guideTex, guideTexScale, state.Chor, sigmaColor);
   }
   {
     dim3 block(32, 8);
     dim3 grid(divUp(H, static_cast<int>(block.x)), divUp(W, static_cast<int>(block.y)));
-    computeCvertTKernel<<<grid, block, 0, stream>>>(guideTex, state.CvertT, sigmaColor);
+    computeCvertTKernel<<<grid, block, 0, stream>>>(guideTex, guideTexScale, state.CvertT, sigmaColor);
   }
 
   constexpr int kWarpsPerBlock = 4;

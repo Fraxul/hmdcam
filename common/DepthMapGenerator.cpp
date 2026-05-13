@@ -469,6 +469,15 @@ void DepthMapGenerator::renderIMGUI() {
     ImGui::Checkbox("Smear background into deadzone", &m_occlusionMaskSmear);
   }
 
+  ImGui::Checkbox("FGS filter", &m_useFGSFilter);
+  if (m_useFGSFilter) {
+    ImGui::DragFloat("FGS Lambda", &m_fgsLambda, /*v_speed=*/ 250.0f, /*v_min=*/ 1000.0f, /*v_max=*/ 16000.0f, "%.1f");
+    ImGui::DragFloat("FGS Sigma Color", &m_fgsSigmaColor, /*v_speed=*/ 0.125f, /*v_min=*/ 0.0f, /*v_max=*/ 8.0f, "%.3f");
+    const uint8_t iterationsMin = 1, iterationsMax = 8;
+    ImGui::DragScalar("FGS iterations", ImGuiDataType_U8, &m_fgsIterations, /*v_speed=*/ 1, &iterationsMin, &iterationsMax, "%u");
+    ImGui::SliderFloat("FGS Lambda Attenuation", &m_fgsLambdaAttenuation, 0.0f, 1.0f);
+  }
+
   ImGui::Checkbox("Temporal filter", &m_useTemporalFilter);
 
   if (m_useTemporalFilter) {
@@ -656,6 +665,26 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
         (CUstream) m_globalStream.cudaPtr());
     }
 
+    if (m_useFGSFilter) {
+      // Run FGS filter over disparity+confidence
+
+      // Pack (disp*conf, conf) into a CV_32FC2 in one kernel pass.
+      fgsPackDispConfMul(*workMat, vd->m_disparityConfidence, disparityPrescale(), vd->m_fgsFilterInOutPacked, (CUstream) m_globalStream.cudaPtr());
+
+      // Fused two-channel filter. Works in-place on vd->m_fgsFilterInOutPacked.
+      fgsFilter(vd->m_fgsFilterState,
+        vd->m_rectifiedLumaTex[0],
+        vd->m_rectifiedLuma[0].cols / workMat->cols, // guide-texture scale; should typically be 1 or 2
+        vd->m_fgsFilterInOutPacked,
+        m_fgsLambda,
+        m_fgsSigmaColor / 255.0f, // guide texture is in integer mode, so sigma does not require the divide-by-255
+        /*lambda_attenuation=*/ m_fgsLambdaAttenuation,
+        /*num_iter=*/ m_fgsIterations,
+        (CUstream) m_globalStream.cudaPtr());
+      // Recover the filtered disparity: pair.x / (pair.y + EPS).
+      fgsUnpackDivideScale(vd->m_fgsFilterInOutPacked, *workMat, static_cast<float>(1 << m_disparitySubpixelBits), (CUstream) m_globalStream.cudaPtr());
+    }
+
     if (m_useTemporalFilter) {
       // Run temporal filter between current and previous disparity.
       // This always writes to currentDisparityMat, but reads from workMat to avoid a copy
@@ -808,6 +837,10 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(DepthMapGenerator* dept
 
   // Allocate buffer for median filter output. This should be identical to m_disparityGpuMat.
   m_disparityMedianFilterDestGpuMat.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
+
+  // Pre-allocate FGS filter state
+  m_fgsFilterState.ensureAllocated(/*newWidth=*/ w, /*newHeight=*/ h);
+  m_fgsFilterInOutPacked.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ CV_32FC2);
 
   // Disparity output: VK-allocated, dual-imported into GL (texture) and CUDA
   // (the surface's GpuMat). Dropping the legacy newTexture2D + per-frame

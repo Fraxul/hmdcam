@@ -4,6 +4,7 @@
 #include "common/DepthMapSHM.h"
 #include "common/SHMSegment.h"
 #include "common/depthMeshAdaptive.h"
+#include "common/fgsFilter.h"
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
 #include "rhi/cuda/CudaUtil.h"
@@ -163,6 +164,9 @@ protected:
 
     cv::cuda::GpuMat m_disparityMedianFilterDestGpuMat;
 
+    FGSFilterState m_fgsFilterState;
+    cv::cuda::GpuMat m_fgsFilterInOutPacked;
+
     // Per-camera rectified luma at the backend's algoInput resolution
     // (1x or 2x the disparity resolution). Owned by the backend; the base
     // class wraps each in a CUtexObject for use in filtering.
@@ -229,6 +233,13 @@ protected:
   // nearest high-confidence disparity to the left (background fill). The
   // scan distance reuses the search window.
   bool m_occlusionMaskSmear = true;
+
+  // Fast Global Smoother filter settings
+  bool m_useFGSFilter = true;
+  float m_fgsLambda = 8000.0f;
+  float m_fgsSigmaColor = 1.0f;
+  uint8_t m_fgsIterations = 3;
+  float m_fgsLambdaAttenuation = 0.25f;
 
   // Render settings
   int m_trimLeft = 8, m_trimTop = 8;

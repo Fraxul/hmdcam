@@ -60,6 +60,9 @@
 //   [0, 1]), pass sigmaColor / 255.f to match the conventional
 //   8-bit-difference sigma scale.
 //
+// guideTexScale: Scale difference between guideTex and the work mat.
+//   Typically 1, where the guide texture and the work are the same size.
+//
 // src_dst: Work GpuMat, filtered in-place. Must be CV_32FC1 or CV_32FC2.
 //   CV_32FC2 runs the fused two-channel filter, in which the
 //   same Thomas-elimination factorization (which depends only on lambda
@@ -84,6 +87,7 @@ struct FGSFilterState;
 void fgsFilter(
   FGSFilterState& state,
   CUtexObject guideTex,
+  float guideTexScale,
   cv::cuda::GpuMat& src_dst,
   float lambda,
   float sigmaColor,
