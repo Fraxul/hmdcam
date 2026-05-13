@@ -257,7 +257,7 @@ __global__ void emitGeometryKernel(
   if (rightCrack || bottomCrack) d11 = dRep;
 
   // Per-edge overlap: extend C outward when the direct neighbor across an edge has
-  // clearly higher disparity (i.e. is closer to the camera) than dRep. Independent of
+  // same-or-higher disparity (i.e. is closer to the camera) than dRep. Independent of
   // the corner-snap logic above -- extension is anchored to the direct neighbor texel,
   // not to T-junction lerp values, so the extrusion direction tracks "neighbor closer
   // => I extend past it". The extension is in q12.4 fixed-point so partial-cell
@@ -265,10 +265,10 @@ __global__ void emitGeometryKernel(
   int extQ = (cellOverlapMultiplier > 1.0f)
     ? int(roundf((cellOverlapMultiplier - 1.0f) * float(sz) * float(kAdaptiveMeshGridScale)))
     : 0;
-  int extLQ = (extQ > 0 && hasL && (dN_L - dRep) > threshold) ? extQ : 0;
-  int extRQ = (extQ > 0 && hasR && (dN_R - dRep) > threshold) ? extQ : 0;
-  int extTQ = (extQ > 0 && hasT && (dN_T - dRep) > threshold) ? extQ : 0;
-  int extBQ = (extQ > 0 && hasB && (dN_B - dRep) > threshold) ? extQ : 0;
+  int extLQ = (extQ > 0 && hasL && (dN_L - dRep) >= threshold) ? extQ : 0;
+  int extRQ = (extQ > 0 && hasR && (dN_R - dRep) >= threshold) ? extQ : 0;
+  int extTQ = (extQ > 0 && hasT && (dN_T - dRep) >= threshold) ? extQ : 0;
+  int extBQ = (extQ > 0 && hasB && (dN_B - dRep) >= threshold) ? extQ : 0;
 
   uint16_t vxL = uint16_t(max(0, x * kAdaptiveMeshGridScale - extLQ));
   uint16_t vyT = uint16_t(max(0, y * kAdaptiveMeshGridScale - extTQ));
