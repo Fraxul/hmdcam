@@ -219,6 +219,8 @@ if have_opencv_cuda:
   SConscript('SConscript-debug-client', variant_dir = 'build/debug-client', duplicate = 0)
 if (build_dgpu):
   SConscript('SConscript-dgpu-worker', variant_dir = 'build/dgpu-worker', duplicate = 0)
+if is_tegra:
+  SConscript('SConscript-disparity-test', variant_dir = 'build/disparity-test', duplicate = 0)
 
 # SHM worker benchmark framework
 SConscript('SConscript-worker-benchmark', variant_dir = 'build/worker-benchmark', duplicate = 0)

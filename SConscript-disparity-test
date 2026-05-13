@@ -1,0 +1,32 @@
+Import('env')
+
+disparityEnv = env.Clone()
+
+disparityEnv.Append(
+  CPPPATH=[
+    'disparity-test',
+    '#nvmedia',
+    '#nvsci_headers',
+  ],
+  LIBS=[
+    'z',
+    'dl',
+    'pthread', 'rt',
+    'cuda', 'cudart',
+    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs',
+    'nvmedia_iofa_sci',
+    'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync',
+  ]
+)
+
+disparityEnv.CompilationDatabase()
+disparityEnv.Program(
+  target = '../bin/disparity-test', # relative to build/disparity-test
+  source = Glob('disparity-test/*.cpp')
+    + Glob('disparity-test/*.cu')
+    + ['common/disparityOcclusionMask.cu', 'common/fgsFilter.cu']
+    + Glob('common/tegra/NvSci*.cpp')
+    + Glob('common/tegra/*.cu')
+    + ['rhi/cuda/CudaUtil.cpp']
+)
+
