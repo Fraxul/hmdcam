@@ -653,7 +653,7 @@ int main(int argc, char* argv[]) {
       // Pack (disp*conf, conf) into a CV_32FC2 in one kernel pass.
       fgsPackDispConfMul(dispGpu, confGpu, static_cast<float>(1.0f / (32 << gridSizeShift)), fusedPair, hStream);
       // Fused two-channel filter: one Thomas factorization, both data lanes.
-      fgsFilter(fgsState, guideTex, fusedPair, fusedPair, fgsLambda, fgsSigma / 255.0f, /*lambda_attenuation=*/ 0.25f, /*num_iter=*/ partitionIters, hStream);
+      fgsFilter(fgsState, guideTex, fusedPair, fgsLambda, fgsSigma / 255.0f, /*lambda_attenuation=*/ 0.25f, /*num_iter=*/ partitionIters, hStream);
       // Recover the filtered disparity: pair.x / (pair.y + EPS).
       fgsUnpackDivideScale(fusedPair, finalDispGpu, static_cast<float>(32 << gridSizeShift), hStream);
 

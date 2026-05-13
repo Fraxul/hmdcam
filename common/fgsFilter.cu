@@ -587,39 +587,20 @@ void FGSFilterState::release() {
 void fgsFilter(
   FGSFilterState& state,
   CUtexObject guideTex,
-  const cv::cuda::GpuMat& src,
-  cv::cuda::GpuMat& dst,
+  cv::cuda::GpuMat& src_dst,
   float lambda,
   float sigmaColor,
   float lambdaAttenuation,
   int numIterations,
   CUstream stream) {
 
-  CV_Assert(!src.empty());
-  const int srcType = src.type();
+  CV_Assert(!src_dst.empty());
+  const int srcType = src_dst.type();
   CV_Assert(srcType == CV_32FC1 || srcType == CV_32FC2);
 
-  const int W = src.cols;
-  const int H = src.rows;
+  const int W = src_dst.cols;
+  const int H = src_dst.rows;
   state.ensureAllocated(W, H);
-
-  if (dst.cols != W || dst.rows != H || dst.type() != srcType) {
-    dst.create(H, W, srcType);
-  }
-
-  // Copy src -> dst (skip when aliased).
-  if (src.cudaPtr() != dst.cudaPtr()) {
-    CUDA_MEMCPY2D copy = {};
-    copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-    copy.srcDevice = reinterpret_cast<CUdeviceptr>(src.cudaPtr());
-    copy.srcPitch = src.step;
-    copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst.cudaPtr());
-    copy.dstPitch = dst.step;
-    copy.WidthInBytes = static_cast<size_t>(W) * src.elemSize();
-    copy.Height = H;
-    CUDA_CHECK(cuMemcpy2DAsync(&copy, stream));
-  }
 
   // Build weight buffers (Chor row-major, CvertT transposed). One-shot per call;
   // both are reused across all numIterations passes.
@@ -664,15 +645,15 @@ void fgsFilter(
       cudaFuncAttributeMaxDynamicSharedMemorySize, maxSmemBytes);
   }
 
-  // Per-iter dispatch: H pass on dst, transpose to workScratch, V pass on
+  // Per-iter dispatch: H pass on src_dst, transpose to workScratch, V pass on
   // workScratch with the transposed weights, transpose back. T (= float or
   // float2) picks the data lane; weights are always scalar.
   auto runIter = [&](auto tagT, cv::cuda::GpuMat& workScratch, float currentLambda) {
     using T = decltype(tagT);
-    hPassPartitionKernel<T><<<hGrid, hBlock, hSmemBytes, stream>>>(dst, state.Chor, currentLambda);
-    transposeKernel<T><<<trGrid_fwd, trBlock, 0, stream>>>(dst, workScratch);
+    hPassPartitionKernel<T><<<hGrid, hBlock, hSmemBytes, stream>>>(src_dst, state.Chor, currentLambda);
+    transposeKernel<T><<<trGrid_fwd, trBlock, 0, stream>>>(src_dst, workScratch);
     hPassPartitionKernel<T><<<vGrid, vBlock, vSmemBytes, stream>>>(workScratch, state.CvertT, currentLambda);
-    transposeKernel<T><<<trGrid_back, trBlock, 0, stream>>>(workScratch, dst);
+    transposeKernel<T><<<trGrid_back, trBlock, 0, stream>>>(workScratch, src_dst);
   };
 
   float currentLambda = lambda;

@@ -60,11 +60,11 @@
 //   [0, 1]), pass sigmaColor / 255.f to match the conventional
 //   8-bit-difference sigma scale.
 //
-// src, dst: GpuMats of matching size. Must both be CV_32FC1 or both be
-//   CV_32FC2. CV_32FC2 runs the fused two-channel filter, in which the
+// src_dst: Work GpuMat, filtered in-place. Must be CV_32FC1 or CV_32FC2.
+//   CV_32FC2 runs the fused two-channel filter, in which the
 //   same Thomas-elimination factorization (which depends only on lambda
 //   and the guide) is applied to both data lanes in one pass --
-//   appreciably cheaper than two CV_32FC1 calls. May alias.
+//   appreciably cheaper than two CV_32FC1 calls.
 //
 // state: persistent scratch; the first call (or any time dimensions
 //   change) does the allocation, subsequent calls are no-ops.
@@ -84,8 +84,7 @@ struct FGSFilterState;
 void fgsFilter(
   FGSFilterState& state,
   CUtexObject guideTex,
-  const cv::cuda::GpuMat& src,
-  cv::cuda::GpuMat& dst,
+  cv::cuda::GpuMat& src_dst,
   float lambda,
   float sigmaColor,
   float lambdaAttenuation,
