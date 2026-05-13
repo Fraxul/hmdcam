@@ -62,10 +62,16 @@ struct DepthMeshAdaptiveScratch {
 //   disparityIn       - the post-processed disparity (uint16_t per texel).
 //   maxValidRaw       - inclusive maximum valid disparity in raw units.
 //   flatThresholdRaw  - inclusive max (max - min) within a block that still counts as flat.
-//   discontinuityThresholdRaw - max |sampled - lerped| across a level-transition edge that
-//                       still gets stitched (T-junction snapped). Edges with a larger
-//                       disparity step keep the sampled corner value, leaving an
-//                       intentional crack in the rendered mesh.
+//   discontinuityThresholdRaw - max disparity step across a quad edge that still gets
+//                       welded. Each emitted cell uses its top-left texel as its
+//                       representative disparity; any corner whose welded value (the
+//                       corner texel, or a T-junction lerp along a coarser neighbor's
+//                       edge) differs from the representative by more than this
+//                       threshold reverts to the representative, leaving an intentional
+//                       crack between this cell and the neighbor on that edge.
+//                       At threshold = 0 every edge is discontinuous and the mesh is
+//                       a set of flat, disconnected quads; at the max value every edge
+//                       welds and the mesh is fully connected.
 //   trimLeft/Top/Right/Bottom - cells in the trimmed border are treated as invalid.
 //
 // Outputs (caller-owned, all device pointers; buffers must be sized for worst-case

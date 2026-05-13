@@ -105,27 +105,28 @@ __global__ void computeMaxFlatLevelKernel(
   outMaxFlatLevel.ptr(y)[x] = uint8_t(chosen + 1); // 0 = skip
 }
 
-// ----- Per-corner T-junction snap -----
+// ----- Per-corner welded disparity (T-junction snap) -----
 //
 // At each emitted corner V we look at the 4 quadrant cells around V. The cell inside
 // our own patch self-skips because its level matches ours; among the remaining cells we
 // pick the one whose containing patch is at the largest level coarser than ours (Q).
 // If any such Q exists, V lies exactly on Q's boundary edge (proof: V's own cell is in
 // our patch and the adjacent cell is in Q, so Q's extent must end precisely at V). We
-// lerp the disparity along Q's shared edge between Q's two corner texture samples and
-// substitute that for V's own sampled disparity -- but only when |sampled - lerped| is
-// below the discontinuity threshold. Larger steps keep the raw sample, so genuine depth
-// discontinuities render as intentional cracks.
+// lerp the disparity along Q's shared edge between Q's two corner texture samples to
+// produce a "welded" disparity at V that cells of either level can agree on. If no
+// such Q exists, the welded value is just V's raw disparity texel.
 //
 // At Q's true corner the lerp evaluates to one of Q's endpoint samples (= V's sample),
 // so the snap is a no-op. We rely on that rather than special-casing corners.
-__device__ inline float computeSnappedCornerDisparity(
+//
+// The discontinuity threshold is applied separately in emitGeometryKernel, which
+// compares this welded value to the cell's own representative disparity.
+__device__ inline float computeWeldedCornerDisparity(
   PtrStep<const uint16_t> disparity,
   PtrStep<const uint8_t> maxFlatLevel,
   int W, int H,
   int vx, int vy,
-  int Lp,
-  uint16_t discontinuityThresholdRaw) {
+  int Lp) {
   int vx_c = min(vx, W - 1);
   int vy_c = min(vy, H - 1);
   float disp_raw = float(disparity.ptr(vy_c)[vx_c]);
@@ -171,9 +172,7 @@ __device__ inline float computeSnappedCornerDisparity(
     disp_b = float(disparity.ptr(ey)[ex1]);
     t = float(vx - qx) / float(szq);
   }
-  float disp_lerp = (1.0f - t) * disp_a + t * disp_b;
-  float diff = fabsf(disp_raw - disp_lerp);
-  return (diff < float(discontinuityThresholdRaw)) ? disp_lerp : disp_raw;
+  return (1.0f - t) * disp_a + t * disp_b;
 }
 
 // ----- Emit verts + indices for each anchor cell -----
@@ -198,37 +197,28 @@ __global__ void emitGeometryKernel(
   // Anchor: top-left corner of the chosen block at level L
   if ((x & (sz - 1)) | (y & (sz - 1))) return;
 
-  // Sample corner disparities, with T-junction snap for corners that fall on a coarser
-  // neighbor's edge. Same-level neighbors share corner samples so flat regions still
-  // render as a continuous mesh.
+  // The cell's representative disparity is the TL texel. It's also the welded value at
+  // the TL corner by construction (the corner texel IS the cell's anchor texel), so the
+  // TL corner is always welded; we only test the other three.
+  float dRep = float(disparity.ptr(y)[x]);
+
   int xRight = x + sz;
   int yBottom = y + sz;
-  float d00 = computeSnappedCornerDisparity(disparity, maxFlatLevel, W, H, x, y, L, discontinuityThresholdRaw);
-  float d10 = computeSnappedCornerDisparity(disparity, maxFlatLevel, W, H, xRight, y, L, discontinuityThresholdRaw);
-  float d01 = computeSnappedCornerDisparity(disparity, maxFlatLevel, W, H, x, yBottom, L, discontinuityThresholdRaw);
-  float d11 = computeSnappedCornerDisparity(disparity, maxFlatLevel, W, H, xRight, yBottom, L, discontinuityThresholdRaw);
+  float d00 = dRep;
+  float d10 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, xRight, y, L);
+  float d01 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, x, yBottom, L);
+  float d11 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, xRight, yBottom, L);
 
-  // Handle large depth discontinuities.
-  // If there's a discontinuity across d00+d01 to d10+d11, then we should flatten it left-to-right (throw away d10/d11, replace with d00/d01)
-  // Same for discontinuity across d00/d10 to d01/d11
-  // Will introduce some cracking on high depth slopes, but that's probably OK.
-
-  bool crackLR = static_cast<uint16_t>(fabs(((d00 + d01) * 0.5f) - ((d10 + d11) * 0.5f))) > discontinuityThresholdRaw;
-  bool crackUD = static_cast<uint16_t>(fabs(((d00 + d10) * 0.5f) - ((d01 + d11) * 0.5f))) > discontinuityThresholdRaw;
-  if (crackLR && crackUD) {
-    // Crack in both directions -- all values become d00
-    d10 = d00;
-    d01 = d00;
-    d11 = d00;
-  } else if (crackLR) {
-    // Crack left-to-right
-    d10 = d00;
-    d11 = d01;
-  } else if (crackUD) {
-    // Crack top-to-bottom
-    d01 = d00;
-    d11 = d10;
-  }
+  // Discontinuity test: any non-TL corner whose welded disparity is further than
+  // discontinuityThresholdRaw from the cell's representative reverts to the
+  // representative, leaving an intentional crack between this cell and whichever
+  // neighbor's value the weld would have pulled in. For same-level edges the welded
+  // value is the neighbor's representative, so this is exactly "disparity change across
+  // the edge"; for coarser-neighbor T-junctions it's the edge lerp vs ours.
+  float threshold = float(discontinuityThresholdRaw);
+  if (fabsf(d10 - dRep) > threshold) d10 = dRep;
+  if (fabsf(d01 - dRep) > threshold) d01 = dRep;
+  if (fabsf(d11 - dRep) > threshold) d11 = dRep;
 
   uint32_t vBase = atomicAdd(&counters->vertexCounter, 4u);
   uint32_t iBase = atomicAdd(&counters->indexCounter, 6u);
