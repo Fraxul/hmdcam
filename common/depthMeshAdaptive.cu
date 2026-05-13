@@ -175,22 +175,19 @@ __device__ inline float computeWeldedCornerDisparity(
   return (1.0f - t) * disp_a + t * disp_b;
 }
 
-// Test whether C should extend its edge outward toward the neighbor texel at (nx, ny).
-// Returns true iff the neighbor is in bounds, valid (has an emitted cell), and its raw
-// disparity exceeds C's representative by more than the discontinuity threshold --
-// i.e. the edge between C and the neighbor is "cracked" AND C is the farther of the
-// two (higher disparity = closer, so dN > dRep + threshold means neighbor is closer).
-__device__ inline bool shouldExtendTowardsNeighbor(
+// Sample the raw disparity at the neighbor texel (nx, ny), returning false (and
+// leaving outDisparity untouched) if the position is out of bounds or has no emitted
+// cell at that texel. Used by the per-edge crack and overlap-extension tests.
+__device__ inline bool sampleNeighborDisparity(
   PtrStep<const uint16_t> disparity,
   PtrStep<const uint8_t> maxFlatLevel,
   int W, int H,
   int nx, int ny,
-  float dRep,
-  float threshold) {
+  float& outDisparity) {
   if (nx < 0 || ny < 0 || nx >= W || ny >= H) return false;
   if (maxFlatLevel.ptr(ny)[nx] == 0) return false;
-  float dN = float(disparity.ptr(ny)[nx]);
-  return (dN - dRep) > threshold;
+  outDisparity = float(disparity.ptr(ny)[nx]);
+  return true;
 }
 
 // ----- Emit verts + indices for each anchor cell -----
@@ -229,29 +226,49 @@ __global__ void emitGeometryKernel(
   float d01 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, x, yBottom, L);
   float d11 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, xRight, yBottom, L);
 
-  // Discontinuity test: any non-TL corner whose welded disparity is further than the
-  // threshold from the cell's representative reverts to the representative, leaving an
-  // intentional crack between this cell and whichever neighbor's value the weld would
-  // have pulled in. For same-level edges the welded value is the neighbor's
-  // representative, so this is exactly "disparity change across the edge"; for
-  // coarser-neighbor T-junctions it's the edge lerp vs ours.
-  if (fabsf(d10 - dRep) > threshold) d10 = dRep;
-  if (fabsf(d01 - dRep) > threshold) d01 = dRep;
-  if (fabsf(d11 - dRep) > threshold) d11 = dRep;
+  // Sample disparity at the texel just past each edge (and at the diagonal corner).
+  // Direct samples drive extension; the corner-snap test below uses the welded values.
+  float dN_L = 0.0f, dN_R = 0.0f, dN_T = 0.0f, dN_B = 0.0f, dN_BR = 0.0f;
+  bool hasL = sampleNeighborDisparity(disparity, maxFlatLevel, W, H, x - 1, y, dN_L);
+  bool hasR = sampleNeighborDisparity(disparity, maxFlatLevel, W, H, xRight, y, dN_R);
+  bool hasT = sampleNeighborDisparity(disparity, maxFlatLevel, W, H, x, y - 1, dN_T);
+  bool hasB = sampleNeighborDisparity(disparity, maxFlatLevel, W, H, x, yBottom, dN_B);
+  bool hasBR = sampleNeighborDisparity(disparity, maxFlatLevel, W, H, xRight, yBottom, dN_BR);
 
-  // Per-edge overlap: when an edge is cracked AND C is the far side (lower disparity),
-  // extend C's quad outward past the natural cell boundary into the gap. The disparity
-  // at extended corners is dRep (already snapped above), so the cell's far-side surface
-  // stretches behind the near-side neighbor's edge, hiding the visible crack from
-  // off-axis viewpoints. The extension is computed in q12.4 fixed-point so partial-cell
+  // Per-corner crack test: each non-TL corner's *welded* disparity is compared against
+  // dRep. Testing the welded value (rather than the direct neighbor texel) catches
+  // T-junction-lerp discontinuities the direct-texel test would miss -- e.g. when a
+  // coarser neighbor Q matches dRep but Q's vertex-space edge lerp samples a texel
+  // outside Q, producing a welded value mid-way between dRep and a totally unrelated
+  // disparity. A missing/invalid neighbor (OOB, trim, or disparity over the valid
+  // ceiling) also counts as a crack -- the welded value would be reading from
+  // unfiltered raw disparity otherwise.
+  bool d10Crack = !hasR || fabsf(d10 - dRep) > threshold;
+  bool d01Crack = !hasB || fabsf(d01 - dRep) > threshold;
+  bool d11Crack = !hasBR || fabsf(d11 - dRep) > threshold;
+
+  // Propagate per-edge so corners on the same edge always crack together. Without this
+  // step, e.g. d11 cracking alone (diagonal outlier) would leave the right and bottom
+  // edges welded with one corner snapped to dRep -- the asymmetric tilt artifact.
+  bool rightCrack = d10Crack || d11Crack;
+  bool bottomCrack = d01Crack || d11Crack;
+  if (rightCrack) d10 = dRep;
+  if (bottomCrack) d01 = dRep;
+  if (rightCrack || bottomCrack) d11 = dRep;
+
+  // Per-edge overlap: extend C outward when the direct neighbor across an edge has
+  // clearly higher disparity (i.e. is closer to the camera) than dRep. Independent of
+  // the corner-snap logic above -- extension is anchored to the direct neighbor texel,
+  // not to T-junction lerp values, so the extrusion direction tracks "neighbor closer
+  // => I extend past it". The extension is in q12.4 fixed-point so partial-cell
   // offsets (e.g. cellOverlapMultiplier = 1.1) survive serialization to uint16_t.
   int extQ = (cellOverlapMultiplier > 1.0f)
     ? int(roundf((cellOverlapMultiplier - 1.0f) * float(sz) * float(kAdaptiveMeshGridScale)))
     : 0;
-  int extLQ = (extQ > 0 && shouldExtendTowardsNeighbor(disparity, maxFlatLevel, W, H, x - 1, y, dRep, threshold)) ? extQ : 0;
-  int extRQ = (extQ > 0 && shouldExtendTowardsNeighbor(disparity, maxFlatLevel, W, H, xRight, y, dRep, threshold)) ? extQ : 0;
-  int extTQ = (extQ > 0 && shouldExtendTowardsNeighbor(disparity, maxFlatLevel, W, H, x, y - 1, dRep, threshold)) ? extQ : 0;
-  int extBQ = (extQ > 0 && shouldExtendTowardsNeighbor(disparity, maxFlatLevel, W, H, x, yBottom, dRep, threshold)) ? extQ : 0;
+  int extLQ = (extQ > 0 && hasL && (dN_L - dRep) > threshold) ? extQ : 0;
+  int extRQ = (extQ > 0 && hasR && (dN_R - dRep) > threshold) ? extQ : 0;
+  int extTQ = (extQ > 0 && hasT && (dN_T - dRep) > threshold) ? extQ : 0;
+  int extBQ = (extQ > 0 && hasB && (dN_B - dRep) > threshold) ? extQ : 0;
 
   uint16_t vxL = uint16_t(max(0, x * kAdaptiveMeshGridScale - extLQ));
   uint16_t vyT = uint16_t(max(0, y * kAdaptiveMeshGridScale - extTQ));
