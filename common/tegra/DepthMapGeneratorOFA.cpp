@@ -461,14 +461,22 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     // TODO: This really should be merged in with the remap above -- write straight to the CUarray, skip a copy.
     PER_EYE copyGpuMatToNvSciBuf(vd->m_rectifiedLuma[eyeIdx], vd->m_ofaInputBuffer[eyeIdx], (CUstream) m_globalStream.cudaPtr());
 
-    // Signal preprocess semaphore for OFA handoff
-    vd->m_ofaPreSync->signalCudaToNvSci((CUstream) m_globalStream.cudaPtr());
+    if (vd->m_ofaPreFenceInserted) {
+      // We already inserted the pre-fence for vd->m_ofaPreSync on a previous loop,
+      // but the processing didn't happen for some reason. Don't re-insert the pre-fence;
+      // a failure in NvMediaIOFAProcessFrame does not clear the pre-fence list, and we'll
+      // end up crashing after filling the pre-fence list.
+    } else {
+      // Signal preprocess semaphore for OFA handoff
+      vd->m_ofaPreSync->signalCudaToNvSci((CUstream) m_globalStream.cudaPtr());
 
-    // Tell OFA to wait on the pre fence for this frame
-    NVMEDIA_CHECK(NvMediaIOFAInsertPreNvSciSyncFence(m_iofa, &vd->m_ofaPreSync->m_nvSciSyncFence));
+      // Tell OFA to wait on the pre fence for this frame
+      NVMEDIA_CHECK(NvMediaIOFAInsertPreNvSciSyncFence(m_iofa, &vd->m_ofaPreSync->m_nvSciSyncFence));
+      vd->m_ofaPreFenceInserted = true;
 
-    // We must clear the pre-fence after handing it off to IOFA, as prep for the next loop.
-    NvSciSyncFenceClear(&vd->m_ofaPreSync->m_nvSciSyncFence);
+      // We must clear the pre-fence after handing it off to IOFA, as prep for the next loop.
+      NvSciSyncFenceClear(&vd->m_ofaPreSync->m_nvSciSyncFence);
+    }
 
     // EOF sync object needs to be provided before frame submission
     NVMEDIA_CHECK(NvMediaIOFASetNvSciSyncObjforEOF(m_iofa, vd->m_ofaEofSync->m_nvSciSync));
@@ -476,8 +484,11 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     // OFA processing
     vd->m_ofaSubmissionOK = NVMEDIA_CHECK_NONFATAL(NvMediaIOFAProcessFrame(m_iofa, &vd->m_ofaSurfArray, &m_iofaProcessParams, /*pEpiInfo=*/ nullptr, /*pROIParams=*/ nullptr));
 
-    // Get EOF fence so CUDA can wait on it later
     if (vd->m_ofaSubmissionOK) {
+      // OFA submission OK means that the pre-fence will have been consumed.
+      vd->m_ofaPreFenceInserted = false;
+
+      // Get EOF fence so CUDA can wait on it later
       NVMEDIA_CHECK(NvMediaIOFAGetEOFNvSciSyncFence(m_iofa, vd->m_ofaEofSync->m_nvSciSync, &vd->m_ofaEofSync->m_nvSciSyncFence));
     }
 

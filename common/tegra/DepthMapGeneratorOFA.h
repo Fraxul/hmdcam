@@ -83,6 +83,7 @@ protected:
     NvMediaIofaBufArray m_ofaSurfArray;
 
     bool m_ofaSubmissionOK = false;
+    bool m_ofaPreFenceInserted = false;
   };
 
   virtual ViewData* newEmptyViewData() { return new ViewDataOFA(); }
