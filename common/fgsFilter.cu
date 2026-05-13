@@ -372,7 +372,8 @@ __global__ void hPassPartitionKernel(
   // Pointer cache into row i of cur (final writeback target).
   T* const curRowGmem = cur.ptr(i);
 
-  // SMEM cache layout per warp: [Chor (W __nv_bfloat16s)] [interD (W floats)] [cur (W T)].
+  // SMEM cache layout per warp: [cur (W T)] [interD (W floats)] [Chor (W __nv_bfloat16s)].
+  // Sorted in decreasing alignment requirement.
   // Chor is stored as bf16 -- 16-bit, but keeps fp32's 8-bit exponent so
   // values like exp(-30) (which arise for |p1-p2|/sigma >> 1 at edges)
   // stay representable instead of flushing to zero. fp16 was tried first
@@ -383,15 +384,19 @@ __global__ void hPassPartitionKernel(
   //
   // Halving Chor's footprint lets one more block fit per SM (SMEM is the
   // occupancy binder per ncu's advisory).
-  // Caller guarantees W is even, so the bf16->float region transition is
-  // 4-byte aligned without explicit padding.
+  //
+  // Depending on W, we may need to pad at the end of the bfloat16 region.
+  //
   extern __shared__ char smemRaw[];
   const int warpInBlock = threadIdx.y;
-  const size_t warpStride = (sizeof(__nv_bfloat16) + sizeof(float) + sizeof(T)) * W;
+
+  // Round up warp stride to a multiple of 16 bytes -- realign after the bfloat16 region.
+  const size_t warpStride = (((sizeof(__nv_bfloat16) + sizeof(float) + sizeof(T)) * W) + 15) & (~(15u));
+
   char* const warpSmem = smemRaw + warpInBlock * warpStride;
-  __nv_bfloat16* const smemChor = reinterpret_cast<__nv_bfloat16*>(warpSmem);
-  float* const interDRow = reinterpret_cast<float*>(smemChor + W);
-  T* const curRow = reinterpret_cast<T*>(interDRow + W);
+  T* const curRow = reinterpret_cast<T*>(warpSmem);
+  float* const interDRow = reinterpret_cast<float*>(curRow + W);
+  __nv_bfloat16* const smemChor = reinterpret_cast<__nv_bfloat16*>(interDRow + W);
 
   // Cooperative coalesced load of Chor + cur from GMEM into SMEM.
   for (int k = tid; k < W; k += 32) {
@@ -622,15 +627,16 @@ void fgsFilter(
   const dim3 trGrid_fwd(divUp(W, kTransposeTile), divUp(H, kTransposeTile));
   const dim3 trGrid_back(divUp(H, kTransposeTile), divUp(W, kTransposeTile));
 
-  // Dynamic SMEM size per block: per-warp (Chor + interD + cur). Chor is
+  // Dynamic SMEM size per block: per-warp (cur + interD + Chor). Chor is
   // stored in SMEM as bf16 (see kernel) to free up enough SMEM for one
-  // more block per SM. The kernel assumes the per-warp Chor region is
-  // followed by a 4-byte-aligned interD region, which is true as long as
-  // W is even.
+  // more block per SM.
+  //
+  // We pad the warp SMEM size to a multiple of 16 bytes, which handles
+  // alignment issues that could be caused by the bfloat16 section.
   CV_Assert((W & 1) == 0 && (H & 1) == 0);
   const size_t tBytes = (srcType == CV_32FC1) ? sizeof(float) : sizeof(float2);
-  const size_t hSmemBytes = static_cast<size_t>(kWarpsPerBlock) * (sizeof(__nv_bfloat16) + sizeof(float) + tBytes) * W;
-  const size_t vSmemBytes = static_cast<size_t>(kWarpsPerBlock) * (sizeof(__nv_bfloat16) + sizeof(float) + tBytes) * H;
+  const size_t hSmemBytes = static_cast<size_t>(kWarpsPerBlock) * ((((sizeof(__nv_bfloat16) + sizeof(float) + tBytes) * W) + 15) & (~(15u)));
+  const size_t vSmemBytes = static_cast<size_t>(kWarpsPerBlock) * ((((sizeof(__nv_bfloat16) + sizeof(float) + tBytes) * H) + 15) & (~(15u)));
 
   // The default per-kernel dynamic SMEM cap on Ampere is 48 KB; the
   // float2 H pass needs ~60 KB at W=960. Opt in to the architecture's
