@@ -11,13 +11,15 @@
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
-#include "common/disparityFill.h"
+#include "common/disparityOcclusionMask.h"
 #include "common/disparityTemporalFilter.h"
 #include "common/medianFilter.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
+#include "rhi/vk/RHIInteropBufferGL.h"
+#include "rhi/vk/RHIInteropSurfaceGL.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
@@ -127,11 +129,13 @@ DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) :
   // Set up a good initial state for the frame timing events
   CUDA_CHECK_NONFATAL(cuEventRecord(m_finalizeDisparityStartEvent, (CUstream) m_globalStream.cudaPtr()));
   CUDA_CHECK_NONFATAL(cuEventRecord(m_finalizeDisparityFinishedEvent, (CUstream) m_globalStream.cudaPtr()));
-
 }
 
 void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
   m_cameraSystem = cs;
+
+  // Create interop sync. initWithCameraSystem should happen late enough that we have RHI access.
+  m_interopSync = new RHIInteropSync();
 
   // Compute internal dimensions
   m_internalWidth = cameraStreamWidth() / m_algoDownsampleX;
@@ -455,7 +459,16 @@ void DepthMapGenerator::renderIMGUI() {
 
   // Common processing settings
   ImGui::Checkbox("Median filter", &m_useMedianFilter);
-  ImGui::Checkbox("Hole-filling pass", &m_useHoleFillingPass);
+  ImGui::Checkbox("Occlusion mask", &m_useOcclusionMask);
+  if (m_useOcclusionMask) {
+    const uint32_t windowMin = 0, windowMax = 256;
+    ImGui::DragScalar("Search window (px, 0=auto)", ImGuiDataType_U32, &m_occlusionMaskSearchWindow, /*v_speed=*/ 1, &windowMin, &windowMax, "%u", /*flags=*/ 0);
+    ImGui::DragFloat("Hysteresis (px)", &m_occlusionMaskHysteresis, /*v_speed=*/ 0.25f, /*v_min=*/ 0.0f, /*v_max=*/ 16.0f, "%.2f");
+    const uint8_t confMin = 0, confMax = 255;
+    ImGui::DragScalar("Confidence ceiling", ImGuiDataType_U8, &m_occlusionMaskConfidenceCeiling, /*v_speed=*/ 1, &confMin, &confMax, "%u", /*flags=*/ 0);
+    ImGui::Checkbox("Smear background into deadzone", &m_occlusionMaskSmear);
+  }
+
   ImGui::Checkbox("Temporal filter", &m_useTemporalFilter);
 
   if (m_useTemporalFilter) {
@@ -566,6 +579,14 @@ void DepthMapGenerator::processFrame() {
     // Let the backend impl update its derived view data components
     this->internalUpdateViewData();
 
+    // Rebuild rectified-luma CUtexObjects to match the (possibly reallocated) underlying GpuMats.
+    // Backends are only allowed to (re)allocate ViewData buffers inside internalUpdateViewData(),
+    // so this is the one place we need to refresh the wrappers.
+    for (ViewData* vd : m_viewData) {
+      if (vd)
+        vd->rebuildRectifiedLumaTextures();
+    }
+
     m_viewDataRevision = m_cameraSystem->calibrationDataRevision();
     uint64_t endTimeNs = currentTimeNs();
     printf("DepthMapGenerator: viewData update took %.3f ms\n", deltaTimeMs(startTimeNs, endTimeNs));
@@ -584,6 +605,9 @@ void DepthMapGenerator::processFrame() {
   }
 
   this->internalProcessFrame();
+
+  // After frame processing has finished, sync the CUDA updates to GL.
+  m_interopSync->signalCUDAToRHI((CUstream) m_globalStream.cudaPtr());
 }
 
 void DepthMapGenerator::internalFinalizeDisparityTexture() {
@@ -610,11 +634,26 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       workMat = &vd->m_disparityMedianFilterDestGpuMat;
     }
 
-    if (m_useHoleFillingPass) {
-      // Filter and attempt to reconstruct invalid disparities. This writes in-place.
-      auto chromaTex = m_cameraSystem->cameraProvider()->cudaChromaTexObject(vd->m_leftCameraIndex);
-
-      disparityFill(chromaTex, *workMat, maxDisparityRaw(), vd->m_disparityMinMaxMips, (CUstream) m_globalStream.cudaPtr());
+    if (m_useOcclusionMask) {
+      // Zero confidence on pixels in the left-of-foreground occlusion shadow
+      // so downstream filters treat them as gaps to inpaint rather than as
+      // noisy data to average over.
+      uint32_t searchWindow = m_occlusionMaskSearchWindow;
+      if (searchWindow == 0) {
+        // Auto: cover the worst-case shadow width = max disparity in pixels.
+        searchWindow = static_cast<uint32_t>(
+                         static_cast<float>(maxDisparityRaw()) * disparityPrescale()) +
+          1;
+      }
+      disparityOcclusionMask(
+        *workMat, vd->m_disparityConfidence,
+        static_cast<uint16_t>(maxDisparityRaw()),
+        disparityPrescale(),
+        searchWindow,
+        m_occlusionMaskHysteresis,
+        m_occlusionMaskConfidenceCeiling,
+        /*smearLeftScanPixels=*/ m_occlusionMaskSmear ? searchWindow : 0,
+        (CUstream) m_globalStream.cudaPtr());
     }
 
     if (m_useTemporalFilter) {
@@ -633,29 +672,11 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       workMat = &vd->currentDisparityMat();
     }
 
-    // Copy filtered disparity to render texture
-    RHICUDA::copyGpuMatToSurface(*workMat, vd->m_disparityTexture, m_globalStream);
+    // Copy filtered disparity into the interop surface's CUDA-side storage.
+    vd->m_disparityTexture->copyFromGpuMatAsync(*workMat, (CUstream) m_globalStream.cudaPtr());
 
-    // Build the adaptive triangle mesh from the post-processed disparity. Map the GL-side
-    // VBO/IBO/indirect-args buffers into CUDA, run the kernels, then unmap so subsequent
-    // GL draws can read them.
+    // Build the adaptive triangle mesh from the post-processed disparity.
     {
-      CUstream cudaStream = (CUstream) m_globalStream.cudaPtr();
-      CUgraphicsResource resources[3] = {
-        vd->m_adaptiveVertexBuffer->cuGraphicsResource(),
-        vd->m_adaptiveIndexBuffer->cuGraphicsResource(),
-        vd->m_adaptiveIndirectArgsBuffer->cuGraphicsResource(),
-      };
-      for (CUgraphicsResource r : resources)
-        CUDA_CHECK(cuGraphicsResourceSetMapFlags(r, CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD));
-      CUDA_CHECK(cuGraphicsMapResources(3, resources, cudaStream));
-
-      CUdeviceptr d_vbo = 0, d_ibo = 0, d_indirect = 0;
-      size_t mappedSize = 0;
-      CUDA_CHECK(cuGraphicsResourceGetMappedPointer(&d_vbo, &mappedSize, resources[0]));
-      CUDA_CHECK(cuGraphicsResourceGetMappedPointer(&d_ibo, &mappedSize, resources[1]));
-      CUDA_CHECK(cuGraphicsResourceGetMappedPointer(&d_indirect, &mappedSize, resources[2]));
-
       // Disable trim/validity masking when running with a fixed disparity, so the resulting
       // mesh covers the full grid (matches the legacy fixed-disparity rendering behavior).
       const bool useFixedDisparity = vd->anyCameraStreamFailed() || m_debugUseFixedDisparity;
@@ -670,24 +691,26 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
         static_cast<uint16_t>(m_adaptiveFlatnessThreshold),
         static_cast<uint16_t>(m_adaptiveDepthDiscontinuityThreshold),
         effTrimL, effTrimT, effTrimR, effTrimB,
-        d_vbo, d_ibo, d_indirect,
+        vd->m_adaptiveVertexBuffer->cudaPointer(),
+        vd->m_adaptiveIndexBuffer->cudaPointer(),
+        vd->m_adaptiveIndirectArgsBuffer->cudaPointer(),
         vd->m_adaptiveScratch,
-        cudaStream);
-
-      CUDA_CHECK(cuGraphicsUnmapResources(3, resources, cudaStream));
+        (CUstream) m_globalStream.cudaPtr());
     }
 
     // Populate debug-residual texture.
     if (m_populateDebugTextures) {
+      cudaStream_t cudaStream = (cudaStream_t) m_globalStream.cudaPtr();
+
       if (!vd->m_debugResidual)
-        vd->m_debugResidual = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_debugResidual = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
 
       if (!vd->m_confidenceTexture)
-        vd->m_confidenceTexture = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_confidenceTexture = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
 
-      RHICUDA::copyGpuMatToSurface(vd->m_disparityDebugResidual, vd->m_debugResidual, (CUstream) m_globalStream.cudaPtr());
+      vd->m_debugResidual->copyFromGpuMatAsync(vd->m_disparityDebugResidual, cudaStream);
 
-      RHICUDA::copyGpuMatToSurface(vd->m_disparityConfidence, vd->m_confidenceTexture, (CUstream) m_globalStream.cudaPtr());
+      vd->m_confidenceTexture->copyFromGpuMatAsync(vd->m_disparityConfidence, cudaStream);
     }
 
     if (debugDisparityCPUAccessEnabled()) {
@@ -708,7 +731,49 @@ uint32_t divUp(uint32_t x, uint32_t y) {
   return (x + (y - 1)) / y;
 }
 
-void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat format) {
+DepthMapGenerator::ViewData::~ViewData() {
+  for (size_t i = 0; i < 2; ++i) {
+    if (m_rectifiedLumaTex[i]) {
+      cuTexObjectDestroy(m_rectifiedLumaTex[i]);
+      m_rectifiedLumaTex[i] = 0;
+    }
+  }
+}
+
+void DepthMapGenerator::ViewData::rebuildRectifiedLumaTextures() {
+  for (size_t i = 0; i < 2; ++i) {
+    if (m_rectifiedLumaTex[i]) {
+      CUDA_CHECK(cuTexObjectDestroy(m_rectifiedLumaTex[i]));
+      m_rectifiedLumaTex[i] = 0;
+    }
+    if (m_rectifiedLuma[i].empty())
+      continue;
+
+    assert(m_rectifiedLuma[i].type() == CV_8U);
+
+    CUDA_RESOURCE_DESC resDesc;
+    memset(&resDesc, 0, sizeof(resDesc));
+    resDesc.resType = CU_RESOURCE_TYPE_PITCH2D;
+    resDesc.res.pitch2D.devPtr = (CUdeviceptr) m_rectifiedLuma[i].cudaPtr();
+    resDesc.res.pitch2D.format = CU_AD_FORMAT_UNSIGNED_INT8;
+    resDesc.res.pitch2D.numChannels = 1;
+    resDesc.res.pitch2D.width = m_rectifiedLuma[i].cols;
+    resDesc.res.pitch2D.height = m_rectifiedLuma[i].rows;
+    resDesc.res.pitch2D.pitchInBytes = m_rectifiedLuma[i].step;
+
+    CUDA_TEXTURE_DESC texDesc;
+    memset(&texDesc, 0, sizeof(texDesc));
+    texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
+    texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
+    texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
+    texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
+    texDesc.maxAnisotropy = 1;
+
+    CUDA_CHECK(cuTexObjectCreate(&m_rectifiedLumaTex[i], &resDesc, &texDesc, /*resourceViewDescriptor=*/ nullptr));
+  }
+}
+
+void DepthMapGenerator::ViewData::updateDisparityTexture(DepthMapGenerator* depthMapGenerator, uint32_t w, uint32_t h, RHISurfaceFormat format) {
   int cvType = 0;
 
   switch (format) {
@@ -744,27 +809,21 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(uint32_t w, uint32_t h,
   // Allocate buffer for median filter output. This should be identical to m_disparityGpuMat.
   m_disparityMedianFilterDestGpuMat.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
 
-  // Create minmax mipchain for filtering
-  // TODO parameterize pass-count
-  const int passes = 2;
-  m_disparityMinMaxMips.resize(passes * 3);
-  printf("Disparity base %ux%u\n", w, h);
-
-  for (size_t pass = 0; pass < m_disparityMinMaxMips.size(); ++pass) {
-    uint32_t passDivider = 1 << (pass + 1);
-    m_disparityMinMaxMips[pass].create(/*rows=*/ divUp(h, passDivider), /*cols=*/ divUp(w, passDivider), CV_16UC4);
-    printf("Disparity MinMaxMip pass %zu: %ux%u\n", pass, m_disparityMinMaxMips[pass].cols, m_disparityMinMaxMips[pass].rows);
-  }
-
-  m_disparityTexture = rhi()->newTexture2D(w, h, RHISurfaceDescriptor(format));
+  // Disparity output: VK-allocated, dual-imported into GL (texture) and CUDA
+  // (the surface's GpuMat). Dropping the legacy newTexture2D + per-frame
+  // copyGpuMatToSurface(cuGraphicsMap/Unmap) pair eliminates the ~150-200µs
+  // GL-context-switch bubble that used to show up around the map call.
+  m_disparityTexture = RHIInteropSurfaceGL::newTexture2D(w, h, RHISurfaceDescriptor(format), RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter));
 
   // Adaptive-mesh buffers. Worst case is one quad per leaf cell (every cell stays at level 0).
+  // Interop-backed so the CUDA mesh-build kernels can write through a stable
+  // CUdeviceptr without a per-frame cuGraphicsMap/Unmap round-trip.
   const size_t worstCaseQuads = size_t(w) * size_t(h);
   const size_t vboBytes = worstCaseQuads * 4 * sizeof(AdaptiveMeshVertex);
   const size_t iboBytes = worstCaseQuads * 6 * sizeof(uint32_t);
-  m_adaptiveVertexBuffer = rhi()->newEmptyBuffer(vboBytes, kBufferUsageGPUPrivate);
-  m_adaptiveIndexBuffer = rhi()->newEmptyBuffer(iboBytes, kBufferUsageGPUPrivate);
-  m_adaptiveIndirectArgsBuffer = rhi()->newEmptyBuffer(2 * sizeof(DrawElementsIndirectCommand), kBufferUsageGPUPrivate);
+  m_adaptiveVertexBuffer = RHIInteropBufferGL::newBuffer(vboBytes, kBufferUsageGPUPrivate, RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter));
+  m_adaptiveIndexBuffer = RHIInteropBufferGL::newBuffer(iboBytes, kBufferUsageGPUPrivate, RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter));
+  m_adaptiveIndirectArgsBuffer = RHIInteropBufferGL::newBuffer(2 * sizeof(DrawElementsIndirectCommand), kBufferUsageGPUPrivate, RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter));
 
   m_adaptiveScratch.allocate(w, h);
 }

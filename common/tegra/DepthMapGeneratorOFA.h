@@ -62,8 +62,7 @@ protected:
     // Remap payloads for rectification
     cv::cuda::GpuMat m_undistortRectifyMap_gpu[2];
 
-    // Output from remap+downsample
-    cv::cuda::GpuMat m_rectifiedMat[2];
+    // The remapped luma is kept on the base class as m_rectifiedLuma[2].
 
     // Reference to the IOFA, which is required to unregister buffers during destruction
     NvMediaIofa* m_iofa = nullptr;
@@ -107,6 +106,7 @@ protected:
   // Cost-to-confidence mapping
   uint8_t m_lowCostThreshold = 4;
   uint8_t m_highCostThreshold = 48;
+  float m_costCurve = 1.0f;
 
 
 private:

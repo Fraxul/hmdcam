@@ -59,7 +59,7 @@ void DepthMapGeneratorMock::internalUpdateViewData() {
     if (!vd->m_isStereoView)
       continue;
 
-    vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
+    vd->updateDisparityTexture(this, internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
     vd->fakeDisparity = cv::Mat(internalHeight(), internalWidth(), CV_16U);
 

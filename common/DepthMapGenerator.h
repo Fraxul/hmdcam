@@ -7,6 +7,9 @@
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
 #include "rhi/cuda/CudaUtil.h"
+#include "rhi/vk/RHIInteropSync.h"
+#include "rhi/vk/RHIInteropSurfaceGL.h"
+#include "rhi/vk/RHIInteropBufferGL.h"
 #include <glm/glm.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
@@ -87,6 +90,9 @@ protected:
   cv::cuda::Stream m_globalStream;
   NppStreamContext m_nppStreamContext;
 
+  // CUDA-to-RHI sync object
+  RHIInteropSync::ptr m_interopSync;
+
   virtual void internalLoadSettings(cv::FileStorage&) = 0;
   virtual void internalSaveSettings(cv::FileStorage&) = 0;
   virtual void internalRenderIMGUI() = 0;
@@ -123,7 +129,11 @@ protected:
 
   struct ViewData {
     ViewData() {}
-    virtual ~ViewData() {}
+    virtual ~ViewData();
+
+    // Rebuild the CUtexObject wrappers around m_rectifiedLuma[]. Call after
+    // any reallocation of those mats (i.e. after internalUpdateViewData()).
+    void rebuildRectifiedLumaTextures();
 
     bool m_isStereoView = false;
     bool m_isVerticalStereo = false;
@@ -141,8 +151,7 @@ protected:
     glm::vec4 m_depthParameters; // Parameters extracted from the view's stereoDisparityToDepth matrix
 
 
-    void updateDisparityTexture(uint32_t w, uint32_t h, RHISurfaceFormat);
-    std::vector<cv::cuda::GpuMat> m_disparityMinMaxMips;
+    void updateDisparityTexture(DepthMapGenerator*, uint32_t w, uint32_t h, RHISurfaceFormat);
 
     // Current and previous frame mats
     cv::cuda::GpuMat& currentDisparityMat() { return m_disparityGpuMat[m_currentMatWriteIndex]; }
@@ -154,8 +163,14 @@ protected:
 
     cv::cuda::GpuMat m_disparityMedianFilterDestGpuMat;
 
-    RHISurface::ptr m_disparityTexture;
-    RHISurface::ptr m_leftGray, m_rightGray, m_confidenceTexture, m_debugResidual;
+    // Per-camera rectified luma at the backend's algoInput resolution
+    // (1x or 2x the disparity resolution). Owned by the backend; the base
+    // class wraps each in a CUtexObject for use in filtering.
+    cv::cuda::GpuMat m_rectifiedLuma[2];
+    CUtexObject m_rectifiedLumaTex[2] = {0, 0};
+
+    RHIInteropSurfaceGL::ptr m_disparityTexture;
+    RHIInteropSurfaceGL::ptr m_leftGray, m_rightGray, m_confidenceTexture, m_debugResidual;
 
     cv::Mat m_debugCPUDisparityInput[2]; // L/R inputs to stereo matching algorithm
     cv::Mat m_debugCPUDisparity;
@@ -166,9 +181,9 @@ protected:
     // post-processed disparity. Buffers are GPU-private and CUDA-mapped during the build,
     // then drawn via glDrawElementsIndirect. Sized for the worst case (every cell is its
     // own quad) so they never need reallocation.
-    RHIBuffer::ptr m_adaptiveVertexBuffer;
-    RHIBuffer::ptr m_adaptiveIndexBuffer;
-    RHIBuffer::ptr m_adaptiveIndirectArgsBuffer; // 2x DrawElementsIndirectCommand: [stereo, mono]
+    RHIInteropBufferGL::ptr m_adaptiveVertexBuffer;
+    RHIInteropBufferGL::ptr m_adaptiveIndexBuffer;
+    RHIInteropBufferGL::ptr m_adaptiveIndirectArgsBuffer; // 2x DrawElementsIndirectCommand: [stereo, mono]
     DepthMeshAdaptiveScratch m_adaptiveScratch;
 
   private:
@@ -192,10 +207,28 @@ protected:
 
   // Processing settings
   bool m_useMedianFilter = true;
-  bool m_useHoleFillingPass = true;
   bool m_useTemporalFilter = true;
   float m_temporalFilterStableThreshold = 8.0f;
   uint8_t m_temporalFilterAlpha = 48;
+
+  // Stereo half-occlusion mask pre-pass: zeroes confidence on pixels in the
+  // "shadow" to the left of foreground objects (no possible match in right
+  // view) before any of the filters see them.
+  bool m_useOcclusionMask = true;
+  // 0 = derive from max disparity (cover the worst-case shadow width).
+  uint32_t m_occlusionMaskSearchWindow = 0;
+  // Slack in pixels on the geometric occlusion test; smaller is more
+  // aggressive about marking near-edge pixels as occluded.
+  float m_occlusionMaskHysteresis = 2.0f;
+  // Pixels whose own confidence is >= this value are treated as having a
+  // real right-view match and skipped by the mask. Tune with the cost-to-
+  // confidence curve: should sit a bit below the value that high-quality
+  // OFA matches typically produce.
+  uint8_t m_occlusionMaskConfidenceCeiling = 192;
+  // After marking a pixel occluded, also overwrite its disparity with the
+  // nearest high-confidence disparity to the left (background fill). The
+  // scan distance reuses the search window.
+  bool m_occlusionMaskSmear = true;
 
   // Render settings
   int m_trimLeft = 8, m_trimTop = 8;

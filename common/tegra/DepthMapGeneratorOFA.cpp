@@ -12,6 +12,7 @@
 #include "rhi/RHISurface.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
+#include "rhi/vk/RHIInteropSurfaceGL.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
@@ -263,7 +264,7 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
     // Need IOFA pointer for future resource destruction
     vd->m_iofa = m_iofa;
 
-    vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
+    vd->updateDisparityTexture(this, internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
     // If the gridSizeShift is <= 1, we build a half-res undistortRectifyMap to save some processing time in remapArray.
     unsigned int downsampleFactor = (kOFAGridSizeShift <= 1) ? 2 : 1;
@@ -274,7 +275,7 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
     }
 
     // Output from remapArray
-    PER_EYE vd->m_rectifiedMat[eyeIdx].create(cv::Size(m_algoInputWidth, m_algoInputHeight), CV_8U);
+    PER_EYE vd->m_rectifiedLuma[eyeIdx].create(cv::Size(m_algoInputWidth, m_algoInputHeight), CV_8U);
 
     // OFA input buffers
     PER_EYE {
@@ -359,15 +360,10 @@ void copyNvSciBufToGpuMat(NvSciCudaInteropBuffer* buf, cv::cuda::GpuMat& outGpuM
   CUDA_CHECK(cuMemcpy2DAsync(&copyDescriptor, stream));
 }
 
-void copyNvSciBufToSurface(NvSciCudaInteropBuffer* buf, RHISurface::ptr surface, CUstream stream) {
+void copyNvSciBufToInteropSurface(NvSciCudaInteropBuffer* buf, RHIInteropSurfaceGL* surface, CUstream stream) {
 
   size_t copyWidth = std::min<size_t>(surface->width(), buf->m_width);
   size_t copyHeight = std::min<size_t>(surface->height(), buf->m_height);
-
-  CUarray pSurfaceMip0Array;
-  CUDA_CHECK(cuGraphicsResourceSetMapFlags(surface->cuGraphicsResource(), CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD));
-  CUDA_CHECK(cuGraphicsMapResources(1, &surface->cuGraphicsResource(), stream));
-  CUDA_CHECK(cuGraphicsSubResourceGetMappedArray(&pSurfaceMip0Array, surface->cuGraphicsResource(), /*arrayIndex=*/ 0, /*mipLevel=*/ 0));
 
   CUDA_MEMCPY2D copyDescriptor;
   memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
@@ -375,16 +371,14 @@ void copyNvSciBufToSurface(NvSciCudaInteropBuffer* buf, RHISurface::ptr surface,
   copyDescriptor.srcArray = buf->m_cuArray;
 
   copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
-  copyDescriptor.dstArray = pSurfaceMip0Array;
-
-  //assert((bpp/8) == outGpuMat.elemSize()); // sanity check
+  // Driver/runtime CUarray handles share the same underlying object; the cast
+  // is the standard interop pattern when bridging the two API styles.
+  copyDescriptor.dstArray = reinterpret_cast<CUarray>(surface->cudaArray());
 
   size_t bytesPerPixel = rhiSurfaceFormatSize(surface->format());
   copyDescriptor.WidthInBytes = copyWidth * bytesPerPixel;
   copyDescriptor.Height = copyHeight;
   CUDA_CHECK(cuMemcpy2DAsync(&copyDescriptor, stream));
-
-  CUDA_CHECK(cuGraphicsUnmapResources(1, &surface->cuGraphicsResource(), stream));
 }
 
 
@@ -415,21 +409,24 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     copyNvSciBufToGpuMat(vd->m_ofaOutputDisparityBuffer, vd->currentDisparityMat(), (CUstream) m_globalStream.cudaPtr());
 
     // Process cost map into confidence
-    ofaCostToConfidence(vd->m_ofaOutputCostBuffer->m_cuTex, vd->m_disparityConfidence, m_lowCostThreshold, m_highCostThreshold, (CUstream) m_globalStream.cudaPtr());
+    ofaCostToConfidence(vd->m_ofaOutputCostBuffer->m_cuTex, vd->m_disparityConfidence, m_lowCostThreshold, m_highCostThreshold, m_costCurve, (CUstream) m_globalStream.cudaPtr());
 
     if (m_populateDebugTextures) {
+      CUstream cudaStream = (CUstream) m_globalStream.cudaPtr();
+
       if (!vd->m_leftGray)
-        vd->m_leftGray = rhi()->newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_leftGray = RHIInteropSurfaceGL::newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
 
       if (!vd->m_rightGray)
-        vd->m_rightGray = rhi()->newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_rightGray = RHIInteropSurfaceGL::newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
 
-      copyNvSciBufToSurface(vd->m_ofaInputBuffer[0], vd->m_leftGray, (CUstream) m_globalStream.cudaPtr());
-      copyNvSciBufToSurface(vd->m_ofaInputBuffer[1], vd->m_rightGray, (CUstream) m_globalStream.cudaPtr());
+      copyNvSciBufToInteropSurface(vd->m_ofaInputBuffer[0], vd->m_leftGray.get(), cudaStream);
+
+      copyNvSciBufToInteropSurface(vd->m_ofaInputBuffer[1], vd->m_rightGray.get(), cudaStream);
     }
 
     if (debugDisparityCPUAccessEnabled()) {
-      PER_EYE vd->m_rectifiedMat[eyeIdx].download(vd->m_debugCPUDisparityInput[eyeIdx], m_globalStream);
+      PER_EYE vd->m_rectifiedLuma[eyeIdx].download(vd->m_debugCPUDisparityInput[eyeIdx], m_globalStream);
     }
   }
 
@@ -458,11 +455,11 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     // Grid size shift of 1 (2x2) will have the half-res undistortRectifyMap and does not require downsampling here.
     // Grid size shift of 2 (4x4) will have a full-res undistortRectifyMap and also does not require downsampling here.
     unsigned int remapDownsampleFactor = (kOFAGridSizeShift == 0) ? 2 : 1;
-    PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), inputSize, vd->m_undistortRectifyMap_gpu[eyeIdx], vd->m_rectifiedMat[eyeIdx], (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ remapDownsampleFactor);
+    PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), inputSize, vd->m_undistortRectifyMap_gpu[eyeIdx], vd->m_rectifiedLuma[eyeIdx], (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ remapDownsampleFactor);
 
     // Populate NvSci input buffer
     // TODO: This really should be merged in with the remap above -- write straight to the CUarray, skip a copy.
-    PER_EYE copyGpuMatToNvSciBuf(vd->m_rectifiedMat[eyeIdx], vd->m_ofaInputBuffer[eyeIdx], (CUstream) m_globalStream.cudaPtr());
+    PER_EYE copyGpuMatToNvSciBuf(vd->m_rectifiedLuma[eyeIdx], vd->m_ofaInputBuffer[eyeIdx], (CUstream) m_globalStream.cudaPtr());
 
     // Signal preprocess semaphore for OFA handoff
     vd->m_ofaPreSync->signalCudaToNvSci((CUstream) m_globalStream.cudaPtr());
@@ -509,6 +506,7 @@ void DepthMapGeneratorOFA::internalRenderIMGUI() {
   const uint8_t u8Min = 0, u8Max = 255;
   ImGui::SliderScalar("Cost threshold low", ImGuiDataType_U8, &m_lowCostThreshold, &u8Min, &u8Max, "%u");
   ImGui::SliderScalar("Cost threshold high", ImGuiDataType_U8, &m_highCostThreshold, &u8Min, &u8Max, "%u");
+  ImGui::SliderFloat("Cost curve", &m_costCurve, 0.0f, 2.0f, "%.2f");
 }
 
 void DepthMapGeneratorOFA::internalRenderIMGUIPerformanceGraphs() {

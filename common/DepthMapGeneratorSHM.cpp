@@ -11,6 +11,7 @@
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
+#include "rhi/vk/RHIInteropSurfaceGL.h"
 #include <opencv2/cvconfig.h>
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
@@ -276,7 +277,7 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
       if (!vd->m_isStereoView)
         continue;
 
-      vd->updateDisparityTexture(internalWidth(), internalHeight(), m_disparityBytesPerPixel == 1 ? kSurfaceFormat_R8i : kSurfaceFormat_R16i);
+      vd->updateDisparityTexture(this, internalWidth(), internalHeight(), m_disparityBytesPerPixel == 1 ? kSurfaceFormat_R8i : kSurfaceFormat_R16i);
     }
 
     // Increment generation so the worker re-reads the settings when starting the next frame
@@ -421,14 +422,17 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     }
 
     if (m_populateDebugTextures) {
+      cudaStream_t cudaStream = (cudaStream_t) m_globalStream.cudaPtr();
+
       if (!vd->m_leftGray)
-        vd->m_leftGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_leftGray = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
 
       if (!vd->m_rightGray)
-        vd->m_rightGray = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_rightGray = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
 
-      RHICUDA::copyGpuMatToSurface(vd->resizedLeft_gpu, vd->m_leftGray, m_globalStream);
-      RHICUDA::copyGpuMatToSurface(vd->resizedRight_gpu, vd->m_rightGray, m_globalStream);
+      vd->m_leftGray->copyFromGpuMatAsync(vd->resizedLeft_gpu, cudaStream);
+
+      vd->m_rightGray->copyFromGpuMatAsync(vd->resizedRight_gpu, cudaStream);
     }
 
     if (debugDisparityCPUAccessEnabled()) {

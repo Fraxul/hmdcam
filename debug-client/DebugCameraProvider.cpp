@@ -448,7 +448,7 @@ void DebugCameraProvider::internalUpdateViewData() {
     if (!vd->m_isStereoView)
       continue;
 
-    vd->updateDisparityTexture(internalWidth(), internalHeight(), kSurfaceFormat_R16i);
+    vd->updateDisparityTexture(this, internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
     // Create receive Mats for the disparity inputs (algoInput size)
     vd->receivedDisparityInput[0].create(m_recvAlgoInputHeight, m_recvAlgoInputWidth, CV_8U);
@@ -482,11 +482,15 @@ void DebugCameraProvider::internalProcessFrame() {
     vd->currentDisparityMat().upload(vd->receivedDisparity);
 
     if (m_populateDebugTextures) {
+      // TODO: These are interop textures for consistency, but they have no sync direction.
+      // Maybe we should switch from using loadTextureData to doing a cuda memcpy into the CUDA side
+      // to follow the data path of the other backends.
+
       if (!vd->m_leftGray)
-        vd->m_leftGray = rhi()->newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_leftGray = RHIInteropSurfaceGL::newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionNone));
 
       if (!vd->m_rightGray)
-        vd->m_rightGray = rhi()->newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+        vd->m_rightGray = RHIInteropSurfaceGL::newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionNone));
 
       rhi()->loadTextureData(vd->m_leftGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[0].ptr());
       rhi()->loadTextureData(vd->m_rightGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[1].ptr());
@@ -496,7 +500,7 @@ void DebugCameraProvider::internalProcessFrame() {
       // Skip CUDA filtering, just upload the disparity and debug-residual directly
       if (m_populateDebugTextures) {
         if (!vd->m_debugResidual)
-          vd->m_debugResidual = rhi()->newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
+          vd->m_debugResidual = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionNone));
 
         rhi()->loadTextureData(vd->m_debugResidual, kVertexElementTypeUByte1N, vd->receivedDisparityDebugResidual.ptr());
       }
