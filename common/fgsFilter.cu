@@ -54,6 +54,7 @@ using cv::cuda::device::divUp;
 namespace {
 
 constexpr int kTransposeTile = 32;
+constexpr float kEPS = 1e-43f;
 
 // Component-wise helpers for the Thomas inner loop. Scalar (interD,
 // coef) arithmetic is always float; the per-pixel data lane T is either
@@ -103,34 +104,27 @@ __global__ void transposeKernel(PtrStepSz<T> in, PtrStep<T> out) {
   }
 }
 
-__global__ void packDispConfMulKernel(PtrStepSz<float> disp, PtrStep<float> conf, PtrStep<float2> out) {
+template <typename DispT>
+__global__ void packDispConfMulKernel(PtrStepSz<DispT> disp, PtrStep<uint8_t> conf, PtrStep<float2> out, float scale) {
   const int j = blockIdx.x * blockDim.x + threadIdx.x;
   const int i = blockIdx.y * blockDim.y + threadIdx.y;
   if (j >= disp.cols || i >= disp.rows) {
     return;
   }
-  const float d = disp.ptr(i)[j];
-  const float c = conf.ptr(i)[j];
+  const float d = static_cast<float>(disp.ptr(i)[j]) * scale;
+  const float c = static_cast<float>(conf.ptr(i)[j]) / 255.0f;
   out.ptr(i)[j] = make_float2(d * c, c);
 }
 
-__global__ void divideEpsPairKernel(PtrStepSz<float> num, PtrStep<float> den, PtrStep<float> out, float eps) {
-  const int j = blockIdx.x * blockDim.x + threadIdx.x;
-  const int i = blockIdx.y * blockDim.y + threadIdx.y;
-  if (j >= num.cols || i >= num.rows) {
-    return;
-  }
-  out.ptr(i)[j] = num.ptr(i)[j] / (den.ptr(i)[j] + eps);
-}
-
-__global__ void unpackDivideEpsKernel(PtrStepSz<float2> pair, PtrStep<float> out, float eps) {
+template <typename T>
+__global__ void unpackDivideScaleKernel(PtrStepSz<float2> pair, PtrStep<T> out, float scale) {
   const int j = blockIdx.x * blockDim.x + threadIdx.x;
   const int i = blockIdx.y * blockDim.y + threadIdx.y;
   if (j >= pair.cols || i >= pair.rows) {
     return;
   }
   const float2 p = pair.ptr(i)[j];
-  out.ptr(i)[j] = p.x / (p.y + eps);
+  out.ptr(i)[j] = T((p.x / (p.y + kEPS)) * scale);
 }
 
 } // namespace
@@ -138,46 +132,31 @@ __global__ void unpackDivideEpsKernel(PtrStepSz<float2> pair, PtrStep<float> out
 void fgsPackDispConfMul(
   const cv::cuda::GpuMat& disp,
   const cv::cuda::GpuMat& conf,
+  float scale,
   cv::cuda::GpuMat& out,
   CUstream stream) {
-  CV_Assert(disp.type() == CV_32FC1 && conf.type() == CV_32FC1);
+  CV_Assert(disp.type() == CV_16UC1 && conf.type() == CV_8UC1);
   CV_Assert(disp.size() == conf.size());
   if (out.cols != disp.cols || out.rows != disp.rows || out.type() != CV_32FC2) {
     out.create(disp.rows, disp.cols, CV_32FC2);
   }
   dim3 block(32, 8);
   dim3 grid(divUp(disp.cols, static_cast<int>(block.x)), divUp(disp.rows, static_cast<int>(block.y)));
-  packDispConfMulKernel<<<grid, block, 0, stream>>>(disp, conf, out);
+  packDispConfMulKernel<uint16_t><<<grid, block, 0, stream>>>(disp, conf, out, scale);
 }
 
-void fgsUnpackDivideEps(
+void fgsUnpackDivideScale(
   const cv::cuda::GpuMat& pair,
   cv::cuda::GpuMat& out,
-  float eps,
+  float scale,
   CUstream stream) {
   CV_Assert(pair.type() == CV_32FC2);
-  if (out.cols != pair.cols || out.rows != pair.rows || out.type() != CV_32FC1) {
-    out.create(pair.rows, pair.cols, CV_32FC1);
+  if (out.cols != pair.cols || out.rows != pair.rows || out.type() != CV_16UC1) {
+    out.create(pair.rows, pair.cols, CV_16UC1);
   }
   dim3 block(32, 8);
   dim3 grid(divUp(pair.cols, static_cast<int>(block.x)), divUp(pair.rows, static_cast<int>(block.y)));
-  unpackDivideEpsKernel<<<grid, block, 0, stream>>>(pair, out, eps);
-}
-
-void fgsDivideEpsPair(
-  const cv::cuda::GpuMat& num,
-  const cv::cuda::GpuMat& den,
-  cv::cuda::GpuMat& out,
-  float eps,
-  CUstream stream) {
-  CV_Assert(num.type() == CV_32FC1 && den.type() == CV_32FC1);
-  CV_Assert(num.size() == den.size());
-  if (out.cols != num.cols || out.rows != num.rows || out.type() != CV_32FC1) {
-    out.create(num.rows, num.cols, CV_32FC1);
-  }
-  dim3 block(32, 8);
-  dim3 grid(divUp(num.cols, static_cast<int>(block.x)), divUp(num.rows, static_cast<int>(block.y)));
-  divideEpsPairKernel<<<grid, block, 0, stream>>>(num, den, out, eps);
+  unpackDivideScaleKernel<uint16_t><<<grid, block, 0, stream>>>(pair, out, scale);
 }
 
 // ===== Partition-method FGS implementation =====

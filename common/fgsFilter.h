@@ -119,31 +119,24 @@ struct FGSFilterState {
   void release();
 };
 
-// Pairwise out = num / (den + eps), single-channel. Same shape and
-// stream as the existing fgsUnpackDivideEps, but operates on two
-// separate CV_32FC1 inputs instead of an interleaved CV_32FC2.
-void fgsDivideEpsPair(
-  const cv::cuda::GpuMat& num,
-  const cv::cuda::GpuMat& den,
-  cv::cuda::GpuMat& out,
-  float eps,
-  CUstream stream);
-
-// Pack (disp, conf) -> float2(disp*conf, conf) per pixel. Used to feed
-// the two-channel fused FGS path for confidence-weighted disparity
-// smoothing without an intermediate cv::cuda::multiply + merge pair.
+// Pack (disp, conf) -> float2(disp*scale*conf, conf) per pixel.
+// Used to feed the two-channel fused FGS path for confidence-weighted
+// disparity smoothing.
+// Assumes disp will be CV_16U and conf will be CV_8U.
 void fgsPackDispConfMul(
   const cv::cuda::GpuMat& disp,
   const cv::cuda::GpuMat& conf,
+  float scale,
   cv::cuda::GpuMat& out,
   CUstream stream);
 
 // Inverse of fgsPackDispConfMul, applied to the filtered pair:
-//   out = pair.x / (pair.y + eps)
+//   out = (pair.x / (pair.y + eps)) * scale
 // The eps floor guards against pixels that had near-zero filtered
 // confidence (would otherwise blow up the divide).
-void fgsUnpackDivideEps(
+// Writes CV_16U to out.
+void fgsUnpackDivideScale(
   const cv::cuda::GpuMat& pair,
   cv::cuda::GpuMat& out,
-  float eps,
+  float scale,
   CUstream stream);
