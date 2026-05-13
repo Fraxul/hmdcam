@@ -255,10 +255,15 @@ protected:
   // and more visible cracks at level transitions.
   int m_adaptiveFlatnessThreshold = 24;
 
-  // Adaptive-mesh path: max |sampled - lerped| disparity at a level-transition edge that
-  // still gets T-junction stitched. Steps larger than this stay as cracks so genuine
-  // depth discontinuities remain visible.
+  // Adaptive-mesh path: max disparity step across a quad edge that still gets welded.
+  // Edges with a larger step crack apart so genuine depth discontinuities remain
+  // visible.
   int m_adaptiveDepthDiscontinuityThreshold = 40;
+
+  // Adaptive-mesh path: at a cracked edge, the far-side cell extends its quad outward
+  // by ceil((multiplier - 1) * cellSize) pixels so the back surface overlaps into the
+  // gap, hiding the crack from off-axis viewpoints. 1.0 disables overlap.
+  float m_adaptiveCellOverlapMultiplier = 1.5f;
 
   bool m_populateDebugTextures = false;
 

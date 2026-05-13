@@ -7,8 +7,11 @@
 // at that corner. Variable-size patches share corner samples with same-level neighbors,
 // so flat regions render as a continuous mesh; T-junctions at level transitions are
 // expected and intentionally not stitched.
-layout(location = 0) in uvec2 gridCoord;       // integer grid coords (W x H disparity grid)
+layout(location = 0) in uvec2 gridCoord;       // q12.4 grid coords (pixel * 16, W x H disparity grid)
 layout(location = 1) in float disparityRawIn;  // raw disparity sampled at this corner
+
+// Matches kAdaptiveMeshGridFracBits / kAdaptiveMeshGridScale in depthMeshAdaptive.h.
+const float kGridScaleInv = 1.0 / 16.0;
 
 out V2F {
   vec2 texCoord;
@@ -23,8 +26,8 @@ void main() {
   float disparityRaw = (debugFixedDisparity >= 0) ? float(debugFixedDisparity) : disparityRawIn;
   float disparity = max(disparityRaw * disparityPrescale, (1.0f / 32.0f)); // prevent divide-by-zero
 
-  vec2 textureCoordinates = vec2(gridCoord) * texCoordStep;
-  vec2 gridCoordinates = vec2(gridCoord);
+  vec2 gridCoordinates = vec2(gridCoord) * kGridScaleInv;
+  vec2 textureCoordinates = gridCoordinates * texCoordStep;
   gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(vec4(textureCoordinates.xy, gridCoordinates.xy), disparity);
 
   v2f.texCoord = textureCoordinates;

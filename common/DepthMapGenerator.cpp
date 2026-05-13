@@ -507,6 +507,7 @@ void DepthMapGenerator::renderIMGUI() {
   } else {
     ImGui::DragInt("Adaptive flatness threshold (raw)", &m_adaptiveFlatnessThreshold, /*v_speed=*/ 8, 0, 128);
     ImGui::DragInt("Adaptive discontinuity threshold (raw)", &m_adaptiveDepthDiscontinuityThreshold, /*v_speed=*/ 8, 0, 1024);
+    ImGui::SliderFloat("Adaptive cell overlap multiplier", &m_adaptiveCellOverlapMultiplier, 1.0f, 3.0f, "%.2f");
 
     // Per-view emission histogram for the most-recent build. The host-side mirror is
     // populated by an async DtoH copy at the end of the build.
@@ -719,6 +720,7 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
         static_cast<uint16_t>(maxDisparityRaw()),
         static_cast<uint16_t>(m_adaptiveFlatnessThreshold),
         static_cast<uint16_t>(m_adaptiveDepthDiscontinuityThreshold),
+        m_adaptiveCellOverlapMultiplier,
         effTrimL, effTrimT, effTrimR, effTrimB,
         vd->m_adaptiveVertexBuffer->cudaPointer(),
         vd->m_adaptiveIndexBuffer->cudaPointer(),

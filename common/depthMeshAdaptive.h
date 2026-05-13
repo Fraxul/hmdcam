@@ -12,8 +12,17 @@ struct DrawElementsIndirectCommand {
   uint32_t baseInstance;
 };
 
+// Number of fractional bits used to encode gridX/gridY -- positions are stored as
+// pixel * (1 << kAdaptiveMeshGridFracBits) so sub-pixel offsets (used for partial-cell
+// overlap at cracked edges) survive the uint16_t serialization. With 4 fractional bits
+// the representable range is up to ~4095 pixels in each axis, plenty for the disparity
+// textures this pipeline runs on. The vertex shader divides by the same scale.
+constexpr int kAdaptiveMeshGridFracBits = 4;
+constexpr int kAdaptiveMeshGridScale = 1 << kAdaptiveMeshGridFracBits;
+
 // Per-vertex format emitted by the adaptive mesh builder. Matches the GL vertex layout
 // declared for the m_disparityDepthMapAdaptivePipeline (see DepthMapGenerator.cpp).
+// gridX/gridY are q12.4 fixed-point pixel coordinates (pixel * kAdaptiveMeshGridScale).
 struct AdaptiveMeshVertex {
   uint16_t gridX;
   uint16_t gridY;
@@ -72,6 +81,11 @@ struct DepthMeshAdaptiveScratch {
 //                       At threshold = 0 every edge is discontinuous and the mesh is
 //                       a set of flat, disconnected quads; at the max value every edge
 //                       welds and the mesh is fully connected.
+//   cellOverlapMultiplier - on a cracked edge, the far-side cell (lower disparity)
+//                       extends its quad outward past the natural cell boundary by
+//                       ceil((multiplier - 1) * cellSize) pixels, so the back surface
+//                       overlaps into the crack and hides the gap from off-axis
+//                       viewpoints. 1.0 disables overlap entirely; 1.5 = 50% extension.
 //   trimLeft/Top/Right/Bottom - cells in the trimmed border are treated as invalid.
 //
 // Outputs (caller-owned, all device pointers; buffers must be sized for worst-case
@@ -88,6 +102,7 @@ void buildAdaptiveDepthMesh(
   uint16_t maxValidRaw,
   uint16_t flatThresholdRaw,
   uint16_t discontinuityThresholdRaw,
+  float cellOverlapMultiplier,
   int trimLeft, int trimTop, int trimRight, int trimBottom,
   CUdeviceptr d_vbo,
   CUdeviceptr d_ibo,

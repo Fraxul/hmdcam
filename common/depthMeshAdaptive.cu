@@ -175,6 +175,24 @@ __device__ inline float computeWeldedCornerDisparity(
   return (1.0f - t) * disp_a + t * disp_b;
 }
 
+// Test whether C should extend its edge outward toward the neighbor texel at (nx, ny).
+// Returns true iff the neighbor is in bounds, valid (has an emitted cell), and its raw
+// disparity exceeds C's representative by more than the discontinuity threshold --
+// i.e. the edge between C and the neighbor is "cracked" AND C is the farther of the
+// two (higher disparity = closer, so dN > dRep + threshold means neighbor is closer).
+__device__ inline bool shouldExtendTowardsNeighbor(
+  PtrStep<const uint16_t> disparity,
+  PtrStep<const uint8_t> maxFlatLevel,
+  int W, int H,
+  int nx, int ny,
+  float dRep,
+  float threshold) {
+  if (nx < 0 || ny < 0 || nx >= W || ny >= H) return false;
+  if (maxFlatLevel.ptr(ny)[nx] == 0) return false;
+  float dN = float(disparity.ptr(ny)[nx]);
+  return (dN - dRep) > threshold;
+}
+
 // ----- Emit verts + indices for each anchor cell -----
 
 __global__ void emitGeometryKernel(
@@ -184,7 +202,8 @@ __global__ void emitGeometryKernel(
   uint32_t* outIndices,
   DepthMeshAdaptiveCounters* counters,
   int W, int H,
-  uint16_t discontinuityThresholdRaw) {
+  uint16_t discontinuityThresholdRaw,
+  float cellOverlapMultiplier) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= W || y >= H) return;
@@ -201,6 +220,7 @@ __global__ void emitGeometryKernel(
   // the TL corner by construction (the corner texel IS the cell's anchor texel), so the
   // TL corner is always welded; we only test the other three.
   float dRep = float(disparity.ptr(y)[x]);
+  float threshold = float(discontinuityThresholdRaw);
 
   int xRight = x + sz;
   int yBottom = y + sz;
@@ -209,25 +229,43 @@ __global__ void emitGeometryKernel(
   float d01 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, x, yBottom, L);
   float d11 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, xRight, yBottom, L);
 
-  // Discontinuity test: any non-TL corner whose welded disparity is further than
-  // discontinuityThresholdRaw from the cell's representative reverts to the
-  // representative, leaving an intentional crack between this cell and whichever
-  // neighbor's value the weld would have pulled in. For same-level edges the welded
-  // value is the neighbor's representative, so this is exactly "disparity change across
-  // the edge"; for coarser-neighbor T-junctions it's the edge lerp vs ours.
-  float threshold = float(discontinuityThresholdRaw);
+  // Discontinuity test: any non-TL corner whose welded disparity is further than the
+  // threshold from the cell's representative reverts to the representative, leaving an
+  // intentional crack between this cell and whichever neighbor's value the weld would
+  // have pulled in. For same-level edges the welded value is the neighbor's
+  // representative, so this is exactly "disparity change across the edge"; for
+  // coarser-neighbor T-junctions it's the edge lerp vs ours.
   if (fabsf(d10 - dRep) > threshold) d10 = dRep;
   if (fabsf(d01 - dRep) > threshold) d01 = dRep;
   if (fabsf(d11 - dRep) > threshold) d11 = dRep;
+
+  // Per-edge overlap: when an edge is cracked AND C is the far side (lower disparity),
+  // extend C's quad outward past the natural cell boundary into the gap. The disparity
+  // at extended corners is dRep (already snapped above), so the cell's far-side surface
+  // stretches behind the near-side neighbor's edge, hiding the visible crack from
+  // off-axis viewpoints. The extension is computed in q12.4 fixed-point so partial-cell
+  // offsets (e.g. cellOverlapMultiplier = 1.1) survive serialization to uint16_t.
+  int extQ = (cellOverlapMultiplier > 1.0f)
+    ? int(roundf((cellOverlapMultiplier - 1.0f) * float(sz) * float(kAdaptiveMeshGridScale)))
+    : 0;
+  int extLQ = (extQ > 0 && shouldExtendTowardsNeighbor(disparity, maxFlatLevel, W, H, x - 1, y, dRep, threshold)) ? extQ : 0;
+  int extRQ = (extQ > 0 && shouldExtendTowardsNeighbor(disparity, maxFlatLevel, W, H, xRight, y, dRep, threshold)) ? extQ : 0;
+  int extTQ = (extQ > 0 && shouldExtendTowardsNeighbor(disparity, maxFlatLevel, W, H, x, y - 1, dRep, threshold)) ? extQ : 0;
+  int extBQ = (extQ > 0 && shouldExtendTowardsNeighbor(disparity, maxFlatLevel, W, H, x, yBottom, dRep, threshold)) ? extQ : 0;
+
+  uint16_t vxL = uint16_t(max(0, x * kAdaptiveMeshGridScale - extLQ));
+  uint16_t vyT = uint16_t(max(0, y * kAdaptiveMeshGridScale - extTQ));
+  uint16_t vxR = uint16_t(xRight * kAdaptiveMeshGridScale + extRQ);
+  uint16_t vyB = uint16_t(yBottom * kAdaptiveMeshGridScale + extBQ);
 
   uint32_t vBase = atomicAdd(&counters->vertexCounter, 4u);
   uint32_t iBase = atomicAdd(&counters->indexCounter, 6u);
   atomicAdd(&counters->levelHistograms[L], 1u);
 
-  outVerts[vBase + 0] = {uint16_t(x), uint16_t(y), d00};
-  outVerts[vBase + 1] = {uint16_t(x + sz), uint16_t(y), d10};
-  outVerts[vBase + 2] = {uint16_t(x), uint16_t(y + sz), d01};
-  outVerts[vBase + 3] = {uint16_t(x + sz), uint16_t(y + sz), d11};
+  outVerts[vBase + 0] = {vxL, vyT, d00};
+  outVerts[vBase + 1] = {vxR, vyT, d10};
+  outVerts[vBase + 2] = {vxL, vyB, d01};
+  outVerts[vBase + 3] = {vxR, vyB, d11};
 
   outIndices[iBase + 0] = vBase + 0;
   outIndices[iBase + 1] = vBase + 1;
@@ -290,6 +328,7 @@ void buildAdaptiveDepthMesh(
   uint16_t maxValidRaw,
   uint16_t flatThresholdRaw,
   uint16_t discontinuityThresholdRaw,
+  float cellOverlapMultiplier,
   int trimLeft, int trimTop, int trimRight, int trimBottom,
   CUdeviceptr d_vbo,
   CUdeviceptr d_ibo,
@@ -351,7 +390,8 @@ void buildAdaptiveDepthMesh(
       reinterpret_cast<uint32_t*>(d_ibo),
       reinterpret_cast<DepthMeshAdaptiveCounters*>(scratch.d_counters),
       W, H,
-      discontinuityThresholdRaw);
+      discontinuityThresholdRaw,
+      cellOverlapMultiplier);
   }
 
   // Pass 5: stamp the indirect draw commands with the resulting index count,
