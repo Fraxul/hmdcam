@@ -12,7 +12,7 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   int renderStereo;
   float maxValidDisparityPixels;
   uint maxValidDisparityRaw;
-  float maxDepthDiscontinuity;
+  float unused1;
 
   vec2 texCoordStep; // (1/internalWidth, 1/internalHeight)
   float minDepthCutoff;
@@ -21,5 +21,3 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   vec2 inputImageSize;
   float pad3, pad4;
 };
-
-

@@ -244,8 +244,6 @@ protected:
   // Render settings
   int m_trimLeft = 8, m_trimTop = 8;
   int m_trimRight = 8, m_trimBottom = 8;
-  bool m_splitDepthDiscontinuity = false;
-  float m_maxDepthDiscontinuity = 1.0f;
   float m_minDepthCutoff = 0.050f;
   bool m_usePointRendering = false;
   float m_pointScale = 1.0f;

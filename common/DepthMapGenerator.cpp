@@ -100,7 +100,7 @@ struct MeshDisparityDepthMapUniformBlock {
   uint32_t renderStereo;
   float maxValidDisparityPixels;
   uint32_t maxValidDisparityRaw;
-  float maxDepthDiscontinuity;
+  float unused1;
 
   glm::vec2 texCoordStep;
   float minDepthCutoff;
@@ -308,13 +308,12 @@ bool DepthMapGenerator::loadSettings() {
     // Load common render settings
     cv::FileNode rsn = fs["renderSettings"];
     if (rsn.isMap()) {
-      readNode(rsn, splitDepthDiscontinuity);
-      readNode(rsn, maxDepthDiscontinuity);
       readNode(rsn, minDepthCutoff);
       readNode(rsn, usePointRendering);
       readNode(rsn, pointScale);
       readNode(rsn, adaptiveFlatnessThreshold);
       readNode(rsn, adaptiveDepthDiscontinuityThreshold);
+      readNode(rsn, adaptiveCellOverlapMultiplier);
       readNode(rsn, trimLeft);
       readNode(rsn, trimTop);
       readNode(rsn, trimRight);
@@ -341,13 +340,12 @@ void DepthMapGenerator::saveSettings() {
 
   // Write common render settings
   fs.startWriteStruct(cv::String("renderSettings"), cv::FileNode::MAP, cv::String());
-  writeNode(fs, splitDepthDiscontinuity);
-  writeNode(fs, maxDepthDiscontinuity);
   writeNode(fs, minDepthCutoff);
   writeNode(fs, usePointRendering);
   writeNode(fs, pointScale);
   writeNode(fs, adaptiveFlatnessThreshold);
   writeNode(fs, adaptiveDepthDiscontinuityThreshold);
+  writeNode(fs, adaptiveCellOverlapMultiplier);
   writeNode(fs, trimLeft);
   writeNode(fs, trimTop);
   writeNode(fs, trimRight);
@@ -405,7 +403,6 @@ bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.renderStereo = (stereo ? 1 : 0);
   ub.maxValidDisparityPixels = maxDisparityPixels() - 1;
   ub.maxValidDisparityRaw = maxDisparityRaw();
-  ub.maxDepthDiscontinuity = m_splitDepthDiscontinuity ? m_maxDepthDiscontinuity : FLT_MAX;
 
   ub.texCoordStep = glm::vec2(
     1.0f / static_cast<float>(internalWidth()),
@@ -488,16 +485,15 @@ void DepthMapGenerator::renderIMGUI() {
   }
 
   // Common render settings -- these don't affect the algorithm.
-  ImGui::Checkbox("Split depth discontinuity", &m_splitDepthDiscontinuity);
-  if (m_splitDepthDiscontinuity)
-    ImGui::SliderFloat("Depth Discontinuity", &m_maxDepthDiscontinuity, 0.01f, 2.0f);
 
-  // clang-format off
-  ImGui::SliderInt("Trim Left",   &m_trimLeft,   0, 64);
-  ImGui::SliderInt("Trim Top",    &m_trimTop,    0, 64);
-  ImGui::SliderInt("Trim Right",  &m_trimRight,  0, 64);
-  ImGui::SliderInt("Trim Bottom", &m_trimBottom, 0, 64);
-  // clang-format on
+  if (ImGui::CollapsingHeader("Trim")) {
+    // clang-format off
+    ImGui::SliderInt("Trim Left",   &m_trimLeft,   0, 64);
+    ImGui::SliderInt("Trim Top",    &m_trimTop,    0, 64);
+    ImGui::SliderInt("Trim Right",  &m_trimRight,  0, 64);
+    ImGui::SliderInt("Trim Bottom", &m_trimBottom, 0, 64);
+    // clang-format on
+  }
 
   ImGui::SliderFloat("Min Depth Cutoff", &m_minDepthCutoff, 0.01f, 0.30f);
 
