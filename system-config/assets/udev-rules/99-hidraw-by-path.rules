@@ -1,0 +1,21 @@
+# Apply builtin path_id and usb_id modules to the hidraw subsystem
+SUBSYSTEM=="hidraw", IMPORT{builtin}="path_id"
+SUBSYSTEM=="hidraw", IMPORT{builtin}="usb_id"
+
+# Generate by-path symlink
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", \
+  ENV{ID_PATH}!="", \
+  SYMLINK+="hidraw/by-path/$env{ID_PATH}-hidraw"
+
+# Generate by-id symlink (USB flavour, with interface number)
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", \
+  ENV{ID_BUS}=="usb", \
+  ENV{ID_SERIAL}!="", \
+  SYMLINK+="hidraw/by-id/$env{ID_SERIAL}-hidraw-if$env{ID_USB_INTERFACE_NUM}"
+
+# Generate by-id symlink (non-USB flavour)
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", \
+  ENV{ID_BUS}!="usb", \
+  ENV{ID_SERIAL}!="", \
+  SYMLINK+="hidraw/by-id/$env{ID_SERIAL}-hidraw"
+

@@ -1,0 +1,6 @@
+# udev rules for STM32 embedded peripherals (contents of /etc/udev/rules.d/83-stm32.rules )
+# update and run `sudo udevadm control --reload ; sudo udevadm trigger`
+
+# VID=0483 is STMicroelectronics.
+ATTRS{idVendor}=="0483", MODE="0666", GROUP="plugdev"
+

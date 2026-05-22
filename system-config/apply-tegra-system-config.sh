@@ -66,7 +66,7 @@ cp assets/canbus.service /etc/systemd/system/
 systemctl enable canbus.service
 
 # Apply udev rules
-cp assets/83-hmd.rules /etc/udev/rules.d/
+cp assets/udev-rules/* /etc/udev/rules.d/
 udevadm control --reload
 udevadm trigger
 
