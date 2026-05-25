@@ -40,7 +40,7 @@ public:
   DepthMapGenerator(DepthMapGeneratorBackend);
   ~DepthMapGenerator();
 
-  void initWithCameraSystem(CameraSystem*);
+  void initWithCameraSystem(CameraSystem*, RHIInteropSync::ptr);
   void processFrame();
   void renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView);
   void renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView);
@@ -88,7 +88,7 @@ protected:
   DepthMapGeneratorBackend m_backend;
 
   // CUDA and NPP stream context
-  cv::cuda::Stream m_globalStream;
+  cv::cuda::Stream m_globalStream; // Wraps RHICUDA::defaultAsyncStream
   NppStreamContext m_nppStreamContext;
 
   // CUDA-to-RHI sync object

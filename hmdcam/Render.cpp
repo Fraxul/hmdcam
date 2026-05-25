@@ -5,6 +5,7 @@
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/gl/GLCommon.h"
+#include "rhi/cuda/RHICUDA.h"
 
 #include "xrt/xrt_instance.h"
 #include "xrt/xrt_space.h"
@@ -13,8 +14,6 @@
 #include "math/m_api.h"
 #include "util/u_distortion_mesh.h"
 #include "util/u_device.h"
-
-#include <cuda.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
@@ -67,10 +66,6 @@ glm::mat4 eyeProjection[2];
 glm::mat4 eyeView[2];
 
 RenderBackend* renderBackend = NULL;
-
-// CUDA
-CUdevice cudaDevice;
-CUcontext cudaContext;
 
 // -----------
 
@@ -157,21 +152,7 @@ bool RenderInit(ERenderBackend backendType) {
   renderBackend = RenderBackend::create(backendType);
   renderBackend->earlyInit();
   renderBackend->createGLContext();
-
-  // CUDA init
-  {
-    cuInit(0);
-
-    cuDeviceGet(&cudaDevice, 0);
-    char devName[512];
-    cuDeviceGetName(devName, 511, cudaDevice);
-    devName[511] = '\0';
-    printf("CUDA device: %s\n", devName);
-
-    cuDevicePrimaryCtxRetain(&cudaContext, cudaDevice);
-    cuCtxSetCurrent(cudaContext);
-  }
-
+  RHICUDA::initRHICUDA();
   initRHIGL();
   initRHIVulkan();
 

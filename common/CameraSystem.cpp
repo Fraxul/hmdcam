@@ -4,10 +4,12 @@
 #include "common/glmCvInterop.h"
 #include "common/FxThreading.h"
 #include "rhi/RHIResources.h"
+#include "rhi/cuda/RHICUDA.h"
 #include "imgui.h"
 #include <iostream>
 #include <set>
 #include <assert.h>
+#include <cuda.h>
 #include <epoxy/gl.h> // epoxy_is_desktop_gl
 
 #include <opencv2/core.hpp>
@@ -76,10 +78,11 @@ static void internal_drawDetectedCornersCharuco(cv::InputOutputArray _image, cv:
 FxAtomicString ksDistortionMap("distortionMap");
 
 
-CameraSystem::CameraSystem(ICameraProvider* cam) :
+CameraSystem::CameraSystem(ICameraProvider* cam, RHIInteropSync::ptr interopSync) :
   calibrationFilename("calibration.yml"),
   m_cameraProvider(cam),
-  m_calibrationDataRevision(0) {
+  m_calibrationDataRevision(0),
+  m_interopSync(interopSync) {
 
   // Initialize ChAruCo data on first use
   if (!s_charucoBoard)
@@ -109,6 +112,11 @@ CameraSystem::CameraSystem(ICameraProvider* cam) :
     desc.setFlag("SAMPLER_TYPE", cam->rgbTextureGLSamplerType());
     m_camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
+}
+
+
+void CameraSystem::processFrame() {
+  // TODO: Update per-view stereo distortion maps
 }
 
 bool CameraSystem::loadCalibrationData() {
@@ -378,7 +386,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   m_calibrationDataRevision += 1;
 }
 
-RHISurface::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize) {
+RHIInteropSurfaceGL::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize) {
   assert(map1.rows == map2.rows && map1.cols == map2.cols);
   size_t width = map1.cols;
   size_t height = map1.rows;
@@ -399,8 +407,22 @@ RHISurface::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map
     }
   }
 
-  RHISurface::ptr distortionMap = rhi()->newTexture2D(width, height, RHISurfaceDescriptor(kSurfaceFormat_RG16));
-  rhi()->loadTextureData(distortionMap, kVertexElementTypeUShort2N, distortionMapTmp);
+  RHIInteropSurfaceGL::ptr distortionMap = RHIInteropSurfaceGL::newTexture2D(width, height, RHISurfaceDescriptor(kSurfaceFormat_RG16), {m_interopSync, kSyncDirectionCUDAWriter});
+
+  // CUDA 2D host-to-array memcpy into distortionMap
+  CUDA_MEMCPY2D copyDescriptor;
+  memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
+  copyDescriptor.srcMemoryType = CU_MEMORYTYPE_HOST;
+  copyDescriptor.srcHost = distortionMapTmp;
+  copyDescriptor.srcPitch = sizeof(uint16_t) * width * 2;
+
+  copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
+  copyDescriptor.dstArray = (CUarray) distortionMap->cudaArray();
+
+  copyDescriptor.WidthInBytes = sizeof(uint16_t) * width * 2;
+  copyDescriptor.Height = height;
+
+  CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
 
   delete[] distortionMapTmp;
   return distortionMap;

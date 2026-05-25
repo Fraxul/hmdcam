@@ -26,7 +26,7 @@
 #include "common/tegra/NvSciCudaInterop.h"
 #include "common/Timing.h"
 #include "readPFM.h"
-#include "rhi/cuda/CudaUtil.h"
+#include "rhi/cuda/RHICUDA.h"
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/cudaarithm.hpp>
 
@@ -42,10 +42,6 @@
   }
 
 // ------------------------ globals --------------------------
-
-// CUDA
-CUdevice cudaDevice;
-CUcontext cudaContext;
 
 // NVSCI
 NvSciSyncModule syncModule;
@@ -70,7 +66,7 @@ void populateInputImageBufAttrList(NvSciBufAttrList& attrList, uint32_t width, u
   NvSciBufAttrValImageScanType planescantype[] = {NvSciBufScan_ProgressiveType};
 
   CUuuid devUUID;
-  CUDA_CHECK(cuDeviceGetUuid(&devUUID, cudaDevice));
+  CUDA_CHECK(cuDeviceGetUuid(&devUUID, RHICUDA::cudaDevice));
 
   NvSciBufAttrKeyValuePair imgBufAttrs[] = {
     {         NvSciBufGeneralAttrKey_Types,       &bufType,        sizeof(bufType)},
@@ -108,7 +104,7 @@ void populateOutputImageBufAttrList(NvSciBufAttrList& attrList, uint32_t width, 
   NvSciBufAttrValImageScanType planescantype[] = {NvSciBufScan_ProgressiveType};
 
   CUuuid devUUID;
-  CUDA_CHECK(cuDeviceGetUuid(&devUUID, cudaDevice));
+  CUDA_CHECK(cuDeviceGetUuid(&devUUID, RHICUDA::cudaDevice));
 
   NvSciBufAttrKeyValuePair imgBufAttrs[] = {
     {         NvSciBufGeneralAttrKey_Types,       &bufType,        sizeof(bufType)},
@@ -361,13 +357,7 @@ int main(int argc, char* argv[]) {
   cvConfidence.create(cv::Size(outputWidth, outputHeight), CV_8U);
 
   // CUDA init
-  {
-    cuInit(0);
-
-    cuDeviceGet(&cudaDevice, 0);
-    cuDevicePrimaryCtxRetain(&cudaContext, cudaDevice);
-    cuCtxSetCurrent(cudaContext);
-  }
+  RHICUDA::initRHICUDA();
 
   // CUDA stream
   CUstream hStream;

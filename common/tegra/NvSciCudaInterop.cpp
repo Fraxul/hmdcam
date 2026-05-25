@@ -1,6 +1,6 @@
 #include "NvSciCudaInterop.h"
 #include "common/tegra/NvSciUtil.h"
-#include "rhi/cuda/CudaUtil.h"
+#include "rhi/cuda/RHICUDA.h"
 #include "nvmedia_iofa.h"
 
 #include <cstdio>
@@ -12,8 +12,6 @@
     fprintf(stderr, msg "\n", ##__VA_ARGS__); \
     abort();                                  \
   } while (0)
-
-extern CUdevice cudaDevice;
 
 NvSciSyncModule gSyncModule() {
   static NvSciSyncModule syncModule = nullptr;
@@ -132,7 +130,7 @@ NvSciCudaInteropSync::NvSciCudaInteropSync(NvSciCudaInteropSyncDirection directi
     NVSCI_CHECK(NvSciSyncAttrListCreate(gSyncModule(), &syncAttrList[1]));
 
     NVMEDIA_CHECK(NvMediaIOFAFillNvSciSyncAttrList(iofa, syncAttrList[0], direction == kSyncNvSciSignalerToCudaWaiter ? NVMEDIA_SIGNALER : NVMEDIA_WAITER));
-    CUDA_CHECK(cuDeviceGetNvSciSyncAttributes(syncAttrList[1], cudaDevice, direction == kSyncNvSciSignalerToCudaWaiter ? CUDA_NVSCISYNC_ATTR_WAIT : CUDA_NVSCISYNC_ATTR_SIGNAL));
+    CUDA_CHECK(cuDeviceGetNvSciSyncAttributes(syncAttrList[1], RHICUDA::cudaDevice, direction == kSyncNvSciSignalerToCudaWaiter ? CUDA_NVSCISYNC_ATTR_WAIT : CUDA_NVSCISYNC_ATTR_SIGNAL));
 
     NvSciSyncAttrList syncConflictList = nullptr;
     NVSCI_CHECK(NvSciSyncAttrListReconcile(syncAttrList, 2, &interopSyncAttrList[direction], &syncConflictList));

@@ -16,6 +16,7 @@
 #include "common/medianFilter.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
+#include "rhi/cuda/RHICUDA.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
 #include "rhi/vk/RHIInteropBufferGL.h"
@@ -118,9 +119,11 @@ struct DisparityMipUniformBlock {
 };
 
 DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) :
-  m_backend(backend_) {
+  m_backend(backend_),
+  m_globalStream(cv::cuda::wrapStream(reinterpret_cast<size_t>(RHICUDA::defaultAsyncStream))) {
+
   memset(&m_nppStreamContext, 0, sizeof(m_nppStreamContext));
-  NPP_CHECK(nppSetStream((CUstream) m_globalStream.cudaPtr()));
+  NPP_CHECK(nppSetStream(RHICUDA::defaultAsyncStream));
   NPP_CHECK(nppGetStreamContext(&m_nppStreamContext));
 
   CUDA_CHECK(cuEventCreate(&m_finalizeDisparityStartEvent, CU_EVENT_DEFAULT));
@@ -131,11 +134,9 @@ DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) :
   CUDA_CHECK_NONFATAL(cuEventRecord(m_finalizeDisparityFinishedEvent, (CUstream) m_globalStream.cudaPtr()));
 }
 
-void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
+void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs, RHIInteropSync::ptr interopSync) {
   m_cameraSystem = cs;
-
-  // Create interop sync. initWithCameraSystem should happen late enough that we have RHI access.
-  m_interopSync = new RHIInteropSync();
+  m_interopSync = interopSync;
 
   // Compute internal dimensions
   m_internalWidth = cameraStreamWidth() / m_algoDownsampleX;
@@ -308,6 +309,7 @@ bool DepthMapGenerator::loadSettings() {
     // Load common render settings
     cv::FileNode rsn = fs["renderSettings"];
     if (rsn.isMap()) {
+      readNode(rsn, useFGSFilter);
       readNode(rsn, minDepthCutoff);
       readNode(rsn, usePointRendering);
       readNode(rsn, pointScale);
@@ -340,6 +342,7 @@ void DepthMapGenerator::saveSettings() {
 
   // Write common render settings
   fs.startWriteStruct(cv::String("renderSettings"), cv::FileNode::MAP, cv::String());
+  writeNode(fs, useFGSFilter);
   writeNode(fs, minDepthCutoff);
   writeNode(fs, usePointRendering);
   writeNode(fs, pointScale);
@@ -612,8 +615,9 @@ void DepthMapGenerator::processFrame() {
 
   this->internalProcessFrame();
 
-  // After frame processing has finished, sync the CUDA updates to GL.
-  m_interopSync->signalCUDAToRHI((CUstream) m_globalStream.cudaPtr());
+  // Note: after frame processing has finished, the CUDA updates must be signaled to GL.
+  // We don't do it here, because we don't own the interop sync, and there may still be
+  // other work left to do.
 }
 
 void DepthMapGenerator::internalFinalizeDisparityTexture() {

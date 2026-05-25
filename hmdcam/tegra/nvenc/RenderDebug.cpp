@@ -4,6 +4,7 @@
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/gl/GLCommon.h"
+#include "rhi/cuda/RHICUDA.h"
 
 #include <cuda.h>
 
@@ -49,7 +50,7 @@ void* rtspServerThreadEntryPoint(void* arg) {
     die("rtspServerThreadEntryPoint: eglMakeCurrent() failed\n");
   }
 
-  cuCtxSetCurrent(cudaContext);
+  cuCtxSetCurrent(RHICUDA::cudaContext);
 
   // Set up the RTSP server
   rtspScheduler = BasicTaskScheduler::createNew();

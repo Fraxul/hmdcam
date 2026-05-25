@@ -24,6 +24,7 @@
 #include "rhi/RHIResources.h"
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
 #include "rhi/gl/RHISurfaceGL.h"
+#include "rhi/cuda/RHICUDA.h"
 
 #include <cuda.h>
 #include <cudaGL.h>
@@ -43,8 +44,6 @@ protected:
   SDL_Window* m_window;
 };
 
-CUdevice cudaDevice;
-CUcontext cudaContext;
 DebugCameraProvider* cameraProvider;
 CameraSystem* cameraSystem;
 FxCamera* sceneCamera;
@@ -277,18 +276,8 @@ int main(int argc, char** argv) {
 
   // CUDA init
   bool cudaGLInteropOK = true;
+  RHICUDA::initRHICUDA();
   {
-    cuInit(0);
-
-    cuDeviceGet(&cudaDevice, 0);
-    char devName[512];
-    cuDeviceGetName(devName, 511, cudaDevice);
-    devName[511] = '\0';
-    printf("CUDA device: %s\n", devName);
-
-    cuDevicePrimaryCtxRetain(&cudaContext, cudaDevice);
-    cuCtxSetCurrent(cudaContext);
-
     unsigned int cudaGLDeviceCount = 0;
     CUdevice cudaGLDevices[8];
     if (CUDA_SUCCESS != cuGLGetDevices(&cudaGLDeviceCount, cudaGLDevices, 8, CU_GL_DEVICE_LIST_ALL) || cudaGLDeviceCount == 0) {

@@ -27,6 +27,6 @@ disparityEnv.Program(
     + ['common/disparityOcclusionMask.cu', 'common/fgsFilter.cu']
     + Glob('common/tegra/NvSci*.cpp')
     + Glob('common/tegra/*.cu')
-    + ['rhi/cuda/CudaUtil.cpp']
+    + ['rhi/cuda/RHICUDA.cpp', 'rhi/cuda/CudaUtil.cpp']
 )
 

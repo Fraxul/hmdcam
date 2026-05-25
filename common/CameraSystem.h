@@ -2,6 +2,8 @@
 #include <vector>
 #include <string>
 #include "rhi/RHI.h"
+#include "rhi/vk/RHIInteropSurfaceGL.h"
+#include "rhi/vk/RHIInteropSync.h"
 #include "common/ICameraProvider.h"
 #include "common/glmCvInterop.h"
 #include <opencv2/core.hpp>
@@ -22,7 +24,7 @@ float computePointSetLinearTransform(const std::vector<glm::vec3>& pVec1, const 
 
 class CameraSystem {
 public:
-  CameraSystem(ICameraProvider*);
+  CameraSystem(ICameraProvider*, RHIInteropSync::ptr);
 
   bool loadCalibrationData();
   bool loadCalibrationData(cv::FileStorage&);
@@ -36,13 +38,15 @@ public:
 
   void debugIncrementCalibrationDataRevision() { m_calibrationDataRevision += 1; }
 
+  // Call processFrame() after the ICameraProvider captures a frame to update distortion.
+  void processFrame();
 
   struct Camera {
     Camera() :
       fovX(0),
       fovY(0) {}
 
-    RHISurface::ptr intrinsicDistortionMap;
+    RHIInteropSurfaceGL::ptr intrinsicDistortionMap;
     RHISurface::ptr mask;
     cv::Mat intrinsicMatrix; // From calibration
     cv::Mat distCoeffs;
@@ -82,7 +86,7 @@ public:
     cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify
     cv::Mat stereoDisparityToDepth;
     cv::Rect stereoValidROI[2];
-    RHISurface::ptr stereoDistortionMap[2]; // Combined intrinsic and stereo distortion
+    RHIInteropSurfaceGL::ptr stereoDistortionMap[2]; // Combined intrinsic and stereo distortion
     double fovX = 0, fovY = 0; // Values for the stereo projection, in degrees
 
     bool hasStereoCalibration() const { return (!(stereoRotation.empty() || stereoTranslation.empty())); }
@@ -134,6 +138,8 @@ public:
 
   RHIRenderPipeline::ptr camGreyscalePipeline() const { return m_camGreyscalePipeline; }
   RHIRenderPipeline::ptr camGreyscaleUndistortPipeline() const { return m_camGreyscaleUndistortPipeline; }
+
+  // ----- Calibration infrastructure -----
 
   class CalibrationContext;
 
@@ -416,10 +422,12 @@ protected:
   ICameraProvider* m_cameraProvider;
   unsigned int m_calibrationDataRevision;
 
+  RHIInteropSync::ptr m_interopSync;
+
   std::vector<Camera> m_cameras;
   std::vector<View> m_views;
 
-  RHISurface::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize);
+  RHIInteropSurfaceGL::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize);
 
   RHIRenderPipeline::ptr m_camGreyscalePipeline;
   RHIRenderPipeline::ptr m_camGreyscaleUndistortPipeline;

@@ -10,6 +10,7 @@
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/RHISurface.h"
+#include "rhi/cuda/RHICUDA.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
 #include "rhi/vk/RHIInteropSurfaceGL.h"
@@ -37,7 +38,6 @@ static const uint32_t kOFAMaxDisparity = 128; // must be {128, 256}
 // Grid-size shift: 0=1x1, 1=2x2, 2=4x4, 3=8x8
 // The output size is fixed at 1/4 of input resolution, so this controls the downsampling applied to the input before handing it to the OFA.
 static const uint32_t kOFAGridSizeShift = 1;
-extern CUdevice cudaDevice;
 
 #define die(msg, ...)                         \
   do {                                        \
@@ -79,7 +79,7 @@ NvSciBufAttrList finishAndReconcileBufAttrList(NvSciBufAttrList inAttrList) {
   NvSciBufAttrValImageScanType planescantype[] = {NvSciBufScan_ProgressiveType};
 
   CUuuid devUUID;
-  CUDA_CHECK(cuDeviceGetUuid(&devUUID, cudaDevice));
+  CUDA_CHECK(cuDeviceGetUuid(&devUUID, RHICUDA::cudaDevice));
 
   NvSciBufAttrKeyValuePair imgBufAttrs[] = {
     {        NvSciBufImageAttrKey_Layout,       &layout,        sizeof(layout)},

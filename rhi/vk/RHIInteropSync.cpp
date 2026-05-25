@@ -130,7 +130,7 @@ void RHIInteropSync::signalCUDAToRHI(CUstream stream) {
     /*srcLayouts=*/ m_waitTextureSrcLayouts.data()));
 }
 
-void RHIInteropSync::signalRHItoCUDA(CUstream stream) {
+void RHIInteropSync::signalRHIToCUDA(CUstream stream) {
   GL(glSignalSemaphoreEXT(m_glToCudaSemGL,
     /*numBufferBarriers=*/ m_signalBufferIDs.size(), /*buffers=*/ m_signalBufferIDs.data(),
     /*numTextureBarriers=*/ m_signalTextureIDs.size(), /*textures=*/ m_signalTextureIDs.data(),

@@ -22,6 +22,8 @@
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
+#include "rhi/vk/RHIInteropSync.h"
+#include "rhi/cuda/RHICUDA.h"
 
 #include "IArgusCamera.h"
 #include "ArgusCameraMock.h"
@@ -343,6 +345,9 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  // Shared interop sync object for handoff from CUDA to RHI.
+  RHIInteropSync::ptr interopSync = new RHIInteropSync();
+
   int tempSensorFd = open(tempSensorFilename.c_str(), 0, O_RDONLY);
   if (tempSensorFd < 0) {
     printf("Warning: Couldn't open temperature sensor %s\n", tempSensorFilename.c_str());
@@ -446,7 +451,7 @@ int main(int argc, char* argv[]) {
     printf("Render debug subsystem disabled at compile time.\n");
   }
 
-  cameraSystem = new CameraSystem(argusCamera);
+  cameraSystem = new CameraSystem(argusCamera, interopSync);
   // Load whatever calibration we have (may be nothing)
   if (!calibrationFilename.empty()) {
     printf("Using calibration file \"%s\"\n", calibrationFilename.c_str());
@@ -466,7 +471,7 @@ int main(int argc, char* argv[]) {
 
 
   if (depthMapGenerator) {
-    depthMapGenerator->initWithCameraSystem(cameraSystem);
+    depthMapGenerator->initWithCameraSystem(cameraSystem, interopSync);
     depthMapGenerator->loadSettings();
   }
 
@@ -863,6 +868,10 @@ int main(int argc, char* argv[]) {
       }
       previousCaptureTimestamp = argusCamera->oldestSensorTimestamp();
 
+
+      // Hook for CameraSystem to do its post-capture frame processing -- this updates dynamic distortion maps
+      cameraSystem->processFrame();
+
       // TODO move this inside CameraSystem
       if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext) {
         nvtxMarkA("DepthMapGenerator::processFrame()");
@@ -876,6 +885,9 @@ int main(int argc, char* argv[]) {
       if (calibrationContext) {
         calibrationContext->processFrame();
       }
+
+      // Frame processing should be done. Sync cameraSystem and depthMapGenerator updates to RHI before starting rendering.
+      interopSync->signalCUDAToRHI(RHICUDA::defaultAsyncStream);
 
 
 #ifdef USE_EYETRACKING

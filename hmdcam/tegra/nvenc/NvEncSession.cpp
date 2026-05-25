@@ -3,7 +3,7 @@
 #include "RenderBackend.h"
 #include "rhi/RHI.h"
 #include "rhi/gl/RHISurfaceGL.h"
-#include "rhi/cuda/CudaUtil.h"
+#include "rhi/cuda/RHICUDA.h"
 #include <cassert>
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -277,7 +277,7 @@ void NvEncSession::cudaWorker() {
   }
 
   // use the default global CUDA context
-  cuCtxSetCurrent(cudaContext);
+  cuCtxSetCurrent(RHICUDA::cudaContext);
 
   NvBufSurfTransformConfigParams config_params = {NvBufSurfTransformCompute_VIC, 0, NULL};
   CHECK_ZERO(NvBufSurfTransformSetSessionParams(&config_params));

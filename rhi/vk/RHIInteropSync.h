@@ -20,7 +20,7 @@ public:
   void signalCUDAToRHI(CUstream stream);
 
   // Call this when you're done with RHI work and will be switching to CUDA
-  void signalRHItoCUDA(CUstream stream);
+  void signalRHIToCUDA(CUstream stream);
 
   void addSyncedObject(RHIObject*);
   void removeSyncedObject(RHIObject*);

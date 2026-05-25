@@ -32,11 +32,6 @@ void recomputeHMDParameters();
 
 extern RenderBackend* renderBackend;
 
-typedef int CUdevice;
-typedef struct CUctx_st* CUcontext;
-extern CUdevice cudaDevice;
-extern CUcontext cudaContext;
-
 struct NDCClippedQuadUniformBlock {
   glm::mat4 modelViewProjection;
   glm::vec2 minUV;
