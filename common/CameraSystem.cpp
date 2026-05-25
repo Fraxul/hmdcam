@@ -5,6 +5,7 @@
 #include "common/FxThreading.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICUDA.h"
+#include "common/UndistortRectifyKernel.h"
 #include "imgui.h"
 #include <iostream>
 #include <set>
@@ -116,7 +117,42 @@ CameraSystem::CameraSystem(ICameraProvider* cam, RHIInteropSync::ptr interopSync
 
 
 void CameraSystem::processFrame() {
-  // TODO: Update per-view stereo distortion maps
+  // Regenerate the stereoDistortionMap for each stereo view by refilling the
+  // per-row R_y * iR buffer on the CPU and launching the kernel. R_y is identity
+  // for now -- the IMU integration will populate non-trivial per-row rotations
+  // in a later change. See SYNCHRONIZATION ASSUMPTION in UndistortRectifyKernel.h.
+
+  const int height = static_cast<int>(cameraProvider()->streamHeight());
+
+  for (size_t viewIdx = 0; viewIdx < m_views.size(); ++viewIdx) {
+    View& v = m_views[viewIdx];
+    if (!v.isStereo) continue;
+    if (v.rsParamsHost == nullptr) continue; // No calibration yet.
+
+    for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+      float* eyeBase = v.rsPerRowIRHost + (eyeIdx * height * 9);
+      const cv::Mat& iR = v.rsIRBase[eyeIdx];
+      for (int y = 0; y < height; ++y) {
+        // Identity R_y placeholder: every row gets the same iR. When IMU
+        // integration lands, replace this with R_y * iR per row.
+        for (int r = 0; r < 3; ++r) {
+          for (int col = 0; col < 3; ++col) {
+            eyeBase[y * 9 + r * 3 + col] = static_cast<float>(iR.at<double>(r, col));
+          }
+        }
+      }
+    }
+
+    for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+      const UndistortRectifyParams* paramsDev = reinterpret_cast<const UndistortRectifyParams*>(v.rsParamsDevice) + eyeIdx;
+      const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * height * 9);
+      launchUndistortRectifyKernel(
+        paramsDev, perRowDev,
+        v.stereoDistortionMap[eyeIdx]->cudaSurfaceObject(),
+        static_cast<int>(cameraProvider()->streamWidth()), height,
+        RHICUDA::defaultAsyncStream);
+    }
+  }
 }
 
 bool CameraSystem::loadCalibrationData() {
@@ -375,13 +411,83 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   }
 */
 
+  // Allocate the RHIInteropSurfaceGL for each eye's distortion map. These start
+  // empty -- the kernel fill below populates them.
+  for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+    v.stereoDistortionMap[eyeIdx] = RHIInteropSurfaceGL::newTexture2D(
+      imageSize.width, imageSize.height,
+      RHISurfaceDescriptor(kSurfaceFormat_RG16),
+      {m_interopSync, kSyncDirectionCUDAWriter});
+  }
+
+  // Allocate the pinned per-View rolling-shutter buffers if this is the first
+  // time this View has been configured. (updateViewStereoDistortionParameters
+  // can be called multiple times across recalibration; we don't re-alloc since
+  // image dimensions don't change.)
+  if (v.rsParamsHost == nullptr) {
+    CUdeviceptr paramsDev = 0;
+    CUDA_CHECK(cuMemHostAlloc(reinterpret_cast<void**>(&v.rsParamsHost),
+      2 * sizeof(UndistortRectifyParams),
+      CU_MEMHOSTALLOC_DEVICEMAP));
+    CUDA_CHECK(cuMemHostGetDevicePointer(&paramsDev, v.rsParamsHost, 0));
+    v.rsParamsDevice = static_cast<unsigned long long>(paramsDev);
+
+    const size_t perRowBytes = 2 * static_cast<size_t>(imageSize.height) * 9 * sizeof(float);
+    CUdeviceptr perRowDev = 0;
+    CUDA_CHECK(cuMemHostAlloc(reinterpret_cast<void**>(&v.rsPerRowIRHost),
+      perRowBytes,
+      CU_MEMHOSTALLOC_DEVICEMAP));
+    CUDA_CHECK(cuMemHostGetDevicePointer(&perRowDev, v.rsPerRowIRHost, 0));
+    v.rsPerRowIRDevice = static_cast<unsigned long long>(perRowDev);
+  }
+
+  // Populate static per-eye params and stash iR for per-frame refold.
   for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
     Camera& c = cameraAtIndex(v.cameraIndices[eyeIdx]);
+    UndistortRectifyParams& p = v.rsParamsHost[eyeIdx];
 
-    cv::initUndistortRectifyMap(c.intrinsicMatrix, c.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], imageSize, CV_32F, map1, map2);
+    for (int r = 0; r < 3; ++r) {
+      for (int col = 0; col < 3; ++col) {
+        p.cameraMatrix[r * 3 + col] = static_cast<float>(c.intrinsicMatrix.at<double>(r, col));
+      }
+    }
+    for (int i = 0; i < 5; ++i) {
+      p.distCoeffs[i] = static_cast<float>(c.distCoeffs.at<double>(i, 0));
+    }
+    p.width = imageSize.width;
+    p.height = imageSize.height;
+    p.texelBiasX = 0.5f;
+    p.texelBiasY = 0.5f;
 
-    v.stereoDistortionMap[eyeIdx] = generateGPUDistortionMap(map1, map2, imageSize);
+    // cv::initUndistortRectifyMap takes a 3x4 newProjection but uses only its upper-left 3x3.
+    cv::Mat newCam3x3 = v.stereoProjection[eyeIdx](cv::Rect(0, 0, 3, 3));
+    v.rsIRBase[eyeIdx] = (newCam3x3 * v.stereoRectification[eyeIdx]).inv();
   }
+
+  // Initial fill: identity per-row R (i.e., per-row entries == iRBase). Gives
+  // stereoDistortionMap[] valid contents before the first processFrame.
+  const int height = imageSize.height;
+  for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+    float* eyeBase = v.rsPerRowIRHost + (eyeIdx * height * 9);
+    for (int y = 0; y < height; ++y) {
+      for (int r = 0; r < 3; ++r) {
+        for (int col = 0; col < 3; ++col) {
+          eyeBase[y * 9 + r * 3 + col] = static_cast<float>(v.rsIRBase[eyeIdx].at<double>(r, col));
+        }
+      }
+    }
+  }
+  for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+    const UndistortRectifyParams* paramsDev = reinterpret_cast<const UndistortRectifyParams*>(v.rsParamsDevice) + eyeIdx;
+    const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * height * 9);
+    launchUndistortRectifyKernel(
+      paramsDev, perRowDev,
+      v.stereoDistortionMap[eyeIdx]->cudaSurfaceObject(),
+      imageSize.width, imageSize.height,
+      RHICUDA::defaultAsyncStream);
+  }
+
+  // The initial fill will be CUDA-accessible on the async stream, but still requires `syncCUDAToRHI()` to be called before use in rendering.
 
   m_calibrationDataRevision += 1;
 }

@@ -10,10 +10,12 @@
 #include <opencv2/core/persistence.hpp>
 #include "glm/gtx/euler_angles.hpp"
 #include "glm/gtx/transform.hpp"
+#include <cuda.h>
 
 class CameraSystem;
 class CharucoMultiViewCalibration;
 class DepthMapGenerator;
+struct UndistortRectifyParams;
 
 std::vector<glm::vec3> getTriangulatedPointsForView(CameraSystem* cameraSystem, size_t viewIdx, const std::vector<std::vector<cv::Point2f>>& leftCalibrationPoints, const std::vector<std::vector<cv::Point2f>>& rightCalibrationPoints);
 std::vector<glm::vec3> transformBoardPointsForView(const glm::mat4& transform);
@@ -88,6 +90,26 @@ public:
     cv::Rect stereoValidROI[2];
     RHIInteropSurfaceGL::ptr stereoDistortionMap[2]; // Combined intrinsic and stereo distortion
     double fovX = 0, fovY = 0; // Values for the stereo projection, in degrees
+
+    // ----- Per-frame distortion-map regeneration (rolling-shutter correction) -----
+    //
+    // Pinned, device-mapped buffers populated by updateViewStereoDistortionParameters
+    // and consumed every frame by processFrame to regenerate stereoDistortionMap[].
+    // Process-lifetime allocations; not freed on View destruction.
+
+    // UndistortRectifyParams[2] in pinned host memory (one entry per eye).
+    // Static after calibration; the kernel reads it zero-copy on Tegra.
+    UndistortRectifyParams* rsParamsHost = nullptr;
+    CUdeviceptr rsParamsDevice = 0;
+
+    // Per-row 3x3 rolling-shutter-folded iR matrices: float[2 * height * 9],
+    // indexed as [eyeIdx * height * 9 + y * 9 + r * 3 + c]. Refilled each frame.
+    float* rsPerRowIRHost = nullptr;
+    CUdeviceptr rsPerRowIRDevice = 0;
+
+    // Stashed iR (inv(P_3x3 * R)) per eye; CPU multiplies each frame's R_y
+    // against this to produce the per-row buffer contents.
+    cv::Mat rsIRBase[2];
 
     bool hasStereoCalibration() const { return (!(stereoRotation.empty() || stereoTranslation.empty())); }
     bool hasStereoRectificationParameters() const {
