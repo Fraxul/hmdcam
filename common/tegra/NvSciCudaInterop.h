@@ -35,7 +35,7 @@ public:
     kNvSciCudaInteropSyncDirection_Count
   };
 
-  NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction, NvMediaIofa* iofa);
+  NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction, NvMediaIofa* iofa, bool allowCpuWaiter);
   ~NvSciCudaInteropSync();
 
   void signalCudaToNvSci(CUstream hStream);

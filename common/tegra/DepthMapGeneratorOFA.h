@@ -24,52 +24,31 @@ protected:
   virtual void internalRenderIMGUI();
   virtual void internalRenderIMGUIPerformanceGraphs();
 
-  struct ViewDataOFA : public ViewData {
-    ViewDataOFA() {
-    }
+  void cleanup(NvSciCudaInteropBuffer*& buf) {
+    if (!buf)
+      return;
+    assert(m_iofa);
+    NVMEDIA_CHECK(NvMediaIOFAUnregisterNvSciBufObj(m_iofa, buf->m_nvSciBuf));
+    delete buf;
+    buf = nullptr;
+  }
 
-    void cleanup(NvSciCudaInteropBuffer*& buf) {
-      if (!buf)
-        return;
-      assert(m_iofa);
-      NVMEDIA_CHECK(NvMediaIOFAUnregisterNvSciBufObj(m_iofa, buf->m_nvSciBuf));
-      delete buf;
-      buf = nullptr;
-    }
+  void cleanup(NvSciCudaInteropSync*& sync) {
+    if (!sync)
+      return;
+    assert(m_iofa);
+    NVMEDIA_CHECK(NvMediaIOFAUnregisterNvSciSyncObj(m_iofa, sync->m_nvSciSync));
+    delete sync;
+    sync = nullptr;
+  }
 
-    void cleanup(NvSciCudaInteropSync*& sync) {
-      if (!sync)
-        return;
-      assert(m_iofa);
-      NVMEDIA_CHECK(NvMediaIOFAUnregisterNvSciSyncObj(m_iofa, sync->m_nvSciSync));
-      delete sync;
-      sync = nullptr;
-    }
 
-    virtual ~ViewDataOFA() {
-      releaseResources();
-    }
-
-    void releaseResources() {
-      cleanup(m_ofaPreSync);
-      cleanup(m_ofaEofSync);
-      cleanup(m_ofaInputBuffer[0]);
-      cleanup(m_ofaInputBuffer[1]);
-      cleanup(m_ofaOutputDisparityBuffer);
-      cleanup(m_ofaOutputCostBuffer);
-    }
-
-    // Remap payloads for rectification
-    cv::cuda::GpuMat m_undistortRectifyMap_gpu[2];
-
-    // The remapped luma is kept on the base class as m_rectifiedLuma[2].
-
-    // Reference to the IOFA, which is required to unregister buffers during destruction
-    NvMediaIofa* m_iofa = nullptr;
-
+  struct SubmissionRingEntry {
     // OFA syncs
     NvSciCudaInteropSync* m_ofaPreSync = nullptr;
     NvSciCudaInteropSync* m_ofaEofSync = nullptr;
+
+    CUevent m_ofaEofSyncDoneEvent = {0};
 
     // OFA input buffers
     NvSciCudaInteropBuffer* m_ofaInputBuffer[2] = {nullptr, nullptr};
@@ -82,8 +61,32 @@ protected:
     // since it doesn't change.
     NvMediaIofaBufArray m_ofaSurfArray;
 
-    bool m_ofaSubmissionOK = false;
-    bool m_ofaPreFenceInserted = false;
+    // True if this buffer-set is part of an active OFA submission.
+    bool m_submissionActive = false;
+
+    // True if the CPU has waited for the EOF fence to ensure that it's actually clear of the OFA.
+    // Set to false when submitting this entry to OFA. Must clear before resubmit.
+    bool m_fenceClearedOnCPU = true;
+  };
+
+  std::array<SubmissionRingEntry*, 8> m_ring;
+  uint32_t m_nextRingIndex = 0;
+
+  struct ViewDataOFA : public ViewData {
+    ViewDataOFA() {
+    }
+
+    virtual ~ViewDataOFA() {
+    }
+
+    // Remap payloads for rectification
+    cv::cuda::GpuMat m_undistortRectifyMap_gpu[2];
+
+    // The remapped luma is kept on the base class as m_rectifiedLuma[2].
+
+    // Which buffer in the ring was last submitted by this view.
+    // -1 means there's no submission pending.
+    int32_t m_activeRingIndex = -1;
   };
 
   virtual ViewData* newEmptyViewData() { return new ViewDataOFA(); }
@@ -94,6 +97,7 @@ protected:
   CUevent m_masterFrameFinishedEvent;
   NvMediaIofa* m_iofa = nullptr;
   NvMediaIofaProcessParams m_iofaProcessParams;
+  NvSciSyncCpuWaitContext m_cpuWaitContext;
 
   NvSciBufAttrList m_inputBufferAttrList = nullptr;
   NvSciBufAttrList m_disparityBufferAttrList = nullptr;

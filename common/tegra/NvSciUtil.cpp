@@ -123,7 +123,13 @@ const char* NvSciSyncAttrKey_toString(NvSciSyncAttrKey k) {
     case NvSciSyncAttrKey_WaiterRequireTimestamps: return "NvSciSyncAttrKey_WaiterRequireTimestamps";
     case NvSciSyncAttrKey_RequireDeterministicFences: return "NvSciSyncAttrKey_RequireDeterministicFences";
     case NvSciSyncAttrKey_UpperBound: return "NvSciSyncAttrKey_UpperBound";
-
+    case NvSciSyncAttrKey_NumTimestampSlots: return "NvSciSyncAttrKey_NumTimestampSlots";
+    case NvSciSyncAttrKey_NumTaskStatusSlots: return "NvSciSyncAttrKey_NumTaskStatusSlots";
+    case NvSciSyncAttrKey_MaxPrimitiveValue: return "NvSciSyncAttrKey_MaxPrimitiveValue";
+    case NvSciSyncAttrKey_PrimitiveInfo: return "NvSciSyncAttrKey_PrimitiveInfo";
+    case NvSciSyncAttrKey_PeerLocationInfo: return "NvSciSyncAttrKey_PeerLocationInfo";
+    case NvSciSyncAttrKey_GpuId: return "NvSciSyncAttrKey_GpuId";
+    case NvSciSyncAttrKey_PeerHwEngineArray: return "NvSciSyncAttrKey_PeerHwEngineArray";
     default:
       snprintf(defaultBuf, 32, "0x%x", k);
       return defaultBuf;

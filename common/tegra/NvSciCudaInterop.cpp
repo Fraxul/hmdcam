@@ -119,37 +119,44 @@ NvSciCudaInteropBuffer::~NvSciCudaInteropBuffer() {
   NvSciBufObjFree(m_nvSciBuf);
 }
 
-NvSciCudaInteropSync::NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction, NvMediaIofa* iofa) :
+NvSciCudaInteropSync::NvSciCudaInteropSync(NvSciCudaInteropSyncDirection direction, NvMediaIofa* iofa, bool allowCpuWaiter) :
   m_direction(direction) {
-  static NvSciSyncAttrList interopSyncAttrList[kNvSciCudaInteropSyncDirection_Count];
 
-  // Demand-create the attribute list for this sync direction
-  if (interopSyncAttrList[direction] == nullptr) {
-    NvSciSyncAttrList syncAttrList[2];
+  NvSciSyncAttrList attrList;
+
+  // Create the reconciled attribute list for this sync direction.
+  {
+    NvSciSyncAttrList syncAttrList[3];
+
     NVSCI_CHECK(NvSciSyncAttrListCreate(gSyncModule(), &syncAttrList[0]));
     NVSCI_CHECK(NvSciSyncAttrListCreate(gSyncModule(), &syncAttrList[1]));
 
     NVMEDIA_CHECK(NvMediaIOFAFillNvSciSyncAttrList(iofa, syncAttrList[0], direction == kSyncNvSciSignalerToCudaWaiter ? NVMEDIA_SIGNALER : NVMEDIA_WAITER));
     CUDA_CHECK(cuDeviceGetNvSciSyncAttributes(syncAttrList[1], RHICUDA::cudaDevice, direction == kSyncNvSciSignalerToCudaWaiter ? CUDA_NVSCISYNC_ATTR_WAIT : CUDA_NVSCISYNC_ATTR_SIGNAL));
+    if (allowCpuWaiter) {
+      syncAttrList[2] = CreateNvSciSyncCpuWaiterAttrList(gSyncModule());
+    }
 
     NvSciSyncAttrList syncConflictList = nullptr;
-    NVSCI_CHECK(NvSciSyncAttrListReconcile(syncAttrList, 2, &interopSyncAttrList[direction], &syncConflictList));
+    NVSCI_CHECK(NvSciSyncAttrListReconcile(syncAttrList, allowCpuWaiter ? 3 : 2, &attrList, &syncConflictList));
 
-    assert(interopSyncAttrList[direction]);
+    assert(attrList);
     bool isReconciled = false;
-    NVSCI_CHECK(NvSciSyncAttrListIsReconciled(interopSyncAttrList[direction], &isReconciled));
+    NVSCI_CHECK(NvSciSyncAttrListIsReconciled(attrList, &isReconciled));
     assert(isReconciled);
 
     NvSciSyncAttrListFree(syncAttrList[0]);
     NvSciSyncAttrListFree(syncAttrList[1]);
   }
 
-  NVSCI_CHECK(NvSciSyncObjAlloc(interopSyncAttrList[direction], &m_nvSciSync));
+  NVSCI_CHECK(NvSciSyncObjAlloc(attrList, &m_nvSciSync));
   CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC desc;
   memset(&desc, 0, sizeof(desc));
   desc.type = CU_EXTERNAL_SEMAPHORE_HANDLE_TYPE_NVSCISYNC;
   desc.handle.nvSciSyncObj = m_nvSciSync;
   CUDA_CHECK(cuImportExternalSemaphore(&m_cuSem, &desc));
+
+  NvSciSyncAttrListFree(attrList);
 }
 
 NvSciCudaInteropSync::~NvSciCudaInteropSync() {

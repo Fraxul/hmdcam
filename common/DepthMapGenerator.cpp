@@ -824,6 +824,17 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(DepthMapGenerator* dept
   m_disparityGpuMat[1].create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
   m_disparityConfidence.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ CV_8U);
 
+  // Pre-fill the disparity and confidence mats with a flat disparity.
+  for (size_t i = 0; i < 2; ++i) {
+    if (cvType == CV_16U) {
+      CUDA_CHECK(cuMemsetD2D16((CUdeviceptr) m_disparityGpuMat[i].cudaPtr(), /*dstPitch (bytes)=*/ m_disparityGpuMat[i].step, /*flat disparity=*/ 32, /*width (elements)=*/ w, h));
+    } else {
+      assert(cvType == CV_8U);
+      CUDA_CHECK(cuMemsetD2D8((CUdeviceptr) m_disparityGpuMat[i].cudaPtr(), /*dstPitch (bytes)=*/ m_disparityGpuMat[i].step, /*flat disparity=*/ 32, /*width (elements)=*/ w, h));
+    }
+  }
+  CUDA_CHECK(cuMemsetD2D8((CUdeviceptr) m_disparityConfidence.cudaPtr(), /*dstPitch (bytes)=*/ m_disparityConfidence.step, 0xff, /*width (elements)=*/ w, h));
+
   // Pre-allocate CPU debug view, identical in size/format to GPU copy
   m_debugCPUDisparity.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ cvType);
   m_debugCPUConfidence.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ CV_8U);

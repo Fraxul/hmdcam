@@ -159,6 +159,8 @@ DepthMapGeneratorOFA::DepthMapGeneratorOFA() :
     printf("NvMedia IOFA HW capabilities: Size range %ux%u - %ux%u\n",
       caps.minWidth, caps.minHeight, caps.maxWidth, caps.maxHeight);
   }
+
+  NVSCI_CHECK(NvSciSyncCpuWaitContextAlloc(gSyncModule(), &m_cpuWaitContext));
 }
 
 void DepthMapGeneratorOFA::internalPostInitWithCameraSystem() {
@@ -219,12 +221,68 @@ void DepthMapGeneratorOFA::internalPostInitWithCameraSystem() {
     setSinglePlaneImageAttrs(attrList, internalWidth(), internalHeight(), NvSciColor_A8);
     m_costBufferAttrList = finishAndReconcileBufAttrList(attrList);
   }
+
+
+  // Populate submission ring
+  for (size_t ringIdx = 0; ringIdx < m_ring.size(); ++ringIdx) {
+    SubmissionRingEntry* ringEntry = new SubmissionRingEntry();
+    m_ring[ringIdx] = ringEntry;
+
+    // OFA input buffers
+    PER_EYE {
+      ringEntry->m_ofaInputBuffer[eyeIdx] = new NvSciCudaInteropBuffer(m_inputBufferAttrList);
+      NVMEDIA_CHECK(NvMediaIOFARegisterNvSciBufObj(m_iofa, ringEntry->m_ofaInputBuffer[eyeIdx]->m_nvSciBuf));
+    }
+
+    // OFA outputs
+    ringEntry->m_ofaOutputDisparityBuffer = new NvSciCudaInteropBuffer(m_disparityBufferAttrList);
+    NVMEDIA_CHECK(NvMediaIOFARegisterNvSciBufObj(m_iofa, ringEntry->m_ofaOutputDisparityBuffer->m_nvSciBuf));
+
+    ringEntry->m_ofaOutputCostBuffer = new NvSciCudaInteropBuffer(m_costBufferAttrList);
+    NVMEDIA_CHECK(NvMediaIOFARegisterNvSciBufObj(m_iofa, ringEntry->m_ofaOutputCostBuffer->m_nvSciBuf));
+
+    // OFA syncs
+
+    ringEntry->m_ofaPreSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncCudaSignalerToNvSciWaiter, m_iofa, /*allowCpuWaiter=*/ false);
+    NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(m_iofa, NVMEDIA_PRESYNCOBJ, ringEntry->m_ofaPreSync->m_nvSciSync));
+
+    ringEntry->m_ofaEofSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncNvSciSignalerToCudaWaiter, m_iofa, /*allowCpuWaiter=*/ true);
+    NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(m_iofa, NVMEDIA_EOFSYNCOBJ, ringEntry->m_ofaEofSync->m_nvSciSync));
+
+    // CUevent for EOF sync clear.
+    // The CUDA driver API docs note: Events created with the CU_EVENT_DISABLE_TIMING flag specified
+    // and the CU_EVENT_BLOCKING_SYNC flag not specified will provide the best performance when used
+    // with cuStreamWaitEvent() and cuEventQuery().
+    CUDA_CHECK(cuEventCreate(&ringEntry->m_ofaEofSyncDoneEvent, CU_EVENT_DISABLE_TIMING));
+
+    // OFA surface array setup
+    memset(&ringEntry->m_ofaSurfArray, 0, sizeof(ringEntry->m_ofaSurfArray));
+    ringEntry->m_ofaSurfArray.inputSurface[0] = ringEntry->m_ofaInputBuffer[0]->m_nvSciBuf; // left surface
+    ringEntry->m_ofaSurfArray.refSurface[0] = ringEntry->m_ofaInputBuffer[1]->m_nvSciBuf; // right surface
+    ringEntry->m_ofaSurfArray.outSurface[0] = ringEntry->m_ofaOutputDisparityBuffer->m_nvSciBuf;
+    ringEntry->m_ofaSurfArray.costSurface[0] = ringEntry->m_ofaOutputCostBuffer->m_nvSciBuf;
+  }
 }
 
 DepthMapGeneratorOFA::~DepthMapGeneratorOFA() {
+  // Cleanup submission ring
+  for (size_t ringIdx = 0; ringIdx < m_ring.size(); ++ringIdx) {
+    SubmissionRingEntry* ringEntry = m_ring[ringIdx];
+    if (!ringEntry)
+      continue;
+    cleanup(ringEntry->m_ofaPreSync);
+    cleanup(ringEntry->m_ofaEofSync);
+    cuEventDestroy(ringEntry->m_ofaEofSyncDoneEvent);
+    PER_EYE cleanup(ringEntry->m_ofaInputBuffer[eyeIdx]);
+    cleanup(ringEntry->m_ofaOutputDisparityBuffer);
+    cleanup(ringEntry->m_ofaOutputCostBuffer);
+    delete ringEntry;
+  }
+
   cuEventDestroy(m_masterFrameStartEvent);
   cuEventDestroy(m_ofaHandoffCompleteEvent);
   cuEventDestroy(m_masterFrameFinishedEvent);
+  NvSciSyncCpuWaitContextFree(m_cpuWaitContext);
 }
 
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
@@ -256,13 +314,8 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
     CameraSystem::View& v = m_cameraSystem->viewAtIndex(viewIdx);
     auto vd = viewDataAtIndex(viewIdx);
 
-    vd->releaseResources();
-
     if (!vd->m_isStereoView)
       continue;
-
-    // Need IOFA pointer for future resource destruction
-    vd->m_iofa = m_iofa;
 
     vd->updateDisparityTexture(this, internalWidth(), internalHeight(), kSurfaceFormat_R16i);
 
@@ -276,34 +329,6 @@ void DepthMapGeneratorOFA::internalUpdateViewData() {
 
     // Output from remapArray
     PER_EYE vd->m_rectifiedLuma[eyeIdx].create(cv::Size(m_algoInputWidth, m_algoInputHeight), CV_8U);
-
-    // OFA input buffers
-    PER_EYE {
-      vd->m_ofaInputBuffer[eyeIdx] = new NvSciCudaInteropBuffer(m_inputBufferAttrList);
-      NVMEDIA_CHECK(NvMediaIOFARegisterNvSciBufObj(m_iofa, vd->m_ofaInputBuffer[eyeIdx]->m_nvSciBuf));
-    }
-
-    // OFA outputs
-    vd->m_ofaOutputDisparityBuffer = new NvSciCudaInteropBuffer(m_disparityBufferAttrList);
-    NVMEDIA_CHECK(NvMediaIOFARegisterNvSciBufObj(m_iofa, vd->m_ofaOutputDisparityBuffer->m_nvSciBuf));
-
-    vd->m_ofaOutputCostBuffer = new NvSciCudaInteropBuffer(m_costBufferAttrList);
-    NVMEDIA_CHECK(NvMediaIOFARegisterNvSciBufObj(m_iofa, vd->m_ofaOutputCostBuffer->m_nvSciBuf));
-
-    // OFA syncs
-
-    vd->m_ofaPreSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncCudaSignalerToNvSciWaiter, m_iofa);
-    NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(m_iofa, NVMEDIA_PRESYNCOBJ, vd->m_ofaPreSync->m_nvSciSync));
-
-    vd->m_ofaEofSync = new NvSciCudaInteropSync(NvSciCudaInteropSync::kSyncNvSciSignalerToCudaWaiter, m_iofa);
-    NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(m_iofa, NVMEDIA_EOFSYNCOBJ, vd->m_ofaEofSync->m_nvSciSync));
-
-    // OFA surface array setup
-    memset(&vd->m_ofaSurfArray, 0, sizeof(vd->m_ofaSurfArray));
-    vd->m_ofaSurfArray.inputSurface[0] = vd->m_ofaInputBuffer[0]->m_nvSciBuf; // left surface
-    vd->m_ofaSurfArray.refSurface[0] = vd->m_ofaInputBuffer[1]->m_nvSciBuf; // right surface
-    vd->m_ofaSurfArray.outSurface[0] = vd->m_ofaOutputDisparityBuffer->m_nvSciBuf;
-    vd->m_ofaSurfArray.costSurface[0] = vd->m_ofaOutputCostBuffer->m_nvSciBuf;
   }
 }
 
@@ -388,28 +413,32 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
   for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
     auto vd = viewDataAtIndex(viewIdx);
 
+    if (vd->m_activeRingIndex < 0)
+      continue; // No pending buffer.
+
+    // Take the ring entry from the ViewData.
+    SubmissionRingEntry* ringEntry = m_ring[vd->m_activeRingIndex];
+    vd->m_activeRingIndex = -1;
+
     // We wait for the previous submission to clear the fence even if a camera stream has failed
     // or if the view has since been reconfigured.
-    if (vd->m_ofaSubmissionOK) {
-      vd->m_ofaEofSync->waitNvSciToCuda((CUstream) m_globalStream.cudaPtr());
+    ringEntry->m_ofaEofSync->waitNvSciToCuda((CUstream) m_globalStream.cudaPtr());
 
-      // Clear the EOF fence after consumption to release internal NvSciSync references.
-      // Without this, each frame overwrites the old fence in GetEOFNvSciSyncFence without
-      // freeing it, leaking sync resources.
-      NvSciSyncFenceClear(&vd->m_ofaEofSync->m_nvSciSyncFence);
+    // Mark that we need to wait on this event before reusing the buffer.
+    ringEntry->m_fenceClearedOnCPU = false;
 
-      vd->m_ofaSubmissionOK = false;
-    } else {
-      continue; // No valid submission on the previous frame, so there's no postprocssing to do.
-    }
+    // After we have CUDA wait on the fence, we no longer consider this entry 'active'.
+    ringEntry->m_submissionActive = false;
 
+    // If this is no longer a stereo view or if one of the streams has failed, don't bother
+    // post-processing the disparity -- we can't use it anyway.
     if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
-    copyNvSciBufToGpuMat(vd->m_ofaOutputDisparityBuffer, vd->currentDisparityMat(), (CUstream) m_globalStream.cudaPtr());
+    copyNvSciBufToGpuMat(ringEntry->m_ofaOutputDisparityBuffer, vd->currentDisparityMat(), (CUstream) m_globalStream.cudaPtr());
 
     // Process cost map into confidence
-    ofaCostToConfidence(vd->m_ofaOutputCostBuffer->m_cuTex, vd->m_disparityConfidence, m_lowCostThreshold, m_highCostThreshold, m_costCurve, (CUstream) m_globalStream.cudaPtr());
+    ofaCostToConfidence(ringEntry->m_ofaOutputCostBuffer->m_cuTex, vd->m_disparityConfidence, m_lowCostThreshold, m_highCostThreshold, m_costCurve, (CUstream) m_globalStream.cudaPtr());
 
     if (m_populateDebugTextures) {
       CUstream cudaStream = (CUstream) m_globalStream.cudaPtr();
@@ -420,9 +449,9 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
       if (!vd->m_rightGray)
         vd->m_rightGray = RHIInteropSurfaceGL::newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
 
-      copyNvSciBufToInteropSurface(vd->m_ofaInputBuffer[0], vd->m_leftGray.get(), cudaStream);
+      copyNvSciBufToInteropSurface(ringEntry->m_ofaInputBuffer[0], vd->m_leftGray.get(), cudaStream);
 
-      copyNvSciBufToInteropSurface(vd->m_ofaInputBuffer[1], vd->m_rightGray.get(), cudaStream);
+      copyNvSciBufToInteropSurface(ringEntry->m_ofaInputBuffer[1], vd->m_rightGray.get(), cudaStream);
     }
 
     if (debugDisparityCPUAccessEnabled()) {
@@ -447,6 +476,32 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
+    // Try to allocate a ring entry for this view.
+    uint32_t ringIndex = m_nextRingIndex;
+    SubmissionRingEntry* ringEntry = m_ring[ringIndex];
+
+    // If the fence for this ring-entry hasn't been cleared yet, do that now.
+    // We must make sure that we're not submitting too many pending frames to the OFA.
+    // This entry should be several frames old, so cuEventSynchronize should return instantly.
+    if (!ringEntry->m_fenceClearedOnCPU) {
+      NvSciError waitErr = NvSciSyncFenceWait(&ringEntry->m_ofaEofSync->m_nvSciSyncFence, m_cpuWaitContext, /*timeoutUs=*/ 1000);
+      if (waitErr == NvSciError_Timeout) {
+        // We ran out of buffers -- abort processing.
+        printf("DepthMapGeneratorOFA: NvSciSyncFenceWait timed out for ring index %u\n", ringIndex);
+        vd->m_activeRingIndex = -1;
+        break;
+      } else if (waitErr != NvSciError_Success) {
+        NVSCI_CHECK(waitErr);
+      }
+      // If NvSciSyncFenceWait was successful, this buffer is ready for reuse.
+      ringEntry->m_fenceClearedOnCPU = true;
+    }
+
+    // Allocation successful, increment the ring pointer.
+    vd->m_activeRingIndex = ringIndex;
+    if (++m_nextRingIndex >= m_ring.size())
+      m_nextRingIndex = 0;
+
     // Remap for distortion correction
     cv::Size inputSize = cv::Size(cameraStreamWidth(), cameraStreamHeight());
 
@@ -459,38 +514,22 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
 
     // Populate NvSci input buffer
     // TODO: This really should be merged in with the remap above -- write straight to the CUarray, skip a copy.
-    PER_EYE copyGpuMatToNvSciBuf(vd->m_rectifiedLuma[eyeIdx], vd->m_ofaInputBuffer[eyeIdx], (CUstream) m_globalStream.cudaPtr());
+    PER_EYE copyGpuMatToNvSciBuf(vd->m_rectifiedLuma[eyeIdx], ringEntry->m_ofaInputBuffer[eyeIdx], (CUstream) m_globalStream.cudaPtr());
 
-    if (vd->m_ofaPreFenceInserted) {
-      // We already inserted the pre-fence for vd->m_ofaPreSync on a previous loop,
-      // but the processing didn't happen for some reason. Don't re-insert the pre-fence;
-      // a failure in NvMediaIOFAProcessFrame does not clear the pre-fence list, and we'll
-      // end up crashing after filling the pre-fence list.
-    } else {
-      // Signal preprocess semaphore for OFA handoff
-      vd->m_ofaPreSync->signalCudaToNvSci((CUstream) m_globalStream.cudaPtr());
+    // Signal preprocess semaphore for OFA handoff
+    ringEntry->m_ofaPreSync->signalCudaToNvSci((CUstream) m_globalStream.cudaPtr());
 
-      // Tell OFA to wait on the pre fence for this frame
-      NVMEDIA_CHECK(NvMediaIOFAInsertPreNvSciSyncFence(m_iofa, &vd->m_ofaPreSync->m_nvSciSyncFence));
-      vd->m_ofaPreFenceInserted = true;
-
-      // We must clear the pre-fence after handing it off to IOFA, as prep for the next loop.
-      NvSciSyncFenceClear(&vd->m_ofaPreSync->m_nvSciSyncFence);
-    }
+    // Tell OFA to wait on the pre fence for this frame
+    NVMEDIA_CHECK(NvMediaIOFAInsertPreNvSciSyncFence(m_iofa, &ringEntry->m_ofaPreSync->m_nvSciSyncFence));
 
     // EOF sync object needs to be provided before frame submission
-    NVMEDIA_CHECK(NvMediaIOFASetNvSciSyncObjforEOF(m_iofa, vd->m_ofaEofSync->m_nvSciSync));
+    NVMEDIA_CHECK(NvMediaIOFASetNvSciSyncObjforEOF(m_iofa, ringEntry->m_ofaEofSync->m_nvSciSync));
 
     // OFA processing
-    vd->m_ofaSubmissionOK = NVMEDIA_CHECK_NONFATAL(NvMediaIOFAProcessFrame(m_iofa, &vd->m_ofaSurfArray, &m_iofaProcessParams, /*pEpiInfo=*/ nullptr, /*pROIParams=*/ nullptr));
+    NVMEDIA_CHECK(NvMediaIOFAProcessFrame(m_iofa, &ringEntry->m_ofaSurfArray, &m_iofaProcessParams, /*pEpiInfo=*/ nullptr, /*pROIParams=*/ nullptr));
 
-    if (vd->m_ofaSubmissionOK) {
-      // OFA submission OK means that the pre-fence will have been consumed.
-      vd->m_ofaPreFenceInserted = false;
-
-      // Get EOF fence so CUDA can wait on it later
-      NVMEDIA_CHECK(NvMediaIOFAGetEOFNvSciSyncFence(m_iofa, vd->m_ofaEofSync->m_nvSciSync, &vd->m_ofaEofSync->m_nvSciSyncFence));
-    }
+    // Get EOF fence so CUDA can wait on it later
+    NVMEDIA_CHECK(NvMediaIOFAGetEOFNvSciSyncFence(m_iofa, ringEntry->m_ofaEofSync->m_nvSciSync, &ringEntry->m_ofaEofSync->m_nvSciSyncFence));
 
   } // view loop
 
