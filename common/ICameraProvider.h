@@ -17,6 +17,15 @@ public:
   virtual unsigned int streamWidth() const = 0;
   virtual unsigned int streamHeight() const = 0;
   virtual bool isStreamFailed(size_t sensorIndex) const = 0;
+
+  // Sampler that should be bound when sampling rgbTexture() in a render
+  // pipeline. Non-null providers (e.g. Tegra ArgusCamera on the VK backend)
+  // return a ycbcr-aware sampler whose VkSamplerYcbcrConversion must be
+  // baked into the consuming pipeline as an immutable-sampler binding
+  // (see RHIShaderDescriptor::setImmutableSamplerBinding). Mock / GL-only
+  // providers return null, and the consuming pipeline uses a regular
+  // pushable sampler.
+  virtual RHISampler::ptr cameraSampler() const { return RHISampler::ptr(); }
 };
 
 class NullCameraProvider : public ICameraProvider {

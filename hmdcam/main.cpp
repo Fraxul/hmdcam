@@ -396,30 +396,44 @@ int main(int argc, char* argv[]) {
   // Setup render pipelines, now that we know the sampler type required for the camera textures
   {
     const char* sampler_type = argusCamera->rgbTextureGLSamplerType();
+    // Non-null when the provider is YUV (Tegra ArgusCamera). Its
+    // VkSamplerYcbcrConversion has to be baked into the descriptor set
+    // layout as the immutable sampler for the "imageTex" binding; the
+    // shader still sees a plain sampler2D and the driver does YUV->RGB.
+    RHISampler::ptr camYcbcrSampler = argusCamera->cameraSampler();
+    auto applyCamSampler = [&](RHIShaderDescriptor& desc) {
+      if (camYcbcrSampler)
+        desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
+    };
 
     {
       RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout);
       desc.setFlag("SAMPLER_TYPE", sampler_type);
+      applyCamSampler(desc);
       camTexturedQuadPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
     }
     {
       RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camOverlay.frag.glsl", ndcQuadVertexLayout);
       desc.setFlag("SAMPLER_TYPE", sampler_type);
+      applyCamSampler(desc);
       camOverlayPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
     }
     {
       RHIShaderDescriptor desc("shaders/ndcClippedQuadXf_vFlip.vtx.glsl", "shaders/camUndistortMask.frag.glsl", ndcQuadVertexLayout);
       desc.setFlag("SAMPLER_TYPE", sampler_type);
+      applyCamSampler(desc);
       camUndistortMaskPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
     }
     {
       RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camUndistortOverlay.frag.glsl", ndcQuadVertexLayout);
       desc.setFlag("SAMPLER_TYPE", sampler_type);
+      applyCamSampler(desc);
       camUndistortOverlayPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
     }
     {
       RHIShaderDescriptor desc("shaders/ndcQuad.vtx.glsl", "shaders/camCopy.frag.glsl", ndcQuadVertexLayout);
       desc.setFlag("SAMPLER_TYPE", sampler_type);
+      applyCamSampler(desc);
       camCopyPipeline = rhi()->compileRenderPipeline(desc, tristripPipelineDescriptor);
     }
 

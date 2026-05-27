@@ -145,13 +145,12 @@ RenderBackendVKDirect::RenderBackendVKDirect(BackendMode mode) :
 }
 
 void RenderBackendVKDirect::createGLContext() {
-  if (m_backendMode == kVKNative) {
-    // No GL context — RHIVK renders directly into swap images.
-    return;
-  }
-  // EGL setup. Must run before initRHIVulkanInteropContext(), since the Vulkan physical device is selected to UUID-match the GL context.
-  // We use the SURFACELESS_MESA platform, since we explicitly do not want this EGL context to take over the display hardware.
-  // (using the DEVICE_EXT platform with a DRM FD will prevent Vulkan from being able to create a swapchain)
+  // EGL display setup. Always required on Tegra: Argus's only supported
+  // buffer type is EGL_IMAGE, so ArgusCamera needs an EGLDisplay to give to
+  // Argus's setEGLDisplay (the EGLImage is a lightweight handle over an
+  // NvBuf; the storage is what VK + CUDA import via DMA-BUF FD). The
+  // SURFACELESS_MESA platform never takes over the display hardware, so
+  // it coexists with VK_KHR_display scanout.
   {
     // clang-format off
     EGLint attrs[] = {
@@ -160,7 +159,17 @@ void RenderBackendVKDirect::createGLContext() {
     // clang-format on
     EGL_CHECK(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_SURFACELESS_MESA, /*native_display=*/ nullptr, attrs));
     EGL_CHECK(eglInitialize(m_eglDisplay, NULL, NULL));
+  }
 
+  if (m_backendMode == kVKNative) {
+    // VK-native mode: EGL display only. No GL context — RHIVK renders directly
+    // into swap images, and the only EGL consumer is the ArgusCamera buffer
+    // handle path documented above.
+    return;
+  }
+
+  // GL-interop mode: also create the GL context for VK<->GL blit.
+  {
     EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
     eglBindAPI(EGL_OPENGL_ES_API);
 

@@ -78,6 +78,23 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 
   m_targetCaptureIntervalNs = 1000000000.0 / framerate;
 
+  // Shared ycbcr-aware sampler. Argus output is NV12 (NV12_ER in code is
+  // full-range YUV; BT.709 narrow vs full is set per the actual surface
+  // metadata when consumer code requires it -- BT.709 narrow is the safer
+  // default and matches typical Argus output for HD video).
+  {
+    RHISamplerDescriptor sd;
+    sd.filter = kFilterLinear;
+    sd.wrapModeU = kWrapClamp;
+    sd.wrapModeV = kWrapClamp;
+    sd.ycbcrConversion.sourceFormat = RHIYcbcrConversionDescriptor::kSourceFormatNV12;
+    sd.ycbcrConversion.model = kYcbcrModelYcbcr709;
+    sd.ycbcrConversion.range = kYcbcrRangeNarrow;
+    sd.ycbcrConversion.xChromaOffset = kChromaLocationCositedEven;
+    sd.ycbcrConversion.yChromaOffset = kChromaLocationCositedEven;
+    sd.ycbcrConversion.chromaFilter = kFilterLinear;
+    m_cameraSampler = rhi()->compileSampler(sd);
+  }
 
   m_cameraProvider.reset(Argus::CameraProvider::create());
   Argus::ICameraProvider* iCameraProvider = Argus::interface_cast<Argus::ICameraProvider>(m_cameraProvider.get());
@@ -280,29 +297,19 @@ void ArgusCamera::buildCaptureSessions() {
     Argus::IEGLImageBufferSettings* iBufferSettings = Argus::interface_cast<Argus::IEGLImageBufferSettings>(bufferSettings);
     iBufferSettings->setEGLDisplay(m_display);
 
-    // Allocate native buffers, create the Argus::Buffer for each EGLImage, and release to stream for initial capture use.
+    // Allocate native buffers + register with Argus + import into VK + CUDA.
+    //
+    // Argus only supports BUFFER_TYPE_EGL_IMAGE as its buffer handle, so we
+    // still allocate an NvBufSurface and map an EGLImage over it for Argus's
+    // benefit. The actual storage is the NvBuf -- the EGLImage is just a
+    // handle. We then independently import the NvBuf's DMA-BUF FD into VK
+    // (as a multi-plane VkImage with ycbcr conversion) and CUDA (as
+    // per-plane CUtexObjects). All three consumers (Argus producer, VK
+    // sampler, CUDA reader) target the same underlying memory; no copies.
     for (size_t i = 0; i < kBufferCount; i++) {
       BufferPool::Entry b;
 
-#ifdef USE_NVBUF_UTILS
-      // Deprecated: nvbuf_utils API
-      NvBufferCreateParams inputParams = {0};
-
-      inputParams.width = m_streamWidth;
-      inputParams.height = m_streamHeight;
-      inputParams.layout = NvBufferLayout_Pitch;
-      inputParams.colorFormat = NvBufferColorFormat_NV12_ER;
-      inputParams.payloadType = NvBufferPayload_SurfArray;
-      inputParams.nvbuf_tag = NvBufferTag_CAMERA;
-
-      if (NvBufferCreateEx(&b.nativeBuffer, &inputParams)) {
-        die("NvBufferCreateEx failed");
-      }
-
-      b.eglImage = NvEGLImageFromFd(m_display, b.nativeBuffer);
-#else
       NvBufSurfaceAllocateParams inputParams = {{0}};
-
       inputParams.params.width = m_streamWidth;
       inputParams.params.height = m_streamHeight;
       inputParams.params.layout = NVBUF_LAYOUT_PITCH;
@@ -310,17 +317,23 @@ void ArgusCamera::buildCaptureSessions() {
       inputParams.params.memType = NVBUF_MEM_SURFACE_ARRAY;
       inputParams.memtag = NvBufSurfaceTag_CAMERA;
 
-      NvBufSurface* nvbuf_surf = 0;
+      NvBufSurface* nvbuf_surf = nullptr;
       if (NvBufSurfaceAllocate(&nvbuf_surf, 1, &inputParams) != 0) {
         die("NvBufSurfaceAllocate failed");
       }
       nvbuf_surf->numFilled = 1;
-      b.nativeBuffer = nvbuf_surf->surfaceList[0].bufferDesc;
-      NvBufSurfaceMapEglImage(nvbuf_surf, 0);
-      b.eglImage = nvbuf_surf->surfaceList->mappedAddr.eglImage;
-#endif
 
-      b.rhiSurface = RHIEGLImageSurfaceGL::newTextureExternalOES(b.eglImage, m_streamWidth, m_streamHeight);
+      // Map an EGLImage handle for Argus's API. This does not copy data; the
+      // EGLImage is just a window over the same NvBuf storage.
+      if (NvBufSurfaceMapEglImage(nvbuf_surf, 0) != 0) {
+        die("NvBufSurfaceMapEglImage failed");
+      }
+      b.eglImage = nvbuf_surf->surfaceList->mappedAddr.eglImage;
+
+      // Import the same NvBuf into VK + CUDA via our shared camera-surface
+      // class. Takes ownership of nvbuf_surf.
+      RHISamplerVK* samplerVk = static_cast<RHISamplerVK*>(m_cameraSampler.get());
+      b.rhiSurface = ArgusCameraSurfaceVK::create(nvbuf_surf, samplerVk->vkSamplerYcbcrConversion());
 
       iBufferSettings->setEGLImage(b.eglImage);
       b.argusBuffer = iBufferOutputStream->createBuffer(bufferSettings.get());
@@ -330,83 +343,12 @@ void ArgusCamera::buildCaptureSessions() {
       if (iBufferOutputStream->releaseBuffer(b.argusBuffer) != Argus::STATUS_OK)
         die("Failed to release Buffer for capture use");
 
-      CUDA_CHECK(cuGraphicsEGLRegisterImage(&b.cudaResource, b.eglImage, CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY));
-      CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&b.eglFrame, b.cudaResource, 0, 0));
-
-      int cvLumaFormat = CV_8U;
-      if (i == 0) { // only report for the first buffer created
-        // Typical eglColorFormat is CU_EGL_COLOR_FORMAT_YUV420_SEMIPLANAR_ER (0x26)
-        // Surface [0]: Y, extended range.
-        // Surface [1]: UV, with VU byte ordering, U/V width = 1/2 Y width, U/V height = 1/2 Y height.
-
-        printf("Stream [%zu]: frameType=%s cuFormat=0x%x eglColorFormat=0x%x width=%u height=%u numChannels=%u planeCount=%u \n", cameraIdx,
-          b.eglFrame.frameType == CU_EGL_FRAME_TYPE_ARRAY ? "Array" : "Pitch", b.eglFrame.cuFormat, b.eglFrame.eglColorFormat, b.eglFrame.width, b.eglFrame.height, b.eglFrame.numChannels, b.eglFrame.planeCount);
-        switch (b.eglFrame.cuFormat) {
-          case CU_AD_FORMAT_UNSIGNED_INT8: cvLumaFormat = CV_8U; break;
-          case CU_AD_FORMAT_UNSIGNED_INT16: cvLumaFormat = CV_16U; break;
-          case CU_AD_FORMAT_UNSIGNED_INT32: cvLumaFormat = CV_32S; break; // no real CV_32U type, so we cheat with CV_32S
-          case CU_AD_FORMAT_SIGNED_INT8: cvLumaFormat = CV_8S; break;
-          case CU_AD_FORMAT_SIGNED_INT16: cvLumaFormat = CV_16S; break;
-          case CU_AD_FORMAT_SIGNED_INT32: cvLumaFormat = CV_32S; break;
-
-          case CU_AD_FORMAT_HALF: cvLumaFormat = CV_16F; break;
-          case CU_AD_FORMAT_FLOAT: cvLumaFormat = CV_32F; break;
-          default:
-            assert(false && "Unhandled cuFormat");
-        }
-      }
-
-      // Create CUtexObject wrapper over the luma plane
-      assert(b.eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH && b.eglFrame.frame.pPitch[0] != nullptr);
-      {
-        CUDA_RESOURCE_DESC resDesc;
-        memset(&resDesc, 0, sizeof(resDesc));
-        resDesc.resType = CU_RESOURCE_TYPE_PITCH2D;
-        resDesc.res.pitch2D.devPtr = (CUdeviceptr) b.eglFrame.frame.pPitch[0];
-        resDesc.res.pitch2D.format = b.eglFrame.cuFormat;
-        resDesc.res.pitch2D.numChannels = b.eglFrame.numChannels;
-        resDesc.res.pitch2D.width = b.eglFrame.width;
-        resDesc.res.pitch2D.height = b.eglFrame.height;
-        resDesc.res.pitch2D.pitchInBytes = b.eglFrame.pitch;
-
-        CUDA_TEXTURE_DESC texDesc;
-        memset(&texDesc, 0, sizeof(texDesc));
-        texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
-        texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
-        texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
-        texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
-        // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
-        texDesc.maxAnisotropy = 1;
-
-        CUDA_CHECK(cuTexObjectCreate(&b.cudaLumaTexObject, &resDesc, &texDesc, /*resourceViewDescriptor=*/ nullptr));
-      }
-
-      // Create CUtexObject wrapper over the chroma plane
-      assert(b.eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH && b.eglFrame.frame.pPitch[1] != nullptr);
-      {
-        CUDA_RESOURCE_DESC resDesc;
-        memset(&resDesc, 0, sizeof(resDesc));
-        resDesc.resType = CU_RESOURCE_TYPE_PITCH2D;
-        // TODO hardcoded assumptions about the Chroma format -- we should be able to get this from the eglColorFormat!
-        resDesc.res.pitch2D.devPtr = (CUdeviceptr) b.eglFrame.frame.pPitch[1];
-        resDesc.res.pitch2D.format = b.eglFrame.cuFormat; // should be CU_AD_FORMAT_SIGNED_INT8
-        resDesc.res.pitch2D.numChannels = 2;
-        resDesc.res.pitch2D.width = b.eglFrame.width / 2;
-        resDesc.res.pitch2D.height = b.eglFrame.height / 2;
-        // pitchInBytes NOTE: "...in case of multiplanar *eglFrame, pitch of only first plane is to be considered by the application."
-        // (accessing planeDesc[0] is intentional)
-        resDesc.res.pitch2D.pitchInBytes = b.eglFrame.pitch;
-
-        CUDA_TEXTURE_DESC texDesc;
-        memset(&texDesc, 0, sizeof(texDesc));
-        texDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
-        texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
-        texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
-        texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
-        // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
-        texDesc.maxAnisotropy = 1;
-
-        CUDA_CHECK(cuTexObjectCreate(&b.cudaChromaTexObject, &resDesc, &texDesc, /*resourceViewDescriptor=*/ nullptr));
+      if (i == 0) {
+        NvBufSurfacePlaneParams& pp = nvbuf_surf->surfaceList[0].planeParams;
+        printf("Stream [%zu]:   Luma: %u x %u, %u channels, %u bytes/channel\n", cameraIdx,
+          pp.width[0], pp.height[0], 1u, pp.bytesPerPix[0]);
+        printf("Stream [%zu]: Chroma: %u x %u, %u channels, %u bytes/channel\n", cameraIdx,
+          pp.width[1], pp.height[1], 2u, pp.bytesPerPix[1] / 2);
       }
 
       sensorData.m_bufferPool.buffers.push_back(b);
@@ -470,18 +412,9 @@ void ArgusCamera::teardownCaptureSessions() {
 
     for (BufferPool::Entry& b : sensorData.m_bufferPool.buffers) {
       b.argusBuffer->destroy();
-      cuTexObjectDestroy(b.cudaLumaTexObject);
-      cuTexObjectDestroy(b.cudaChromaTexObject);
-      cuGraphicsUnregisterResource(b.cudaResource);
-      eglDestroyImageKHR(m_display, b.eglImage);
-#ifdef USE_NVBUF_UTILS
-      NvBufferDestroy(b.nativeBuffer);
-#else
-      NvBufSurface* nvbuf_surf = nullptr;
-      NvBufSurfaceFromFd(b.nativeBuffer, (void**) (&nvbuf_surf));
-      if (nvbuf_surf != nullptr)
-        NvBufSurfaceDestroy(nvbuf_surf);
-#endif
+      // b.rhiSurface owns the NvBufSurface + VK + CUDA imports; releasing
+      // the intrusive_ptr destroys all of them in the right order.
+      b.rhiSurface.reset();
     }
   }
   m_perSensorData.clear();
@@ -1044,8 +977,8 @@ bool ArgusCamera::renderPerformanceTuningIMGUI() {
 }
 
 cv::cuda::GpuMat ArgusCamera::gpuMatGreyscale(size_t sensorIdx) {
-  const CUeglFrame& eglFrame = m_perSensorData[sensorIdx].m_bufferPool.activeBuffer().eglFrame;
-  return cv::cuda::GpuMat(eglFrame.height, eglFrame.width, CV_8U, eglFrame.frame.pPitch[0], eglFrame.pitch);
+  const ArgusCameraSurfaceVK* s = m_perSensorData[sensorIdx].m_bufferPool.activeBuffer().rhiSurface.get();
+  return cv::cuda::GpuMat(s->lumaHeight(), s->lumaWidth(), CV_8U, reinterpret_cast<void*>(s->lumaDevicePtr()), s->lumaPitch());
 }
 
 bool ArgusCamera::isStreamFailed(size_t sensorIndex) const {
@@ -1058,29 +991,7 @@ bool ArgusCamera::isStreamFailed(size_t sensorIndex) const {
 bool ArgusCamera::fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const {
   if (sensorIndex >= m_perSensorData.size())
     return false;
-
-  const BufferPool::Entry& activeBuffer = m_perSensorData[sensorIndex].m_bufferPool.activeBuffer();
-
-  outCopyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-
-  // Luma is 1 byte per pixel, full width; chroma is 2 bytes per pixel, half width.
-  // Width in bytes ends up being the same.
-  outCopyDescriptor.WidthInBytes = activeBuffer.eglFrame.width;
-
-  // Pitch is guaranteed identical between the planes.
-  outCopyDescriptor.srcPitch = activeBuffer.eglFrame.pitch;
-
-  if (fromChromaPlane) {
-    // Chroma plane.
-    outCopyDescriptor.srcDevice = (CUdeviceptr) activeBuffer.eglFrame.frame.pPitch[1];
-    outCopyDescriptor.Height = activeBuffer.eglFrame.height / 2; // Chroma is half-height.
-  } else {
-    // Luma plane.
-    outCopyDescriptor.srcDevice = (CUdeviceptr) activeBuffer.eglFrame.frame.pPitch[0];
-    outCopyDescriptor.Height = activeBuffer.eglFrame.height; // Luma is full-height.
-  }
-
-  return true;
+  return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface->fillCudaMemcpy2D(outCopyDescriptor, fromChromaPlane);
 }
 
 

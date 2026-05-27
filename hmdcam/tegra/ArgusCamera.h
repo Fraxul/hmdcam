@@ -4,12 +4,13 @@
 #include <epoxy/egl.h>
 #include <Argus/Argus.h>
 
-#include "rhi/egl/RHIEGLImageSurfaceGL.h"
 #include "rhi/RHIRenderTarget.h"
+#include "rhi/RHISurface.h"
+#include "rhi/vk/RHISamplerVK.h"
+#include "hmdcam/tegra/ArgusCameraSurfaceVK.h"
 #include "common/ICameraProvider.h"
 #include "common/ScrollingBuffer.h"
 #include <cuda.h>
-#include <cudaEGL.h>
 #include <opencv2/core.hpp>
 
 #include <boost/accumulators/accumulators.hpp>
@@ -25,11 +26,12 @@ public:
   // === ICameraProvider ===
   virtual size_t streamCount() const { return m_perSensorData.size(); }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface; }
-  virtual const char* rgbTextureGLSamplerType() const { return "samplerExternalOES"; }
-  virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().cudaLumaTexObject; }
-  virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().cudaChromaTexObject; }
+  virtual const char* rgbTextureGLSamplerType() const { return "sampler2D"; }
+  virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface->cudaLumaTexObject(); }
+  virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface->cudaChromaTexObject(); }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
   virtual bool isStreamFailed(size_t sensorIndex) const;
+  virtual RHISampler::ptr cameraSampler() const override { return m_cameraSampler; }
   // =======================
 
   // === IArgusCamera ===
@@ -98,26 +100,18 @@ private:
 
   struct BufferPool {
     struct Entry {
-      Entry() :
-        argusBuffer(NULL),
-        nativeBuffer(-1),
-        eglImage(NULL),
-        cudaResource(NULL) {}
-      Entry(Argus::Buffer* b_, int nb_, EGLImageKHR egl_, CUgraphicsResource cr_) :
-        argusBuffer(b_),
-        nativeBuffer(nb_),
-        eglImage(egl_),
-        cudaResource(cr_) {}
+      Entry() = default;
 
-      Argus::Buffer* argusBuffer;
-      int nativeBuffer;
-      EGLImageKHR eglImage;
-      RHIEGLImageSurfaceGL::ptr rhiSurface;
+      // Argus's per-buffer handle. The Argus::Buffer wraps an EGLImage that
+      // is itself a window over the NvBufSurface owned by `rhiSurface`.
+      // Argus writes into the NvBuf; VK + CUDA read it through `rhiSurface`.
+      Argus::Buffer* argusBuffer = nullptr;
+      EGLImageKHR eglImage = nullptr;
 
-      CUgraphicsResource cudaResource;
-      CUeglFrame eglFrame;
-      CUtexObject cudaLumaTexObject = 0;
-      CUtexObject cudaChromaTexObject = 0;
+      // Owns the underlying NvBufSurface + VK + CUDA imports. Exposes the
+      // sampled VkImageView (via inherited RHISurfaceVK) and per-plane CUDA
+      // texture objects matching the IArgusCamera contract.
+      ArgusCameraSurfaceVK::ptr rhiSurface;
     };
 
     std::vector<Entry> buffers;
@@ -194,6 +188,13 @@ private:
 
   mutable RHISurface::ptr m_tmpBlitSurface;
   mutable RHIRenderTarget::ptr m_tmpBlitRT;
+
+  // Shared ycbcr-aware sampler for the camera streams. Created once in the
+  // ctor (NV12 / BT.709 / narrow range, matching Argus output for this
+  // hardware). The same conversion is referenced by every ArgusCameraSurfaceVK's
+  // VkImageView and is declared as the immutable sampler for every camera
+  // pipeline's "imageTex" binding by main.cpp.
+  RHISampler::ptr m_cameraSampler;
 
   // noncopyable
   ArgusCamera(const ArgusCamera&);
