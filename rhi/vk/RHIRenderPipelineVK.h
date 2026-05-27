@@ -49,8 +49,12 @@ public:
     uint32_t arraySize = 1;
   };
   // Keyed by name (case-sensitive; matches the FxAtomicString the engine
-  // uses in load*).
-  const std::map<std::string, ResourceBinding>& resourceBindings() const { return m_resourceBindings; }
+  // uses in load*). The value is a vector because the same uniform block
+  // can legitimately be referenced from multiple stages — and because
+  // our per-stage binding-number offset (RHIShaderVK::stageBindingOffset)
+  // puts each stage's reference at a different binding slot, a single
+  // load*() needs to fan out to all of them. Typical vector size is 1.
+  const std::map<std::string, std::vector<ResourceBinding>>& resourceBindings() const { return m_resourceBindings; }
 
   // Vertex-input arrays in the exact form vkCmdSetVertexInputEXT expects.
   const std::vector<vk::VertexInputBindingDescription2EXT>& vertexBindings() const { return m_vertexBindings; }
@@ -75,7 +79,7 @@ protected:
   std::vector<vk::ShaderEXT> m_shaderObjectsRaw;
   std::vector<vk::ShaderStageFlagBits> m_shaderStages;
 
-  std::map<std::string, ResourceBinding> m_resourceBindings;
+  std::map<std::string, std::vector<ResourceBinding>> m_resourceBindings;
   std::vector<vk::VertexInputBindingDescription2EXT> m_vertexBindings;
   std::vector<vk::VertexInputAttributeDescription2EXT> m_vertexAttributes;
   vk::PrimitiveTopology m_primitiveTopology = vk::PrimitiveTopology::eTriangleList;

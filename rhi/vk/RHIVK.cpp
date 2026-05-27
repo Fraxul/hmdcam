@@ -685,16 +685,23 @@ void RHIVK::loadUniformBlock(FxAtomicString name, RHIBuffer::ptr buffer) {
   auto it = bindings.find(name.c_str());
   if (it == bindings.end()) return; // shader does not use this block
 
-  StagedDescriptorWrite w;
-  w.set = it->second.set;
-  w.bufferInfo.buffer = static_cast<RHIBufferVK*>(buffer.get())->vkBuffer();
-  w.bufferInfo.offset = 0;
-  w.bufferInfo.range = buffer->size();
-  w.write.dstBinding = it->second.binding;
-  w.write.dstArrayElement = 0;
-  w.write.descriptorCount = 1;
-  w.write.descriptorType = it->second.descriptorType;
-  m_pendingDescriptorWrites[{it->second.set, it->second.binding}] = w;
+  // Fan out the write to every binding slot this name occupies (typically
+  // one, but a cross-stage-shared uniform block lands at multiple slots
+  // because our per-stage binding-number offset puts each stage's
+  // reference at a distinct slot — see RHIShaderVK::stageBindingOffset).
+  vk::Buffer vkBuf = static_cast<RHIBufferVK*>(buffer.get())->vkBuffer();
+  for (const auto& binding : it->second) {
+    StagedDescriptorWrite w;
+    w.set = binding.set;
+    w.bufferInfo.buffer = vkBuf;
+    w.bufferInfo.offset = 0;
+    w.bufferInfo.range = buffer->size();
+    w.write.dstBinding = binding.binding;
+    w.write.dstArrayElement = 0;
+    w.write.descriptorCount = 1;
+    w.write.descriptorType = binding.descriptorType;
+    m_pendingDescriptorWrites[{binding.set, binding.binding}] = w;
+  }
   keepAliveForFrame(buffer);
 }
 
@@ -705,16 +712,18 @@ void RHIVK::loadUniformBlockImmediate(FxAtomicString name, const void* data, siz
   if (it == bindings.end()) return;
 
   auto alloc = allocTransientUniform(data, size);
-  StagedDescriptorWrite w;
-  w.set = it->second.set;
-  w.bufferInfo.buffer = alloc.buffer;
-  w.bufferInfo.offset = alloc.offset;
-  w.bufferInfo.range = alloc.size;
-  w.write.dstBinding = it->second.binding;
-  w.write.dstArrayElement = 0;
-  w.write.descriptorCount = 1;
-  w.write.descriptorType = it->second.descriptorType;
-  m_pendingDescriptorWrites[{it->second.set, it->second.binding}] = w;
+  for (const auto& binding : it->second) {
+    StagedDescriptorWrite w;
+    w.set = binding.set;
+    w.bufferInfo.buffer = alloc.buffer;
+    w.bufferInfo.offset = alloc.offset;
+    w.bufferInfo.range = alloc.size;
+    w.write.dstBinding = binding.binding;
+    w.write.dstArrayElement = 0;
+    w.write.descriptorCount = 1;
+    w.write.descriptorType = binding.descriptorType;
+    m_pendingDescriptorWrites[{binding.set, binding.binding}] = w;
+  }
 }
 
 void RHIVK::loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr buffer) {
@@ -723,16 +732,19 @@ void RHIVK::loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr buffer) {
   auto it = bindings.find(name.c_str());
   if (it == bindings.end()) return;
 
-  StagedDescriptorWrite w;
-  w.set = it->second.set;
-  w.bufferInfo.buffer = static_cast<RHIBufferVK*>(buffer.get())->vkBuffer();
-  w.bufferInfo.offset = 0;
-  w.bufferInfo.range = buffer->size();
-  w.write.dstBinding = it->second.binding;
-  w.write.dstArrayElement = 0;
-  w.write.descriptorCount = 1;
-  w.write.descriptorType = it->second.descriptorType;
-  m_pendingDescriptorWrites[{it->second.set, it->second.binding}] = w;
+  vk::Buffer vkBuf = static_cast<RHIBufferVK*>(buffer.get())->vkBuffer();
+  for (const auto& binding : it->second) {
+    StagedDescriptorWrite w;
+    w.set = binding.set;
+    w.bufferInfo.buffer = vkBuf;
+    w.bufferInfo.offset = 0;
+    w.bufferInfo.range = buffer->size();
+    w.write.dstBinding = binding.binding;
+    w.write.dstArrayElement = 0;
+    w.write.descriptorCount = 1;
+    w.write.descriptorType = binding.descriptorType;
+    m_pendingDescriptorWrites[{binding.set, binding.binding}] = w;
+  }
   keepAliveForFrame(buffer);
 }
 
@@ -747,21 +759,26 @@ void RHIVK::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::pt
   const auto& bindings = m_boundPipeline->resourceBindings();
   auto it = bindings.find(name.c_str());
   if (it == bindings.end()) return;
-  StagedDescriptorWrite w;
-  w.set = it->second.set;
-  w.imageInfo.imageView = static_cast<RHISurfaceVK*>(tex.get())->vkImageView();
-  w.imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+  vk::ImageView imageView = static_cast<RHISurfaceVK*>(tex.get())->vkImageView();
   // VK CIS descriptors require a real sampler handle. Callers that pass
   // sampler=nullptr (mirroring GL where the texture's own glTexParameter
   // state suffices) get a process-wide default linear/repeat sampler.
-  w.imageInfo.sampler = sampler
+  vk::Sampler vkSampler = sampler
     ? static_cast<RHISamplerVK*>(sampler.get())->vkSampler()
     : defaultSampler();
-  w.write.dstBinding = it->second.binding;
-  w.write.dstArrayElement = 0;
-  w.write.descriptorCount = 1;
-  w.write.descriptorType = it->second.descriptorType;
-  m_pendingDescriptorWrites[{it->second.set, it->second.binding}] = w;
+  for (const auto& binding : it->second) {
+    StagedDescriptorWrite w;
+    w.set = binding.set;
+    w.imageInfo.imageView = imageView;
+    w.imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    w.imageInfo.sampler = vkSampler;
+    w.write.dstBinding = binding.binding;
+    w.write.dstArrayElement = 0;
+    w.write.descriptorCount = 1;
+    w.write.descriptorType = binding.descriptorType;
+    m_pendingDescriptorWrites[{binding.set, binding.binding}] = w;
+  }
   keepAliveForFrame(tex);
   if (sampler) keepAliveForFrame(sampler);
 }
@@ -787,15 +804,18 @@ void RHIVK::loadImage(FxAtomicString name, RHISurface::ptr tex, RHIImageAccessTy
   auto it = bindings.find(name.c_str());
   if (it == bindings.end()) return;
 
-  StagedDescriptorWrite w;
-  w.set = it->second.set;
-  w.imageInfo.imageView = static_cast<RHISurfaceVK*>(tex.get())->vkImageView();
-  w.imageInfo.imageLayout = vk::ImageLayout::eGeneral;
-  w.write.dstBinding = it->second.binding;
-  w.write.dstArrayElement = 0;
-  w.write.descriptorCount = 1;
-  w.write.descriptorType = it->second.descriptorType;
-  m_pendingDescriptorWrites[{it->second.set, it->second.binding}] = w;
+  vk::ImageView imageView = static_cast<RHISurfaceVK*>(tex.get())->vkImageView();
+  for (const auto& binding : it->second) {
+    StagedDescriptorWrite w;
+    w.set = binding.set;
+    w.imageInfo.imageView = imageView;
+    w.imageInfo.imageLayout = vk::ImageLayout::eGeneral;
+    w.write.dstBinding = binding.binding;
+    w.write.dstArrayElement = 0;
+    w.write.descriptorCount = 1;
+    w.write.descriptorType = binding.descriptorType;
+    m_pendingDescriptorWrites[{binding.set, binding.binding}] = w;
+  }
   keepAliveForFrame(tex);
 }
 

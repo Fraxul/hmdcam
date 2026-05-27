@@ -161,7 +161,12 @@ RHIRenderPipelineVK::RHIRenderPipelineVK(RHIShaderVK::ptr shader, const RHIRende
     }
   }
 
-  // Populate name → binding map for fast load*() lookup.
+  // Populate name → bindings map for fast load*() lookup. A single name
+  // can map to multiple bindings when the same resource (typically a
+  // uniform block) is referenced from multiple shader stages: our
+  // per-stage binding-number offset puts each stage's reference at a
+  // distinct slot. load*() fans out the descriptor write to all matching
+  // slots so every stage sees the data. Typical entry has size 1.
   for (const auto& [key, agg] : aggBindings) {
     ResourceBinding rb;
     rb.set = agg.set;
@@ -170,7 +175,7 @@ RHIRenderPipelineVK::RHIRenderPipelineVK(RHIShaderVK::ptr shader, const RHIRende
     rb.stageFlags = agg.stageFlags;
     rb.arraySize = agg.arraySize;
     if (!agg.name.empty())
-      m_resourceBindings[agg.name] = rb;
+      m_resourceBindings[agg.name].push_back(rb);
   }
 
   // ---- 2. Build one VkDescriptorSetLayout per used `set` index. ----
