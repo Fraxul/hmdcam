@@ -3,6 +3,7 @@
 #include "rhi/RHIComputePipeline.h"
 #include "rhi/RHIObject.h"
 #include "rhi/RHIRenderPipeline.h"
+#include "rhi/RHISurface.h" // RHISampler — required for intrusive_ptr<RHISampler> in maps
 #include <stddef.h>
 #include <stdint.h>
 #include <glm/glm.hpp>
@@ -89,11 +90,21 @@ public:
   // only applies to compute shaders
   const glm::uvec3& localWorkgroupSize() const { return m_localWorkgroupSize; }
 
+  // Declare that the descriptor binding with this GLSL identifier should use
+  // an immutable sampler. Required for ycbcr-aware samplers in the VK
+  // backend (the conversion can only be referenced from a layout-resident
+  // sampler, not from per-frame descriptor writes). Must be set before any
+  // pipeline that uses this shader is compiled — once a pipeline is built
+  // the descriptor set layout is fixed. The GL backend ignores these.
+  void setImmutableSampler(const std::string& bindingName, boost::intrusive_ptr<RHISampler> sampler);
+  const std::map<std::string, boost::intrusive_ptr<RHISampler>>& immutableSamplers() const { return m_immutableSamplers; }
+
 protected:
   friend class RHI;
   glm::uvec3 m_localWorkgroupSize;
   std::map<size_t, RHIRenderPipeline::ptr> m_renderPipelineCache;
   RHIComputePipeline::ptr m_computePipelineCache;
+  std::map<std::string, boost::intrusive_ptr<RHISampler>> m_immutableSamplers;
 };
 
 struct RHIVertexLayoutElement {
@@ -177,6 +188,12 @@ public:
   void setFlag(const std::string&, int);
   void setFlag(const std::string&, float);
 
+  // Declare an immutable sampler binding for the resulting pipeline. See
+  // RHIShader::setImmutableSampler for full semantics. Propagated to the
+  // compiled shader at compileRenderPipeline time.
+  void setImmutableSamplerBinding(const std::string& bindingName, boost::intrusive_ptr<RHISampler> sampler);
+  const std::map<std::string, boost::intrusive_ptr<RHISampler>>& immutableSamplerBindings() const { return m_immutableSamplerBindings; }
+
   void setVertexLayout(const RHIVertexLayout&);
 
   struct Source {
@@ -205,5 +222,6 @@ public:
 protected:
   std::vector<Source> m_sources;
   std::map<std::string, std::string> m_flags;
+  std::map<std::string, boost::intrusive_ptr<RHISampler>> m_immutableSamplerBindings;
   RHIVertexLayout m_vertexLayout;
 };

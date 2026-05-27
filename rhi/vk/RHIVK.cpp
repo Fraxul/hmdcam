@@ -764,7 +764,10 @@ void RHIVK::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::pt
   // VK CIS descriptors require a real sampler handle. Callers that pass
   // sampler=nullptr (mirroring GL where the texture's own glTexParameter
   // state suffices) get a process-wide default linear/repeat sampler.
-  vk::Sampler vkSampler = sampler
+  // For bindings declared with an immutable sampler in the descriptor set
+  // layout, the sampler half of the push is ignored by the spec — we still
+  // pass the immutable handle defensively to keep validation/drivers happy.
+  vk::Sampler defaultVkSampler = sampler
     ? static_cast<RHISamplerVK*>(sampler.get())->vkSampler()
     : defaultSampler();
   for (const auto& binding : it->second) {
@@ -772,7 +775,9 @@ void RHIVK::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::pt
     w.set = binding.set;
     w.imageInfo.imageView = imageView;
     w.imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-    w.imageInfo.sampler = vkSampler;
+    w.imageInfo.sampler = binding.immutableSampler
+      ? binding.immutableSampler->vkSampler()
+      : defaultVkSampler;
     w.write.dstBinding = binding.binding;
     w.write.dstArrayElement = 0;
     w.write.descriptorCount = 1;

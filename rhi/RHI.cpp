@@ -99,7 +99,16 @@ RHIRenderPipeline::ptr RHI::compileRenderPipeline(RHIShader::ptr shader, const R
 }
 
 RHIRenderPipeline::ptr RHI::compileRenderPipeline(const RHIShaderDescriptor& shaderDescriptor, const RHIRenderPipelineDescriptor& renderPipelineDescriptor) {
-  return compileRenderPipeline(compileShader(shaderDescriptor), renderPipelineDescriptor);
+  RHIShader::ptr shader = compileShader(shaderDescriptor);
+  // Immutable-sampler declarations on the descriptor propagate to the
+  // compiled shader. compileShader caches by descriptor hash, so applying
+  // here (rather than inside compileShader) handles the cached-hit case
+  // where the shader already exists with prior immutable samplers attached
+  // — the new set overwrites name-by-name, leaving unrelated bindings alone.
+  for (const auto& [name, sampler] : shaderDescriptor.immutableSamplerBindings()) {
+    shader->setImmutableSampler(name, sampler);
+  }
+  return compileRenderPipeline(shader, renderPipelineDescriptor);
 }
 
 RHIComputePipeline::ptr RHI::compileComputePipeline(RHIShader::ptr shader) {

@@ -16,6 +16,50 @@ enum RHISamplerFilterMode : unsigned char {
   kFilterMipLinear,
 };
 
+enum RHIYcbcrModel : unsigned char {
+  kYcbcrModelRGBIdentity,
+  kYcbcrModelYcbcrIdentity,
+  kYcbcrModelYcbcr709,
+  kYcbcrModelYcbcr601,
+  kYcbcrModelYcbcr2020,
+};
+
+enum RHIYcbcrRange : unsigned char {
+  kYcbcrRangeFull,
+  kYcbcrRangeNarrow,
+};
+
+enum RHIChromaLocation : unsigned char {
+  kChromaLocationCositedEven,
+  kChromaLocationMidpoint,
+};
+
+// Describes a YUV->RGB conversion to be applied at sample time. Attached to
+// an RHISamplerDescriptor when the sampler will be used with a YUV-format
+// surface (e.g. ArgusCamera output). The VK backend translates this into a
+// VkSamplerYcbcrConversion; the GL backend ignores it (samplerExternalOES on
+// GL handles equivalent conversion internally and was never user-configurable).
+//
+// sourceFormat names which YUV-plane layout the producer writes. Only NV12 is
+// supported today; extend on demand.
+struct RHIYcbcrConversionDescriptor {
+  enum SourceFormat : unsigned char {
+    kSourceFormatNone, // sampler is not ycbcr-aware (default)
+    kSourceFormatNV12, // NV12 (Y + interleaved UV, 4:2:0). Maps to VK_FORMAT_G8_B8R8_2PLANE_420_UNORM.
+  };
+
+  RHIYcbcrConversionDescriptor() {}
+
+  SourceFormat sourceFormat = kSourceFormatNone;
+  RHIYcbcrModel model = kYcbcrModelYcbcr709;
+  RHIYcbcrRange range = kYcbcrRangeNarrow;
+  RHIChromaLocation xChromaOffset = kChromaLocationCositedEven;
+  RHIChromaLocation yChromaOffset = kChromaLocationCositedEven;
+  RHISamplerFilterMode chromaFilter = kFilterLinear;
+
+  bool isEnabled() const { return sourceFormat != kSourceFormatNone; }
+};
+
 struct RHISamplerDescriptor {
   RHISamplerDescriptor() :
     wrapModeU(kWrapClamp),
@@ -26,6 +70,12 @@ struct RHISamplerDescriptor {
   RHISamplerWrapMode wrapModeU, wrapModeV;
   RHISamplerFilterMode filter;
   uint8_t maxAnisotropy;
+
+  // When set, the sampler does YUV->RGB conversion at sample time. Samplers
+  // configured this way carry implementation constraints in some backends
+  // (e.g. VK requires them to be specified as immutable samplers in the
+  // descriptor set layout — see RHIShaderDescriptor::setImmutableSampler).
+  RHIYcbcrConversionDescriptor ycbcrConversion;
 };
 
 enum RHISurfaceFormat : unsigned char {

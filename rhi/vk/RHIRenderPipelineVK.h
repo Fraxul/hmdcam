@@ -47,6 +47,12 @@ public:
     vk::DescriptorType descriptorType{};
     vk::ShaderStageFlags stageFlags{};
     uint32_t arraySize = 1;
+    // Non-owning. Non-null iff this binding was declared with
+    // RHIShader::setImmutableSampler. The sampler handle is baked into the
+    // descriptor set layout's pImmutableSamplers; loadTexture treats the
+    // sampler half of the descriptor write as ignored for these bindings
+    // (the spec says immutable samplers shadow the write's sampler).
+    class RHISamplerVK* immutableSampler = nullptr;
   };
   // Keyed by name (case-sensitive; matches the FxAtomicString the engine
   // uses in load*). The value is a vector because the same uniform block

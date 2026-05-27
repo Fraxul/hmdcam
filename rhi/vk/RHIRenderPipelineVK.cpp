@@ -1,5 +1,6 @@
 #include "rhi/vk/RHIRenderPipelineVK.h"
 #include "rhi/RHI.h"
+#include "rhi/vk/RHISamplerVK.h"
 #include <cstdio>
 #include <cstdlib>
 #include <set>
@@ -161,6 +162,27 @@ RHIRenderPipelineVK::RHIRenderPipelineVK(RHIShaderVK::ptr shader, const RHIRende
     }
   }
 
+  // Resolve immutable-sampler declarations (set on the shader prior to
+  // pipeline build) into (binding -> VkSampler) handles. The shader carries
+  // RHISampler::ptr keyed by GLSL identifier; we look those up against the
+  // aggregated binding names so each immutable sampler lands on every slot
+  // that names it (across stages, when our per-stage offset puts the same
+  // name at multiple bindings).
+  std::map<std::pair<uint32_t, uint32_t>, RHISamplerVK*> immutableByBinding;
+  for (const auto& [name, samplerPtr] : m_shader->immutableSamplers()) {
+    RHISamplerVK* samplerVk = static_cast<RHISamplerVK*>(samplerPtr.get());
+    bool foundAny = false;
+    for (const auto& [key, agg] : aggBindings) {
+      if (agg.name == name) {
+        immutableByBinding[key] = samplerVk;
+        foundAny = true;
+      }
+    }
+    if (!foundAny) {
+      fprintf(stderr, "RHIRenderPipelineVK: immutable sampler binding \"%s\" not found in any shader stage\n", name.c_str());
+    }
+  }
+
   // Populate name → bindings map for fast load*() lookup. A single name
   // can map to multiple bindings when the same resource (typically a
   // uniform block) is referenced from multiple shader stages: our
@@ -174,6 +196,9 @@ RHIRenderPipelineVK::RHIRenderPipelineVK(RHIShaderVK::ptr shader, const RHIRende
     rb.descriptorType = agg.descriptorType;
     rb.stageFlags = agg.stageFlags;
     rb.arraySize = agg.arraySize;
+    auto immIt = immutableByBinding.find(key);
+    if (immIt != immutableByBinding.end())
+      rb.immutableSampler = immIt->second;
     if (!agg.name.empty())
       m_resourceBindings[agg.name].push_back(rb);
   }
@@ -183,14 +208,29 @@ RHIRenderPipelineVK::RHIRenderPipelineVK(RHIShaderVK::ptr shader, const RHIRende
   // pool — bindings are pushed inline per-draw. The shader-object pipeline
   // layout must include a slot for every set up to the max referenced set
   // (gaps would be illegal); we synthesize empty layouts for any holes.
+  //
+  // Immutable samplers must be specified via pImmutableSamplers on the
+  // matching binding entry. The pointed-to VkSampler array must outlive
+  // the descriptor set layout creation call (we keep a side vector per
+  // binding while building, then the driver copies the handle into the
+  // layout itself).
   uint32_t maxSet = 0;
   std::map<uint32_t, std::vector<vk::DescriptorSetLayoutBinding>> bindingsBySet;
+  // Holds the single VkSampler each immutable binding refers to. Indexed
+  // by (set, binding) so the address handed to Vulkan stays stable across
+  // bindingsBySet vector reallocations.
+  std::map<std::pair<uint32_t, uint32_t>, vk::Sampler> immutableSamplerHandles;
   for (const auto& [key, agg] : aggBindings) {
     vk::DescriptorSetLayoutBinding lb;
     lb.binding = agg.binding;
     lb.descriptorType = agg.descriptorType;
     lb.descriptorCount = agg.arraySize;
     lb.stageFlags = agg.stageFlags;
+    auto immIt = immutableByBinding.find(key);
+    if (immIt != immutableByBinding.end()) {
+      immutableSamplerHandles[key] = immIt->second->vkSampler();
+      lb.pImmutableSamplers = &immutableSamplerHandles[key];
+    }
     bindingsBySet[agg.set].push_back(lb);
     if (agg.set > maxSet) maxSet = agg.set;
   }

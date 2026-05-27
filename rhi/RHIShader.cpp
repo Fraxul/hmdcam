@@ -40,6 +40,14 @@ RHIShader::RHIShader() :
 RHIShader::~RHIShader() {
 }
 
+void RHIShader::setImmutableSampler(const std::string& bindingName, boost::intrusive_ptr<RHISampler> sampler) {
+  m_immutableSamplers[bindingName] = std::move(sampler);
+}
+
+void RHIShaderDescriptor::setImmutableSamplerBinding(const std::string& bindingName, boost::intrusive_ptr<RHISampler> sampler) {
+  m_immutableSamplerBindings[bindingName] = std::move(sampler);
+}
+
 RHIShaderDescriptor::RHIShaderDescriptor() {
   rhi()->populateGlobalShaderDescriptorEnvironment(this);
 }
