@@ -1,7 +1,11 @@
 #pragma once
 #include "rhi/RHI.h"
 #include "rhi/vk/RHIVulkan.h"
+#include <condition_variable>
+#include <deque>
 #include <glm/glm.hpp>
+#include <mutex>
+#include <thread>
 
 class VKFrameSource;
 class RHIWindowRenderTargetVK;
@@ -176,6 +180,21 @@ protected:
     vk::ImageView passImageView;
     vk::Extent2D passExtent{};
     vk::Format passFormat{};
+
+    // ---- Frame scope: pending PNG dumps (debug, env-var-gated) ----
+    // One entry per endRenderPass on a dump frame. Drained in swapBuffers /
+    // flush after the queue submit has completed (waitIdle), then the
+    // CurrentFrame reset destroys the staging buffers.
+    struct PendingDump {
+      vk::UniqueBuffer buffer;
+      vk::UniqueDeviceMemory memory;
+      vk::DeviceSize size = 0;
+      uint32_t width = 0;
+      uint32_t height = 0;
+      vk::Format format{};
+      std::string filepath;
+    };
+    std::vector<PendingDump> pendingDumps;
   };
   CurrentFrame m_currentFrame;
 
@@ -271,4 +290,47 @@ protected:
   // Helper called by bindRenderPipeline to set every shader_object dynamic
   // state to a sensible default.
   void setDynamicStateDefaults();
+
+  // -------- debug: per-frame render-target dump --------
+  //
+  // When RHI_VK_DUMP_FRAME=<N> is set, every endRenderPass on the N-th
+  // frame (0-indexed from process start) records a vkCmdCopyImageToBuffer
+  // of the just-rendered image into a host-visible staging buffer. After
+  // the frame's submit completes, each staging buffer is mapped, format-
+  // converted to RGB(A)8, and written via stbi_write_png as
+  //   <dir>/frame_<N>_pass_<P>_<window|offscreen>_<WxH>_<format>.png
+  // <dir> defaults to /tmp/rhi-vk-dump (override via RHI_VK_DUMP_DIR).
+  // Zero cost when the env var is unset (one int64 compare per endRenderPass).
+  int64_t m_dumpFrameIndex = -1; // -1 disables
+  std::string m_dumpDir;
+  uint64_t m_dumpFrameCounter = 0; // incremented per swapBuffers
+  uint32_t m_passCounterThisFrame = 0; // resets at swap/flush
+
+  // Insert copyImageToBuffer + per-pass staging-buffer alloc into the
+  // current CB; record the PendingDump on m_currentFrame for later write.
+  // Called from endRenderPass when (m_dumpFrameCounter == m_dumpFrameIndex).
+  // finalLayout is the image's layout after endRenderPass's normal toFinal
+  // transition (PRESENT_SRC for window RT, SHADER_READ_ONLY for offscreen).
+  void enqueuePassDump(vk::ImageLayout finalLayout);
+
+  // Submit a signal-only fence after the just-submitted frame CB and queue
+  // a job for the background worker to wait on, then map and PNG-encode.
+  // Returns immediately — the actual map / convert / stbi_write_png runs
+  // off-thread so the render loop isn't stalled. Without this offload, a
+  // multi-megapixel PNG encode (~50 ms) stretches the gap between submits
+  // long enough to trip CUDA-side semaphore-acquire watchdogs on busy
+  // pipelines (e.g. the mock-depth path).
+  void processPendingDumps();
+
+  // Background PNG-encoder worker.
+  struct DumpJob {
+    vk::UniqueFence fence; // signaled by an empty queue.submit after the frame CB
+    std::vector<CurrentFrame::PendingDump> dumps;
+  };
+  std::thread m_dumpWorker;
+  std::mutex m_dumpMutex;
+  std::condition_variable m_dumpCv;
+  std::deque<DumpJob> m_dumpQueue;
+  bool m_dumpStop = false;
+  void dumpWorkerThread();
 };

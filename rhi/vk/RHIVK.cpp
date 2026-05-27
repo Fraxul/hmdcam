@@ -15,10 +15,13 @@
 #include "rhi/vk/RHIVKFrameSource.h"
 #include "rhi/vk/RHIVulkan.h"
 #include "rhi/vk/RHIWindowRenderTargetVK.h"
+#include "stb/stb_image_write.h"
 #include <assert.h>
 #include <cstring>
+#include <filesystem>
 #include <stdio.h>
 #include <stdlib.h>
+#include <system_error>
 
 #define RHI_VK_NOT_IMPLEMENTED()                                \
   do {                                                          \
@@ -33,6 +36,18 @@ RHIVK::RHIVK() {
 }
 
 RHIVK::~RHIVK() {
+  // Drain the dump worker before tearing down the device: its in-flight
+  // jobs hold UniqueFence / UniqueBuffer / UniqueDeviceMemory handles
+  // whose destructors call into the vk::Device. Stop-signal + join
+  // guarantees the worker has popped every job from the queue.
+  if (m_dumpWorker.joinable()) {
+    {
+      std::lock_guard<std::mutex> lock(m_dumpMutex);
+      m_dumpStop = true;
+    }
+    m_dumpCv.notify_all();
+    m_dumpWorker.join();
+  }
   // Wait for any in-flight frames before tearing down command pool / image
   // views so the destruction order is safe.
   if (rhi() && rhi()->vk()) {
@@ -100,6 +115,22 @@ void RHIVK::setFrameSource(VKFrameSource* source) {
 
   printf("RHIVK::setFrameSource: %u frame slots ready (transient uniform ring=%zu bytes/slot, ubo align=%zu)\n",
     frameCount, size_t(kTransientUniformRingSize), size_t(m_transientUniformAlignment));
+
+  // Debug: RHI_VK_DUMP_FRAME=<N> picks a single frame to dump every
+  // render-target pass to PNG. Lets the user diff stages while chasing
+  // coordinate-convention bugs (Y-flip, etc.). Cost is zero when unset.
+  if (const char* s = getenv("RHI_VK_DUMP_FRAME")) {
+    m_dumpFrameIndex = atoll(s);
+    m_dumpDir = getenv("RHI_VK_DUMP_DIR") ? getenv("RHI_VK_DUMP_DIR") : "/tmp/rhi-vk-dump";
+    std::error_code ec;
+    std::filesystem::create_directories(m_dumpDir, ec);
+    if (ec) {
+      fprintf(stderr, "RHIVK: warning: could not create dump dir %s: %s\n",
+        m_dumpDir.c_str(), ec.message().c_str());
+    }
+    printf("RHIVK: will dump frame %lld render-target passes to %s\n",
+      (long long) m_dumpFrameIndex, m_dumpDir.c_str());
+  }
 }
 
 vk::ImageView RHIVK::swapImageViewFor(vk::Image image, vk::Format format) {
@@ -343,6 +374,13 @@ void RHIVK::endRenderPass(RHIRenderTarget::ptr /*target*/) {
     dstStage,
     vk::DependencyFlags(), 0, nullptr, 0, nullptr,
     1, &toFinal);
+
+  // Debug: optionally snapshot this pass for PNG dump. Gated by env var;
+  // runs only on the configured frame.
+  if (static_cast<int64_t>(m_dumpFrameCounter) == m_dumpFrameIndex) {
+    enqueuePassDump(finalLayout);
+  }
+  ++m_passCounterThisFrame;
 
   // Pass scope done. The CB stays open for the next begin* (next render
   // pass, timer query, etc.); swapBuffers / flush handles the submit.
@@ -1175,12 +1213,18 @@ void RHIVK::swapBuffers(RHIRenderTarget::ptr /*target*/) {
   info.renderFinished = m_currentFrame.renderFinished;
   m_frameSource->presentVKFrame(info);
 
+  // Drain debug PNG dumps before destroying their staging buffers (the
+  // CurrentFrame reset below releases the UniqueBuffer/UniqueDeviceMemory).
+  processPendingDumps();
+
   // Advance the slot ring.
   m_frameContextIndex = (m_frameContextIndex + 1) % m_frameContexts.size();
   m_currentFrame = {}; // cbOpen=false, hasWindowImage=false, passActive=false
   m_boundPipeline = nullptr;
   m_pendingStreamBuffers.clear();
   m_pendingDescriptorWrites.clear();
+  ++m_dumpFrameCounter;
+  m_passCounterThisFrame = 0;
 }
 void RHIVK::flush() {
   // Submit the currently-recording frame CB without presenting. Used when
@@ -1224,11 +1268,15 @@ void RHIVK::flush() {
   }
   rhi()->vk()->queue().submit(submit, m_currentFrame.frameFence);
 
+  processPendingDumps();
+
   m_frameContextIndex = (m_frameContextIndex + 1) % m_frameContexts.size();
   m_currentFrame = {};
   m_boundPipeline = nullptr;
   m_pendingStreamBuffers.clear();
   m_pendingDescriptorWrites.clear();
+  ++m_dumpFrameCounter;
+  m_passCounterThisFrame = 0;
 }
 void RHIVK::flushAndWaitForGPUScheduling() { RHI_VK_NOT_IMPLEMENTED(); }
 uint32_t RHIVK::maxMultisampleSamples() { RHI_VK_NOT_IMPLEMENTED(); }
@@ -1244,6 +1292,222 @@ RHIRenderPipeline::ptr RHIVK::internalCompileRenderPipeline(RHIShader::ptr shade
   return RHIRenderPipeline::ptr(new RHIRenderPipelineVK(shaderVK, d));
 }
 RHIComputePipeline::ptr RHIVK::internalCompileComputePipeline(RHIShader::ptr) { RHI_VK_NOT_IMPLEMENTED(); }
+
+// -------- Debug: per-frame render-target PNG dump --------
+
+namespace {
+
+// Returns (bytesPerPixel, stbComponents, formatTag). bpp==0 means unsupported.
+struct DumpFormatInfo {
+  uint32_t bpp = 0;
+  int stbComponents = 0;
+  const char* tag = "unknown";
+  bool srcIsBGR = false; // swap channels[0]/[2] on write
+  bool downconvert16To8 = false; // shift each u16 channel right 8
+};
+
+DumpFormatInfo classifyDumpFormat(vk::Format f) {
+  switch (f) {
+    case vk::Format::eB8G8R8A8Srgb: return {4, 4, "bgra8_srgb", true, false};
+    case vk::Format::eB8G8R8A8Unorm: return {4, 4, "bgra8_unorm", true, false};
+    case vk::Format::eR8G8B8A8Srgb: return {4, 4, "rgba8_srgb", false, false};
+    case vk::Format::eR8G8B8A8Unorm: return {4, 4, "rgba8_unorm", false, false};
+    // Packed A8B8G8R8: on little-endian (which is every platform we care
+    // about) bytes 0..3 are R, G, B, A — identical to R8G8B8A8 in memory.
+    case vk::Format::eA8B8G8R8UnormPack32: return {4, 4, "abgr8_unorm_pack32", false, false};
+    case vk::Format::eA8B8G8R8SrgbPack32: return {4, 4, "abgr8_srgb_pack32", false, false};
+    case vk::Format::eR8Unorm: return {1, 1, "r8_unorm", false, false};
+    case vk::Format::eR8G8Unorm: return {2, 2, "rg8_unorm", false, false};
+    case vk::Format::eR16Unorm: return {2, 1, "r16_unorm", false, true};
+    case vk::Format::eR16G16Unorm: return {4, 2, "rg16_unorm", false, true};
+    case vk::Format::eR16G16Sfloat: return {4, 2, "rg16_sfloat", false, true}; // crude: shifts mantissa+exp bits
+    default: return {};
+  }
+}
+
+} // namespace
+
+void RHIVK::enqueuePassDump(vk::ImageLayout finalLayout) {
+  DumpFormatInfo fmt = classifyDumpFormat(m_currentFrame.passFormat);
+  if (fmt.bpp == 0) {
+    fprintf(stderr, "RHIVK: pass %u dump skipped: unsupported VkFormat (%u)\n",
+      m_passCounterThisFrame, static_cast<uint32_t>(m_currentFrame.passFormat));
+    return;
+  }
+  const uint32_t w = m_currentFrame.passExtent.width;
+  const uint32_t h = m_currentFrame.passExtent.height;
+  const vk::DeviceSize size = vk::DeviceSize(w) * h * fmt.bpp;
+
+  vk::Device device = rhi()->vk()->device();
+  vk::BufferCreateInfo bci{vk::BufferCreateFlags(),
+    size, vk::BufferUsageFlagBits::eTransferDst, vk::SharingMode::eExclusive};
+  CurrentFrame::PendingDump pd;
+  pd.buffer = device.createBufferUnique(bci);
+  vk::MemoryRequirements memReq = device.getBufferMemoryRequirements(pd.buffer.get());
+  vk::MemoryAllocateInfo mai{memReq.size,
+    rhi()->vk()->findMemoryType(memReq.memoryTypeBits,
+      vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)};
+  pd.memory = device.allocateMemoryUnique(mai);
+  device.bindBufferMemory(pd.buffer.get(), pd.memory.get(), 0);
+  pd.size = size;
+  pd.width = w;
+  pd.height = h;
+  pd.format = m_currentFrame.passFormat;
+  char filename[256];
+  snprintf(filename, sizeof(filename),
+    "%s/frame_%06llu_pass_%03u_%s_%ux%u_%s.png",
+    m_dumpDir.c_str(),
+    (unsigned long long) m_dumpFrameCounter,
+    m_passCounterThisFrame,
+    m_currentFrame.passIsWindowRT ? "window" : "offscreen",
+    w, h, fmt.tag);
+  pd.filepath = filename;
+
+  // Transition finalLayout -> TRANSFER_SRC_OPTIMAL, copy, transition back.
+  // Source-stage of the toFinal barrier was eColorAttachmentOutput; we
+  // need the writes to be visible to TRANSFER reads, so srcStage matches
+  // the toFinal transition's dstStage.
+  vk::CommandBuffer cb = m_currentFrame.commandBuffer;
+  vk::ImageMemoryBarrier toSrc{
+    vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite,
+    vk::AccessFlagBits::eTransferRead,
+    finalLayout,
+    vk::ImageLayout::eTransferSrcOptimal,
+    VK_QUEUE_FAMILY_IGNORED,
+    VK_QUEUE_FAMILY_IGNORED,
+    m_currentFrame.passImage,
+    vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+  };
+  cb.pipelineBarrier(
+    vk::PipelineStageFlagBits::eAllCommands,
+    vk::PipelineStageFlagBits::eTransfer,
+    vk::DependencyFlags(), 0, nullptr, 0, nullptr, 1, &toSrc);
+
+  vk::BufferImageCopy region{
+  /*bufferOffset=*/ 0,
+ /*bufferRowLength=*/ 0, // tightly packed
+  /*bufferImageHeight=*/ 0,
+    vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+    vk::Offset3D{                              0, 0, 0  },
+    vk::Extent3D{                              w, h, 1  },
+  };
+  cb.copyImageToBuffer(m_currentFrame.passImage,
+    vk::ImageLayout::eTransferSrcOptimal,
+    pd.buffer.get(), 1, &region);
+
+  vk::ImageMemoryBarrier toBack{
+    vk::AccessFlagBits::eTransferRead,
+    vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite,
+    vk::ImageLayout::eTransferSrcOptimal,
+    finalLayout,
+    VK_QUEUE_FAMILY_IGNORED,
+    VK_QUEUE_FAMILY_IGNORED,
+    m_currentFrame.passImage,
+    vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+  };
+  cb.pipelineBarrier(
+    vk::PipelineStageFlagBits::eTransfer,
+    vk::PipelineStageFlagBits::eAllCommands,
+    vk::DependencyFlags(), 0, nullptr, 0, nullptr, 1, &toBack);
+
+  m_currentFrame.pendingDumps.push_back(std::move(pd));
+}
+
+void RHIVK::processPendingDumps() {
+  if (m_currentFrame.pendingDumps.empty()) return;
+
+  vk::Device device = rhi()->vk()->device();
+
+  // Allocate a dedicated fence for this dump batch and queue an empty
+  // signal-only submit. The worker waits on this fence rather than the
+  // per-slot frame fence — the main thread will reset that one on its
+  // next wrap around the ring, racing the worker's wait. The empty
+  // submit signals after the just-submitted frame CB completes (queue
+  // submissions execute in submission order), so by the time this fence
+  // signals, every dump's staging buffer is fully written.
+  vk::UniqueFence dumpFence = device.createFenceUnique({});
+  rhi()->vk()->queue().submit({}, dumpFence.get());
+
+  // Lazy worker startup: off-frames pay nothing, no thread spawns unless
+  // and until the first dump batch arrives.
+  if (!m_dumpWorker.joinable()) {
+    m_dumpWorker = std::thread(&RHIVK::dumpWorkerThread, this);
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(m_dumpMutex);
+    m_dumpQueue.push_back(DumpJob{std::move(dumpFence), std::move(m_currentFrame.pendingDumps)});
+  }
+  m_dumpCv.notify_one();
+}
+
+void RHIVK::dumpWorkerThread() {
+  vk::Device device = rhi()->vk()->device();
+
+  while (true) {
+    DumpJob job;
+    {
+      std::unique_lock<std::mutex> lock(m_dumpMutex);
+      m_dumpCv.wait(lock, [&] { return m_dumpStop || !m_dumpQueue.empty(); });
+      // Drain any remaining jobs even after stop is signaled — staging
+      // buffers / fences still need the device to be valid when their
+      // Unique handles destruct.
+      if (m_dumpQueue.empty()) return;
+      job = std::move(m_dumpQueue.front());
+      m_dumpQueue.pop_front();
+    }
+
+    vk::Fence fenceHandle = job.fence.get();
+    (void) device.waitForFences(1, &fenceHandle, VK_TRUE, UINT64_MAX);
+
+    for (auto& dump : job.dumps) {
+      DumpFormatInfo fmt = classifyDumpFormat(dump.format);
+      if (fmt.bpp == 0) continue; // shouldn't happen — checked at enqueue
+
+      void* mapped = device.mapMemory(dump.memory.get(), 0, dump.size);
+
+      // Convert into a tightly-packed RGB(A)8 buffer for stbi_write_png.
+      std::vector<uint8_t> out(size_t(dump.width) * dump.height * fmt.stbComponents);
+      const size_t pixels = size_t(dump.width) * dump.height;
+
+      if (fmt.downconvert16To8) {
+        // u16 → u8 by taking the high byte. For UNORM this is mathematically
+        // correct (high byte = floor(value * 255 / 65535) within rounding).
+        // For SFLOAT it's nonsense but at least produces a recognisable
+        // image — half-float bit-pattern's exponent + top mantissa bits.
+        const uint16_t* src = static_cast<const uint16_t*>(mapped);
+        for (size_t i = 0; i < pixels * fmt.stbComponents; ++i) {
+          out[i] = uint8_t(src[i] >> 8);
+        }
+      } else if (fmt.srcIsBGR) {
+        // BGRA8 → RGBA8.
+        const uint8_t* src = static_cast<const uint8_t*>(mapped);
+        for (size_t i = 0; i < pixels; ++i) {
+          out[i * 4 + 0] = src[i * 4 + 2];
+          out[i * 4 + 1] = src[i * 4 + 1];
+          out[i * 4 + 2] = src[i * 4 + 0];
+          out[i * 4 + 3] = src[i * 4 + 3];
+        }
+      } else {
+        memcpy(out.data(), mapped, pixels * fmt.bpp);
+      }
+
+      device.unmapMemory(dump.memory.get());
+
+      stbi_write_png_compression_level = 3; // Default to faster PNG compression
+      int ok = stbi_write_png(dump.filepath.c_str(),
+        int(dump.width), int(dump.height), fmt.stbComponents,
+        out.data(), int(dump.width * fmt.stbComponents));
+      if (!ok) {
+        fprintf(stderr, "RHIVK: stbi_write_png failed for %s\n", dump.filepath.c_str());
+      } else {
+        printf("RHIVK: dumped %s\n", dump.filepath.c_str());
+      }
+    }
+    // job's UniqueFence + PendingDump UniqueBuffers/UniqueDeviceMemory
+    // destruct here, releasing GPU resources back to the driver.
+  }
+}
 
 // -------- Top-level VK backend init --------
 
