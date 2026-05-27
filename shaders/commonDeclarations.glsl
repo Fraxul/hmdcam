@@ -3,9 +3,10 @@
 // Backends gate extensions / declarations via:
 //   RHI_TARGET_VULKAN -- defined by the Vulkan RHI backend. When set, all
 //     GL-specific extension directives are skipped (Vulkan SPIR-V provides
-//     gl_ViewportIndex, image formats, etc. as core features). Some
-//     constructs like samplerExternalOES will instead be handled by
-//     VkSamplerYcbcrConversion at sampler creation time (Phase 6).
+//     gl_ViewportIndex, image formats, etc. as core features). YUV camera
+//     samples used to need samplerExternalOES on GL; on VK they go through
+//     VkSamplerYcbcrConversion at sampler creation time (Phase 6) so the
+//     shader-side sampler is just plain sampler2D.
 //   GL_ES -- predefined by GLSL ES compilers; the legacy GL-on-ES extensions
 //     live in this branch.
 
@@ -34,8 +35,6 @@
   #elif RHI_FRAGMENT_SHADER
     #ifdef GL_ES
       #extension GL_OES_viewport_array : require
-      #extension GL_OES_EGL_image_external : require
-      #extension GL_OES_EGL_image_external_essl3 : require
     #else
       #extension GL_ARB_viewport_array : require
     #endif

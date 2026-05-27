@@ -105,7 +105,6 @@ CameraSystem::CameraSystem(ICameraProvider* cam, RHIInteropSync::ptr interopSync
       "shaders/ndcQuad.vtx.glsl",
       "shaders/camGreyscale.frag.glsl",
       ndcQuadVertexLayout);
-    desc.setFlag("SAMPLER_TYPE", cam->rgbTextureGLSamplerType());
     if (camYcbcrSampler)
       desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
     if (camTexCropX != 1.0f)
@@ -119,7 +118,6 @@ CameraSystem::CameraSystem(ICameraProvider* cam, RHIInteropSync::ptr interopSync
       "shaders/ndcQuad.vtx.glsl",
       "shaders/camGreyscaleUndistort.frag.glsl",
       ndcQuadVertexLayout);
-    desc.setFlag("SAMPLER_TYPE", cam->rgbTextureGLSamplerType());
     if (camYcbcrSampler)
       desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
     if (camTexCropX != 1.0f)

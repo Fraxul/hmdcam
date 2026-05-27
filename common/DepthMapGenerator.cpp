@@ -263,7 +263,6 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs, RHIInteropSync::p
         RHIVertexLayoutElement(0, kVertexElementTypeUShort2, "quadCoordOffset",            4, 8)
       }));
 
-    desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
     if (auto camYcbcrSampler = cs->cameraProvider()->cameraSampler())
       desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
     if (cs->cameraProvider()->cameraTexCoordCropX() != 1.0f)
@@ -287,7 +286,6 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs, RHIInteropSync::p
         RHIVertexLayoutElement(0, kVertexElementTypeFloat1,  "disparityRawIn", offsetof(AdaptiveMeshVertex, disparityRaw), sizeof(AdaptiveMeshVertex))
       }));
 
-    desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
     if (auto camYcbcrSampler = cs->cameraProvider()->cameraSampler())
       desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
     if (cs->cameraProvider()->cameraTexCoordCropX() != 1.0f)

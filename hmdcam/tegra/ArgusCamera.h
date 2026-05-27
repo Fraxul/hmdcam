@@ -26,7 +26,6 @@ public:
   // === ICameraProvider ===
   virtual size_t streamCount() const { return m_perSensorData.size(); }
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface; }
-  virtual const char* rgbTextureGLSamplerType() const { return "sampler2D"; }
   virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface->cudaLumaTexObject(); }
   virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface->cudaChromaTexObject(); }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);

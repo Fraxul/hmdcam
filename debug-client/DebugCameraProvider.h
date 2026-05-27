@@ -18,7 +18,6 @@ public:
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
   virtual RHISurface::ptr rgbTexture(size_t streamIdx) const;
-  virtual const char* rgbTextureGLSamplerType() const { return "sampler2D"; }
   virtual CUtexObject cudaLumaTexObject(size_t streamIdx) const;
   virtual CUtexObject cudaChromaTexObject(size_t streamIdx) const;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t streamIdx);

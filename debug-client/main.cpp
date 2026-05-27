@@ -322,14 +322,10 @@ int main(int argc, char** argv) {
   depthMapGenerator->loadSettings();
   depthMapGenerator->setPopulateDebugTextures(true);
 
-  // Setup render pipelines, now that we know the sampler type required for the camera textures
+  // Setup render pipelines for camera sampling
   {
-    const char* sampler_type = cameraProvider->rgbTextureGLSamplerType();
-    {
-      RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout);
-      desc.setFlag("SAMPLER_TYPE", sampler_type);
-      camTexturedQuadPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
-    }
+    RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout);
+    camTexturedQuadPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
   }
 
   std::vector<RHIRect> debugSurfaceCameraRects;

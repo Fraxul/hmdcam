@@ -3,7 +3,7 @@
 in V2F {
   vec2 texCoord;
 } v2f;
-uniform SAMPLER_TYPE imageTex;
+uniform sampler2D imageTex;
 uniform sampler2D distortionMap;
 
 layout(location = 0) out vec4 outColor;
