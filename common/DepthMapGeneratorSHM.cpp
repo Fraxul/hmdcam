@@ -425,13 +425,13 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
       cudaStream_t cudaStream = (cudaStream_t) m_globalStream.cudaPtr();
 
       if (!vd->m_leftGray) {
-        vd->m_leftGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+        vd->m_leftGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
         vd->m_leftGrayInterop = dynamic_cast<RHIInteropSurface*>(vd->m_leftGray.get());
         assert(vd->m_leftGrayInterop);
       }
 
       if (!vd->m_rightGray) {
-        vd->m_rightGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+        vd->m_rightGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
         vd->m_rightGrayInterop = dynamic_cast<RHIInteropSurface*>(vd->m_rightGray.get());
         assert(vd->m_rightGrayInterop);
       }

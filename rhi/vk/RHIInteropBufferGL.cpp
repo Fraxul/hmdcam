@@ -11,9 +11,6 @@ RHIInteropBufferGL::RHIInteropBufferGL() :
 }
 
 RHIInteropBufferGL::~RHIInteropBufferGL() {
-  if (m_syncDescriptor.sync())
-    m_syncDescriptor.sync()->removeSyncedObject(this);
-
   if (m_cudaPtr) {
     cuMemFree(m_cudaPtr);
     m_cudaPtr = 0;
@@ -81,7 +78,5 @@ RHIInteropBufferGL::~RHIInteropBufferGL() {
   buf->m_cudaPtr = reinterpret_cast<CUdeviceptr>(cudaPtrRaw);
   buf->m_cudaSize = sizeBytes;
 
-  // Register buffer with sync
-  syncDescriptor.sync()->addSyncedObject(buf);
   return buf;
 }

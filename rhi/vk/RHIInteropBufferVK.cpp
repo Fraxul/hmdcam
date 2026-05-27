@@ -11,9 +11,6 @@ RHIInteropBufferVK::RHIInteropBufferVK() :
 }
 
 RHIInteropBufferVK::~RHIInteropBufferVK() {
-  if (m_syncDescriptor.sync())
-    m_syncDescriptor.sync()->removeSyncedObject(this);
-
   if (m_cudaPtr) {
     cuMemFree(m_cudaPtr);
     m_cudaPtr = 0;
@@ -79,6 +76,5 @@ RHIInteropBufferVK::~RHIInteropBufferVK() {
   buf->m_cudaPtr = reinterpret_cast<CUdeviceptr>(cudaPtrRaw);
   buf->m_cudaSize = sizeBytes;
 
-  syncDescriptor.sync()->addSyncedObject(buf);
   return buf;
 }

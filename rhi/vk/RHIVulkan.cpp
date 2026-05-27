@@ -205,6 +205,11 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
     vk::PhysicalDeviceHostQueryResetFeatures hostQueryResetFeatures{};
     hostQueryResetFeatures.hostQueryReset = VK_TRUE;
 
+    // Timeline semaphores: backs RHIInteropSync's CUDA↔VK ordering.
+    // Core since Vulkan 1.2; the feature must still be opted into.
+    vk::PhysicalDeviceTimelineSemaphoreFeatures timelineSemaphoreFeatures{};
+    timelineSemaphoreFeatures.timelineSemaphore = VK_TRUE;
+
     // Chain assembled tail-first so each link's pNext is set before the
     // outer struct points at it. Order in the chain does not matter to
     // the implementation, only that the terminal struct's pNext is null.
@@ -214,6 +219,7 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
     eds1Features.setPNext(&shaderObjectFeatures);
     shaderObjectFeatures.setPNext(&dynamicRenderingFeatures);
     dynamicRenderingFeatures.setPNext(&hostQueryResetFeatures);
+    hostQueryResetFeatures.setPNext(&timelineSemaphoreFeatures);
 
     vk::DeviceCreateInfo dci{
       vk::DeviceCreateFlags(),
@@ -362,12 +368,18 @@ RHIVulkan::ExternalBuffer RHIVulkan::allocateExternalBuffer(vk::DeviceSize size,
   return out;
 }
 
-RHIVulkan::ExternalSemaphore RHIVulkan::createExternalSemaphore() const {
+RHIVulkan::ExternalSemaphore RHIVulkan::createExternalSemaphore(vk::SemaphoreType type) const {
   ExternalSemaphore out;
 
+  // Chain order: SemaphoreCreateInfo -> ExportSemaphoreCreateInfo ->
+  // SemaphoreTypeCreateInfo (only for timeline; binary uses the default).
   vk::SemaphoreCreateInfo sci{};
   vk::ExportSemaphoreCreateInfo esci{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd};
+  vk::SemaphoreTypeCreateInfo stci{type, /*initialValue=*/ 0};
   sci.setPNext(&esci);
+  if (type == vk::SemaphoreType::eTimeline) {
+    esci.setPNext(&stci);
+  }
 
   out.semaphore = m_device->createSemaphoreUnique(sci);
 

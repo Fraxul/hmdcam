@@ -65,13 +65,15 @@ public:
   };
   ExternalBuffer allocateExternalBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage) const;
 
-  // Allocate a binary VkSemaphore backed by an exportable POSIX FD handle.
-  // The returned fd is owned by the caller; dup() for each importer.
+  // Allocate a VkSemaphore backed by an exportable POSIX FD handle. The
+  // returned fd is owned by the caller; dup() for each importer. Pass
+  // vk::SemaphoreType::eTimeline to create a timeline semaphore (initial
+  // counter value 0) instead of the default binary semaphore.
   struct ExternalSemaphore {
     vk::UniqueSemaphore semaphore;
     int fd = -1;
   };
-  ExternalSemaphore createExternalSemaphore() const;
+  ExternalSemaphore createExternalSemaphore(vk::SemaphoreType = vk::SemaphoreType::eBinary) const;
 
 private:
   RHIVulkan() = default;

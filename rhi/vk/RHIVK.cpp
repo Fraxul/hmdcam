@@ -4,6 +4,7 @@
 #include "rhi/vk/RHIDepthStencilStateVK.h"
 #include "rhi/vk/RHIInteropBufferVK.h"
 #include "rhi/vk/RHIInteropSurfaceVK.h"
+#include "rhi/vk/RHIInteropSync.h"
 #include "rhi/vk/RHIInteropSyncDescriptor.h"
 #include "rhi/vk/RHIQueryVK.h"
 #include "rhi/vk/RHIRenderPipelineVK.h"
@@ -1126,12 +1127,42 @@ void RHIVK::swapBuffers(RHIRenderTarget::ptr /*target*/) {
 
   // Submit: wait on imageAcquired (colour attachment output stage),
   // signal renderFinished (for present) + per-frame fence (for CB recycling).
-  vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+  // When an RHIInteropSync is attached, also wait on the interop timeline at
+  // CUDA's latest signaled value, and signal the next VK value on it. The
+  // wait stage on the interop semaphore is eAllCommands — interop surfaces
+  // can be sampled in any stage, so we conservatively pessimize until
+  // profiling shows it matters.
+  std::array<vk::Semaphore, 2> waitSemaphores{m_currentFrame.imageAcquired, vk::Semaphore{}};
+  std::array<vk::PipelineStageFlags, 2> waitStages{
+    vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    vk::PipelineStageFlagBits::eAllCommands};
+  std::array<uint64_t, 2> waitValues{0, 0};
+  std::array<vk::Semaphore, 2> signalSemaphores{m_currentFrame.renderFinished, vk::Semaphore{}};
+  std::array<uint64_t, 2> signalValues{0, 0};
+  uint32_t waitCount = 1;
+  uint32_t signalCount = 1;
+  if (m_interopSync) {
+    waitSemaphores[waitCount] = m_interopSync->vkSemaphore();
+    waitValues[waitCount] = m_interopSync->cudaSignaledValue();
+    ++waitCount;
+    signalSemaphores[signalCount] = m_interopSync->vkSemaphore();
+    signalValues[signalCount] = m_interopSync->allocateVKSignalValue();
+    ++signalCount;
+  }
+  // Timeline submit info: pValues entries are ignored for binary semaphores
+  // (imageAcquired / renderFinished), but counts must match the outer
+  // VkSubmitInfo's wait / signal counts when the chain is present.
+  vk::TimelineSemaphoreSubmitInfo timelineSubmit{};
+  timelineSubmit.setWaitSemaphoreValues(vk::ArrayProxyNoTemporaries<const uint64_t>(waitCount, waitValues.data()));
+  timelineSubmit.setSignalSemaphoreValues(vk::ArrayProxyNoTemporaries<const uint64_t>(signalCount, signalValues.data()));
   vk::SubmitInfo submit;
-  submit.setWaitSemaphores(m_currentFrame.imageAcquired);
-  submit.setWaitDstStageMask(waitStage);
+  submit.setWaitSemaphores(vk::ArrayProxyNoTemporaries<const vk::Semaphore>(waitCount, waitSemaphores.data()));
+  submit.setWaitDstStageMask(vk::ArrayProxyNoTemporaries<const vk::PipelineStageFlags>(waitCount, waitStages.data()));
   submit.setCommandBuffers(cb);
-  submit.setSignalSemaphores(m_currentFrame.renderFinished);
+  submit.setSignalSemaphores(vk::ArrayProxyNoTemporaries<const vk::Semaphore>(signalCount, signalSemaphores.data()));
+  if (m_interopSync) {
+    submit.setPNext(&timelineSubmit);
+  }
   rhi()->vk()->queue().submit(submit, m_currentFrame.frameFence);
 
   // Present via the frame source. Backend manages its own per-frame index.
@@ -1170,8 +1201,27 @@ void RHIVK::flush() {
   }
   vk::CommandBuffer cb = m_currentFrame.commandBuffer;
   cb.end();
+  // Same interop-timeline plumbing as swapBuffers, minus the per-swap-image
+  // imageAcquired/renderFinished pair (flush() is for off-screen frames
+  // with no present).
+  vk::Semaphore interopSem;
+  vk::PipelineStageFlags interopWaitStage = vk::PipelineStageFlagBits::eAllCommands;
+  uint64_t interopWaitValue = 0;
+  uint64_t interopSignalValue = 0;
+  vk::TimelineSemaphoreSubmitInfo timelineSubmit{};
   vk::SubmitInfo submit;
   submit.setCommandBuffers(cb);
+  if (m_interopSync) {
+    interopSem = m_interopSync->vkSemaphore();
+    interopWaitValue = m_interopSync->cudaSignaledValue();
+    interopSignalValue = m_interopSync->allocateVKSignalValue();
+    submit.setWaitSemaphores(interopSem);
+    submit.setWaitDstStageMask(interopWaitStage);
+    submit.setSignalSemaphores(interopSem);
+    timelineSubmit.setWaitSemaphoreValues(interopWaitValue);
+    timelineSubmit.setSignalSemaphoreValues(interopSignalValue);
+    submit.setPNext(&timelineSubmit);
+  }
   rhi()->vk()->queue().submit(submit, m_currentFrame.frameFence);
 
   m_frameContextIndex = (m_frameContextIndex + 1) % m_frameContexts.size();

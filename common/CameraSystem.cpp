@@ -430,7 +430,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     v.stereoDistortionMap[eyeIdx] = rhi()->newInteropSurface(
       imageSize.width, imageSize.height,
       RHISurfaceDescriptor(kSurfaceFormat_RG16),
-      {m_interopSync, kSyncDirectionCUDAWriter});
+      {m_interopSync});
     v.stereoDistortionMapInterop[eyeIdx] = dynamic_cast<RHIInteropSurface*>(v.stereoDistortionMap[eyeIdx].get());
     assert(v.stereoDistortionMapInterop[eyeIdx]);
   }
@@ -528,7 +528,7 @@ RHISurface::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map
     }
   }
 
-  RHISurface::ptr distortionMap = rhi()->newInteropSurface(width, height, RHISurfaceDescriptor(kSurfaceFormat_RG16), {m_interopSync, kSyncDirectionCUDAWriter});
+  RHISurface::ptr distortionMap = rhi()->newInteropSurface(width, height, RHISurfaceDescriptor(kSurfaceFormat_RG16), {m_interopSync});
   RHIInteropSurface* distortionMapInterop = dynamic_cast<RHIInteropSurface*>(distortionMap.get());
   assert(distortionMapInterop);
 

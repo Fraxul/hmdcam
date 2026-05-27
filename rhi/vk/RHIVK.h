@@ -6,6 +6,7 @@
 class VKFrameSource;
 class RHIWindowRenderTargetVK;
 class RHIRenderPipelineVK;
+class RHIInteropSync;
 
 class RHIVK : public RHI {
 public:
@@ -17,6 +18,17 @@ public:
   // run so the swap image count is known. Allocates the command pool +
   // per-frame ring (one slot per swap image).
   void setFrameSource(VKFrameSource* source);
+
+  // Attach the process-wide RHIInteropSync (one VK timeline semaphore shared
+  // with CUDA via opaque-FD import). Once set, every swapBuffers / flush
+  // submit chains a VkTimelineSemaphoreSubmitInfo onto its VkSubmitInfo:
+  //   wait  = sync->cudaSignaledValue()    (CUDA producers' latest signal)
+  //   signal = sync->allocateVKSignalValue()  (consumed by future signalRHIToCUDA)
+  // Caller is main.cpp, immediately after `new RHIInteropSync()`. Null is
+  // permitted (e.g. desktop/test builds with no CUDA producers); in that
+  // mode the submit doesn't touch the timeline at all.
+  void setInteropSync(RHIInteropSync* sync) { m_interopSync = sync; }
+  RHIInteropSync* interopSync() const { return m_interopSync; }
 
   virtual RHIDepthStencilState::ptr compileDepthStencilState(const RHIDepthStencilStateDescriptor&) override;
   virtual RHIRenderTarget::ptr compileRenderTarget(const RHIRenderTargetDescriptor&) override;
@@ -107,6 +119,7 @@ protected:
   // -------- Phase 3: frame / command buffer state --------
 
   VKFrameSource* m_frameSource = nullptr;
+  RHIInteropSync* m_interopSync = nullptr;
 
   // Command pool with per-buffer reset support; one command buffer + fence
   // per swap image, sized to allow that many frames in flight.

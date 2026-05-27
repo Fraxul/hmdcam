@@ -1,12 +1,13 @@
 #pragma once
-// RHIInteropSyncGL: A synchronization mechanism between GL and CUDA.
+// RHIInteropSync: Timeline-semaphore CUDA↔VK synchronization barrier. A single
+// VK timeline semaphore is exported via opaque-FD and imported into CUDA so
+// both APIs share one monotonic counter. Each side bumps the counter when it
+// signals; the other side waits on the most-recently-signaled value.
 #include "rhi/RHIObject.h"
-#include "rhi/gl/GLCommon.h"
 #include "rhi/vk/RHIVulkan.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include <set>
-#include <vector>
+#include <stdint.h>
 
 class RHIInteropSync : public RHIObject {
 public:
@@ -16,37 +17,32 @@ public:
 
   // Sync barrier functions.
 
-  // Call this when you're done with CUDA work and will be switching to RHI
+  // Call this when you're done with CUDA work and will be switching to RHI.
+  // Bumps the shared counter and records a CUDA-side signal on the stream.
+  // The RHI consumer (RHIVK's per-frame submit) waits on the latest value.
   void signalCUDAToRHI(CUstream stream);
 
-  // Call this when you're done with RHI work and will be switching to CUDA
+  // Call this when you're done with RHI work and will be switching to CUDA.
+  // Records a CUDA-side wait on the latest VK-signaled value. The VK side
+  // signals every frame from RHIVK's swap/flush submit, so this is correct
+  // as long as the VK submit that produced the data has already happened.
   void signalRHIToCUDA(CUstream stream);
 
-  void addSyncedObject(RHIObject*);
-  void removeSyncedObject(RHIObject*);
+  // RHIVK accessors: read by the per-frame submit to populate
+  // VkTimelineSemaphoreSubmitInfo. The VK wait value is whatever CUDA most
+  // recently signaled; the VK signal value is allocated here so a single
+  // monotonic counter is shared across both directions.
+  vk::Semaphore vkSemaphore() const { return m_timeline.semaphore.get(); }
+  uint64_t cudaSignaledValue() const { return m_cudaSignaledValue; }
+  uint64_t allocateVKSignalValue() { return ++m_vkSignaledValue; }
 
 protected:
-  std::set<RHIObject*> m_syncedObjects;
+  RHIVulkan::ExternalSemaphore m_timeline;
+  cudaExternalSemaphore_t m_timelineCU = nullptr;
 
-  void rebuildSyncIDLists();
-
-  std::vector<GLuint> m_waitBufferIDs;
-  std::vector<GLuint> m_signalBufferIDs;
-
-  std::vector<GLuint> m_waitTextureIDs;
-  std::vector<GLenum> m_waitTextureSrcLayouts;
-
-  std::vector<GLuint> m_signalTextureIDs;
-  std::vector<GLenum> m_signalTextureDstLayouts;
-
-  RHIVulkan::ExternalSemaphore m_cudaToGlSem;
-  RHIVulkan::ExternalSemaphore m_glToCudaSem;
-  GLuint m_cudaToGlSemGL = 0;
-  GLuint m_glToCudaSemGL = 0;
-  cudaExternalSemaphore_t m_cudaToGlSemCU = nullptr;
-  cudaExternalSemaphore_t m_glToCudaSemCU = nullptr;
-  // Phase 4 transitional: if no GL context is current, GL-side
-  // semaphore-import + signal/wait operations are skipped. Phase 6 will
-  // replace this whole class with timeline-semaphore CUDA↔VK sync.
-  bool m_hasGLContext = false;
+  // Last value signaled by CUDA (advances in signalCUDAToRHI).
+  uint64_t m_cudaSignaledValue = 0;
+  // Last value signaled by VK (advances in allocateVKSignalValue, called
+  // from RHIVK::swapBuffers / RHIVK::flush before submit).
+  uint64_t m_vkSignaledValue = 0;
 };

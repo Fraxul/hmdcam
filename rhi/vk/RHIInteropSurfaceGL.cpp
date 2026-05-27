@@ -75,9 +75,6 @@ RHIInteropSurfaceGL::RHIInteropSurfaceGL() :
   RHISurfaceGL() {}
 
 RHIInteropSurfaceGL::~RHIInteropSurfaceGL() {
-  if (syncDescriptor().sync())
-    syncDescriptor().sync()->removeSyncedObject(this);
-
   // CUDA-side teardown
   if (m_cudaSurfaceObject) {
     cudaDestroySurfaceObject(m_cudaSurfaceObject);
@@ -203,8 +200,6 @@ RHIInteropSurfaceGL::~RHIInteropSurfaceGL() {
   texDesc.normalizedCoords = 0;
   CUDA_CHECK(cudaCreateTextureObject(&tex->m_cudaTextureObject, &resDesc, &texDesc, /*resViewDesc=*/ nullptr));
 
-  // Register with sync
-  syncDescriptor.sync()->addSyncedObject(tex);
   return tex;
 }
 

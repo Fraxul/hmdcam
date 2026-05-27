@@ -61,9 +61,6 @@ RHIInteropSurfaceVK::RHIInteropSurfaceVK() :
   RHISurfaceVK() {}
 
 RHIInteropSurfaceVK::~RHIInteropSurfaceVK() {
-  if (m_syncDescriptor.sync())
-    m_syncDescriptor.sync()->removeSyncedObject(this);
-
   if (m_cudaSurfaceObject) {
     cudaDestroySurfaceObject(m_cudaSurfaceObject);
     m_cudaSurfaceObject = 0;
@@ -195,7 +192,6 @@ RHIInteropSurfaceVK::~RHIInteropSurfaceVK() {
   texDesc.normalizedCoords = 0;
   CUDA_CHECK(cudaCreateTextureObject(&tex->m_cudaTextureObject, &resDesc, &texDesc, /*resViewDesc=*/ nullptr));
 
-  syncDescriptor.sync()->addSyncedObject(tex);
   return tex;
 }
 
