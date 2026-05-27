@@ -192,21 +192,21 @@ FxRenderView FxCamera::toRenderView(float renderTargetAspectRatio, int forStereo
   glm::vec2 projOffset = glm::vec2(0.0f);
 
   if (m_useInfiniteZ) {
-    // Right-handed infinite-Z far plane
+    // Right-handed infinite-Z far plane, reverse-Z [0,1]
     res.projectionMatrix = glm::mat4(
-      glm::vec4(projScale.x,        0.0f, projOffset.x,  0.0f),
-      glm::vec4(       0.0f, projScale.y, projOffset.y,  0.0f),
-      glm::vec4(       0.0f,        0.0f,         0.0f, -1.0f),
-      glm::vec4(       0.0f,        0.0f,      m_zNear,  0.0f));
+      glm::vec4( projScale.x,         0.0f,    0.0f,  0.0f),
+      glm::vec4(        0.0f,  projScale.y,    0.0f,  0.0f),
+      glm::vec4(projOffset.x, projOffset.y,    0.0f, -1.0f),
+      glm::vec4(        0.0f,         0.0f, m_zNear,  0.0f));
   } else {
-    // bounded-Z far plane
-    float z1 = m_zNear / (m_zNear - m_zFar);
-    float z2 = -m_zFar * z1;
+    // Right-handed bounded-Z far plane, reverse-Z [0,1] (near->1, far->0)
+    float z1 = m_zNear / (m_zFar - m_zNear);
+    float z2 = m_zFar * z1;
     res.projectionMatrix = glm::mat4(
-      glm::vec4(projScale.x,        0.0f, projOffset.x,  0.0f),
-      glm::vec4(       0.0f, projScale.y, projOffset.y,  0.0f),
-      glm::vec4(       0.0f,        0.0f,           z1, -1.0f),
-      glm::vec4(       0.0f,        0.0f,           z2,  0.0f));
+      glm::vec4( projScale.x,         0.0f, 0.0f,  0.0f),
+      glm::vec4(        0.0f,  projScale.y, 0.0f,  0.0f),
+      glm::vec4(projOffset.x, projOffset.y,   z1, -1.0f),
+      glm::vec4(        0.0f,         0.0f,   z2,  0.0f));
   }
   // clang-format on
 
