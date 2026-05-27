@@ -170,6 +170,15 @@ env.Append(
 )
 env['CERES_LIBS'] = ['ceres', 'cholmod', 'lapack', 'spqr', 'glog', 'gflags']
 
+# Sanity-check for shaderc build (required for RHI)
+SHADERC_BUILD='#build/shaderc'
+if not os.path.exists(str(Dir(SHADERC_BUILD))):
+  sys.exit('shaderc build artifacts are not present. Please run ./build-shaderc.sh first.')
+env.Append(
+  CPPPATH=[SHADERC_BUILD + '/install/include'],
+  LIBPATH=[SHADERC_BUILD + '/install/lib']
+)
+
 # Finally, export environment for individual component build scripts to clone and modify.
 Export('env')
 

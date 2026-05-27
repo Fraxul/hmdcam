@@ -34,3 +34,6 @@
 	path = nvsci_headers
 	url = https://nv-tegra.nvidia.com/r/tegra/nv-sci-src/nvsci_headers.git
 	ignore = untracked
+[submodule "shaderc"]
+	path = shaderc
+	url = https://github.com/google/shaderc.git
