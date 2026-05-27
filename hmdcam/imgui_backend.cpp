@@ -107,8 +107,8 @@ void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawDat
       ImVec2 clip_off = draw_data->DisplayPos; // (0,0) unless using multi-viewports
       ImVec2 clip_scale = draw_data->FramebufferScale; // (1,1) unless using retina display which are often (2,2)
 
-      // ortho projection matrix
-      glm::mat4 mvp = glm::ortho<float>(/*left=*/ 0.0f, /*right=*/ renderTarget->width() / drawData->FramebufferScale.x, /*bottom=*/ renderTarget->height() / drawData->FramebufferScale.y, /*top=*/ 0.0f);
+      // ortho projection matrix for Vulkan top-is-zero orientation.
+      glm::mat4 mvp = glm::ortho<float>(/*left=*/ 0.0f, /*right=*/ renderTarget->width() / drawData->FramebufferScale.x, /*top=*/ 0.0f, /*bottom=*/ renderTarget->height() / drawData->FramebufferScale.y);
       rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &mvp, sizeof(glm::mat4));
 
       for (const ImDrawCmd& drawCmd : drawCommands) {
@@ -118,8 +118,6 @@ void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawDat
           (drawCmd.ClipRect.y - clip_off.y) * clip_scale.y,
           (drawCmd.ClipRect.z - clip_off.x) * clip_scale.x,
           (drawCmd.ClipRect.w - clip_off.y) * clip_scale.y);
-        // Coordsys correction for scissor rect
-        scissor.y = renderTarget->height() - (scissor.y + scissor.height);
 
         if (scissor.x < renderTarget->width() && scissor.y < renderTarget->height() && scissor.width > 0 && scissor.height > 0) {
           // Setup per-command draw state
