@@ -11,6 +11,7 @@
 // Layout: GL_LAYOUT_GENERAL_EXT for both directions; the first signal on
 // either side handles the undefined→general transition implicitly.
 
+#include "rhi/RHIInteropSurface.h"
 #include "rhi/vk/RHIInteropSyncDescriptor.h"
 #include "rhi/gl/RHISurfaceGL.h"
 #include "rhi/vk/RHIVulkan.h"
@@ -18,7 +19,7 @@
 #include <cuda_runtime.h>
 #include <opencv2/core/cuda.hpp>
 
-class RHIInteropSurfaceGL : public RHISurfaceGL {
+class RHIInteropSurfaceGL : public RHISurfaceGL, public RHIInteropSurface {
 public:
   typedef boost::intrusive_ptr<RHIInteropSurfaceGL> ptr;
 
@@ -26,21 +27,14 @@ public:
 
   virtual ~RHIInteropSurfaceGL();
 
-  // Stable across the lifetime of this surface.
-  cudaArray_t cudaArray() const { return m_cudaArray; }
+  cudaArray_t cudaArray() const override { return m_cudaArray; }
+  cudaSurfaceObject_t cudaSurfaceObject() const override { return m_cudaSurfaceObject; }
+  cudaTextureObject_t cudaTextureObject() const override { return m_cudaTextureObject; }
 
-  // Convenience surface and texture objects bound to the underlying CUarray.
-  // The texture object uses point filter, clamp address, element-type reads,
-  // non-normalized coords; reset by direct cudaArray() use if you need other
-  // semantics.
-  cudaSurfaceObject_t cudaSurfaceObject() const { return m_cudaSurfaceObject; }
-  cudaTextureObject_t cudaTextureObject() const { return m_cudaTextureObject; }
-
-  // Convenience: 2D async copy from src GpuMat into this surface's CUarray
-  // on the given stream. Drop-in replacement for RHICUDA::copyGpuMatToSurface()
-  // that doesn't pay for a per-frame cuGraphicsMap/Unmap. Caller is
-  // responsible for calling signalCUDADone(stream) afterwards.
-  void copyFromGpuMatAsync(const cv::cuda::GpuMat& src, cudaStream_t stream);
+  // Drop-in replacement for RHICUDA::copyGpuMatToSurface() that doesn't
+  // pay for a per-frame cuGraphicsMap/Unmap. Caller is responsible for
+  // calling signalCUDADone(stream) afterwards.
+  void copyFromGpuMatAsync(const cv::cuda::GpuMat& src, cudaStream_t stream) override;
 
   const RHIInteropSyncDescriptor& syncDescriptor() const { return m_syncDescriptor; };
 

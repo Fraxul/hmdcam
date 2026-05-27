@@ -2,8 +2,9 @@
 #include <vector>
 #include <string>
 #include "rhi/RHI.h"
-#include "rhi/vk/RHIInteropSurfaceGL.h"
+#include "rhi/RHIInteropSurface.h"
 #include "rhi/vk/RHIInteropSync.h"
+#include "rhi/vk/RHIInteropSyncDescriptor.h"
 #include "common/ICameraProvider.h"
 #include "common/glmCvInterop.h"
 #include <opencv2/core.hpp>
@@ -48,7 +49,11 @@ public:
       fovX(0),
       fovY(0) {}
 
-    RHIInteropSurfaceGL::ptr intrinsicDistortionMap;
+    RHISurface::ptr intrinsicDistortionMap;
+    // Non-owning view of the same object cast to the interop interface;
+    // used by CUDA code paths to access cudaSurfaceObject/cudaArray etc.
+    // Stays in sync with intrinsicDistortionMap.
+    RHIInteropSurface* intrinsicDistortionMapInterop = nullptr;
     RHISurface::ptr mask;
     cv::Mat intrinsicMatrix; // From calibration
     cv::Mat distCoeffs;
@@ -88,7 +93,9 @@ public:
     cv::Mat stereoRectification[2], stereoProjection[2]; // Derived from stereoRotation/stereoTranslation via cv::stereoRectify
     cv::Mat stereoDisparityToDepth;
     cv::Rect stereoValidROI[2];
-    RHIInteropSurfaceGL::ptr stereoDistortionMap[2]; // Combined intrinsic and stereo distortion
+    RHISurface::ptr stereoDistortionMap[2]; // Combined intrinsic and stereo distortion
+    // Non-owning interop view of each entry above; populated alongside.
+    RHIInteropSurface* stereoDistortionMapInterop[2] = {nullptr, nullptr};
     double fovX = 0, fovY = 0; // Values for the stereo projection, in degrees
 
     // ----- Per-frame distortion-map regeneration (rolling-shutter correction) -----
@@ -449,7 +456,7 @@ protected:
   std::vector<Camera> m_cameras;
   std::vector<View> m_views;
 
-  RHIInteropSurfaceGL::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize);
+  RHISurface::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize);
 
   RHIRenderPipeline::ptr m_camGreyscalePipeline;
   RHIRenderPipeline::ptr m_camGreyscaleUndistortPipeline;

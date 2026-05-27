@@ -3,6 +3,7 @@
 #include "rhi/vk/RHIBufferVK.h"
 #include "rhi/vk/RHIDepthStencilStateVK.h"
 #include "rhi/vk/RHIInteropBufferVK.h"
+#include "rhi/vk/RHIInteropSurfaceVK.h"
 #include "rhi/vk/RHIInteropSyncDescriptor.h"
 #include "rhi/vk/RHIQueryVK.h"
 #include "rhi/vk/RHIRenderPipelineVK.h"
@@ -143,6 +144,9 @@ RHIBuffer::ptr RHIVK::newUniformBufferWithContents(const void* data, size_t size
 }
 RHIBuffer::ptr RHIVK::newInteropBuffer(size_t size, RHIBufferUsageMode mode, const RHIInteropSyncDescriptor& sync) {
   return RHIBuffer::ptr(RHIInteropBufferVK::newBuffer(size, mode, sync));
+}
+RHISurface::ptr RHIVK::newInteropSurface(uint32_t w, uint32_t h, const RHISurfaceDescriptor& d, const RHIInteropSyncDescriptor& sync) {
+  return RHISurface::ptr(RHIInteropSurfaceVK::newTexture2D(w, h, d, sync));
 }
 void RHIVK::loadBufferData(RHIBuffer::ptr buf, const void* data, size_t offset, size_t length) {
   if (length == 0) length = buf->size() - offset;
@@ -292,6 +296,14 @@ void RHIVK::beginRenderPass(RHIRenderTarget::ptr target,
   };
 
   cb.beginRenderingKHR(renderingInfo);
+
+  // shader_object requires every dynamic state to be set before the first
+  // draw. Seed all of them to known defaults here so a subsequent draw
+  // succeeds even if the caller binds no state. User bindBlendState /
+  // bindDepthStencilState / setCullState / setViewport / setScissorRect
+  // overrides individual pieces; bindRenderPipeline only writes
+  // pipeline-specific dynamic state (vertex input, topology, etc.).
+  setDynamicStateDefaults();
 }
 
 void RHIVK::endRenderPass(RHIRenderTarget::ptr /*target*/) {
@@ -475,11 +487,12 @@ void RHIVK::bindRenderPipeline(RHIRenderPipeline::ptr pipeline) {
   }
   cb.bindShadersEXT(uint32_t(std::size(kAllStages)), kAllStages, shaderHandles.data());
 
-  // Set every dynamic state the implementation requires when shader_object
-  // is in use; per-draw setX/bindXState overwrites individual pieces.
-  setDynamicStateDefaults();
-
-  // Pipeline-derived dynamic state.
+  // Pipeline-derived dynamic state. The non-pipeline-derived defaults
+  // (blend/depth/stencil/raster) are seeded once per render pass in
+  // beginRenderPass and only overridden by user state binds — NOT by
+  // bindRenderPipeline. The engine's pattern is to bind state then bind
+  // pipeline expecting state to persist across pipeline binds (true in
+  // GL where state is independent of pipeline; we preserve that here).
   cb.setVertexInputEXT(p->vertexBindings(), p->vertexAttributes());
   cb.setPrimitiveTopologyEXT(p->primitiveTopology());
   cb.setPrimitiveRestartEnableEXT(m_boundPipeline->descriptor().primitiveRestartEnabled ? VK_TRUE : VK_FALSE);
@@ -734,7 +747,6 @@ void RHIVK::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::pt
   const auto& bindings = m_boundPipeline->resourceBindings();
   auto it = bindings.find(name.c_str());
   if (it == bindings.end()) return;
-
   StagedDescriptorWrite w;
   w.set = it->second.set;
   w.imageInfo.imageView = static_cast<RHISurfaceVK*>(tex.get())->vkImageView();

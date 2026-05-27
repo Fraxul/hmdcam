@@ -99,6 +99,12 @@ public:
   virtual RHISurface::ptr newTexture3D(uint32_t width, uint32_t height, uint32_t depth, const RHISurfaceDescriptor&) = 0;
   virtual RHISurface::ptr newRenderbuffer2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) = 0;
   virtual RHISurface::ptr newHMDSwapTexture(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) = 0;
+  // Allocate a 2D surface whose memory is shared with CUDA via the
+  // supplied RHIInteropSync. The returned RHISurface::ptr is bindable as a
+  // normal texture/render target; dynamic_cast it to RHIInteropSurface*
+  // (rhi/RHIInteropSurface.h) for CUDA-side mappings (cudaArray, surface
+  // object, texture object). Each backend returns a concrete subclass.
+  virtual RHISurface::ptr newInteropSurface(uint32_t width, uint32_t height, const RHISurfaceDescriptor&, const class RHIInteropSyncDescriptor&) = 0;
   virtual void loadTextureData(RHISurface::ptr texture, RHIVertexElementType sourceDataFormat, const void* sourceData) = 0;
   virtual void generateTextureMips(RHISurface::ptr texture) = 0;
   virtual void readbackTexture(RHISurface::ptr, uint8_t layer, RHIVertexElementType dataFormat, void* outData) = 0;

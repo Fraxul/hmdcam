@@ -2,6 +2,7 @@
 #include "rhi/vk/RHIInteropBufferGL.h"
 #include "rhi/vk/RHIInteropBufferVK.h"
 #include "rhi/vk/RHIInteropSurfaceGL.h"
+#include "rhi/vk/RHIInteropSurfaceVK.h"
 #include "rhi/RHI.h"
 #include "rhi/cuda/CudaUtil.h"
 #include <epoxy/egl.h>
@@ -130,14 +131,16 @@ void RHIInteropSync::rebuildSyncIDLists() {
       }
     }
     {
-      // VK interop buffers carry no GL ID, so they don't go into any of the
-      // lists above (those drive glSignal/WaitSemaphoreEXT, which doesn't
-      // run in the no-GL stub mode anyway). Recognized here so the assert
-      // below doesn't fire. Phase 6 replaces this whole class with
-      // timeline-semaphore CUDA↔VK sync; until then we lose
+      // VK interop buffers/surfaces carry no GL ID, so they don't go into
+      // any of the lists above (those drive glSignal/WaitSemaphoreEXT,
+      // which doesn't run in the no-GL stub mode anyway). Recognized here
+      // so the assert below doesn't fire. Phase 6 replaces this whole
+      // class with timeline-semaphore CUDA↔VK sync; until then we lose
       // producer/consumer ordering for VK-backed interop, same as the rest
       // of this transitional stub mode.
       if (dynamic_cast<RHIInteropBufferVK*>(obj))
+        continue;
+      if (dynamic_cast<RHIInteropSurfaceVK*>(obj))
         continue;
     }
     assert(false && "RHIInteropSync:rebuildSyncIDLists(): unhandled RHIObject type");

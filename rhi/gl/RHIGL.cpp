@@ -9,6 +9,7 @@
 #include "rhi/gl/RHIShaderGL.h"
 #include "rhi/gl/RHISurfaceGL.h"
 #include "rhi/vk/RHIInteropBufferGL.h"
+#include "rhi/vk/RHIInteropSurfaceGL.h"
 #include "rhi/vk/RHIInteropSyncDescriptor.h"
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
 #include <glm/gtc/type_ptr.hpp>
@@ -228,6 +229,10 @@ RHIBuffer::ptr RHIGL::newUniformBufferWithContents(const void* data, size_t size
 
 RHIBuffer::ptr RHIGL::newInteropBuffer(size_t size, RHIBufferUsageMode mode, const RHIInteropSyncDescriptor& sync) {
   return RHIBuffer::ptr(RHIInteropBufferGL::newBuffer(size, mode, sync));
+}
+
+RHISurface::ptr RHIGL::newInteropSurface(uint32_t width, uint32_t height, const RHISurfaceDescriptor& desc, const RHIInteropSyncDescriptor& sync) {
+  return RHISurface::ptr(RHIInteropSurfaceGL::newTexture2D(width, height, desc, sync));
 }
 
 void RHIGL::clearBuffer(RHIBuffer::ptr buffer) {

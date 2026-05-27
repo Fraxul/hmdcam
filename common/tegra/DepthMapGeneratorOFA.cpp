@@ -13,7 +13,7 @@
 #include "rhi/cuda/RHICUDA.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
-#include "rhi/vk/RHIInteropSurfaceGL.h"
+#include "rhi/RHIInteropSurface.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
@@ -385,10 +385,10 @@ void copyNvSciBufToGpuMat(NvSciCudaInteropBuffer* buf, cv::cuda::GpuMat& outGpuM
   CUDA_CHECK(cuMemcpy2DAsync(&copyDescriptor, stream));
 }
 
-void copyNvSciBufToInteropSurface(NvSciCudaInteropBuffer* buf, RHIInteropSurfaceGL* surface, CUstream stream) {
+void copyNvSciBufToInteropSurface(NvSciCudaInteropBuffer* buf, RHISurface* dstSurface, RHIInteropSurface* dstInterop, CUstream stream) {
 
-  size_t copyWidth = std::min<size_t>(surface->width(), buf->m_width);
-  size_t copyHeight = std::min<size_t>(surface->height(), buf->m_height);
+  size_t copyWidth = std::min<size_t>(dstSurface->width(), buf->m_width);
+  size_t copyHeight = std::min<size_t>(dstSurface->height(), buf->m_height);
 
   CUDA_MEMCPY2D copyDescriptor;
   memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
@@ -398,9 +398,9 @@ void copyNvSciBufToInteropSurface(NvSciCudaInteropBuffer* buf, RHIInteropSurface
   copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
   // Driver/runtime CUarray handles share the same underlying object; the cast
   // is the standard interop pattern when bridging the two API styles.
-  copyDescriptor.dstArray = reinterpret_cast<CUarray>(surface->cudaArray());
+  copyDescriptor.dstArray = reinterpret_cast<CUarray>(dstInterop->cudaArray());
 
-  size_t bytesPerPixel = rhiSurfaceFormatSize(surface->format());
+  size_t bytesPerPixel = rhiSurfaceFormatSize(dstSurface->format());
   copyDescriptor.WidthInBytes = copyWidth * bytesPerPixel;
   copyDescriptor.Height = copyHeight;
   CUDA_CHECK(cuMemcpy2DAsync(&copyDescriptor, stream));
@@ -443,15 +443,21 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     if (m_populateDebugTextures) {
       CUstream cudaStream = (CUstream) m_globalStream.cudaPtr();
 
-      if (!vd->m_leftGray)
-        vd->m_leftGray = RHIInteropSurfaceGL::newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+      if (!vd->m_leftGray) {
+        vd->m_leftGray = rhi()->newInteropSurface(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+        vd->m_leftGrayInterop = dynamic_cast<RHIInteropSurface*>(vd->m_leftGray.get());
+        assert(vd->m_leftGrayInterop);
+      }
 
-      if (!vd->m_rightGray)
-        vd->m_rightGray = RHIInteropSurfaceGL::newTexture2D(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+      if (!vd->m_rightGray) {
+        vd->m_rightGray = rhi()->newInteropSurface(m_algoInputWidth, m_algoInputHeight, RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+        vd->m_rightGrayInterop = dynamic_cast<RHIInteropSurface*>(vd->m_rightGray.get());
+        assert(vd->m_rightGrayInterop);
+      }
 
-      copyNvSciBufToInteropSurface(ringEntry->m_ofaInputBuffer[0], vd->m_leftGray.get(), cudaStream);
+      copyNvSciBufToInteropSurface(ringEntry->m_ofaInputBuffer[0], vd->m_leftGray.get(), vd->m_leftGrayInterop, cudaStream);
 
-      copyNvSciBufToInteropSurface(ringEntry->m_ofaInputBuffer[1], vd->m_rightGray.get(), cudaStream);
+      copyNvSciBufToInteropSurface(ringEntry->m_ofaInputBuffer[1], vd->m_rightGray.get(), vd->m_rightGrayInterop, cudaStream);
     }
 
     if (debugDisparityCPUAccessEnabled()) {

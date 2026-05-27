@@ -21,7 +21,7 @@
 #include "rhi/gl/GLCommon.h"
 #include "rhi/RHIInteropBuffer.h"
 #include "rhi/vk/RHIInteropSyncDescriptor.h"
-#include "rhi/vk/RHIInteropSurfaceGL.h"
+#include "rhi/RHIInteropSurface.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
@@ -704,7 +704,7 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
     }
 
     // Copy filtered disparity into the interop surface's CUDA-side storage.
-    vd->m_disparityTexture->copyFromGpuMatAsync(*workMat, (CUstream) m_globalStream.cudaPtr());
+    vd->m_disparityTextureInterop->copyFromGpuMatAsync(*workMat, (cudaStream_t) m_globalStream.cudaPtr());
 
     // Build the adaptive triangle mesh from the post-processed disparity.
     {
@@ -734,15 +734,21 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
     if (m_populateDebugTextures) {
       cudaStream_t cudaStream = (cudaStream_t) m_globalStream.cudaPtr();
 
-      if (!vd->m_debugResidual)
-        vd->m_debugResidual = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+      if (!vd->m_debugResidual) {
+        vd->m_debugResidual = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+        vd->m_debugResidualInterop = dynamic_cast<RHIInteropSurface*>(vd->m_debugResidual.get());
+        assert(vd->m_debugResidualInterop);
+      }
 
-      if (!vd->m_confidenceTexture)
-        vd->m_confidenceTexture = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+      if (!vd->m_confidenceTexture) {
+        vd->m_confidenceTexture = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+        vd->m_confidenceTextureInterop = dynamic_cast<RHIInteropSurface*>(vd->m_confidenceTexture.get());
+        assert(vd->m_confidenceTextureInterop);
+      }
 
-      vd->m_debugResidual->copyFromGpuMatAsync(vd->m_disparityDebugResidual, cudaStream);
+      vd->m_debugResidualInterop->copyFromGpuMatAsync(vd->m_disparityDebugResidual, cudaStream);
 
-      vd->m_confidenceTexture->copyFromGpuMatAsync(vd->m_disparityConfidence, cudaStream);
+      vd->m_confidenceTextureInterop->copyFromGpuMatAsync(vd->m_disparityConfidence, cudaStream);
     }
 
     if (debugDisparityCPUAccessEnabled()) {
@@ -860,7 +866,9 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(DepthMapGenerator* dept
   // (the surface's GpuMat). Dropping the legacy newTexture2D + per-frame
   // copyGpuMatToSurface(cuGraphicsMap/Unmap) pair eliminates the ~150-200µs
   // GL-context-switch bubble that used to show up around the map call.
-  m_disparityTexture = RHIInteropSurfaceGL::newTexture2D(w, h, RHISurfaceDescriptor(format), RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter));
+  m_disparityTexture = rhi()->newInteropSurface(w, h, RHISurfaceDescriptor(format), RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter));
+  m_disparityTextureInterop = dynamic_cast<RHIInteropSurface*>(m_disparityTexture.get());
+  assert(m_disparityTextureInterop);
 
   // Adaptive-mesh buffers. Worst case is one quad per leaf cell (every cell stays at level 0).
   // Interop-backed so the CUDA mesh-build kernels can write through a stable

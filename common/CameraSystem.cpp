@@ -148,7 +148,7 @@ void CameraSystem::processFrame() {
       const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * height * 9);
       launchUndistortRectifyKernel(
         paramsDev, perRowDev,
-        v.stereoDistortionMap[eyeIdx]->cudaSurfaceObject(),
+        v.stereoDistortionMapInterop[eyeIdx]->cudaSurfaceObject(),
         static_cast<int>(cameraProvider()->streamWidth()), height,
         RHICUDA::defaultAsyncStream);
     }
@@ -338,6 +338,8 @@ void CameraSystem::updateCameraIntrinsicDistortionParameters(size_t cameraIdx) {
   }
 
   c.intrinsicDistortionMap = generateGPUDistortionMap(map1, map2, imageSize);
+  c.intrinsicDistortionMapInterop = dynamic_cast<RHIInteropSurface*>(c.intrinsicDistortionMap.get());
+  assert(c.intrinsicDistortionMapInterop);
 
   m_calibrationDataRevision += 1;
 }
@@ -411,13 +413,15 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   }
 */
 
-  // Allocate the RHIInteropSurfaceGL for each eye's distortion map. These start
+  // Allocate the interop surface for each eye's distortion map. These start
   // empty -- the kernel fill below populates them.
   for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-    v.stereoDistortionMap[eyeIdx] = RHIInteropSurfaceGL::newTexture2D(
+    v.stereoDistortionMap[eyeIdx] = rhi()->newInteropSurface(
       imageSize.width, imageSize.height,
       RHISurfaceDescriptor(kSurfaceFormat_RG16),
       {m_interopSync, kSyncDirectionCUDAWriter});
+    v.stereoDistortionMapInterop[eyeIdx] = dynamic_cast<RHIInteropSurface*>(v.stereoDistortionMap[eyeIdx].get());
+    assert(v.stereoDistortionMapInterop[eyeIdx]);
   }
 
   // Allocate the pinned per-View rolling-shutter buffers if this is the first
@@ -482,7 +486,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * height * 9);
     launchUndistortRectifyKernel(
       paramsDev, perRowDev,
-      v.stereoDistortionMap[eyeIdx]->cudaSurfaceObject(),
+      v.stereoDistortionMapInterop[eyeIdx]->cudaSurfaceObject(),
       imageSize.width, imageSize.height,
       RHICUDA::defaultAsyncStream);
   }
@@ -492,13 +496,13 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   m_calibrationDataRevision += 1;
 }
 
-RHIInteropSurfaceGL::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize) {
+RHISurface::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize) {
   assert(map1.rows == map2.rows && map1.cols == map2.cols);
   size_t width = map1.cols;
   size_t height = map1.rows;
 
   // map1 and map2 should contain absolute x and y coords for sampling the input image, in pixel scale (map1 is 0-1280, map2 is 0-720, etc) -- this is the output format of cv::initUndistortRectifyMap
-  // Combine the maps into a buffer we can upload to opengl. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
+  // Combine the maps into a buffer we can upload. Remap the absolute pixel coordinates to UV (0...1) range to save work in the pixel shader.
   uint16_t* distortionMapTmp = new uint16_t[width * height * 2];
 
   // Apply half-texel bias to line up the coordinate systems. This makes shader-based remapping line up exactly with cv::remap.
@@ -513,7 +517,9 @@ RHIInteropSurfaceGL::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv
     }
   }
 
-  RHIInteropSurfaceGL::ptr distortionMap = RHIInteropSurfaceGL::newTexture2D(width, height, RHISurfaceDescriptor(kSurfaceFormat_RG16), {m_interopSync, kSyncDirectionCUDAWriter});
+  RHISurface::ptr distortionMap = rhi()->newInteropSurface(width, height, RHISurfaceDescriptor(kSurfaceFormat_RG16), {m_interopSync, kSyncDirectionCUDAWriter});
+  RHIInteropSurface* distortionMapInterop = dynamic_cast<RHIInteropSurface*>(distortionMap.get());
+  assert(distortionMapInterop);
 
   // CUDA 2D host-to-array memcpy into distortionMap
   CUDA_MEMCPY2D copyDescriptor;
@@ -523,7 +529,7 @@ RHIInteropSurfaceGL::ptr CameraSystem::generateGPUDistortionMap(cv::Mat map1, cv
   copyDescriptor.srcPitch = sizeof(uint16_t) * width * 2;
 
   copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
-  copyDescriptor.dstArray = (CUarray) distortionMap->cudaArray();
+  copyDescriptor.dstArray = (CUarray) distortionMapInterop->cudaArray();
 
   copyDescriptor.WidthInBytes = sizeof(uint16_t) * width * 2;
   copyDescriptor.Height = height;

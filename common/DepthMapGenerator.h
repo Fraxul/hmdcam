@@ -173,8 +173,15 @@ protected:
     cv::cuda::GpuMat m_rectifiedLuma[2];
     CUtexObject m_rectifiedLumaTex[2] = {0, 0};
 
-    RHIInteropSurfaceGL::ptr m_disparityTexture;
-    RHIInteropSurfaceGL::ptr m_leftGray, m_rightGray, m_confidenceTexture, m_debugResidual;
+    RHISurface::ptr m_disparityTexture;
+    RHISurface::ptr m_leftGray, m_rightGray, m_confidenceTexture, m_debugResidual;
+    // Non-owning interop views of the same objects above for CUDA access.
+    // Populated alongside; see DepthMapGenerator.cpp/updateDisparityTexture.
+    RHIInteropSurface* m_disparityTextureInterop = nullptr;
+    RHIInteropSurface* m_leftGrayInterop = nullptr;
+    RHIInteropSurface* m_rightGrayInterop = nullptr;
+    RHIInteropSurface* m_confidenceTextureInterop = nullptr;
+    RHIInteropSurface* m_debugResidualInterop = nullptr;
 
     cv::Mat m_debugCPUDisparityInput[2]; // L/R inputs to stereo matching algorithm
     cv::Mat m_debugCPUDisparity;

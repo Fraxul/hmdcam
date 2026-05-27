@@ -11,7 +11,7 @@
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
-#include "rhi/vk/RHIInteropSurfaceGL.h"
+#include "rhi/RHIInteropSurface.h"
 #include <opencv2/cvconfig.h>
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
@@ -424,15 +424,21 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
     if (m_populateDebugTextures) {
       cudaStream_t cudaStream = (cudaStream_t) m_globalStream.cudaPtr();
 
-      if (!vd->m_leftGray)
-        vd->m_leftGray = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+      if (!vd->m_leftGray) {
+        vd->m_leftGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+        vd->m_leftGrayInterop = dynamic_cast<RHIInteropSurface*>(vd->m_leftGray.get());
+        assert(vd->m_leftGrayInterop);
+      }
 
-      if (!vd->m_rightGray)
-        vd->m_rightGray = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+      if (!vd->m_rightGray) {
+        vd->m_rightGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync, kSyncDirectionCUDAWriter));
+        vd->m_rightGrayInterop = dynamic_cast<RHIInteropSurface*>(vd->m_rightGray.get());
+        assert(vd->m_rightGrayInterop);
+      }
 
-      vd->m_leftGray->copyFromGpuMatAsync(vd->resizedLeft_gpu, cudaStream);
+      vd->m_leftGrayInterop->copyFromGpuMatAsync(vd->resizedLeft_gpu, cudaStream);
 
-      vd->m_rightGray->copyFromGpuMatAsync(vd->resizedRight_gpu, cudaStream);
+      vd->m_rightGrayInterop->copyFromGpuMatAsync(vd->resizedRight_gpu, cudaStream);
     }
 
     if (debugDisparityCPUAccessEnabled()) {
