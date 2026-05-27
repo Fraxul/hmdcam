@@ -369,10 +369,10 @@ void recomputeHMDParameters() {
       }
     };*/
 
-    // Right-handed infinite-Z far plane
+    // Right-handed infinite-Z far plane, Vulkan Y-down NDC, reverse-Z [0,1].
     eyeProjection[eyeIdx] = glm::mat4(
        a11,  0.0f,  0.0f,   0.0f,
-      0.0f,   a22,  0.0f,   0.0f,
+      0.0f,  -a22,  0.0f,   0.0f,
        a31,   a32,  0.0f,  -1.0f,
       0.0f,  0.0f,  zNear,  0.0f);
 

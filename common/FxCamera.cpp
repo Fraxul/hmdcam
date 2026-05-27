@@ -187,8 +187,8 @@ FxRenderView FxCamera::toRenderView(float renderTargetAspectRatio, int forStereo
 
   // clang-format off
   glm::vec2 projScale = glm::vec2(
-    1.0f / glm::tan(glm::radians(res.fov  * 0.5f)),
-    1.0f / glm::tan(glm::radians(res.fovY * 0.5f)));
+     1.0f / glm::tan(glm::radians(res.fov  * 0.5f)),
+    -1.0f / glm::tan(glm::radians(res.fovY * 0.5f))); // negated Y for Vulkan Y-down NDC
   glm::vec2 projOffset = glm::vec2(0.0f);
 
   if (m_useInfiniteZ) {

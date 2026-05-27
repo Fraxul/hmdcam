@@ -61,20 +61,22 @@ void initRHIResources() {
 
   {
     // Draws a single triangle that's big enough to get clipped into a screen-filling rectangle.
+    // CCW winding in Vulkan framebuffer (Y-down).
     static const float fullscreenPassData[] = {
-       3.0f, -1.0f, 0.0f, 2.0f, 0.0f,  // right-bottom
-      -1.0f,  3.0f, 0.0f, 0.0f, 2.0f,  // left-top
-      -1.0f, -1.0f, 0.0f, 0.0f, 0.0f}; // left-bottom
+      -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,  // left-top
+      -1.0f,  3.0f, 0.0f, 0.0f, 2.0f,  // left-bottom
+       3.0f, -1.0f, 0.0f, 2.0f, 0.0f}; // right-top
 
     fullscreenPassVBO = rhi()->newBufferWithContents(fullscreenPassData, sizeof(float) * 15);
   }
 
   {
+    // Triangle strip; CCW winding in Vulkan framebuffer (Y-down).
     static const float ndcQuadData[] = {
-       1.0f,  1.0f, 0.0f, 1.0f, 1.0f,  // right-top
-       1.0f, -1.0f, 0.0f, 1.0f, 0.0f,  // right-bottom
-      -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  // left-top
-      -1.0f, -1.0f, 0.0f, 0.0f, 0.0f}; // left-bottom
+       1.0f,  1.0f, 0.0f, 1.0f, 1.0f,  // right-bottom
+       1.0f, -1.0f, 0.0f, 1.0f, 0.0f,  // right-top
+      -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  // left-bottom
+      -1.0f, -1.0f, 0.0f, 0.0f, 0.0f}; // left-top
 
     ndcQuadVBO = rhi()->newBufferWithContents(ndcQuadData, sizeof(float) * 20);
   }
