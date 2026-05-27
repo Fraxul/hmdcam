@@ -76,6 +76,16 @@ RHIShader::ptr RHI::compileShader(const RHIShaderDescriptor& descriptor) {
     }
     cacheSlot = this->internalCompileShader(descriptor);
   }
+  // Always propagate immutable-sampler bindings from the descriptor to the
+  // (possibly cached) shader. Belongs here rather than in compileRenderPipeline
+  // so callers using either the (sdesc, pdesc) overload OR the
+  // (compileShader(sdesc), pdesc) overload get consistent behavior. The shader
+  // cache returns the same shader for repeated calls with the same hash, so
+  // later setImmutableSampler calls overwrite name-by-name — see RHIShader for
+  // the resulting per-binding-name lifetime semantics.
+  for (const auto& [name, sampler] : descriptor.immutableSamplerBindings()) {
+    cacheSlot->setImmutableSampler(name, sampler);
+  }
   return cacheSlot;
 }
 
@@ -99,16 +109,9 @@ RHIRenderPipeline::ptr RHI::compileRenderPipeline(RHIShader::ptr shader, const R
 }
 
 RHIRenderPipeline::ptr RHI::compileRenderPipeline(const RHIShaderDescriptor& shaderDescriptor, const RHIRenderPipelineDescriptor& renderPipelineDescriptor) {
-  RHIShader::ptr shader = compileShader(shaderDescriptor);
-  // Immutable-sampler declarations on the descriptor propagate to the
-  // compiled shader. compileShader caches by descriptor hash, so applying
-  // here (rather than inside compileShader) handles the cached-hit case
-  // where the shader already exists with prior immutable samplers attached
-  // — the new set overwrites name-by-name, leaving unrelated bindings alone.
-  for (const auto& [name, sampler] : shaderDescriptor.immutableSamplerBindings()) {
-    shader->setImmutableSampler(name, sampler);
-  }
-  return compileRenderPipeline(shader, renderPipelineDescriptor);
+  // Immutable-sampler propagation lives in compileShader so the
+  // (compileShader(sdesc), pdesc) overload also picks it up.
+  return compileRenderPipeline(compileShader(shaderDescriptor), renderPipelineDescriptor);
 }
 
 RHIComputePipeline::ptr RHI::compileComputePipeline(RHIShader::ptr shader) {

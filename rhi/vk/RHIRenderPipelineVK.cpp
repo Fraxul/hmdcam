@@ -126,6 +126,13 @@ RHIRenderPipelineVK::RHIRenderPipelineVK(RHIShaderVK::ptr shader, const RHIRende
   const char* dumpEnv = getenv("RHI_VK_DUMP_BINDINGS");
   if (dumpEnv && atoi(dumpEnv)) {
     fprintf(stderr, "RHIRenderPipelineVK: bindings for pipeline %p\n", static_cast<void*>(this));
+    const auto& immBindings = m_shader->immutableSamplers();
+    if (!immBindings.empty()) {
+      fprintf(stderr, "  immutable samplers declared on shader:\n");
+      for (const auto& [name, samp] : immBindings) {
+        fprintf(stderr, "    name=\"%s\" -> sampler=%p\n", name.c_str(), static_cast<void*>(samp.get()));
+      }
+    }
     for (const auto& [unit, refl] : m_shader->stagesReflection) {
       fprintf(stderr, "  stage %s:\n", RHIShaderDescriptor::nameForShadingUnit(unit));
       for (const auto& b : refl.bindings) {

@@ -401,9 +401,15 @@ int main(int argc, char* argv[]) {
     // layout as the immutable sampler for the "imageTex" binding; the
     // shader still sees a plain sampler2D and the driver does YUV->RGB.
     RHISampler::ptr camYcbcrSampler = argusCamera->cameraSampler();
+    // X-tex-coord crop factor — needed when the camera VkImage extent is
+    // padded to match NvBuf's per-row pitch (Tegra DISJOINT+LINEAR import
+    // workaround). 1.0 means no crop.
+    float camTexCropX = argusCamera->cameraTexCoordCropX();
     auto applyCamSampler = [&](RHIShaderDescriptor& desc) {
       if (camYcbcrSampler)
         desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
+      if (camTexCropX != 1.0f)
+        desc.setFlag("CAM_TEX_CROP_X", camTexCropX);
     };
 
     {

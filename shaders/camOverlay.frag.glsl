@@ -5,7 +5,7 @@ layout(location = 0) out vec4 outColor;
 uniform SAMPLER_TYPE imageTex;
 uniform sampler2D overlayTex;
 void main() {
-  vec4 color = texture(imageTex, fragTexCoord);
+  vec4 color = SAMPLE_CAMERA(fragTexCoord);
   vec4 overlayColor = texture(overlayTex, fragTexCoord);
 
   // OpenCV's overlay drawing doesn't set the alpha channel, so we just assume that

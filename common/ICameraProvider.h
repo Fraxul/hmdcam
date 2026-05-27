@@ -26,6 +26,13 @@ public:
   // providers return null, and the consuming pipeline uses a regular
   // pushable sampler.
   virtual RHISampler::ptr cameraSampler() const { return RHISampler::ptr(); }
+
+  // Scale factor that consumers must multiply their normalized X-tex-coord
+  // by when sampling rgbTexture(). Needed when the underlying VkImage is
+  // wider than the valid Argus output region (NvBuf pitch-pad workaround on
+  // Tegra). Default 1.0 means no crop. The same factor applies to every
+  // camera stream in the provider (they all share resolution).
+  virtual float cameraTexCoordCropX() const { return 1.0f; }
 };
 
 class NullCameraProvider : public ICameraProvider {

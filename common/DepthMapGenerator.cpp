@@ -266,6 +266,8 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs, RHIInteropSync::p
     desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
     if (auto camYcbcrSampler = cs->cameraProvider()->cameraSampler())
       desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
+    if (cs->cameraProvider()->cameraTexCoordCropX() != 1.0f)
+      desc.setFlag("CAM_TEX_CROP_X", cs->cameraProvider()->cameraTexCoordCropX());
 
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
     // clang-format on
@@ -288,6 +290,8 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs, RHIInteropSync::p
     desc.setFlag("SAMPLER_TYPE", cs->cameraProvider()->rgbTextureGLSamplerType());
     if (auto camYcbcrSampler = cs->cameraProvider()->cameraSampler())
       desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
+    if (cs->cameraProvider()->cameraTexCoordCropX() != 1.0f)
+      desc.setFlag("CAM_TEX_CROP_X", cs->cameraProvider()->cameraTexCoordCropX());
 
     m_disparityDepthMapAdaptivePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
     // clang-format on

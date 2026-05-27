@@ -97,6 +97,7 @@ CameraSystem::CameraSystem(ICameraProvider* cam, RHIInteropSync::ptr interopSync
   // ycbcr immutable sampler — non-null for YUV providers (Tegra
   // ArgusCamera on VK). See main.cpp for the same pattern.
   RHISampler::ptr camYcbcrSampler = cam->cameraSampler();
+  float camTexCropX = cam->cameraTexCoordCropX();
 
   // Compile utility pipelines on first use
   {
@@ -107,6 +108,8 @@ CameraSystem::CameraSystem(ICameraProvider* cam, RHIInteropSync::ptr interopSync
     desc.setFlag("SAMPLER_TYPE", cam->rgbTextureGLSamplerType());
     if (camYcbcrSampler)
       desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
+    if (camTexCropX != 1.0f)
+      desc.setFlag("CAM_TEX_CROP_X", camTexCropX);
 
     m_camGreyscalePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
@@ -119,6 +122,8 @@ CameraSystem::CameraSystem(ICameraProvider* cam, RHIInteropSync::ptr interopSync
     desc.setFlag("SAMPLER_TYPE", cam->rgbTextureGLSamplerType());
     if (camYcbcrSampler)
       desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
+    if (camTexCropX != 1.0f)
+      desc.setFlag("CAM_TEX_CROP_X", camTexCropX);
     m_camGreyscaleUndistortPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
   }
 }

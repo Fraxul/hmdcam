@@ -64,6 +64,14 @@ public:
   size_t lumaPitch() const { return m_pitchY; }
   CUdeviceptr lumaDevicePtr() const { return m_cudaY; }
 
+  // VkImage extent.width is padded to match NvBuf's per-row pitch (the VK
+  // driver's tight-pack rowPitch wouldn't otherwise match NvBuf's hardware-
+  // aligned pitch -> stride artifacts). Consumers sampling the image must
+  // multiply their normalized texture coords by this factor to crop to the
+  // valid sub-region. Y: validWidth / extentWidth. X is always 1.0 (we
+  // never pad rows).
+  float texCoordCropX() const { return static_cast<float>(m_widthY) / static_cast<float>(m_extentWidth); }
+
 protected:
   ArgusCameraSurfaceVK() = default;
 
@@ -78,10 +86,11 @@ protected:
   CUdeviceptr m_cudaUV = 0;
   size_t m_pitchY = 0;
   size_t m_pitchUV = 0;
-  uint32_t m_widthY = 0;
+  uint32_t m_widthY = 0; // logical (Argus output) Y-plane width
   uint32_t m_heightY = 0;
   uint32_t m_widthUV = 0;
   uint32_t m_heightUV = 0;
+  uint32_t m_extentWidth = 0; // VkImage extent.width (padded to match NvBuf pitch)
   CUtexObject m_cudaLumaTexObject = 0;
   CUtexObject m_cudaChromaTexObject = 0;
 };

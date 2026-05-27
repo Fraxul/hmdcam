@@ -66,3 +66,13 @@ precision highp int;
 
 vec2 flipTexcoordY(vec2 texCoord);
 
+// Camera-texture X-coord crop: when the camera VkImage was allocated with
+// extent.width > valid Argus width (NvBuf pitch-padding workaround on Tegra),
+// callers must scale their normalized X coord into the valid sub-region
+// before sampling. The host sets CAM_TEX_CROP_X via setFlag() to validW /
+// extentW when needed (e.g. 1920/2048 = 0.9375); default 1.0 means no crop.
+#ifndef CAM_TEX_CROP_X
+#define CAM_TEX_CROP_X 1.0
+#endif
+#define SAMPLE_CAMERA(uv) texture(imageTex, vec2((uv).x * CAM_TEX_CROP_X, (uv).y))
+

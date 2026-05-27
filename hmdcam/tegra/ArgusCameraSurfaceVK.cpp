@@ -59,10 +59,24 @@ ArgusCameraSurfaceVK::~ArgusCameraSurfaceVK() {
   }
   vk::Device device = vk->device();
 
+  // VkImage extent.width must be padded to match NvBuf's per-row pitch.
+  // The driver's per-plane rowPitch under DISJOINT+LINEAR is computed from
+  // extent.width * bytesPerPixel; if that's less than NvBuf's hardware-
+  // aligned pitch (typical: 1920 logical -> 2048 padded), the driver reads
+  // rows at the wrong stride and produces horizontal stripe artifacts.
+  //
+  // For NV12 the Y plane is 1 byte/pixel, so paddedWidth = pp.pitch[0].
+  // (Chroma plane has the same NvBuf pitch, with 2 bytes per UV sample,
+  // and NV12 ties plane-1 width to plane-0 width / 2 — the math works out
+  // so both planes get matching rowPitch simultaneously.)
+  uint32_t extentWidth = pp.pitch[0] / pp.bytesPerPix[0];
+
   ArgusCameraSurfaceVK::ptr tex(new ArgusCameraSurfaceVK());
   tex->m_surf = surf;
   tex->m_vkFormat = kNV12Format;
   tex->m_rhiFormat = kSurfaceFormat_RGBA8; // sampler delivers RGBA after ycbcr conversion
+  // width()/height() report the *valid* (Argus output) dims so consumers'
+  // coordinate math is unchanged. extent.width carries the padded dim.
   tex->m_width = sp.width;
   tex->m_height = sp.height;
   tex->m_widthY = pp.width[0];
@@ -71,6 +85,7 @@ ArgusCameraSurfaceVK::~ArgusCameraSurfaceVK() {
   tex->m_widthUV = pp.width[1];
   tex->m_heightUV = pp.height[1];
   tex->m_pitchUV = pp.pitch[1];
+  tex->m_extentWidth = extentWidth;
 
   // ------ Create disjoint multi-plane VkImage ------
   // Per the NV12+ycbcr spike: VK_EXT_image_drm_format_modifier is broken on
@@ -84,7 +99,7 @@ ArgusCameraSurfaceVK::~ArgusCameraSurfaceVK() {
   imgCi.pNext = &extImgCi;
   imgCi.imageType = vk::ImageType::e2D;
   imgCi.format = kNV12Format;
-  imgCi.extent = vk::Extent3D{sp.width, sp.height, 1};
+  imgCi.extent = vk::Extent3D{extentWidth, sp.height, 1};
   imgCi.mipLevels = 1;
   imgCi.arrayLayers = 1;
   imgCi.samples = vk::SampleCountFlagBits::e1;
@@ -168,6 +183,23 @@ ArgusCameraSurfaceVK::~ArgusCameraSurfaceVK() {
     binds[i].memoryOffset = pp.offset[i];
   }
   (void) device.bindImageMemory2(2, binds);
+
+  // Diagnostic: confirm the driver's per-plane row pitch actually matches
+  // NvBuf's. With DISJOINT+LINEAR, the driver picks rowPitch from
+  // extent.width — typically tight (width * bpp). NvBuf often pads to a
+  // hardware-friendly alignment (e.g. 1920 -> 2048). When they differ the
+  // sampled image shows horizontal stripes from accumulated row drift.
+  static bool s_loggedOnce = false;
+  if (!s_loggedOnce) {
+    s_loggedOnce = true;
+    for (uint32_t i = 0; i < 2; ++i) {
+      vk::ImageSubresource sr{planeAspects[i], 0, 0};
+      vk::SubresourceLayout lay = device.getImageSubresourceLayout(tex->m_image.get(), sr);
+      fprintf(stderr, "ArgusCameraSurfaceVK[diag] plane[%u]: NvBuf pitch=%u VK rowPitch=%llu (%s)\n",
+        i, pp.pitch[i], (unsigned long long) lay.rowPitch,
+        (lay.rowPitch == pp.pitch[i]) ? "match" : "MISMATCH -- stride artifacts will appear");
+    }
+  }
 
   // ImageView with the supplied ycbcr conversion. The aspect for the sampled
   // view is COLOR (covers both planes); the conversion handles the YUV->RGB

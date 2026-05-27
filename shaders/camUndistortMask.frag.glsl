@@ -16,7 +16,7 @@ void main() {
   if (any(equal(distortionCoord.xyxy, vec4(0.0f, 0.0f, 1.0f, 1.0f)))) { // clip edge pixels
     outColor = vec4(0.0);
   } else {
-    outColor = texture(imageTex, distortionCoord) * texture(maskTex, distortionCoord).r;
+    outColor = SAMPLE_CAMERA(distortionCoord) * texture(maskTex, distortionCoord).r;
   }
 
 }

@@ -18,7 +18,7 @@ void main() {
   if (any(equal(distortionCoord.xyxy, vec4(0.0f, 0.0f, 1.0f, 1.0f)))) { // clip edge pixels
     cameraColor = vec4(0.0);
   } else {
-    cameraColor = texture(imageTex, distortionCoord);
+    cameraColor = SAMPLE_CAMERA(distortionCoord);
   }
 
   outColor = (cameraColor * (1.0f - overlayColor.a)) + (overlayColor * overlayColor.a);

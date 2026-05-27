@@ -78,18 +78,20 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 
   m_targetCaptureIntervalNs = 1000000000.0 / framerate;
 
-  // Shared ycbcr-aware sampler. Argus output is NV12 (NV12_ER in code is
-  // full-range YUV; BT.709 narrow vs full is set per the actual surface
-  // metadata when consumer code requires it -- BT.709 narrow is the safer
-  // default and matches typical Argus output for HD video).
+  // Shared ycbcr-aware sampler. We allocate camera buffers with
+  // NVBUF_COLOR_FORMAT_NV12_ER. Per the NvBuf header docs both NV12 and
+  // NV12_ER are BT.601 colorspace; the "_ER" suffix means "Extended Range"
+  // = full range (0..255), not narrow range (16..235). Configure the
+  // conversion to match — BT.709 or narrow range here would produce
+  // visible color tints.
   {
     RHISamplerDescriptor sd;
     sd.filter = kFilterLinear;
     sd.wrapModeU = kWrapClamp;
     sd.wrapModeV = kWrapClamp;
     sd.ycbcrConversion.sourceFormat = RHIYcbcrConversionDescriptor::kSourceFormatNV12;
-    sd.ycbcrConversion.model = kYcbcrModelYcbcr709;
-    sd.ycbcrConversion.range = kYcbcrRangeNarrow;
+    sd.ycbcrConversion.model = kYcbcrModelYcbcr601;
+    sd.ycbcrConversion.range = kYcbcrRangeFull;
     sd.ycbcrConversion.xChromaOffset = kChromaLocationCositedEven;
     sd.ycbcrConversion.yChromaOffset = kChromaLocationCositedEven;
     sd.ycbcrConversion.chromaFilter = kFilterLinear;
