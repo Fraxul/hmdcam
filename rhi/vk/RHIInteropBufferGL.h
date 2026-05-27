@@ -1,13 +1,14 @@
 #pragma once
 // RHIInteropBufferGL: a GL buffer and a CUDA device pointer backed by the same Vulkan-allocated VkBuffer.
 
+#include "rhi/RHIInteropBuffer.h"
 #include "rhi/vk/RHIInteropSyncDescriptor.h"
 #include "rhi/gl/RHIBufferGL.h"
 #include "rhi/vk/RHIVulkan.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-class RHIInteropBufferGL : public RHIBufferGL {
+class RHIInteropBufferGL : public RHIBufferGL, public RHIInteropBuffer {
 public:
   typedef boost::intrusive_ptr<RHIInteropBufferGL> ptr;
 
@@ -15,8 +16,8 @@ public:
 
   virtual ~RHIInteropBufferGL();
 
-  CUdeviceptr cudaPointer() const { return m_cudaPtr; }
-  size_t cudaSize() const { return m_cudaSize; }
+  CUdeviceptr cudaPointer() const override { return m_cudaPtr; }
+  size_t cudaSize() const override { return m_cudaSize; }
 
   const RHIInteropSyncDescriptor& syncDescriptor() const { return m_syncDescriptor; };
 

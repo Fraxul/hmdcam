@@ -22,6 +22,7 @@ public:
   virtual RHIBuffer::ptr newBufferWithContents(const void*, size_t, RHIBufferUsageMode);
   virtual RHIBuffer::ptr newEmptyBuffer(size_t, RHIBufferUsageMode);
   virtual RHIBuffer::ptr newUniformBufferWithContents(const void*, size_t);
+  virtual RHIBuffer::ptr newInteropBuffer(size_t, RHIBufferUsageMode, const class RHIInteropSyncDescriptor&) override;
   virtual void clearBuffer(RHIBuffer::ptr);
   virtual void loadBufferData(RHIBuffer::ptr, const void*, size_t offset, size_t length);
 

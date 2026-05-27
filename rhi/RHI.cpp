@@ -9,13 +9,21 @@ static RHI* s_rhi = NULL;
 
 void initRHIResources();
 
-void initRHI(RHI* renderThreadRHI) {
+void installRHIInstance(RHI* renderThreadRHI) {
   assert(s_rhi == NULL);
-
   s_rhi = renderThreadRHI;
+}
+
+void initRHI(RHI* renderThreadRHI) {
+  installRHIInstance(renderThreadRHI);
 
   // Create shared render resources
   initRHIResources();
+}
+
+void shutdownRHI() {
+  delete s_rhi;
+  s_rhi = nullptr;
 }
 
 RHI* rhi() {

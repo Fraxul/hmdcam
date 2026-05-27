@@ -23,8 +23,18 @@ struct Texture_t;
 RHI* rhi(); // render thread owned
 
 void initRHI(RHI*);
+// Install the RHI singleton without triggering initRHIResources(). Useful
+// during the VK migration when some RHI methods aren't implemented yet —
+// initRHIResources() would abort on the first unimplemented call.
+// Phase 4+ will switch to initRHI() once buffers/states/pipelines are wired.
+void installRHIInstance(RHI*);
+// Tear down the RHI singleton, destroying the backend's resources. Must be
+// called while the underlying GPU device is still alive (i.e. before any
+// device-owning singleton like rhi()->vk() goes out of scope).
+void shutdownRHI();
 void initRHIGL(); // convenience method, defined in rhi/gl/RHIGL.cpp
-void initRHIVulkan(); // convenience method, defined in rhi/vk/RHIVulkan.cpp
+void initRHIVulkan(); // top-level VK backend init, defined in rhi/vk/RHIVK.cpp
+void initRHIVulkanInteropContext(); // headless VK allocator init for the GL backend's CUDA/GL interop; defined in rhi/vk/RHIVulkan.cpp. Must run after a GL context is current and after initRHIGL().
 
 enum RHICullState : unsigned char {
   kCullDisabled,
@@ -77,6 +87,13 @@ public:
   virtual RHIBuffer::ptr newUniformBufferWithContents(const void*, size_t) = 0;
   // virtual void clearBuffer(RHIBuffer::ptr) = 0; // Not implemented on ES3
   virtual void loadBufferData(RHIBuffer::ptr, const void*, size_t offset = 0, size_t length = 0) = 0;
+  // Allocate a buffer whose memory is shared with CUDA via the supplied
+  // RHIInteropSync. The returned RHIBuffer::ptr can be bound through the
+  // normal RHI APIs (vertex/index/indirect); dynamic_cast it to
+  // RHIInteropBuffer* (rhi/RHIInteropBuffer.h) to retrieve the CUDA device
+  // pointer for CUDA writers/readers. Each backend returns a concrete
+  // subclass: GL → RHIInteropBufferGL, VK → RHIInteropBufferVK.
+  virtual RHIBuffer::ptr newInteropBuffer(size_t sizeBytes, RHIBufferUsageMode, const class RHIInteropSyncDescriptor&) = 0;
 
   virtual RHISurface::ptr newTexture2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) = 0;
   virtual RHISurface::ptr newTexture3D(uint32_t width, uint32_t height, uint32_t depth, const RHISurfaceDescriptor&) = 0;

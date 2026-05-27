@@ -10,7 +10,7 @@
 #include "rhi/cuda/CudaUtil.h"
 #include "rhi/vk/RHIInteropSync.h"
 #include "rhi/vk/RHIInteropSurfaceGL.h"
-#include "rhi/vk/RHIInteropBufferGL.h"
+#include "rhi/RHIInteropBuffer.h"
 #include <glm/glm.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
@@ -183,11 +183,19 @@ protected:
 
     // Adaptive-mesh path: variable-size triangle mesh built per-frame in CUDA from the
     // post-processed disparity. Buffers are GPU-private and CUDA-mapped during the build,
-    // then drawn via glDrawElementsIndirect. Sized for the worst case (every cell is its
-    // own quad) so they never need reallocation.
-    RHIInteropBufferGL::ptr m_adaptiveVertexBuffer;
-    RHIInteropBufferGL::ptr m_adaptiveIndexBuffer;
-    RHIInteropBufferGL::ptr m_adaptiveIndirectArgsBuffer; // 2x DrawElementsIndirectCommand: [stereo, mono]
+    // then drawn via drawIndexedPrimitivesIndirect. Sized for the worst case (every cell is
+    // its own quad) so they never need reallocation.
+    //
+    // The buffers are allocated via rhi()->newInteropBuffer; the returned ptrs are
+    // bindable through the standard RHIBuffer API. The cudaPointer/cudaSize for
+    // CUDA writes are accessed through a cached RHIInteropBuffer* view that
+    // dynamic_casts from the same underlying object (cheap setup-time cast).
+    RHIBuffer::ptr m_adaptiveVertexBuffer;
+    RHIBuffer::ptr m_adaptiveIndexBuffer;
+    RHIBuffer::ptr m_adaptiveIndirectArgsBuffer; // 2x DrawElementsIndirectCommand: [stereo, mono]
+    RHIInteropBuffer* m_adaptiveVertexInterop = nullptr; // non-owning view; backed by m_adaptiveVertexBuffer
+    RHIInteropBuffer* m_adaptiveIndexInterop = nullptr;
+    RHIInteropBuffer* m_adaptiveIndirectArgsInterop = nullptr;
     DepthMeshAdaptiveScratch m_adaptiveScratch;
 
   private:

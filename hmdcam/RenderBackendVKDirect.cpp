@@ -4,6 +4,7 @@
 // https://github.com/KhronosGroup/Vulkan-Samples/blob/master/samples/extensions/open_gl_interop/open_gl_interop.cpp
 
 #include "RenderBackendVKDirect.h"
+#include "rhi/vk/RHIWindowRenderTargetVK.h"
 #include "common/Timing.h"
 #include "rhi/RHI.h"
 #include <epoxy/egl.h>
@@ -131,18 +132,24 @@ extern "C" int ioctl(int fd, unsigned long request, ...) {
 }
 #endif // IS_TEGRA
 
-RenderBackend* createVKDirectBackend() { return new RenderBackendVKDirect(); }
+RenderBackend* createVKDirectBackend() { return new RenderBackendVKDirect(RenderBackendVKDirect::kGLInteropBlit); }
+RenderBackend* createVKDirectBackend_VKNative() { return new RenderBackendVKDirect(RenderBackendVKDirect::kVKNative); }
 
 template <typename T>
 bool contains(const std::vector<T>& container, const T& value) {
   return std::find(container.begin(), container.end(), value) != container.end();
 }
 
-RenderBackendVKDirect::RenderBackendVKDirect() {
+RenderBackendVKDirect::RenderBackendVKDirect(BackendMode mode) :
+  m_backendMode(mode) {
 }
 
 void RenderBackendVKDirect::createGLContext() {
-  // EGL setup. Must run before initRHIVulkan(), since the Vulkan physical device is selected to UUID-match the GL context.
+  if (m_backendMode == kVKNative) {
+    // No GL context — RHIVK renders directly into swap images.
+    return;
+  }
+  // EGL setup. Must run before initRHIVulkanInteropContext(), since the Vulkan physical device is selected to UUID-match the GL context.
   // We use the SURFACELESS_MESA platform, since we explicitly do not want this EGL context to take over the display hardware.
   // (using the DEVICE_EXT platform with a DRM FD will prevent Vulkan from being able to create a swapchain)
   {
@@ -353,6 +360,16 @@ void RenderBackendVKDirect::createPresentation() {
       } else if (contains(presentModes, vk::PresentModeKHR::eImmediate)) { // Immediate might tear, but it'll keep latency low
         presentMode = vk::PresentModeKHR::eImmediate;
       }
+      // RHI_VK_PRESENT_MODE env var overrides (e.g. for stress testing the
+      // VK-native sync). Accepts "fifo", "mailbox", "immediate".
+      if (const char* envMode = getenv("RHI_VK_PRESENT_MODE")) {
+        if (strcmp(envMode, "fifo") == 0)
+          presentMode = vk::PresentModeKHR::eFifo;
+        else if (strcmp(envMode, "mailbox") == 0 && contains(presentModes, vk::PresentModeKHR::eMailbox))
+          presentMode = vk::PresentModeKHR::eMailbox;
+        else if (strcmp(envMode, "immediate") == 0 && contains(presentModes, vk::PresentModeKHR::eImmediate))
+          presentMode = vk::PresentModeKHR::eImmediate;
+      }
 
       printf("\nSelected presentation mode: %s\n", to_string(presentMode).c_str());
 
@@ -382,8 +399,10 @@ void RenderBackendVKDirect::createPresentation() {
       m_swapchainFormat = format.format;
     }
 
-    // Create sync objects
-    {
+    // Per-swapchain-image GL interop textures + GL/VK shared semaphores.
+    // VK-native mode skips this — RHIVK renders directly into swap images
+    // without GL involvement.
+    if (m_backendMode == kGLInteropBlit) {
       m_syncData.resize(m_swapchainImages.size());
       for (auto& s : m_syncData) {
         // Interop texture
@@ -462,61 +481,89 @@ void RenderBackendVKDirect::createPresentation() {
         makeSemaphore(s.m_available, s.m_availableHandle, s.m_availableGL);
         makeSemaphore(s.m_finished, s.m_finishedHandle, s.m_finishedGL);
       }
-    }
+    } // end GL-interop sync objects
 
-    // Swapchain management semaphores
+    // Swapchain management semaphores — required for both modes
+    // (acquireNextImageKHR signals imageAcquired; presentKHR waits on
+    // renderFinished / blitFinished).
     for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
       vk::SemaphoreCreateInfo ci{};
       m_imageAcquiredSemaphores.push_back(device.createSemaphoreUnique(ci));
       m_blitFinishedSemaphores.push_back(device.createSemaphoreUnique(ci));
     }
+    // VK-native: additional per-swap-image renderFinished semaphores so the
+    // signal/wait sequencing on the presentation semaphore is safe across
+    // reordered present modes. See member comment in the header.
+    if (m_backendMode == kVKNative) {
+      for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
+        vk::SemaphoreCreateInfo ci{};
+        m_renderFinishedSemaphoresPerImage.push_back(device.createSemaphoreUnique(ci));
+      }
+    }
 
-    // Command pool and command buffers (recorded per-frame in submitTexture)
-    {
+    // Command pool + per-frame blit command buffers — only used for the
+    // GL→VK blit submit in GL-interop mode. RHIVK has its own pool in
+    // VK-native mode.
+    if (m_backendMode == kGLInteropBlit) {
       vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlagBits::eResetCommandBuffer, queueFamily};
       m_commandPool = device.createCommandPoolUnique(commandPoolCreateInfo);
 
       vk::CommandBufferAllocateInfo commandBufferAllocateInfo = {m_commandPool.get(), vk::CommandBufferLevel::ePrimary, uint32_t(m_swapchainImages.size())};
       m_blitCommandBuffers = device.allocateCommandBuffers(commandBufferAllocateInfo);
+
+      m_unsignaledFrames = static_cast<uint32_t>(m_swapchainImages.size());
     }
 
-    m_unsignaledFrames = static_cast<uint32_t>(m_swapchainImages.size());
-
-    // Window RT
-    m_windowRenderTarget = new VKDirectSwapchainRenderTarget(this);
-    m_windowRenderTarget->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
+    // Window RT differs per mode.
+    if (m_backendMode == kGLInteropBlit) {
+      m_windowRenderTarget = new VKDirectSwapchainRenderTarget(this);
+      static_cast<VKDirectSwapchainRenderTarget*>(m_windowRenderTarget.get())
+        ->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
+    } else {
+      // VK-native: lightweight handle that RHIVK updates with the
+      // currently-acquired swap image per frame.
+      m_windowRenderTarget = new RHIWindowRenderTargetVK(
+        m_swapchainExtent.width, m_swapchainExtent.height, m_swapchainFormat);
+    }
 
 
     // Scanout timestamp source setup.
+    //
+    // VK-native mode skips this entirely for Phase 3 — the existing path
+    // captures the vblank syncpt during a first-frame submit that uses
+    // GL/interop primitives. A VK-native equivalent is a Phase 5 polish
+    // item; until then, lastPresentationTimestamp stays 0 in VK-native mode.
+    if (m_backendMode == kGLInteropBlit) {
 #ifdef IS_TEGRA
-    // Tegra: host1x vblank syncpoint. If init fails, leave the worker thread
-    // unstarted; lastPresentationTimestamp stays at 0. The render loop will
-    // continue to function; only consumers that depend on the timestamp are
-    // affected.
+      // Tegra: host1x vblank syncpoint. If init fails, leave the worker thread
+      // unstarted; lastPresentationTimestamp stays at 0. The render loop will
+      // continue to function; only consumers that depend on the timestamp are
+      // affected.
 
-    // We first need to render a frame to the device to get the output configured;
-    // without this, the ioctl hook can't catch the vblank syncpt ID.
-    {
-      VKGLSyncData* frame = acquireTexture();
-      glBindFramebuffer(GL_FRAMEBUFFER, frame->m_framebufferGL);
-      glViewport(0, 0, surfaceWidth(), surfaceHeight());
-      glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-      glClear(GL_COLOR_BUFFER_BIT);
-      glFlush();
-      submitTexture(frame);
-    }
+      // We first need to render a frame to the device to get the output configured;
+      // without this, the ioctl hook can't catch the vblank syncpt ID.
+      {
+        VKGLSyncData* frame = acquireTexture();
+        glBindFramebuffer(GL_FRAMEBUFFER, frame->m_framebufferGL);
+        glViewport(0, 0, surfaceWidth(), surfaceHeight());
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glFlush();
+        submitTexture(frame);
+      }
 
-    if (initScanoutSyncpt()) {
-      m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
-    } else {
-      fprintf(stderr, "RenderBackendVKDirect: host1x syncpt init failed; lastPresentationTimestamp will remain 0\n");
-    }
+      if (initScanoutSyncpt()) {
+        m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+      } else {
+        fprintf(stderr, "RenderBackendVKDirect: host1x syncpt init failed; lastPresentationTimestamp will remain 0\n");
+      }
 #else
-    // Non-Tegra: Vulkan display-event fence path.
-    m_scanoutEventFd = eventfd(0, 0);
-    CHECK(m_scanoutEventFd >= 0);
-    m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+      // Non-Tegra: Vulkan display-event fence path.
+      m_scanoutEventFd = eventfd(0, 0);
+      CHECK(m_scanoutEventFd >= 0);
+      m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
 #endif
+    } // end if (kGLInteropBlit) scanout setup
 
   } catch (const std::exception& ex) {
     printf("%s\n", ex.what());
@@ -741,7 +788,56 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
 }
 #endif // IS_TEGRA
 
+// VKFrameSource implementation. Hands out the next swap image + per-frame
+// sync primitives. RHIVK records render commands directly into the image,
+// then submit + present via presentVKFrame.
+VKFrameInfo RenderBackendVKDirect::acquireVKFrame() {
+  assert(m_backendMode == kVKNative);
+  vk::Device device = rhi()->vk()->device();
+
+  vk::Semaphore imageAcquired = m_imageAcquiredSemaphores[m_frameIndex].get();
+
+  auto r = device.acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), imageAcquired, vk::Fence());
+  if (r.result == vk::Result::eSuboptimalKHR)
+    fprintf(stderr, "RenderBackendVKDirect::acquireVKFrame: eSuboptimalKHR\n");
+  uint32_t swapchainIndex = r.value;
+
+  // renderFinished is indexed by swap image (not frame slot) — see member
+  // comment. Safe because acquireNextImageKHR returning image I implies the
+  // previous present that waited on renderFinished[I] has completed.
+  vk::Semaphore renderFinished = m_renderFinishedSemaphoresPerImage[swapchainIndex].get();
+
+  VKFrameInfo frame;
+  frame.swapchainIndex = swapchainIndex;
+  frame.swapchainImage = m_swapchainImages[swapchainIndex];
+  frame.extent = m_swapchainExtent;
+  frame.format = m_swapchainFormat;
+  frame.imageAcquired = imageAcquired;
+  frame.renderFinished = renderFinished;
+  return frame;
+}
+
+void RenderBackendVKDirect::presentVKFrame(const VKFrameInfo& frame) {
+  assert(m_backendMode == kVKNative);
+  vk::Queue presentQueue = rhi()->vk()->queue();
+
+  // Present waits on renderFinished (which the caller's render submit was
+  // required to signal). Store handles in named locals — taking & of
+  // .get()'s rvalue would leave a dangling pointer in PresentInfoKHR after
+  // the constructor expression ends.
+  vk::SwapchainKHR swapchain = m_swapchain.get();
+  vk::Semaphore waitSem = frame.renderFinished;
+  uint32_t swapIdx = frame.swapchainIndex;
+  vk::PresentInfoKHR presentInfo{1, &waitSem, 1, &swapchain, &swapIdx};
+  vk::Result presentResult = presentQueue.presentKHR(presentInfo);
+  if (presentResult == vk::Result::eSuboptimalKHR)
+    fprintf(stderr, "RenderBackendVKDirect::presentVKFrame: eSuboptimalKHR\n");
+
+  m_frameIndex = (m_frameIndex + 1) % m_swapchainImages.size();
+}
+
 VKGLSyncData* RenderBackendVKDirect::acquireTexture() {
+  assert(m_backendMode == kGLInteropBlit);
   if (m_unsignaledFrames > 0) {
     // Skip the wait for the first cycle through all swapchain images -- the
     // available semaphore for each index is first signaled by its blit submit,
@@ -755,6 +851,7 @@ VKGLSyncData* RenderBackendVKDirect::acquireTexture() {
 }
 
 void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
+  assert(m_backendMode == kGLInteropBlit);
   vk::Device device = rhi()->vk()->device();
   vk::Queue presentQueue = rhi()->vk()->queue();
 

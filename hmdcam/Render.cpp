@@ -1,6 +1,8 @@
 #include "Render.h"
 #include "RenderBackend.h"
+#include "RenderBackendVKDirect.h"
 #include "RenderBackendWayland.h"
+#include "rhi/vk/RHIVK.h"
 #include "common/Timing.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -17,6 +19,8 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 
 // extern bool vive_watchman_enable; // hacky; symbol added in xrt/drivers/vive/vive_device.c to disable watchman thread (since we don't use lighthouse tracking)
@@ -145,19 +149,55 @@ bool RenderInit(ERenderBackend backendType) {
     printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
   }
 
-  // RenderBackend bringup is split into three phases so that the GL context
-  // exists before RHI initializes, and RHI's Vulkan allocator (which is
-  // UUID-matched to the GL device) exists before any presentation surface
-  // is built. See RenderBackend.h for details.
-  renderBackend = RenderBackend::create(backendType);
-  renderBackend->earlyInit();
-  renderBackend->createGLContext();
-  RHICUDA::initRHICUDA();
-  initRHIGL();
-  initRHIVulkan();
+  // RHI backend selection. Default is GL; RHI_BACKEND=vk picks the new
+  // Vulkan RHI backend. The VK path uses RenderBackendVKDirect in VK-native
+  // mode (no EGL/GL context, swap images rendered directly by RHIVK).
+  const char* rhiBackendStr = getenv("RHI_BACKEND");
+  const bool useVulkanRHIBackend = (rhiBackendStr && strcmp(rhiBackendStr, "vk") == 0);
 
-  renderBackend->createPresentation();
-  windowRenderTarget = renderBackend->windowRenderTarget();
+  if (useVulkanRHIBackend) {
+    printf("RHI_BACKEND=vk: bringing up Vulkan RHI backend.\n");
+
+    // Construct RenderBackendVKDirect in VK-native mode. earlyInit is a no-op
+    // on VKDirect, createGLContext becomes a no-op, createPresentation skips
+    // VKGLSyncData and uses RHIWindowRenderTargetVK.
+    auto* vkBackend = new RenderBackendVKDirect(RenderBackendVKDirect::kVKNative);
+    renderBackend = vkBackend;
+    vkBackend->earlyInit();
+    vkBackend->createGLContext(); // no-op in VK-native mode
+
+    RHICUDA::initRHICUDA();
+    // initRHIVulkan() calls initRHI() which runs initRHIResources(). As
+    // unimplemented RHIVK methods get called, they abort with the method
+    // name + source location — incrementally fill them in (see Vulkan-
+    // Migration.md Phase 4).
+    initRHIVulkan();
+
+    vkBackend->createPresentation();
+    windowRenderTarget = renderBackend->windowRenderTarget();
+
+    // Attach the swap-frame source to RHIVK so it can drive the per-frame
+    // command buffer + acquire/present cycle.
+    static_cast<RHIVK*>(rhi())->setFrameSource(vkBackend);
+
+    // Fall through to the shared post-bringup setup (pipelines, etc.).
+  } else
+
+  {
+    // GL backend bringup is split into three phases so that the GL context
+    // exists before RHI initializes, and RHI's Vulkan allocator (which is
+    // UUID-matched to the GL device) exists before any presentation surface
+    // is built. See RenderBackend.h for details.
+    renderBackend = RenderBackend::create(backendType);
+    renderBackend->earlyInit();
+    renderBackend->createGLContext();
+    RHICUDA::initRHICUDA();
+    initRHIGL();
+    initRHIVulkanInteropContext();
+
+    renderBackend->createPresentation();
+    windowRenderTarget = renderBackend->windowRenderTarget();
+  }
 
   // Set up shared resources
 
@@ -363,7 +403,11 @@ void recomputeHMDParameters() {
 }
 
 void renderHMDFrame() {
-  // Switch to output framebuffer
+  // Record the distortion pass into the current frame's command buffer.
+  // Caller is responsible for calling rhi()->swapBuffers(windowRenderTarget)
+  // after this returns (and after any post-distortion bookkeeping like
+  // ending a distortion timer query, which must happen before swap so its
+  // timestamp write lands in the CB that swap submits).
   rhi()->beginRenderPass(windowRenderTarget, kLoadInvalidate);
 
   if (xrtHMDevice->hmd->distortion.mesh.uv_channels_count == 1) {
@@ -389,6 +433,4 @@ void renderHMDFrame() {
   }
 
   rhi()->endRenderPass(windowRenderTarget);
-
-  rhi()->swapBuffers(windowRenderTarget);
 }

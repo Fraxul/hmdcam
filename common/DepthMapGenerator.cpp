@@ -19,7 +19,8 @@
 #include "rhi/cuda/RHICUDA.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
-#include "rhi/vk/RHIInteropBufferGL.h"
+#include "rhi/RHIInteropBuffer.h"
+#include "rhi/vk/RHIInteropSyncDescriptor.h"
 #include "rhi/vk/RHIInteropSurfaceGL.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
@@ -722,9 +723,9 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
         static_cast<uint16_t>(m_adaptiveDepthDiscontinuityThreshold),
         m_adaptiveCellOverlapMultiplier,
         effTrimL, effTrimT, effTrimR, effTrimB,
-        vd->m_adaptiveVertexBuffer->cudaPointer(),
-        vd->m_adaptiveIndexBuffer->cudaPointer(),
-        vd->m_adaptiveIndirectArgsBuffer->cudaPointer(),
+        vd->m_adaptiveVertexInterop->cudaPointer(),
+        vd->m_adaptiveIndexInterop->cudaPointer(),
+        vd->m_adaptiveIndirectArgsInterop->cudaPointer(),
         vd->m_adaptiveScratch,
         (CUstream) m_globalStream.cudaPtr());
     }
@@ -867,9 +868,18 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(DepthMapGenerator* dept
   const size_t worstCaseQuads = size_t(w) * size_t(h);
   const size_t vboBytes = worstCaseQuads * 4 * sizeof(AdaptiveMeshVertex);
   const size_t iboBytes = worstCaseQuads * 6 * sizeof(uint32_t);
-  m_adaptiveVertexBuffer = RHIInteropBufferGL::newBuffer(vboBytes, kBufferUsageGPUPrivate, RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter));
-  m_adaptiveIndexBuffer = RHIInteropBufferGL::newBuffer(iboBytes, kBufferUsageGPUPrivate, RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter));
-  m_adaptiveIndirectArgsBuffer = RHIInteropBufferGL::newBuffer(2 * sizeof(DrawElementsIndirectCommand), kBufferUsageGPUPrivate, RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter));
+  RHIInteropSyncDescriptor syncDesc(depthMapGenerator->m_interopSync, kSyncDirectionCUDAWriter);
+  m_adaptiveVertexBuffer = rhi()->newInteropBuffer(vboBytes, kBufferUsageGPUPrivate, syncDesc);
+  m_adaptiveIndexBuffer = rhi()->newInteropBuffer(iboBytes, kBufferUsageGPUPrivate, syncDesc);
+  m_adaptiveIndirectArgsBuffer = rhi()->newInteropBuffer(2 * sizeof(DrawElementsIndirectCommand), kBufferUsageGPUPrivate, syncDesc);
+  // Cache the RHIInteropBuffer view of each buffer for cudaPointer/cudaSize
+  // access. Each concrete implementation (GL or VK) inherits from both
+  // RHIBuffer and RHIInteropBuffer, so the dynamic_cast always succeeds for
+  // buffers returned by newInteropBuffer.
+  m_adaptiveVertexInterop = dynamic_cast<RHIInteropBuffer*>(m_adaptiveVertexBuffer.get());
+  m_adaptiveIndexInterop = dynamic_cast<RHIInteropBuffer*>(m_adaptiveIndexBuffer.get());
+  m_adaptiveIndirectArgsInterop = dynamic_cast<RHIInteropBuffer*>(m_adaptiveIndirectArgsBuffer.get());
+  assert(m_adaptiveVertexInterop && m_adaptiveIndexInterop && m_adaptiveIndirectArgsInterop);
 
   m_adaptiveScratch.allocate(w, h);
 }

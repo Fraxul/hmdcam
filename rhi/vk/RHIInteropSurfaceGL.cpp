@@ -2,8 +2,17 @@
 #include "rhi/RHI.h"
 #include "rhi/cuda/CudaUtil.h"
 #include "rhi/gl/GLCommon.h"
+#include <epoxy/egl.h>
 #include <stdio.h>
 #include <unistd.h>
+
+namespace {
+// Phase 4 transitional: when running on the VK RHI backend, no GL context
+// is current. Skip the GL-side memory import in that case — CUDA + VK
+// halves of the surface are still constructed; only m_glId remains 0 (and
+// any GL consumer would fail loudly if it tried to use it).
+bool hasCurrentGLContext() { return eglGetCurrentContext() != EGL_NO_CONTEXT; }
+} // namespace
 
 namespace {
 
@@ -91,7 +100,7 @@ RHIInteropSurfaceGL::~RHIInteropSurfaceGL() {
   }
 
   // GL-side teardown
-  if (m_glMemoryObject) {
+  if (m_glMemoryObject && hasCurrentGLContext()) {
     glDeleteMemoryObjectsEXT(1, &m_glMemoryObject);
     m_glMemoryObject = 0;
   }
@@ -137,24 +146,28 @@ RHIInteropSurfaceGL::~RHIInteropSurfaceGL() {
   tex->m_vkImage = vk->allocateExternalImage(width, height, fmt.vkFormat, usage, vk::ImageTiling::eOptimal);
 
   // GL side: import memory and create the texture on top of it. Tiling is
-  // left at the GL default (optimal) to match the VK side.
-  GL(glGenTextures(1, &tex->m_glId));
-  GL(glBindTexture(GL_TEXTURE_2D, tex->m_glId));
+  // left at the GL default (optimal) to match the VK side. Skipped when no
+  // GL context is current (VK RHI backend) — m_glId stays 0 and GL
+  // consumers (if any) would error loudly on use.
+  if (hasCurrentGLContext()) {
+    GL(glGenTextures(1, &tex->m_glId));
+    GL(glBindTexture(GL_TEXTURE_2D, tex->m_glId));
 
-  GL(glCreateMemoryObjectsEXT(1, &tex->m_glMemoryObject));
-  if (tex->m_vkImage.isDedicated) {
-    GLint dedicated = GL_TRUE;
-    GL(glMemoryObjectParameterivEXT(tex->m_glMemoryObject, GL_DEDICATED_MEMORY_OBJECT_EXT, &dedicated));
+    GL(glCreateMemoryObjectsEXT(1, &tex->m_glMemoryObject));
+    if (tex->m_vkImage.isDedicated) {
+      GLint dedicated = GL_TRUE;
+      GL(glMemoryObjectParameterivEXT(tex->m_glMemoryObject, GL_DEDICATED_MEMORY_OBJECT_EXT, &dedicated));
+    }
+
+    int memFdForGL = dup(tex->m_vkImage.memoryFd);
+    GL(glImportMemoryFdEXT(tex->m_glMemoryObject, tex->m_vkImage.allocationSize, GL_HANDLE_TYPE_OPAQUE_FD_EXT, memFdForGL));
+    GL(glTexStorageMem2DEXT(GL_TEXTURE_2D, /*levels=*/ 1, tex->m_glInternalFormat, width, height, tex->m_glMemoryObject, /*offset=*/ 0));
+
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
+    GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
   }
-
-  int memFdForGL = dup(tex->m_vkImage.memoryFd);
-  GL(glImportMemoryFdEXT(tex->m_glMemoryObject, tex->m_vkImage.allocationSize, GL_HANDLE_TYPE_OPAQUE_FD_EXT, memFdForGL));
-  GL(glTexStorageMem2DEXT(GL_TEXTURE_2D, /*levels=*/ 1, tex->m_glInternalFormat, width, height, tex->m_glMemoryObject, /*offset=*/ 0));
-
-  GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-  GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-  GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-  GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
 
   // CUDA side: import memory and map as a mipmapped array. cudaArraySurfaceLoadStore
   // is required so we can wrap level 0 in a cudaSurfaceObject.

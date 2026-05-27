@@ -45,4 +45,8 @@ protected:
   GLuint m_glToCudaSemGL = 0;
   cudaExternalSemaphore_t m_cudaToGlSemCU = nullptr;
   cudaExternalSemaphore_t m_glToCudaSemCU = nullptr;
+  // Phase 4 transitional: if no GL context is current, GL-side
+  // semaphore-import + signal/wait operations are skipped. Phase 6 will
+  // replace this whole class with timeline-semaphore CUDA↔VK sync.
+  bool m_hasGLContext = false;
 };

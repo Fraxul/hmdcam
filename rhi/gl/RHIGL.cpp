@@ -8,6 +8,8 @@
 #include "rhi/gl/RHIRenderTargetGL.h"
 #include "rhi/gl/RHIShaderGL.h"
 #include "rhi/gl/RHISurfaceGL.h"
+#include "rhi/vk/RHIInteropBufferGL.h"
+#include "rhi/vk/RHIInteropSyncDescriptor.h"
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <string.h>
@@ -224,6 +226,10 @@ RHIBuffer::ptr RHIGL::newUniformBufferWithContents(const void* data, size_t size
   return RHIBuffer::ptr(new RHIBufferGL(buffer, size, kBufferUsageCPUWriteOnly));
 }
 
+RHIBuffer::ptr RHIGL::newInteropBuffer(size_t size, RHIBufferUsageMode mode, const RHIInteropSyncDescriptor& sync) {
+  return RHIBuffer::ptr(RHIInteropBufferGL::newBuffer(size, mode, sync));
+}
+
 void RHIGL::clearBuffer(RHIBuffer::ptr buffer) {
   RHIBufferGL* glBuf = static_cast<RHIBufferGL*>(buffer.get());
   GL(glBindBuffer(GL_ARRAY_BUFFER, glBuf->glId()));
@@ -248,7 +254,7 @@ RHISurface::ptr RHIGL::newHMDSwapTexture(uint32_t width, uint32_t height, const 
 }
 
 static void rhiVertexElementTypeToGLPackFormat(RHIVertexElementType rhiFormat, GLenum& unpackFormat, GLenum& unpackType) {
-// clang-format off
+  // clang-format off
   #define FMT_TYPE(glFmt, glType) unpackFormat = glFmt; unpackType = glType; return;
   switch (rhiFormat) {
     case kVertexElementTypeFloat1:    FMT_TYPE(GL_RED, GL_FLOAT);

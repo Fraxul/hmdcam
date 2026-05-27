@@ -102,7 +102,10 @@ void RenderInitDebugSurface(uint32_t width, uint32_t height) {
 }
 
 bool RenderDebugSubsystemEnabled() {
-  return true;
+  // The VK RHI backend gates RenderInitDebugSurface (NvEncSession needs an
+  // EGL context — see main.cpp). Without nvencSession the subsystem can't
+  // do anything, so report disabled so per-frame paths skip the work.
+  return nvencSession != nullptr;
 }
 
 RHISurface::ptr renderAcquireDebugSurface() {

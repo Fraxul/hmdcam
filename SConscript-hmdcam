@@ -41,6 +41,7 @@ tegraEnv.Append(
     'nppc', 'nppidei', 'nppitc', 'nppif',
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
     'socketcan',
+    'shaderc_combined',  # GLSL → SPIR-V for the Vulkan RHI backend; bundles glslang + SPIRV-Tools
   ]
 )
 monadoStatics = \

@@ -1,8 +1,10 @@
 #include "rhi/vk/RHIInteropSync.h"
 #include "rhi/vk/RHIInteropBufferGL.h"
+#include "rhi/vk/RHIInteropBufferVK.h"
 #include "rhi/vk/RHIInteropSurfaceGL.h"
 #include "rhi/RHI.h"
 #include "rhi/cuda/CudaUtil.h"
+#include <epoxy/egl.h>
 
 RHIInteropSync::RHIInteropSync() {
   RHIVulkan* vk = rhi()->vk();
@@ -11,18 +13,29 @@ RHIInteropSync::RHIInteropSync() {
     abort();
   }
 
+  // Detect whether a GL/EGL context is current. The VK RHI backend runs
+  // without GL, in which case the GL semaphore-import path doesn't apply.
+  // Phase 4 transitional: skip GL-side setup; CUDA-side signals become
+  // no-op pairs (no GL consumer to wait on them). Phase 6 will replace
+  // this whole class with timeline-semaphore CUDA↔VK sync.
+  m_hasGLContext = (eglGetCurrentContext() != EGL_NO_CONTEXT);
+
   // Sync primitives: one binary semaphore per direction.
   m_cudaToGlSem = vk->createExternalSemaphore();
   m_glToCudaSem = vk->createExternalSemaphore();
 
-  // GL side: import semaphores.
-  GL(glGenSemaphoresEXT(1, &m_cudaToGlSemGL));
-  int cudaToGlFdForGL = dup(m_cudaToGlSem.fd);
-  GL(glImportSemaphoreFdEXT(m_cudaToGlSemGL, GL_HANDLE_TYPE_OPAQUE_FD_EXT, cudaToGlFdForGL));
+  if (m_hasGLContext) {
+    // GL side: import semaphores.
+    GL(glGenSemaphoresEXT(1, &m_cudaToGlSemGL));
+    int cudaToGlFdForGL = dup(m_cudaToGlSem.fd);
+    GL(glImportSemaphoreFdEXT(m_cudaToGlSemGL, GL_HANDLE_TYPE_OPAQUE_FD_EXT, cudaToGlFdForGL));
 
-  GL(glGenSemaphoresEXT(1, &m_glToCudaSemGL));
-  int glToCudaFdForGL = dup(m_glToCudaSem.fd);
-  GL(glImportSemaphoreFdEXT(m_glToCudaSemGL, GL_HANDLE_TYPE_OPAQUE_FD_EXT, glToCudaFdForGL));
+    GL(glGenSemaphoresEXT(1, &m_glToCudaSemGL));
+    int glToCudaFdForGL = dup(m_glToCudaSem.fd);
+    GL(glImportSemaphoreFdEXT(m_glToCudaSemGL, GL_HANDLE_TYPE_OPAQUE_FD_EXT, glToCudaFdForGL));
+  } else {
+    printf("RHIInteropSync: no GL context current; running in CUDA-only stub mode (Phase 4 transitional)\n");
+  }
 
   // CUDA side: import semaphores.
   cudaExternalSemaphoreHandleDesc cudaToGlSemDesc = {};
@@ -116,11 +129,28 @@ void RHIInteropSync::rebuildSyncIDLists() {
         continue;
       }
     }
+    {
+      // VK interop buffers carry no GL ID, so they don't go into any of the
+      // lists above (those drive glSignal/WaitSemaphoreEXT, which doesn't
+      // run in the no-GL stub mode anyway). Recognized here so the assert
+      // below doesn't fire. Phase 6 replaces this whole class with
+      // timeline-semaphore CUDA↔VK sync; until then we lose
+      // producer/consumer ordering for VK-backed interop, same as the rest
+      // of this transitional stub mode.
+      if (dynamic_cast<RHIInteropBufferVK*>(obj))
+        continue;
+    }
     assert(false && "RHIInteropSync:rebuildSyncIDLists(): unhandled RHIObject type");
   }
 }
 
 void RHIInteropSync::signalCUDAToRHI(CUstream stream) {
+  if (!m_hasGLContext) {
+    // Stub mode: no GL consumer, so signaling would leave the semaphore in
+    // a stuck signaled state. Just skip — the CUDA work still flushes via
+    // the stream itself; we're losing CUDA↔VK ordering until Phase 6.
+    return;
+  }
   cudaExternalSemaphoreSignalParams params = {};
   CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&m_cudaToGlSemCU, &params, 1, stream));
 
@@ -131,6 +161,9 @@ void RHIInteropSync::signalCUDAToRHI(CUstream stream) {
 }
 
 void RHIInteropSync::signalRHIToCUDA(CUstream stream) {
+  if (!m_hasGLContext) {
+    return;
+  }
   GL(glSignalSemaphoreEXT(m_glToCudaSemGL,
     /*numBufferBarriers=*/ m_signalBufferIDs.size(), /*buffers=*/ m_signalBufferIDs.data(),
     /*numTextureBarriers=*/ m_signalTextureIDs.size(), /*textures=*/ m_signalTextureIDs.data(),

@@ -88,4 +88,16 @@ private:
 // and use the zero UUID if GL_EXT_memory_object isn't available), then
 // construct the RHIVulkan singleton accessible through rhi()->vk().
 // Must be called after a GL context is current and after initRHIGL().
-void initRHIVulkan();
+//
+// This is the "VK allocator attached to a GL backend" path used for
+// CUDA/GL interop. For the top-level Vulkan RHI backend, see
+// initRHIVulkan() in rhi/vk/RHIVK.cpp.
+void initRHIVulkanInteropContext();
+
+// Install the headless RHIVulkan singleton accessible via rhi()->vk(). Used by
+// both initRHIVulkanInteropContext (GL backend's interop helper) and the
+// top-level initRHIVulkan (RHIVK backend) so the singleton-management code
+// lives in one place. Pass the all-zero UUID to select the first enumerated
+// physical device. Returns true on success; asserts if a singleton is already
+// installed.
+bool rhiVulkanInstallSingleton(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID);

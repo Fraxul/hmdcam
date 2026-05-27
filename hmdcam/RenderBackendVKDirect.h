@@ -1,6 +1,7 @@
 #pragma once
 #include "RenderBackend.h"
 #include "rhi/gl/RHIWindowRenderTargetGL.h"
+#include "rhi/vk/RHIVKFrameSource.h"
 #include "rhi/vk/RHIVulkan.h" // pulls in vulkan.hpp with the dynamic-dispatch macro
 #include <epoxy/egl.h>
 
@@ -47,10 +48,27 @@ protected:
   VKGLSyncData* m_syncTex = NULL;
 };
 
-class RenderBackendVKDirect : public RenderBackend {
+class RenderBackendVKDirect : public RenderBackend, public VKFrameSource {
 public:
-  RenderBackendVKDirect();
+  // Two operating modes — both render through the same VK swapchain, but
+  // differ in how the swap-image content is produced.
+  //
+  //   kGLInteropBlit  (legacy): GL renders into an exported VK interop
+  //     texture, VK blits the interop texture into the swap image, VK
+  //     presents. Requires an EGL/GL context.
+  //
+  //   kVKNative (new): RHIVK records render commands directly into the swap
+  //     image, no GL involved. Used when the Vulkan RHI backend is selected
+  //     (RHI_BACKEND=vk).
+  enum BackendMode {
+    kGLInteropBlit,
+    kVKNative,
+  };
+
+  RenderBackendVKDirect(BackendMode mode = kGLInteropBlit);
   virtual ~RenderBackendVKDirect();
+
+  BackendMode backendMode() const { return m_backendMode; }
 
   virtual void createGLContext() override;
   virtual void createPresentation() override;
@@ -68,16 +86,27 @@ public:
 
   virtual uint64_t lastPresentationTimestamp() const override { return m_lastPresentationTimestamp.load(std::memory_order_acquire); }
 
+  // VKFrameSource: VK-native acquire/present. Valid only when
+  // backendMode() == kVKNative. RHIVK owns its own command buffer pool and
+  // records render commands; this backend hands out swap images + sync
+  // primitives.
+  virtual uint32_t swapImageCount() const override { return static_cast<uint32_t>(m_swapchainImages.size()); }
+  virtual VKFrameInfo acquireVKFrame() override;
+  virtual void presentVKFrame(const VKFrameInfo&) override;
+
 protected:
   uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags);
 
+  BackendMode m_backendMode;
   double m_refreshRateHz = 0;
 
   // EGL state
   EGLDisplay m_eglDisplay = EGL_NO_DISPLAY;
   EGLContext m_eglContext = NULL;
 
-  VKDirectSwapchainRenderTarget::ptr m_windowRenderTarget;
+  // GL-interop mode: VKDirectSwapchainRenderTarget (RHIWindowRenderTargetGL).
+  // VK-native mode: RHIWindowRenderTargetVK.
+  RHIRenderTarget::ptr m_windowRenderTarget;
 
   // VK state. Instance, physical device, logical device, queue family index,
   // and queue all live on rhi()->vk(); only display/surface/swapchain and the
@@ -97,7 +126,17 @@ protected:
   uint32_t m_frameIndex = 0;
   std::vector<VKGLSyncData> m_syncData;
   std::vector<vk::UniqueSemaphore> m_imageAcquiredSemaphores;
+  // GL-interop mode: indexed by m_frameIndex, signaled by the blit submit,
+  //   waited on by present.
+  // VK-native mode: unused; m_renderFinishedSemaphoresPerImage replaces it.
   std::vector<vk::UniqueSemaphore> m_blitFinishedSemaphores;
+  // VK-native mode only: per-swap-image renderFinished semaphores.
+  // Indexed by the swap image index returned by acquireNextImageKHR — not
+  // by m_frameIndex. Per-image indexing is what makes the signal/wait pair
+  // safe across reordered present modes (Immediate, Mailbox): when
+  // acquireNextImageKHR returns image I, image I's previous present must
+  // have already consumed renderFinished[I], so the next signal is safe.
+  std::vector<vk::UniqueSemaphore> m_renderFinishedSemaphoresPerImage;
   vk::UniqueCommandPool m_commandPool;
   std::vector<vk::CommandBuffer> m_blitCommandBuffers;
 

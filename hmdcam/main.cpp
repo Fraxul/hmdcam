@@ -428,7 +428,11 @@ int main(int argc, char* argv[]) {
 
 
   std::vector<RHIRect> debugSurfaceCameraRects;
-  if (RenderDebugSubsystemEnabled()) {
+  // Render debug subsystem uses NvEncSession which needs an EGL context.
+  // Skip when running on the VK RHI backend (Phase 4 transitional — Phase 7
+  // will rework NvEnc to accept VK image input).
+  const bool vkRHIBackend = renderBackend && renderBackend->eglContext() == EGL_NO_CONTEXT;
+  if (RenderDebugSubsystemEnabled() && !vkRHIBackend) {
     // Size and allocate debug surface area based on camera count
     unsigned int debugColumns = 1, debugRows = 1;
     if (argusCamera->streamCount() > 1) {
@@ -447,6 +451,8 @@ int main(int argc, char* argv[]) {
       debugSurfaceCameraRects.push_back(r);
     }
     RenderInitDebugSurface(dsW, dsH);
+  } else if (vkRHIBackend) {
+    printf("Render debug subsystem disabled: NvEncSession needs an EGL context, unavailable on the VK RHI backend.\n");
   } else {
     printf("Render debug subsystem disabled at compile time.\n");
   }
@@ -704,6 +710,7 @@ int main(int argc, char* argv[]) {
 
         // Submit eye rendertargets for distortion/scanout
         renderHMDFrame();
+        rhi()->swapBuffers(windowRenderTarget);
 
         uint64_t delta = currentTimeNs() - frameStartTime;
         const uint64_t frametimeTarget = 11'111'111;
@@ -1696,8 +1703,14 @@ int main(int argc, char* argv[]) {
 
       renderHMDFrame();
 
+      // End timer BEFORE swapBuffers — the timestamp write needs to land
+      // in the CB that swap submits, otherwise it strands in an open CB
+      // and the next frame's getQueryResult would hit RHIVK's
+      // "results requested while CB still open" assert.
       if (debugRenderTiming)
         rhi()->endTimerQuery(distortionRenderQuery);
+
+      rhi()->swapBuffers(windowRenderTarget);
 
       {
         uint64_t thisFrameTimestamp = currentTimeNs();

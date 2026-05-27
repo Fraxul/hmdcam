@@ -1,6 +1,7 @@
 #include "rhi/vk/RHIVulkan.h"
 #include "rhi/RHI.h"
 #include <epoxy/gl.h>
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,23 @@ const std::vector<const char*> kDeviceExtensions = {
   VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
   VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
   VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME,
+  // VK-native RHI backend needs dynamic rendering (replaces VkRenderPass /
+  // VkFramebuffer ceremony with vkCmdBeginRendering / vkCmdEndRendering).
+  VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+  // Shader objects + the dynamic state extensions they pull in. With
+  // shader_object enabled we never construct a VkPipeline for graphics — all
+  // rasterizer/blend/depth/vertex-input state is set per-draw via
+  // vkCmdSet*EXT. Together this matches the GL RHI's "rebind anything
+  // anywhere" model far more naturally than monolithic VkPipeline objects.
+  VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+  VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
+  VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME,
+  VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME,
+  VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME,
+  // Push descriptors let us issue resource bindings without managing a
+  // descriptor pool / per-frame allocation — vkCmdPushDescriptorSetKHR
+  // pushes a transient set inline into the command buffer.
+  VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 };
 
 const std::vector<const char*> kValidationLayers = {
@@ -73,9 +91,14 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
       uint32_t(sizeof(kEnabledValidationFeatures) / sizeof(kEnabledValidationFeatures[0])), kEnabledValidationFeatures,
       0, nullptr};
 
+    // apiVersion controls which core API the loader/validation expect us
+    // to be using; 1.3 covers dynamic rendering, shader_object's
+    // dependency chain, and the extended-dynamic-state extensions.
+    vk::ApplicationInfo appInfo{"hmdcam", 1, "hmdcam", 1, VK_API_VERSION_1_3};
+
     vk::InstanceCreateInfo ici{
       vk::InstanceCreateFlags(),
-      /*applicationInfo=*/ nullptr,
+      &appInfo,
       /*enabledLayerCount=*/ 0, /*ppEnabledLayerNames=*/ nullptr,
       uint32_t(instanceExtensions.size()), instanceExtensions.data()};
     if (enableValidation) {
@@ -128,13 +151,77 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
 
     float priority = 1.0f;
     vk::DeviceQueueCreateInfo qci{vk::DeviceQueueCreateFlags(), v->m_queueFamily, 1, &priority};
-    vk::PhysicalDeviceFeatures features;
+
+    // Enable a minimal set of "core" features that several pipelines and
+    // shaders the engine compiles end up using. Adding to this when
+    // validation reports a missing feature is cheaper than chasing
+    // each one individually.
+    vk::PhysicalDeviceFeatures features{};
+    features.geometryShader = VK_TRUE;
+    features.fillModeNonSolid = VK_TRUE;
+    features.wideLines = VK_TRUE;
+    features.samplerAnisotropy = VK_TRUE;
+    features.fragmentStoresAndAtomics = VK_TRUE;
+    features.vertexPipelineStoresAndAtomics = VK_TRUE;
+    features.shaderStorageImageExtendedFormats = VK_TRUE;
+    features.multiViewport = VK_TRUE;
+
+    // Feature chain for dynamic rendering + shader_object + the dynamic state
+    // extensions shader_object depends on. vulkan-hpp's StructureChain
+    // would be cleaner but bringing the structs in by hand keeps the
+    // dependency on optional features visible and lets us toggle each as
+    // their presence is validated.
+    vk::PhysicalDeviceDynamicRenderingFeaturesKHR dynamicRenderingFeatures{};
+    dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
+
+    vk::PhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{};
+    shaderObjectFeatures.shaderObject = VK_TRUE;
+
+    vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT eds1Features{};
+    eds1Features.extendedDynamicState = VK_TRUE;
+
+    vk::PhysicalDeviceExtendedDynamicState2FeaturesEXT eds2Features{};
+    eds2Features.extendedDynamicState2 = VK_TRUE;
+    eds2Features.extendedDynamicState2LogicOp = VK_TRUE;
+
+    vk::PhysicalDeviceExtendedDynamicState3FeaturesEXT eds3Features{};
+    eds3Features.extendedDynamicState3DepthClampEnable = VK_TRUE;
+    eds3Features.extendedDynamicState3PolygonMode = VK_TRUE;
+    eds3Features.extendedDynamicState3RasterizationSamples = VK_TRUE;
+    eds3Features.extendedDynamicState3SampleMask = VK_TRUE;
+    eds3Features.extendedDynamicState3AlphaToCoverageEnable = VK_TRUE;
+    eds3Features.extendedDynamicState3AlphaToOneEnable = VK_TRUE;
+    eds3Features.extendedDynamicState3LogicOpEnable = VK_TRUE;
+    eds3Features.extendedDynamicState3ColorBlendEnable = VK_TRUE;
+    eds3Features.extendedDynamicState3ColorBlendEquation = VK_TRUE;
+    eds3Features.extendedDynamicState3ColorWriteMask = VK_TRUE;
+
+    vk::PhysicalDeviceVertexInputDynamicStateFeaturesEXT vertexInputFeatures{};
+    vertexInputFeatures.vertexInputDynamicState = VK_TRUE;
+
+    // Host-side reset of query pools lets RHITimerQueryVK avoid recording
+    // a vkCmdResetQueryPool into each frame's CB. Core in VK 1.2; the
+    // EXT struct + extension are still recognized for explicitness.
+    vk::PhysicalDeviceHostQueryResetFeatures hostQueryResetFeatures{};
+    hostQueryResetFeatures.hostQueryReset = VK_TRUE;
+
+    // Chain assembled tail-first so each link's pNext is set before the
+    // outer struct points at it. Order in the chain does not matter to
+    // the implementation, only that the terminal struct's pNext is null.
+    vertexInputFeatures.setPNext(&eds3Features);
+    eds3Features.setPNext(&eds2Features);
+    eds2Features.setPNext(&eds1Features);
+    eds1Features.setPNext(&shaderObjectFeatures);
+    shaderObjectFeatures.setPNext(&dynamicRenderingFeatures);
+    dynamicRenderingFeatures.setPNext(&hostQueryResetFeatures);
+
     vk::DeviceCreateInfo dci{
       vk::DeviceCreateFlags(),
       1, &qci,
       /*enabledLayerCount=*/ 0, /*ppEnabledLayerNames=*/ nullptr,
       uint32_t(kDeviceExtensions.size()), kDeviceExtensions.data(),
       &features};
+    dci.setPNext(&vertexInputFeatures);
     v->m_device = v->m_gpu.createDeviceUnique(dci);
     v->m_queue = v->m_device->getQueue(v->m_queueFamily, 0);
     VULKAN_HPP_DEFAULT_DISPATCHER.init(v->m_device.get());
@@ -299,16 +386,21 @@ RHIVulkan* RHI::vk() const {
   return s_rhiVk.get();
 }
 
-void initRHIVulkan() {
+bool rhiVulkanInstallSingleton(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID) {
+  assert(!s_rhiVk);
+  s_rhiVk = RHIVulkan::create(gpuUUID);
+  return s_rhiVk != nullptr;
+}
+
+void initRHIVulkanInteropContext() {
   std::array<uint8_t, VK_UUID_SIZE> uuid{};
   if (epoxy_has_gl_extension("GL_EXT_memory_object")) {
     glGetUnsignedBytevEXT(GL_DEVICE_UUID_EXT, uuid.data());
   } else {
-    fprintf(stderr, "initRHIVulkan: GL_EXT_memory_object not available; selecting first VK physical device without UUID match\n");
+    fprintf(stderr, "initRHIVulkanInteropContext: GL_EXT_memory_object not available; selecting first VK physical device without UUID match\n");
   }
 
-  s_rhiVk = RHIVulkan::create(uuid);
-  if (!s_rhiVk) {
-    fprintf(stderr, "initRHIVulkan: RHIVulkan::create() failed; CUDA-GL shared surfaces will be unavailable\n");
+  if (!rhiVulkanInstallSingleton(uuid)) {
+    fprintf(stderr, "initRHIVulkanInteropContext: RHIVulkan::create() failed; CUDA-GL shared surfaces will be unavailable\n");
   }
 }
