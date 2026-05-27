@@ -31,6 +31,7 @@ except:
 env = Environment(tools = env_tools, toolpath=['scons-tools'],
   CPPPATH=[
     '#.',
+    '#vulkan',
     '#glm',
     '#imgui',
     '/usr/local/cuda/include',
