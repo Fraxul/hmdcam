@@ -30,8 +30,8 @@ public:
   virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface->cudaChromaTexObject(); }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIdx);
   virtual bool isStreamFailed(size_t sensorIndex) const;
-  virtual RHISampler::ptr cameraSampler() const override { return m_cameraSampler; }
-  virtual float cameraTexCoordCropX() const override {
+  virtual RHISampler::ptr cameraSampler() const { return m_cameraSampler; }
+  virtual float cameraTexCoordCropX() const {
     return m_perSensorData.empty() ? 1.0f : m_perSensorData[0].m_bufferPool.buffers[0].rhiSurface->texCoordCropX();
   }
   // =======================
