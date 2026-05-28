@@ -69,7 +69,7 @@ float panoClipScale = 1.0f;
 float panoTxScale = 1.0f;
 bool debugUseDistortion = true;
 bool debugShowDepthMap = true;
-float uiScale = 0.2f;
+float uiScale = 0.4f;
 float uiDepth = 0.4f;
 
 bool drawStatusBar = true;
@@ -214,19 +214,19 @@ void renderDrawCamera(size_t cameraIdx, size_t flags, RHISurface::ptr distortion
   rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(cameraIdx), linearClampSampler);
 
   if (useClippedQuadUB) {
-    NDCClippedQuadUniformBlock ub;
+    ModelSpaceClippedQuadUniformBlock ub;
     ub.modelViewProjection = modelViewProjection;
     ub.minUV = glm::vec2(minU, 0.0f);
     ub.maxUV = glm::vec2(maxU, 1.0f);
 
-    rhi()->loadUniformBlockImmediate(ksNDCClippedQuadUniformBlock, &ub, sizeof(NDCClippedQuadUniformBlock));
+    rhi()->loadUniformBlockImmediate(ksModelSpaceClippedQuadUniformBlock, &ub, sizeof(ub));
   } else {
-    NDCQuadUniformBlock ub;
+    MVPUniformBlock ub;
     ub.modelViewProjection = modelViewProjection;
 
-    rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
+    rhi()->loadUniformBlockImmediate(ksMVPUniformBlock, &ub, sizeof(ub));
   }
-  rhi()->drawNDCQuad();
+  rhi()->drawModelSpaceUnitQuad();
 }
 
 RHIRenderPipeline::ptr camTexturedQuadPipeline;
@@ -412,32 +412,32 @@ int main(int argc, char* argv[]) {
     };
 
     {
-      RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout);
+      RHIShaderDescriptor desc("shaders/modelSpaceQuad.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", modelSpaceUnitQuadVertexLayout);
       applyCamSampler(desc);
       camTexturedQuadPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
     }
     {
-      RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camOverlay.frag.glsl", ndcQuadVertexLayout);
+      RHIShaderDescriptor desc("shaders/modelSpaceQuad.vtx.glsl", "shaders/camOverlay.frag.glsl", modelSpaceUnitQuadVertexLayout);
       applyCamSampler(desc);
       camOverlayPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
     }
     {
-      RHIShaderDescriptor desc("shaders/ndcClippedQuadXf_vFlip.vtx.glsl", "shaders/camUndistortMask.frag.glsl", ndcQuadVertexLayout);
+      RHIShaderDescriptor desc("shaders/modelSpaceClippedQuad.vtx.glsl", "shaders/camUndistortMask.frag.glsl", modelSpaceUnitQuadVertexLayout);
       applyCamSampler(desc);
       camUndistortMaskPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
     }
     {
-      RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camUndistortOverlay.frag.glsl", ndcQuadVertexLayout);
+      RHIShaderDescriptor desc("shaders/modelSpaceQuad.vtx.glsl", "shaders/camUndistortOverlay.frag.glsl", modelSpaceUnitQuadVertexLayout);
       applyCamSampler(desc);
       camUndistortOverlayPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
     }
     {
-      RHIShaderDescriptor desc("shaders/ndcQuad.vtx.glsl", "shaders/camCopy.frag.glsl", ndcQuadVertexLayout);
+      RHIShaderDescriptor desc("shaders/ndcQuad.vtx.glsl", "shaders/camCopy.frag.glsl", fullscreenPassVertexLayout);
       applyCamSampler(desc);
       camCopyPipeline = rhi()->compileRenderPipeline(desc, tristripPipelineDescriptor);
     }
 
-    disparityScalePipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
+    disparityScalePipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
   }
 
 
@@ -718,7 +718,7 @@ int main(int argc, char* argv[]) {
           ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
 
           rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
-          rhi()->drawNDCQuad();
+          rhi()->drawModelSpaceUnitQuad();
         }
         rhi()->endRenderPass(eyeRT);
 
@@ -1210,7 +1210,7 @@ int main(int argc, char* argv[]) {
               rhi()->beginRenderPass(snapRT, kLoadInvalidate);
               rhi()->bindRenderPipeline(camCopyPipeline);
               rhi()->loadTexture(ksImageTex, argusCamera->rgbTexture(streamIdx), linearClampSampler);
-              rhi()->drawNDCQuad();
+              rhi()->drawFullscreenPass();
               rhi()->endRenderPass(snapRT);
 
               uint8_t* imageData = new uint8_t[argusCamera->streamWidth() * argusCamera->streamHeight() * 4];
@@ -1477,8 +1477,8 @@ int main(int argc, char* argv[]) {
                   fovX = v.isStereo ? v.fovX : cameraSystem->cameraAtIndex(v.cameraIndices[viewEyeIdx]).fovX;
                 }
 
-                // half-width is viewDepth * tanf(0.5 * fovx). maps directly to scale factor since the quad we're rendering is two units across (NDC quad)
-                float fovScaleFactor = viewDepth * tan(glm::radians(fovX * 0.5f));
+                // half-width is viewDepth * tanf(0.5 * fovx). Double to full-width for scale factor since the quad we're rendering is one unit across.
+                float fovScaleFactor = 2.0f * viewDepth * tan(glm::radians(fovX * 0.5f));
 
                 glm::mat4 model = cameraSystem->viewWorldTransform(viewIdx) * glm::translate(tx) * glm::scale(glm::vec3(fovScaleFactor * zoomFactor, fovScaleFactor * zoomFactor * aspectRatioYScale, 1.0f));
 
@@ -1536,7 +1536,7 @@ int main(int argc, char* argv[]) {
       }
 #endif
 
-      // UI overlay
+      // UI overlay for stereo HMD view.
       {
         nvtxMarkA("UI overlay");
         rhi()->bindBlendState(standardAlphaOverBlendState);
@@ -1551,7 +1551,7 @@ int main(int argc, char* argv[]) {
         ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
 
         rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
-        rhi()->drawNDCQuad();
+        rhi()->drawModelSpaceUnitQuad();
       }
 
 #ifdef USE_EYETRACKING
@@ -1658,7 +1658,7 @@ int main(int argc, char* argv[]) {
             }
           }
 
-          // UI overlay
+          // UI overlay for debug surface
           {
             // Default to drawing the UI on the center-bottom of the debug surface
             RHIRect uiDestRect = RHIRect::xywh((debugSurface->width() / 2) - (guiTex->width() / 2), debugSurface->height() - guiTex->height(), guiTex->width(), guiTex->height());
@@ -1696,6 +1696,7 @@ int main(int argc, char* argv[]) {
             uiLayerBlock.modelViewProjection = glm::mat4(1.0f);
 
             rhi()->loadUniformBlockImmediate(ksUILayerUniformBlock, &uiLayerBlock, sizeof(UILayerUniformBlock));
+            // We're drawing this without using a model-view-projection transform, so use the NDC quad geometry.
             rhi()->drawNDCQuad();
           }
 

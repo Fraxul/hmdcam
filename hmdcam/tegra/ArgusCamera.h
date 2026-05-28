@@ -67,10 +67,6 @@ public:
   void setCaptureDurationOffset(int64_t ns);
   int64_t captureDurationOffset() const;
 
-  // ====================
-
-  void populateGpuMat(size_t sensorIndex, cv::cuda::GpuMat&, const cv::cuda::Stream&);
-
 private:
   void teardownCaptureSessions();
   void buildCaptureSessions();

@@ -42,17 +42,21 @@
 #include "stb/stb_image_write.h"
 
 
-template <typename T> static inline T degrees(T r) { return r * (180.0 / M_PI); }
-template <typename T> static inline T radians(T d) { return d * (M_PI / 180.0); }
-template <typename T> void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
+template <typename T>
+static inline T degrees(T r) { return r * (180.0 / M_PI); }
+template <typename T>
+static inline T radians(T d) { return d * (M_PI / 180.0); }
+template <typename T>
+void anglesToVector(T roll, T pitch, T yaw, T* outVec) {
   // Mathematica: evaluated EulerMatrix[{roll, pitch, yaw}, {3, 1, 2}] . {0, 0, 1}
   // result: {Cos[yaw] Sin[pitch] Sin[roll] + Cos[roll] Sin[yaw], -Cos[roll] Cos[yaw] Sin[pitch] + Sin[roll] Sin[yaw], Cos[pitch] Cos[yaw]}
-  outVec[0] = (cos(yaw)*sin(pitch)*sin(roll)) + (cos(roll)*sin(yaw));
-  outVec[1] = (-cos(roll)*cos(yaw)*sin(pitch)) + (sin(roll)*sin(yaw));
-  outVec[2] = (cos(pitch)*cos(yaw));
+  outVec[0] = (cos(yaw) * sin(pitch) * sin(roll)) + (cos(roll) * sin(yaw));
+  outVec[1] = (-cos(roll) * cos(yaw) * sin(pitch)) + (sin(roll) * sin(yaw));
+  outVec[2] = (cos(pitch) * cos(yaw));
 }
 
-template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, bool toDegrees) {
+template <typename T>
+void vectorToAngles(const T* vec, T& outPitch, T& outYaw, bool toDegrees) {
   // Note: argument ordering is atan2(y, x)
 
   // Pitch is rotation around / flattening along the X axis, where the 2d plane is Z, Y
@@ -70,7 +74,7 @@ template <typename T> void vectorToAngles(const T* vec, T& outPitch, T& outYaw, 
   }
 }
 
-float uiScale = 0.2f;
+float uiScale = 0.4f;
 float uiDepth = 0.4f;
 
 // Profiling data
@@ -89,7 +93,7 @@ static void signal_handler(int) {
   want_quit = true;
 
   // Restore signal handlers so the program is still interruptable if clean shutdown gets stuck
-  signal(SIGINT,  SIG_DFL);
+  signal(SIGINT, SIG_DFL);
   signal(SIGTERM, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
 }
@@ -124,7 +128,7 @@ int main(int argc, char* argv[]) {
   io.DisplaySize = ImVec2(512.0f, 512.0f); // Not the full size, but the size of our overlay RT
   io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f); // Use HiDPI rendering
 
-  signal(SIGINT,  signal_handler);
+  signal(SIGINT, signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGQUIT, signal_handler);
 
@@ -136,19 +140,18 @@ int main(int argc, char* argv[]) {
 
   int eyeTrackingCalibrationPointIdx = -1;
   const glm::vec2 eyeTrackingCalibrationPoints[] = {
-    { -1,   0 },
-    {  1,   0 },
-    {  0,   1 },
-    {  0,  -1 },
-    {  1,   1 },
-    {  1,  -1 },
-    { -1,   1 },
-    { -1,  -1 },
+    {-1,  0},
+    { 1,  0},
+    { 0,  1},
+    { 0, -1},
+    { 1,  1},
+    { 1, -1},
+    {-1,  1},
+    {-1, -1},
   };
   const size_t eyeTrackingCalibrationPointCount = (sizeof(eyeTrackingCalibrationPoints) / sizeof(eyeTrackingCalibrationPoints[0]));
   const float eyeTrackingCalibrationPointScales[] = {
-    2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5, 25
-  };
+    2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5, 25};
   const size_t eyeTrackingCalibrationScaleCount = (sizeof(eyeTrackingCalibrationPointScales) / sizeof(eyeTrackingCalibrationPointScales[0]));
   const size_t eyeTrackingCalibrationTotalSampleCount = eyeTrackingCalibrationPointCount * eyeTrackingCalibrationScaleCount;
 
@@ -162,12 +165,7 @@ int main(int argc, char* argv[]) {
     uint64_t frameCounter = 0;
 
     uint64_t previousFrameTimestamp = 0;
-    boost::accumulators::accumulator_set<double, boost::accumulators::stats<
-        boost::accumulators::tag::min,
-        boost::accumulators::tag::max,
-        boost::accumulators::tag::mean,
-        boost::accumulators::tag::median
-      > > frameInterval;
+    boost::accumulators::accumulator_set<double, boost::accumulators::stats<boost::accumulators::tag::min, boost::accumulators::tag::max, boost::accumulators::tag::mean, boost::accumulators::tag::median>> frameInterval;
 
     io.DeltaTime = 1.0f / 60.0f; // Will be updated during frame-timing computation
 
@@ -175,7 +173,7 @@ int main(int argc, char* argv[]) {
     RHISurface::ptr guiTex;
 
     guiTex = rhi()->newTexture2D(io.DisplaySize.x * io.DisplayFramebufferScale.x, io.DisplaySize.y * io.DisplayFramebufferScale.y, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    guiRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({ guiTex }));
+    guiRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({guiTex}));
 
     bool drawUI = false;
     bool eyeTrackingCaptureMode = false;
@@ -211,7 +209,7 @@ int main(int argc, char* argv[]) {
 
 
       if (ImGui::IsKeyPressed(ImGuiKey_Menu, /*repeat=*/ false) ||
-          ImGui::IsKeyPressed(ImGuiKey_F1, /*repeat=*/ false)) {
+        ImGui::IsKeyPressed(ImGuiKey_F1, /*repeat=*/ false)) {
 
         drawUI = !drawUI;
       }
@@ -269,7 +267,7 @@ int main(int argc, char* argv[]) {
         eyeTrackingCaptureMode = false;
 
         // GUI support
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, io.DisplaySize.y), 0, /*pivot=*/ImVec2(0.5f, 1.0f)); // bottom-center aligned
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y), 0, /*pivot=*/ ImVec2(0.5f, 1.0f)); // bottom-center aligned
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents, since we don't provide a way to resize the UI
         ImGui::Begin("Overlay", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
@@ -293,23 +291,23 @@ int main(int argc, char* argv[]) {
         if (ImGui::CollapsingHeader("Performance")) {
           int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
 
-          if (debugRenderTiming && ImPlot::BeginPlot("##RenderTiming", ImVec2(-1,150), /*flags=*/ plotFlags)) {
-              ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
-              ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
-              ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
-              ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
-              ImPlot::SetupFinish();
+          if (debugRenderTiming && ImPlot::BeginPlot("##RenderTiming", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
+            ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
+            ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_LockMin);
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0f, 12.0f, ImPlotCond_Always);
+            ImPlot::SetupFinish();
 
-              ImPlot::PlotLine("View Render", &s_timingDataBuffer.data()[0].viewRenderTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::PlotLine("HMD Distortion",  &s_timingDataBuffer.data()[0].distortionRenderTimeMs,  s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
-              ImPlot::EndPlot();
+            ImPlot::PlotLine("View Render", &s_timingDataBuffer.data()[0].viewRenderTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::PlotLine("HMD Distortion", &s_timingDataBuffer.data()[0].distortionRenderTimeMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
+            ImPlot::EndPlot();
           }
         } // Performance
 
         ImGui::End();
 
       } else {
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*0.5f, 0), 0, /*pivot=*/ImVec2(0.5f, 0.0f)); // top-center aligned
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, 0), 0, /*pivot=*/ ImVec2(0.5f, 0.0f)); // top-center aligned
         ImGui::SetNextWindowSize(ImVec2(0, -1), ImGuiCond_Always); // grow-only auto-size to X, frame auto-size to Y
         ImGui::Begin("StatusBar", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
@@ -317,7 +315,9 @@ int main(int argc, char* argv[]) {
         time_t t = time(NULL);
         strftime(timebuf, 64, "%a %b %e %T", localtime(&t));
         ImGui::TextUnformatted(timebuf);
-        ImGui::SameLine(); ImGui::Separator(); ImGui::SameLine();
+        ImGui::SameLine();
+        ImGui::Separator();
+        ImGui::SameLine();
         ImGui::Text("%.1fFPS", io.Framerate);
 
         if (eyeTrackingCaptureMode) {
@@ -370,8 +370,6 @@ int main(int argc, char* argv[]) {
       // === Render objects ===
 
 
-
-
       // Render eyetracking gizmos
 
       // Eyetracking calibration point
@@ -382,9 +380,7 @@ int main(int argc, char* argv[]) {
 
         // TODO wire up rotation angles
         glm::mat4 modelMatrix =
-            glm::eulerAngleXY(glm::radians(calPoint.x), glm::radians(calPoint.y))
-          * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth))
-          * glm::scale(glm::vec3(0.005f));
+          glm::eulerAngleXY(glm::radians(calPoint.x), glm::radians(calPoint.y)) * glm::translate(glm::vec3(0.0f, 0.0f, -uiDepth)) * glm::scale(glm::vec3(0.005f));
 
         ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
         ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
@@ -397,8 +393,7 @@ int main(int argc, char* argv[]) {
         rhi()->loadUniformBlockImmediate(ksCrosshairUniformBlock, &ub, sizeof(ub));
         // rhi()->setViewports(eyeViewports, 2); // should already be set
 
-        rhi()->bindStreamBuffer(0, ndcQuadVBO);
-        rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
+        rhi()->drawNDCQuad(/*instanceCount=*/ 2);
       }
 
       // Eyetracking overlays that draw behind the UI
@@ -418,7 +413,7 @@ int main(int argc, char* argv[]) {
         ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
 
         rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
-        rhi()->drawNDCQuad();
+        rhi()->drawModelSpaceUnitQuad();
       }
 
       // Cursors and any other EyeTrackingService-provided gizmos
@@ -457,7 +452,7 @@ int main(int argc, char* argv[]) {
 
 
   // Restore signal handlers
-  signal(SIGINT,  SIG_DFL);
+  signal(SIGINT, SIG_DFL);
   signal(SIGTERM, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
 
@@ -475,4 +470,3 @@ int main(int argc, char* argv[]) {
 
   return 0;
 }
-

@@ -153,8 +153,17 @@ public:
   virtual void drawPrimitivesIndirect(RHIBuffer::ptr indirectBuffer, uint32_t indirectCommandCount = 1, uint32_t indirectCommandArrayOffset = 0) = 0;
   virtual void drawIndexedPrimitives(RHIBuffer::ptr indexBuffer, RHIIndexBufferType indexBufferType, uint32_t indexCount, uint32_t indexOffsetElements = 0, uint32_t instanceCount = 1, uint32_t baseInstance = 0) = 0;
   virtual void drawIndexedPrimitivesIndirect(RHIBuffer::ptr indexBuffer, RHIIndexBufferType indexBufferType, RHIBuffer::ptr indirectBuffer, uint32_t indirectCommandCount = 1, uint32_t indirectCommandArrayOffset = 0) = 0;
+
+  // Draw a fullscreen pass -- uses a single triangle that gets clipped by the edges of the framebuffer.
   void drawFullscreenPass();
-  void drawNDCQuad();
+  // Draw an NDC-convention quad: XY range from -1 to 1, Z=0, UV ranges from 0 to 1.
+  // (0, 0) in UV is located at (-1, -1) in XY, to make framebuffer pixel and texture coordinates line up.
+  // Intended for use without a projection transform.
+  void drawNDCQuad(uint32_t instanceCount = 1);
+  // Draw a model-space-convention unit quad: XY range from -0.5 to 0.5, UV ranges from 0 to 1.
+  // (0, 0) in UV is located at (-0.5, 0.5), to make the applied image appear upright when transformed with standard model matrix conventions.
+  // Intended for use with a standard model-view-projection transform setup.
+  void drawModelSpaceUnitQuad(uint32_t instanceCount = 1);
 
   virtual RHITimerQuery::ptr newTimerQuery() = 0;
   virtual RHIOcclusionQuery::ptr newOcclusionQuery(RHIOcclusionQueryMode queryMode) = 0;

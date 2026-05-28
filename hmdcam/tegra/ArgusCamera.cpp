@@ -39,9 +39,6 @@ static const uint64_t kWaitForIdleTimeoutNs = 500 /*milliseconds*/ * 1'000'000UL
 static const uint32_t kFailedCaptureThreshold = 10;
 static const uint32_t kFailedWaitForIdleThreshold = 2;
 
-extern RHIRenderPipeline::ptr camTexturedQuadPipeline;
-extern FxAtomicString ksNDCQuadUniformBlock;
-
 static const char* argusStatusStr(Argus::Status status) {
   switch (status) {
     case Argus::STATUS_OK: return "STATUS_OK";
@@ -994,67 +991,4 @@ bool ArgusCamera::fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescript
   if (sensorIndex >= m_perSensorData.size())
     return false;
   return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface->fillCudaMemcpy2D(outCopyDescriptor, fromChromaPlane);
-}
-
-
-/*
-void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {
-  CUgraphicsResource pReadResource = NULL;
-  CUresult status = cuGraphicsEGLRegisterImage(&pReadResource, m_currentEglImages[sensorIdx], CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY);
-  if (status != CUDA_SUCCESS)
-    die("cuGraphicsEGLRegisterImage failed: %d\n", status);
-
-  CUeglFrame eglFrame;
-  status = cuGraphicsResourceGetMappedEglFrame(&eglFrame, pReadResource, 0, 0);
-  if (status != CUDA_SUCCESS) {
-    die("cuGraphicsSubResourceGetMappedArray failed: %d\n", status);
-  }
-
-  // TODO optionally support NV12 -> RGB format conversion
-
-  CUDA_MEMCPY2D copyDescriptor;
-  memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
-
-  assert(eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH);
-  copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-  copyDescriptor.srcDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
-  copyDescriptor.srcPitch = eglFrame.pitch;
-
-  copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-  copyDescriptor.dstDevice = (CUdeviceptr) gpuMat.cudaPtr();
-  copyDescriptor.dstPitch = gpuMat.step;
-
-  copyDescriptor.WidthInBytes = eglFrame.frame.width * gpuMat.elemSize();
-  copyDescriptor.Height = copyHeight;
-
-  CUStream streamPtr = (CUStream) stream.cudaPtr();
-  if (streamPtr) {
-    CUDA_CHECK(cuMemcpy2DAsync(&copyDescriptor, streamPtr));
-  } else {
-    CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
-  }
-
-  cuGraphicsUnregisterResource(pReadResource);
-}
-*/
-
-void ArgusCamera::populateGpuMat(size_t sensorIdx, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {
-#ifdef HAVE_CUDA // from opencv2/cvconfig.h
-  if (!m_tmpBlitSurface) {
-    m_tmpBlitSurface = rhi()->newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    m_tmpBlitRT = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_tmpBlitSurface}));
-  }
-
-  glm::mat4 ub = glm::mat4(1.0f);
-  ub[1][1] = -1.0f; // Y-flip for coordsys matching
-
-  rhi()->beginRenderPass(m_tmpBlitRT, kLoadInvalidate);
-  rhi()->bindRenderPipeline(camTexturedQuadPipeline);
-  rhi()->loadTexture(ksImageTex, rgbTexture(sensorIdx), linearClampSampler);
-  rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(glm::mat4));
-  rhi()->drawNDCQuad();
-  rhi()->endRenderPass(m_tmpBlitRT);
-
-  RHICUDA::copySurfaceToGpuMat(m_tmpBlitSurface, gpuMat, const_cast<cv::cuda::Stream&>(stream));
-#endif
 }

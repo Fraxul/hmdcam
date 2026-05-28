@@ -7,10 +7,10 @@ static /*CVar*/ int r_textureAnisotropy = 8;
 
 RHIRenderPipeline::ptr uiLayerPipeline;
 RHIRenderPipeline::ptr uiLayerStereoPipeline;
-RHIRenderPipeline::ptr overlayCompositePipeline;
 RHIRenderPipeline::ptr triadGizmoPipeline;
 RHIBuffer::ptr fullscreenPassVBO;
 RHIBuffer::ptr ndcQuadVBO;
+RHIBuffer::ptr modelSpaceUnitQuadVBO;
 RHIBuffer::ptr triadGizmoVBO;
 RHISurface::ptr hbaoNoiseTexture;
 RHISurface::ptr emptySsaoTexture;
@@ -38,6 +38,7 @@ RHISampler::ptr linearMipWrapAnisoSampler;
 
 RHIVertexLayout fullscreenPassVertexLayout;
 RHIVertexLayout ndcQuadVertexLayout;
+RHIVertexLayout modelSpaceUnitQuadVertexLayout;
 RHIRenderPipelineDescriptor tristripPipelineDescriptor;
 RHIRenderPipeline::ptr crosshairPipeline;
 
@@ -78,9 +79,24 @@ void initRHIResources() {
     ndcQuadVBO = rhi()->newBufferWithContents(ndcQuadData, sizeof(float) * 20);
   }
 
+  {
+    // Triangle strip; CCW winding in Vulkan framebuffer (Y-down).
+    static const float modelSpaceUnitQuadData[] = {
+       0.5f,  0.5f, 0.0f, 1.0f, 0.0f,  // right-top
+       0.5f, -0.5f, 0.0f, 1.0f, 1.0f,  // right-bottom
+      -0.5f,  0.5f, 0.0f, 0.0f, 0.0f,  // left-top
+      -0.5f, -0.5f, 0.0f, 0.0f, 1.0f}; // left-bottom
+
+    modelSpaceUnitQuadVBO = rhi()->newBufferWithContents(modelSpaceUnitQuadData, sizeof(float) * 20);
+  }
+
   ndcQuadVertexLayout.elements.clear();
   ndcQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position",            0, sizeof(float) * 5));
   ndcQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates", 12, sizeof(float) * 5));
+
+  modelSpaceUnitQuadVertexLayout.elements.clear();
+  modelSpaceUnitQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position",            0, sizeof(float) * 5));
+  modelSpaceUnitQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates", 12, sizeof(float) * 5));
 
   fullscreenPassVertexLayout.elements.clear();
   fullscreenPassVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position",            0, sizeof(float) * 5));
@@ -268,23 +284,15 @@ void initRHIResources() {
 
   // Set up shaders and static pipelines
 
-  uiLayerPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor("shaders/uiLayer.vtx.glsl", "shaders/uiLayer.frag.glsl", ndcQuadVertexLayout)), tristripPipelineDescriptor);
+  uiLayerPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(RHIShaderDescriptor("shaders/uiLayer.vtx.glsl", "shaders/uiLayer.frag.glsl", modelSpaceUnitQuadVertexLayout)), tristripPipelineDescriptor);
 
   {
     RHIShaderDescriptor desc;
     desc.addSourceFile(RHIShaderDescriptor::kVertexShader, "shaders/uiLayerStereo.vtx.glsl");
     desc.addSourceFile(RHIShaderDescriptor::kGeometryShader, "shaders/uiLayerStereo.geom.glsl");
     desc.addSourceFile(RHIShaderDescriptor::kFragmentShader, "shaders/uiLayerStereo.frag.glsl");
-    desc.setVertexLayout(ndcQuadVertexLayout);
+    desc.setVertexLayout(modelSpaceUnitQuadVertexLayout);
     uiLayerStereoPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), tristripPipelineDescriptor);
-  }
-
-  {
-    RHIShaderDescriptor overlayCompositeShaderDescriptor;
-    overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kVertexShader, "shaders/lightPass.vtx.glsl");
-    overlayCompositeShaderDescriptor.addSourceFile(RHIShaderDescriptor::kFragmentShader, "shaders/overlayCompositeShader.frag.glsl");
-    overlayCompositeShaderDescriptor.setVertexLayout(ndcQuadVertexLayout);
-    overlayCompositePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(overlayCompositeShaderDescriptor), tristripPipelineDescriptor);
   }
 
   crosshairPipeline = rhi()->compileRenderPipeline("shaders/crosshair.vtx.glsl", "shaders/crosshair.frag.glsl", ndcQuadVertexLayout, kPrimitiveTopologyTriangleStrip);

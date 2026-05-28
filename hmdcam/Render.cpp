@@ -27,8 +27,8 @@
 
 RHIRenderTarget::ptr windowRenderTarget;
 
-FxAtomicString ksNDCQuadUniformBlock("NDCQuadUniformBlock");
-FxAtomicString ksNDCClippedQuadUniformBlock("NDCClippedQuadUniformBlock");
+FxAtomicString ksMVPUniformBlock("MVPUniformBlock");
+FxAtomicString ksModelSpaceClippedQuadUniformBlock("ModelSpaceClippedQuadUniformBlock");
 FxAtomicString ksSolidQuadUniformBlock("SolidQuadUniformBlock");
 
 RHIRenderPipeline::ptr solidQuadPipeline;

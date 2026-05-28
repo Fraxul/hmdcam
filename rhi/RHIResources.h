@@ -12,11 +12,12 @@
 
 extern RHIRenderPipeline::ptr uiLayerPipeline;
 extern RHIRenderPipeline::ptr uiLayerStereoPipeline;
-extern RHIRenderPipeline::ptr overlayCompositePipeline;
 extern RHIBuffer::ptr fullscreenPassVBO;
 extern RHIBuffer::ptr ndcQuadVBO;
+extern RHIBuffer::ptr modelSpaceUnitQuadVBO;
 extern RHIVertexLayout fullscreenPassVertexLayout;
 extern RHIVertexLayout ndcQuadVertexLayout;
+extern RHIVertexLayout modelSpaceUnitQuadVertexLayout;
 extern RHIRenderPipelineDescriptor tristripPipelineDescriptor;
 
 extern RHIDepthStencilState::ptr disabledDepthStencilState;

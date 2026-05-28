@@ -32,17 +32,17 @@ void recomputeHMDParameters();
 
 extern RenderBackend* renderBackend;
 
-struct NDCClippedQuadUniformBlock {
+struct ModelSpaceClippedQuadUniformBlock {
   glm::mat4 modelViewProjection;
   glm::vec2 minUV;
   glm::vec2 maxUV;
 };
-extern FxAtomicString ksNDCClippedQuadUniformBlock;
+extern FxAtomicString ksModelSpaceClippedQuadUniformBlock;
 
-struct NDCQuadUniformBlock {
+struct MVPUniformBlock {
   glm::mat4 modelViewProjection;
 };
-extern FxAtomicString ksNDCQuadUniformBlock;
+extern FxAtomicString ksMVPUniformBlock;
 
 struct SolidQuadUniformBlock {
   glm::mat4 modelViewProjection[2];

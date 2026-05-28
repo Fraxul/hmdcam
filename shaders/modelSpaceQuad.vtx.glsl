@@ -1,5 +1,5 @@
 #version 310 es
-in vec4 position;
+in vec3 position;
 in vec2 textureCoordinates;
 out vec2 fragTexCoord;
 
@@ -8,8 +8,7 @@ layout(std140) uniform MVPUniformBlock {
 };
 
 void main() {
-  gl_Position = modelViewProjection * position;
+  gl_Position = modelViewProjection * vec4(position, 1.0f);
   fragTexCoord = textureCoordinates;
 }
-
 

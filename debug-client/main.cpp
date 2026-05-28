@@ -54,7 +54,7 @@ extern FxAtomicString ksDistortionMap;
 extern cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_64FC1);
 
-RHIRenderPipeline::ptr camTexturedQuadPipeline;
+RHIRenderPipeline::ptr camNdcQuadPipeline;
 
 #if 0
 RHIRenderPipeline::ptr meshVertexColorPipeline;
@@ -263,9 +263,9 @@ int main(int argc, char** argv) {
 
   RHISurface::ptr disparityScaleSurface;
   RHIRenderTarget::ptr disparityScaleTarget;
-  RHIRenderPipeline::ptr disparityScalePipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
+  RHIRenderPipeline::ptr disparityScalePipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
 
-  RHIRenderPipeline::ptr colorMapPipeline = rhi()->compileRenderPipeline("shaders/lightPass.vtx.glsl", "shaders/colorMap.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
+  RHIRenderPipeline::ptr colorMapPipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/colorMap.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
 
   RHISurface::ptr disparityDebugColorMapSurface;
   RHIRenderTarget::ptr disparityDebugColorMapTarget;
@@ -324,8 +324,8 @@ int main(int argc, char** argv) {
 
   // Setup render pipelines for camera sampling
   {
-    RHIShaderDescriptor desc("shaders/ndcQuadXf_vFlip.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout);
-    camTexturedQuadPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
+    RHIShaderDescriptor desc("shaders/ndcQuad.vtx.glsl", "shaders/camTexturedQuad.frag.glsl", ndcQuadVertexLayout);
+    camNdcQuadPipeline = rhi()->compileRenderPipeline(desc, kPrimitiveTopologyTriangleStrip);
   }
 
   std::vector<RHIRect> debugSurfaceCameraRects;
@@ -884,7 +884,7 @@ int main(int argc, char** argv) {
         padY = std::max<int>(padY, 0);
       }
 
-      rhi()->bindRenderPipeline(camTexturedQuadPipeline);
+      rhi()->bindRenderPipeline(camNdcQuadPipeline);
 
       for (size_t cameraIdx = 0; cameraIdx < cameraProvider->streamCount(); ++cameraIdx) {
         RHIRect origVp = debugSurfaceCameraRects[cameraIdx];
@@ -898,11 +898,6 @@ int main(int argc, char** argv) {
 
         // No-distortion / direct passthrough
         rhi()->loadTexture(ksImageTex, cameraProvider->rgbTexture(cameraIdx), linearClampSampler);
-
-        NDCQuadUniformBlock ub;
-        ub.modelViewProjection = glm::mat4(1.0f); // identity MVP
-
-        rhi()->loadUniformBlockImmediate(ksNDCQuadUniformBlock, &ub, sizeof(NDCQuadUniformBlock));
         rhi()->drawNDCQuad();
       }
 

@@ -1369,7 +1369,7 @@ void EyeTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
 
   // Render eyetracking debug view
   if (m_debugShowFeedbackView) {
-    const float feedbackViewScale = 0.175f;
+    const float feedbackViewScale = 0.35;
 
     ProcessingState& ps = m_processingState[0];
     const cv::Mat& debugView = getDebugViewForEye(0);
@@ -1391,13 +1391,13 @@ void EyeTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
       // rhi()->setViewports(eyeViewports, 2); // should already be set
 
       UILayerStereoUniformBlock ub;
-      glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -feedbackViewDepth)) * glm::scale(glm::vec3(feedbackViewScale * (static_cast<float>(ps.m_eyeTrackingDebugTexture->width()) / static_cast<float>(ps.m_eyeTrackingDebugTexture->height())), -feedbackViewScale, feedbackViewScale));
+      glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -feedbackViewDepth)) * glm::scale(glm::vec3(feedbackViewScale * (static_cast<float>(ps.m_eyeTrackingDebugTexture->width()) / static_cast<float>(ps.m_eyeTrackingDebugTexture->height())), feedbackViewScale, feedbackViewScale));
       ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
       ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
       ub.tint = glm::vec4(m_debugFeedbackBrightness, m_debugFeedbackBrightness, m_debugFeedbackBrightness, 1.0f);
 
       rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
-      rhi()->drawNDCQuad();
+      rhi()->drawModelSpaceUnitQuad();
     }
   }
 }
@@ -1442,8 +1442,7 @@ void EyeTrackingService::renderSceneGizmos_postUI(FxRenderView* renderViews) {
     rhi()->loadUniformBlockImmediate(ksCrosshairUniformBlock, &ub, sizeof(ub));
     // rhi()->setViewports(eyeViewports, 2); // should already be set
 
-    rhi()->bindStreamBuffer(0, ndcQuadVBO);
-    rhi()->drawPrimitives(0, 4, /*instanceCount=*/ 2);
+    rhi()->drawNDCQuad(/*instanceCount=*/ 2);
   }
 
   // Center crosshair

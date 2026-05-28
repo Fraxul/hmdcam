@@ -43,9 +43,14 @@ void RHI::drawFullscreenPass() {
   drawPrimitives(0, 3);
 }
 
-void RHI::drawNDCQuad() {
+void RHI::drawNDCQuad(uint32_t instanceCount) {
   bindStreamBuffer(0, ndcQuadVBO);
-  drawPrimitives(0, 4);
+  drawPrimitives(0, 4, instanceCount);
+}
+
+void RHI::drawModelSpaceUnitQuad(uint32_t instanceCount) {
+  bindStreamBuffer(0, modelSpaceUnitQuadVBO);
+  drawPrimitives(0, 4, instanceCount);
 }
 
 RHIShader::ptr RHI::compileShader(const RHIShaderDescriptor& descriptor) {

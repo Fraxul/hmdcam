@@ -351,7 +351,7 @@ void FaceTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
 
   // Render debug view
   if (m_debugShowFeedbackView) {
-    const float feedbackViewScale = 0.175f;
+    const float feedbackViewScale = 0.35f;
 
     ProcessingState& ps = m_processingState;
     const cv::Mat& debugView = ps.m_debugViewRGB;
@@ -373,13 +373,13 @@ void FaceTrackingService::renderSceneGizmos_preUI(FxRenderView* renderViews) {
       // rhi()->setViewports(eyeViewports, 2); // should already be set
 
       UILayerStereoUniformBlock ub;
-      glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -feedbackViewDepth)) * glm::scale(glm::vec3(feedbackViewScale * (static_cast<float>(ps.m_debugTexture->width()) / static_cast<float>(ps.m_debugTexture->height())), -feedbackViewScale, feedbackViewScale));
+      glm::mat4 modelMatrix = glm::translate(glm::vec3(0.0f, 0.0f, -feedbackViewDepth)) * glm::scale(glm::vec3(feedbackViewScale * (static_cast<float>(ps.m_debugTexture->width()) / static_cast<float>(ps.m_debugTexture->height())), feedbackViewScale, feedbackViewScale));
       ub.modelViewProjection[0] = renderViews[0].viewProjectionMatrix * modelMatrix;
       ub.modelViewProjection[1] = renderViews[1].viewProjectionMatrix * modelMatrix;
       ub.tint = glm::vec4(m_debugFeedbackBrightness, m_debugFeedbackBrightness, m_debugFeedbackBrightness, 1.0f);
 
       rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
-      rhi()->drawNDCQuad();
+      rhi()->drawModelSpaceUnitQuad();
     }
   }
 }
