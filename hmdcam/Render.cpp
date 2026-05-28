@@ -149,55 +149,28 @@ bool RenderInit(ERenderBackend backendType) {
     printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
   }
 
-  // RHI backend selection. Default is GL; RHI_BACKEND=vk picks the new
-  // Vulkan RHI backend. The VK path uses RenderBackendVKDirect in VK-native
-  // mode (no EGL/GL context, swap images rendered directly by RHIVK).
-  const char* rhiBackendStr = getenv("RHI_BACKEND");
-  const bool useVulkanRHIBackend = (rhiBackendStr && strcmp(rhiBackendStr, "vk") == 0);
+  // Construct RenderBackendVKDirect in VK-native mode. earlyInit is a no-op
+  // on VKDirect, createGLContext becomes a no-op, createPresentation skips
+  // VKGLSyncData and uses RHIWindowRenderTargetVK.
+  auto* vkBackend = new RenderBackendVKDirect(RenderBackendVKDirect::kVKNative);
+  renderBackend = vkBackend;
+  vkBackend->earlyInit();
+  vkBackend->createGLContext(); // no-op in VK-native mode
 
-  if (useVulkanRHIBackend) {
-    printf("RHI_BACKEND=vk: bringing up Vulkan RHI backend.\n");
+  RHICUDA::initRHICUDA();
+  // initRHIVulkan() calls initRHI() which runs initRHIResources(). As
+  // unimplemented RHIVK methods get called, they abort with the method
+  // name + source location — incrementally fill them in (see Vulkan-
+  // Migration.md Phase 4).
+  initRHIVulkan();
 
-    // Construct RenderBackendVKDirect in VK-native mode. earlyInit is a no-op
-    // on VKDirect, createGLContext becomes a no-op, createPresentation skips
-    // VKGLSyncData and uses RHIWindowRenderTargetVK.
-    auto* vkBackend = new RenderBackendVKDirect(RenderBackendVKDirect::kVKNative);
-    renderBackend = vkBackend;
-    vkBackend->earlyInit();
-    vkBackend->createGLContext(); // no-op in VK-native mode
+  vkBackend->createPresentation();
+  windowRenderTarget = renderBackend->windowRenderTarget();
 
-    RHICUDA::initRHICUDA();
-    // initRHIVulkan() calls initRHI() which runs initRHIResources(). As
-    // unimplemented RHIVK methods get called, they abort with the method
-    // name + source location — incrementally fill them in (see Vulkan-
-    // Migration.md Phase 4).
-    initRHIVulkan();
+  // Attach the swap-frame source to RHIVK so it can drive the per-frame
+  // command buffer + acquire/present cycle.
+  static_cast<RHIVK*>(rhi())->setFrameSource(vkBackend);
 
-    vkBackend->createPresentation();
-    windowRenderTarget = renderBackend->windowRenderTarget();
-
-    // Attach the swap-frame source to RHIVK so it can drive the per-frame
-    // command buffer + acquire/present cycle.
-    static_cast<RHIVK*>(rhi())->setFrameSource(vkBackend);
-
-    // Fall through to the shared post-bringup setup (pipelines, etc.).
-  } else
-
-  {
-    // GL backend bringup is split into three phases so that the GL context
-    // exists before RHI initializes, and RHI's Vulkan allocator (which is
-    // UUID-matched to the GL device) exists before any presentation surface
-    // is built. See RenderBackend.h for details.
-    renderBackend = RenderBackend::create(backendType);
-    renderBackend->earlyInit();
-    renderBackend->createGLContext();
-    RHICUDA::initRHICUDA();
-    initRHIGL();
-    initRHIVulkanInteropContext();
-
-    renderBackend->createPresentation();
-    windowRenderTarget = renderBackend->windowRenderTarget();
-  }
 
   // Set up shared resources
 
