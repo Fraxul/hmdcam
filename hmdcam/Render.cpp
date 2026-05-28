@@ -157,7 +157,6 @@ bool RenderInit(ERenderBackend backendType) {
   vkBackend->earlyInit();
   vkBackend->createGLContext(); // no-op in VK-native mode
 
-  RHICUDA::initRHICUDA();
   // initRHIVulkan() calls initRHI() which runs initRHIResources(). As
   // unimplemented RHIVK methods get called, they abort with the method
   // name + source location — incrementally fill them in (see Vulkan-

@@ -317,6 +317,8 @@ int main(int argc, char* argv[]) {
   // will break EGL initialization in libargus and nvbufsurface.
   unsetenv("DISPLAY");
 
+  RHICUDA::initRHICUDA(); // Required before depthMapGenerator
+
   depthMapGenerator = createDepthMapGenerator(depthBackend);
 
   if (depthBackend == kDepthBackendDepthAI) {

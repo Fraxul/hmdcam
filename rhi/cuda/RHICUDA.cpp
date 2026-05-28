@@ -6,8 +6,12 @@ namespace RHICUDA {
 CUstream defaultAsyncStream;
 CUdevice cudaDevice;
 CUcontext cudaContext;
+bool initialized = false;
 
 void initRHICUDA() {
+  if (initialized)
+    return; // Already done.
+
   cuInit(0);
 
   cuDeviceGet(&cudaDevice, 0);
@@ -24,6 +28,9 @@ void initRHICUDA() {
 
   // Create a default non-blocking stream.
   CUDA_CHECK(cuStreamCreate(&defaultAsyncStream, CU_STREAM_NON_BLOCKING));
+
+  // Mark initialization done.
+  initialized = true;
 }
 
 }; // namespace RHICUDA

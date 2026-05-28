@@ -188,9 +188,11 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  depthMapGenerator = createDepthMapGenerator(depthBackend);
-
   FxThreading::detail::init();
+
+  RHICUDA::initRHICUDA(); // Required before depthMapGenerator
+
+  depthMapGenerator = createDepthMapGenerator(depthBackend);
 
   // SDL + window init
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
@@ -219,7 +221,6 @@ int main(int argc, char** argv) {
   if (!RenderBackendSDLVK::getRequiredInstanceExtensions(window, sdlInstanceExtensions)) {
     return -1;
   }
-  RHICUDA::initRHICUDA();
   initRHIVulkan(sdlInstanceExtensions);
 
   renderBackend = new RenderBackendSDLVK(window);

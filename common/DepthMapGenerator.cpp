@@ -123,6 +123,8 @@ DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) :
   m_backend(backend_),
   m_globalStream(cv::cuda::wrapStream(reinterpret_cast<size_t>(RHICUDA::defaultAsyncStream))) {
 
+  assert(RHICUDA::initialized);
+
   memset(&m_nppStreamContext, 0, sizeof(m_nppStreamContext));
   NPP_CHECK(nppSetStream(RHICUDA::defaultAsyncStream));
   NPP_CHECK(nppGetStreamContext(&m_nppStreamContext));

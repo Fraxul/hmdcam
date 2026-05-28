@@ -6,6 +6,8 @@ namespace RHICUDA {
 
 void initRHICUDA();
 
+extern bool initialized;
+
 extern CUstream defaultAsyncStream;
 extern CUdevice cudaDevice;
 extern CUcontext cudaContext;
