@@ -225,6 +225,15 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
     vk::PhysicalDeviceTimelineSemaphoreFeatures timelineSemaphoreFeatures{};
     timelineSemaphoreFeatures.timelineSemaphore = VK_TRUE;
 
+    // YCbCr sampler conversion: required for the NV12 camera immutable sampler
+    // (Phase 6). Core since Vulkan 1.1; must be explicitly enabled or
+    // vkCreateSamplerYcbcrConversion is undefined behavior. The NV driver
+    // tolerates it without validation but builds a corrupt conversion object
+    // that faults later (observed as a SIGBUS atomic-refcount in
+    // vkCreateShadersEXT).
+    vk::PhysicalDeviceSamplerYcbcrConversionFeatures ycbcrConversionFeatures{};
+    ycbcrConversionFeatures.samplerYcbcrConversion = VK_TRUE;
+
     // Chain assembled tail-first so each link's pNext is set before the
     // outer struct points at it. Order in the chain does not matter to
     // the implementation, only that the terminal struct's pNext is null.
@@ -235,6 +244,7 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
     shaderObjectFeatures.setPNext(&dynamicRenderingFeatures);
     dynamicRenderingFeatures.setPNext(&hostQueryResetFeatures);
     hostQueryResetFeatures.setPNext(&timelineSemaphoreFeatures);
+    timelineSemaphoreFeatures.setPNext(&ycbcrConversionFeatures);
 
     vk::DeviceCreateInfo dci{
       vk::DeviceCreateFlags(),

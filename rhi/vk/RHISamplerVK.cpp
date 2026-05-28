@@ -94,12 +94,23 @@ RHISamplerVK::~RHISamplerVK() {}
       ci.mipmapMode = vk::SamplerMipmapMode::eLinear;
       break;
   }
-  ci.addressModeU = vkWrap(d.wrapModeU);
-  ci.addressModeV = vkWrap(d.wrapModeV);
-  ci.addressModeW = vk::SamplerAddressMode::eRepeat;
-  if (d.maxAnisotropy > 1) {
-    ci.anisotropyEnable = VK_TRUE;
-    ci.maxAnisotropy = static_cast<float>(d.maxAnisotropy);
+  if (ycbcrConv) {
+    // A sampler with an attached ycbcr conversion must use CLAMP_TO_EDGE on
+    // every axis, with anisotropy and unnormalized coordinates disabled
+    // (VUID-VkSamplerCreateInfo-addressModeU-01646).
+    ci.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+    ci.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+    ci.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+    ci.anisotropyEnable = VK_FALSE;
+    ci.unnormalizedCoordinates = VK_FALSE;
+  } else {
+    ci.addressModeU = vkWrap(d.wrapModeU);
+    ci.addressModeV = vkWrap(d.wrapModeV);
+    ci.addressModeW = vk::SamplerAddressMode::eRepeat;
+    if (d.maxAnisotropy > 1) {
+      ci.anisotropyEnable = VK_TRUE;
+      ci.maxAnisotropy = static_cast<float>(d.maxAnisotropy);
+    }
   }
   ci.minLod = 0.0f;
   ci.maxLod = VK_LOD_CLAMP_NONE;
