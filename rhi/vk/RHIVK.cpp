@@ -236,16 +236,46 @@ void RHIVK::ensureFrameCBOpen() {
   m_currentFrame.frameFence = fc.frameFence.get();
 }
 
+namespace {
+
+// Map an RHI load action to a Vulkan attachment load op. kLoadInvalidate
+// matches GL's glDiscardFramebufferEXT (contents become undefined) → eDontCare;
+// kLoadPreserveContents / kLoadUnspecified keep prior contents → eLoad.
+vk::AttachmentLoadOp vkLoadOpFor(RHIRenderTargetLoadAction action) {
+  switch (action) {
+    case kLoadClear: return vk::AttachmentLoadOp::eClear;
+    case kLoadInvalidate: return vk::AttachmentLoadOp::eDontCare;
+    default: return vk::AttachmentLoadOp::eLoad;
+  }
+}
+
+} // namespace
+
 void RHIVK::beginRenderPass(RHIRenderTarget::ptr target,
   RHIRenderTargetLoadAction colorLoadAction,
-  RHIRenderTargetLoadAction /*depthLoadAction*/,
-  RHIRenderTargetLoadAction /*stencilLoadAction*/) {
+  RHIRenderTargetLoadAction depthLoadAction,
+  RHIRenderTargetLoadAction stencilLoadAction) {
   if (m_currentFrame.passActive) {
     fprintf(stderr, "RHIVK::beginRenderPass: previous render pass not closed\n");
     abort();
   }
 
+  // Mirror the GL backend's load-action defaulting: depth follows color and
+  // stencil follows depth when left unspecified.
+  if (depthLoadAction == kLoadUnspecified)
+    depthLoadAction = colorLoadAction;
+  if (stencilLoadAction == kLoadUnspecified)
+    stencilLoadAction = depthLoadAction;
+
   ensureFrameCBOpen();
+
+  // Reset per-pass attachment bookkeeping.
+  m_currentFrame.passColorAttachments.clear();
+  m_currentFrame.passHasDepthStencil = false;
+  m_currentFrame.passDepthStencilHasDepth = false;
+  m_currentFrame.passDepthStencilHasStencil = false;
+  m_currentFrame.passDepthStencilImage = nullptr;
+  m_currentFrame.passDepthStencilView = nullptr;
 
   bool isWindow = target->isWindowRenderTarget();
   if (isWindow) {
@@ -266,72 +296,158 @@ void RHIVK::beginRenderPass(RHIRenderTarget::ptr target,
     m_currentFrame.imageAcquired = frame.imageAcquired;
     m_currentFrame.renderFinished = frame.renderFinished;
 
-    m_currentFrame.passImage = frame.swapchainImage;
-    m_currentFrame.passImageView = swapImageViewFor(frame.swapchainImage, frame.format);
+    CurrentFrame::PassColorAttachment att;
+    att.image = frame.swapchainImage;
+    att.view = swapImageViewFor(frame.swapchainImage, frame.format);
+    att.format = frame.format;
+    m_currentFrame.passColorAttachments.push_back(att);
     m_currentFrame.passExtent = frame.extent;
-    m_currentFrame.passFormat = frame.format;
   } else {
-    // Offscreen RT — Phase 4 supports single-color-attachment, no depth.
+    // Offscreen RT: zero or more color attachments + an optional
+    // depth-stencil attachment, matching the GL backend.
     auto* offRT = static_cast<RHIRenderTargetVK*>(target.get());
-    if (offRT->colorTargetCount() == 0) {
-      fprintf(stderr, "RHIVK::beginRenderPass: offscreen RT with no color targets not supported yet\n");
+    if (offRT->colorTargetCount() == 0 && !offRT->hasDepthStencilTarget()) {
+      fprintf(stderr, "RHIVK::beginRenderPass: offscreen RT has no attachments\n");
       abort();
     }
-    RHISurfaceVK* color0 = offRT->colorAttachment(0);
-    m_currentFrame.passImage = color0->vkImage();
-    m_currentFrame.passImageView = color0->vkImageView();
-    m_currentFrame.passExtent = vk::Extent2D{color0->width(), color0->height()};
-    m_currentFrame.passFormat = color0->vkFormat();
+    m_currentFrame.passExtent = vk::Extent2D{offRT->width(), offRT->height()};
+    for (size_t i = 0; i < offRT->colorTargetCount(); ++i) {
+      RHISurfaceVK* c = offRT->colorAttachment(i);
+      CurrentFrame::PassColorAttachment att;
+      att.image = c->vkImage();
+      att.view = c->vkImageView();
+      att.format = c->vkFormat();
+      m_currentFrame.passColorAttachments.push_back(att);
+    }
+    if (offRT->hasDepthStencilTarget()) {
+      RHISurfaceVK* ds = offRT->depthStencilAttachment();
+      m_currentFrame.passHasDepthStencil = true;
+      m_currentFrame.passDepthStencilHasDepth = rhiSurfaceFormatHasDepth(ds->format());
+      m_currentFrame.passDepthStencilHasStencil = rhiSurfaceFormatHasStencil(ds->format());
+      m_currentFrame.passDepthStencilImage = ds->vkImage();
+      m_currentFrame.passDepthStencilView = ds->vkImageView();
+    }
   }
+
+  // Primary color alias (used by the dump path + viewport/scissor defaults).
+  if (!m_currentFrame.passColorAttachments.empty()) {
+    m_currentFrame.passImage = m_currentFrame.passColorAttachments[0].image;
+    m_currentFrame.passImageView = m_currentFrame.passColorAttachments[0].view;
+    m_currentFrame.passFormat = m_currentFrame.passColorAttachments[0].format;
+  } else {
+    m_currentFrame.passImage = nullptr;
+    m_currentFrame.passImageView = nullptr;
+    m_currentFrame.passFormat = vk::Format{};
+  }
+
   m_currentFrame.passActive = true;
   m_currentFrame.passIsWindowRT = isWindow;
 
   vk::CommandBuffer cb = m_currentFrame.commandBuffer;
 
-  // Transition image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL. UNDEFINED is
-  // fine because the load op (clear) writes every pixel. For kLoadKeep
-  // we'd need per-image layout tracking — TODO when a use surfaces.
-  vk::ImageMemoryBarrier toColorAttachment{
-    vk::AccessFlags(),
-    vk::AccessFlagBits::eColorAttachmentWrite,
-    vk::ImageLayout::eUndefined,
-    vk::ImageLayout::eColorAttachmentOptimal,
-    VK_QUEUE_FAMILY_IGNORED,
-    VK_QUEUE_FAMILY_IGNORED,
-    m_currentFrame.passImage,
-    vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-  };
-  cb.pipelineBarrier(
-    vk::PipelineStageFlagBits::eTopOfPipe,
-    vk::PipelineStageFlagBits::eColorAttachmentOutput,
-    vk::DependencyFlags(), 0, nullptr, 0, nullptr,
-    1, &toColorAttachment);
+  // Layout transitions: UNDEFINED → *_ATTACHMENT_OPTIMAL for every attachment.
+  // UNDEFINED discards prior contents, which is correct for clear/invalidate.
+  // (Full cross-pass layout tracking — needed to truly preserve contents on
+  // kLoadPreserveContents — is still deferred; this matches the prior
+  // color-only behavior.)
+  std::vector<vk::ImageMemoryBarrier> toAttachment;
+  toAttachment.reserve(m_currentFrame.passColorAttachments.size() + 1);
+  for (const auto& att : m_currentFrame.passColorAttachments) {
+    toAttachment.push_back(vk::ImageMemoryBarrier{
+      vk::AccessFlags(),
+      vk::AccessFlagBits::eColorAttachmentWrite,
+      vk::ImageLayout::eUndefined,
+      vk::ImageLayout::eColorAttachmentOptimal,
+      VK_QUEUE_FAMILY_IGNORED,
+      VK_QUEUE_FAMILY_IGNORED,
+      att.image,
+      vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    });
+  }
+  vk::PipelineStageFlags toAttachmentDstStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+  if (m_currentFrame.passHasDepthStencil) {
+    vk::ImageAspectFlags aspect;
+    if (m_currentFrame.passDepthStencilHasDepth) aspect |= vk::ImageAspectFlagBits::eDepth;
+    if (m_currentFrame.passDepthStencilHasStencil) aspect |= vk::ImageAspectFlagBits::eStencil;
+    toAttachment.push_back(vk::ImageMemoryBarrier{
+      vk::AccessFlags(),
+      vk::AccessFlagBits::eDepthStencilAttachmentWrite,
+      vk::ImageLayout::eUndefined,
+      vk::ImageLayout::eDepthStencilAttachmentOptimal,
+      VK_QUEUE_FAMILY_IGNORED,
+      VK_QUEUE_FAMILY_IGNORED,
+      m_currentFrame.passDepthStencilImage,
+      vk::ImageSubresourceRange{aspect, 0, 1, 0, 1},
+    });
+    toAttachmentDstStage |= vk::PipelineStageFlagBits::eEarlyFragmentTests;
+  }
+  if (!toAttachment.empty()) {
+    cb.pipelineBarrier(
+      vk::PipelineStageFlagBits::eTopOfPipe,
+      toAttachmentDstStage,
+      vk::DependencyFlags(), 0, nullptr, 0, nullptr,
+      uint32_t(toAttachment.size()), toAttachment.data());
+  }
 
-  // Begin dynamic rendering with clear value from setClearColor.
-  vk::ClearValue clearValue{};
-  clearValue.color.float32[0] = m_clearColor.r;
-  clearValue.color.float32[1] = m_clearColor.g;
-  clearValue.color.float32[2] = m_clearColor.b;
-  clearValue.color.float32[3] = m_clearColor.a;
+  // Color attachment infos (clear value from setClearColor).
+  vk::ClearValue colorClear{};
+  colorClear.color.float32[0] = m_clearColor.r;
+  colorClear.color.float32[1] = m_clearColor.g;
+  colorClear.color.float32[2] = m_clearColor.b;
+  colorClear.color.float32[3] = m_clearColor.a;
+  std::vector<vk::RenderingAttachmentInfoKHR> colorInfos;
+  colorInfos.reserve(m_currentFrame.passColorAttachments.size());
+  for (const auto& att : m_currentFrame.passColorAttachments) {
+    colorInfos.push_back(vk::RenderingAttachmentInfoKHR{
+      att.view,
+      vk::ImageLayout::eColorAttachmentOptimal,
+      vk::ResolveModeFlagBits::eNone,
+      {},
+      vk::ImageLayout::eUndefined,
+      vkLoadOpFor(colorLoadAction),
+      vk::AttachmentStoreOp::eStore,
+      colorClear,
+    });
+  }
 
-  vk::RenderingAttachmentInfoKHR colorAttachment{
-    m_currentFrame.passImageView,
-    vk::ImageLayout::eColorAttachmentOptimal,
+  // Depth + stencil attachment infos (clear value from setClearDepth/Stencil).
+  // A combined depth-stencil format points both attachments at the same view,
+  // each carrying its own load op.
+  vk::ClearValue depthStencilClear{};
+  depthStencilClear.depthStencil.depth = m_clearDepth;
+  depthStencilClear.depthStencil.stencil = m_clearStencil;
+  vk::RenderingAttachmentInfoKHR depthInfo{
+    m_currentFrame.passDepthStencilView,
+    vk::ImageLayout::eDepthStencilAttachmentOptimal,
     vk::ResolveModeFlagBits::eNone,
     {},
     vk::ImageLayout::eUndefined,
-    (colorLoadAction == kLoadClear) ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
+    vkLoadOpFor(depthLoadAction),
     vk::AttachmentStoreOp::eStore,
-    clearValue,
+    depthStencilClear,
   };
+  vk::RenderingAttachmentInfoKHR stencilInfo{
+    m_currentFrame.passDepthStencilView,
+    vk::ImageLayout::eDepthStencilAttachmentOptimal,
+    vk::ResolveModeFlagBits::eNone,
+    {},
+    vk::ImageLayout::eUndefined,
+    vkLoadOpFor(stencilLoadAction),
+    vk::AttachmentStoreOp::eStore,
+    depthStencilClear,
+  };
+  bool useDepth = m_currentFrame.passHasDepthStencil && m_currentFrame.passDepthStencilHasDepth;
+  bool useStencil = m_currentFrame.passHasDepthStencil && m_currentFrame.passDepthStencilHasStencil;
 
   vk::RenderingInfoKHR renderingInfo{
     vk::RenderingFlags(),
     vk::Rect2D{vk::Offset2D{0, 0}, m_currentFrame.passExtent},
     1, // layerCount
     0, // viewMask
-    1, // colorAttachmentCount
-    &colorAttachment,
+    uint32_t(colorInfos.size()),
+    colorInfos.empty() ? nullptr : colorInfos.data(),
+    useDepth ? &depthInfo : nullptr,
+    useStencil ? &stencilInfo : nullptr,
   };
 
   cb.beginRenderingKHR(renderingInfo);
@@ -353,39 +469,68 @@ void RHIVK::endRenderPass(RHIRenderTarget::ptr /*target*/) {
   vk::CommandBuffer cb = m_currentFrame.commandBuffer;
   cb.endRenderingKHR();
 
-  // Final layout depends on RT type: present for window, shader-read for
-  // offscreen (so the result can be sampled by a subsequent pass in the
-  // same CB — pipeline barrier orders the writes/reads).
-  vk::ImageLayout finalLayout = m_currentFrame.passIsWindowRT
+  // Final color layout depends on RT type: present for window, shader-read for
+  // offscreen (so the result can be sampled by a subsequent pass in the same
+  // CB — the pipeline barrier orders the writes against later reads).
+  vk::ImageLayout colorFinalLayout = m_currentFrame.passIsWindowRT
     ? vk::ImageLayout::ePresentSrcKHR
     : vk::ImageLayout::eShaderReadOnlyOptimal;
-  vk::AccessFlags dstAccess = m_currentFrame.passIsWindowRT
+  vk::AccessFlags colorDstAccess = m_currentFrame.passIsWindowRT
     ? vk::AccessFlags()
     : vk::AccessFlagBits::eShaderRead;
   vk::PipelineStageFlags dstStage = m_currentFrame.passIsWindowRT
     ? vk::PipelineStageFlagBits::eBottomOfPipe
     : vk::PipelineStageFlagBits::eFragmentShader;
 
-  vk::ImageMemoryBarrier toFinal{
-    vk::AccessFlagBits::eColorAttachmentWrite,
-    dstAccess,
-    vk::ImageLayout::eColorAttachmentOptimal,
-    finalLayout,
-    VK_QUEUE_FAMILY_IGNORED,
-    VK_QUEUE_FAMILY_IGNORED,
-    m_currentFrame.passImage,
-    vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-  };
-  cb.pipelineBarrier(
-    vk::PipelineStageFlagBits::eColorAttachmentOutput,
-    dstStage,
-    vk::DependencyFlags(), 0, nullptr, 0, nullptr,
-    1, &toFinal);
+  std::vector<vk::ImageMemoryBarrier> toFinal;
+  toFinal.reserve(m_currentFrame.passColorAttachments.size() + 1);
+  for (const auto& att : m_currentFrame.passColorAttachments) {
+    toFinal.push_back(vk::ImageMemoryBarrier{
+      vk::AccessFlagBits::eColorAttachmentWrite,
+      colorDstAccess,
+      vk::ImageLayout::eColorAttachmentOptimal,
+      colorFinalLayout,
+      VK_QUEUE_FAMILY_IGNORED,
+      VK_QUEUE_FAMILY_IGNORED,
+      att.image,
+      vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    });
+  }
+  vk::PipelineStageFlags srcStage{};
+  if (!m_currentFrame.passColorAttachments.empty())
+    srcStage |= vk::PipelineStageFlagBits::eColorAttachmentOutput;
+  if (m_currentFrame.passHasDepthStencil) {
+    // Offscreen depth-stencil transitions to shader-read so a later pass can
+    // sample it (e.g. as a depth texture). Offscreen-only: window RTs never
+    // carry a depth attachment.
+    vk::ImageAspectFlags aspect;
+    if (m_currentFrame.passDepthStencilHasDepth) aspect |= vk::ImageAspectFlagBits::eDepth;
+    if (m_currentFrame.passDepthStencilHasStencil) aspect |= vk::ImageAspectFlagBits::eStencil;
+    toFinal.push_back(vk::ImageMemoryBarrier{
+      vk::AccessFlagBits::eDepthStencilAttachmentWrite,
+      vk::AccessFlagBits::eShaderRead,
+      vk::ImageLayout::eDepthStencilAttachmentOptimal,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      VK_QUEUE_FAMILY_IGNORED,
+      VK_QUEUE_FAMILY_IGNORED,
+      m_currentFrame.passDepthStencilImage,
+      vk::ImageSubresourceRange{aspect, 0, 1, 0, 1},
+    });
+    srcStage |= vk::PipelineStageFlagBits::eLateFragmentTests;
+  }
+  if (!toFinal.empty()) {
+    cb.pipelineBarrier(
+      srcStage,
+      dstStage,
+      vk::DependencyFlags(), 0, nullptr, 0, nullptr,
+      uint32_t(toFinal.size()), toFinal.data());
+  }
 
-  // Debug: optionally snapshot this pass for PNG dump. Gated by env var;
-  // runs only on the configured frame.
-  if (static_cast<int64_t>(m_dumpFrameCounter) == m_dumpFrameIndex) {
-    enqueuePassDump(finalLayout);
+  // Debug: optionally snapshot this pass for PNG dump. Gated by env var; runs
+  // only on the configured frame. The dump path snapshots the primary color
+  // attachment, so skip it for a depth-only pass (no color image to copy).
+  if (m_currentFrame.passImage && static_cast<int64_t>(m_dumpFrameCounter) == m_dumpFrameIndex) {
+    enqueuePassDump(colorFinalLayout);
   }
   ++m_passCounterThisFrame;
 
@@ -393,6 +538,12 @@ void RHIVK::endRenderPass(RHIRenderTarget::ptr /*target*/) {
   // pass, timer query, etc.); swapBuffers / flush handles the submit.
   m_currentFrame.passActive = false;
   m_currentFrame.passIsWindowRT = false;
+  m_currentFrame.passColorAttachments.clear();
+  m_currentFrame.passHasDepthStencil = false;
+  m_currentFrame.passDepthStencilHasDepth = false;
+  m_currentFrame.passDepthStencilHasStencil = false;
+  m_currentFrame.passDepthStencilImage = nullptr;
+  m_currentFrame.passDepthStencilView = nullptr;
   m_currentFrame.passImage = nullptr;
   m_currentFrame.passImageView = nullptr;
   m_currentFrame.passExtent = vk::Extent2D{};
@@ -572,6 +723,7 @@ void RHIVK::setDynamicStateDefaults() {
   cb.setDepthTestEnableEXT(VK_FALSE);
   cb.setDepthWriteEnableEXT(VK_FALSE);
   cb.setDepthCompareOpEXT(vk::CompareOp::eLess);
+  cb.setDepthBoundsTestEnableEXT(VK_FALSE);
   cb.setStencilTestEnableEXT(VK_FALSE);
   cb.setStencilOpEXT(vk::StencilFaceFlagBits::eFrontAndBack,
     vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eAlways);
@@ -579,17 +731,26 @@ void RHIVK::setDynamicStateDefaults() {
   cb.setStencilWriteMask(vk::StencilFaceFlagBits::eFrontAndBack, 0xff);
   cb.setStencilReference(vk::StencilFaceFlagBits::eFrontAndBack, 0);
 
-  // Color blend — single color attachment, blending disabled, all channels write.
-  const vk::Bool32 blendEnable = VK_FALSE;
-  const vk::ColorBlendEquationEXT blendEq{
-    vk::BlendFactor::eOne, vk::BlendFactor::eZero, vk::BlendOp::eAdd,
-    vk::BlendFactor::eOne, vk::BlendFactor::eZero, vk::BlendOp::eAdd};
-  const vk::ColorComponentFlags writeAll =
-    vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-    vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-  cb.setColorBlendEnableEXT(0, 1, &blendEnable);
-  cb.setColorBlendEquationEXT(0, 1, &blendEq);
-  cb.setColorWriteMaskEXT(0, 1, &writeAll);
+  // Color blend — one entry per bound color attachment, blending disabled,
+  // all channels written. shader_object requires these dynamic states to be
+  // set for every attachment the pass uses.
+  uint32_t colorCount = uint32_t(m_currentFrame.passColorAttachments.size());
+  if (colorCount > 0) {
+    const vk::ColorBlendEquationEXT blendEq{
+      vk::BlendFactor::eOne, vk::BlendFactor::eZero, vk::BlendOp::eAdd,
+      vk::BlendFactor::eOne, vk::BlendFactor::eZero, vk::BlendOp::eAdd};
+    const vk::ColorComponentFlags writeAll =
+      vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+      vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    std::vector<vk::Bool32> blendEnables(colorCount, VK_FALSE);
+    std::vector<vk::ColorBlendEquationEXT> blendEqs(colorCount, blendEq);
+    std::vector<vk::ColorComponentFlags> writeMasks(colorCount, writeAll);
+    // const pointer disambiguates from the ArrayProxy overload (vk::Bool32 is
+    // uint32_t, so colorCount could otherwise bind to a single-element proxy).
+    cb.setColorBlendEnableEXT(0, colorCount, static_cast<const vk::Bool32*>(blendEnables.data()));
+    cb.setColorBlendEquationEXT(0, colorCount, blendEqs.data());
+    cb.setColorWriteMaskEXT(0, colorCount, writeMasks.data());
+  }
 
   // Default viewport + scissor cover the whole render target.
   vk::Viewport vp{0.0f, 0.0f, float(m_currentFrame.passExtent.width), float(m_currentFrame.passExtent.height), 0.0f, 1.0f};
@@ -657,17 +818,25 @@ void RHIVK::bindBlendState(RHIBlendState::ptr state) {
   const RHIBlendStateDescriptor& d = static_cast<RHIBlendStateVK*>(state.get())->descriptor();
   vk::CommandBuffer cb = m_currentFrame.commandBuffer;
 
-  // Engine emits the same blend state for every color attachment when only
-  // a single element is provided. Replicate across the bound RT's color
-  // attachment count — Phase 4 uses 1 always, so emit just slot 0.
-  if (d.targetBlendStates.empty()) return;
-  const auto& el = d.targetBlendStates[0];
-  const vk::Bool32 enable = el.blendEnabled ? VK_TRUE : VK_FALSE;
-  vk::ColorBlendEquationEXT eq{
-    vkBlendFactorFor(el.colorSource), vkBlendFactorFor(el.colorDest), vkBlendOpFor(el.colorFunc),
-    vkBlendFactorFor(el.alphaSource), vkBlendFactorFor(el.alphaDest), vkBlendOpFor(el.alphaFunc)};
-  cb.setColorBlendEnableEXT(0, 1, &enable);
-  cb.setColorBlendEquationEXT(0, 1, &eq);
+  uint32_t colorCount = uint32_t(m_currentFrame.passColorAttachments.size());
+  if (colorCount == 0 || d.targetBlendStates.empty()) return;
+
+  // The engine emits a single element to mean "same blend for every color
+  // attachment"; honor per-attachment entries when supplied, otherwise
+  // replicate element 0 across all bound color attachments.
+  std::vector<vk::Bool32> enables(colorCount);
+  std::vector<vk::ColorBlendEquationEXT> eqs(colorCount);
+  for (uint32_t i = 0; i < colorCount; ++i) {
+    const auto& el = d.targetBlendStates[i < d.targetBlendStates.size() ? i : 0];
+    enables[i] = el.blendEnabled ? VK_TRUE : VK_FALSE;
+    eqs[i] = vk::ColorBlendEquationEXT{
+      vkBlendFactorFor(el.colorSource), vkBlendFactorFor(el.colorDest), vkBlendOpFor(el.colorFunc),
+      vkBlendFactorFor(el.alphaSource), vkBlendFactorFor(el.alphaDest), vkBlendOpFor(el.alphaFunc)};
+  }
+  // const pointer disambiguates from the ArrayProxy overload (see note in
+  // setDynamicStateDefaults).
+  cb.setColorBlendEnableEXT(0, colorCount, static_cast<const vk::Bool32*>(enables.data()));
+  cb.setColorBlendEquationEXT(0, colorCount, eqs.data());
   cb.setBlendConstants(&d.constantColor.r);
 }
 

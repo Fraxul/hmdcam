@@ -184,9 +184,34 @@ protected:
     // ---- Render-pass scope (set by beginRenderPass, cleared by endRenderPass) ----
     bool passActive = false;
     bool passIsWindowRT = false;
+    vk::Extent2D passExtent{};
+
+    // All color attachments bound this pass (0..N). A window-RT pass holds
+    // exactly the acquired swap image; an offscreen pass mirrors the render
+    // target's color attachment list (which may be empty for a depth-only
+    // pass).
+    struct PassColorAttachment {
+      vk::Image image;
+      vk::ImageView view;
+      vk::Format format{};
+    };
+    std::vector<PassColorAttachment> passColorAttachments;
+
+    // Optional depth-stencil attachment. hasDepth / hasStencil are derived
+    // from the surface's RHISurfaceFormat so begin/endRenderPass can select
+    // the image aspect and decide which of pDepthAttachment / pStencilAttachment
+    // to populate.
+    bool passHasDepthStencil = false;
+    bool passDepthStencilHasDepth = false;
+    bool passDepthStencilHasStencil = false;
+    vk::Image passDepthStencilImage;
+    vk::ImageView passDepthStencilView;
+
+    // Primary color attachment — aliases passColorAttachments[0] when present,
+    // null for a depth-only pass. Retained for the debug PNG-dump path and
+    // window-RT bookkeeping (which always has exactly one color attachment).
     vk::Image passImage;
     vk::ImageView passImageView;
-    vk::Extent2D passExtent{};
     vk::Format passFormat{};
 
     // ---- Frame scope: pending PNG dumps (debug, env-var-gated) ----
