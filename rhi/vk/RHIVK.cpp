@@ -381,9 +381,18 @@ void RHIVK::beginRenderPass(RHIRenderTarget::ptr target,
     });
     toAttachmentDstStage |= vk::PipelineStageFlagBits::eEarlyFragmentTests;
   }
+  // For the window swap image, the begin barrier must form an execution
+  // dependency with the imageAcquired semaphore (waited at
+  // COLOR_ATTACHMENT_OUTPUT in swapBuffers). srcStage = TOP_OF_PIPE would let
+  // the UNDEFINED→COLOR transition race the presentation engine's read of the
+  // image (WRITE_AFTER_READ hazard), so match the semaphore's wait stage.
+  // Offscreen attachments aren't acquire-dependent, so TOP_OF_PIPE is fine.
+  vk::PipelineStageFlags toAttachmentSrcStage = isWindow
+    ? vk::PipelineStageFlagBits::eColorAttachmentOutput
+    : vk::PipelineStageFlagBits::eTopOfPipe;
   if (!toAttachment.empty()) {
     cb.pipelineBarrier(
-      vk::PipelineStageFlagBits::eTopOfPipe,
+      toAttachmentSrcStage,
       toAttachmentDstStage,
       vk::DependencyFlags(), 0, nullptr, 0, nullptr,
       uint32_t(toAttachment.size()), toAttachment.data());
@@ -632,17 +641,37 @@ void RHIVK::setViewport(const RHIRect& r) {
   vk::Viewport vp{
     float(r.x), float(r.y), float(r.width), float(r.height),
     0.0f, 1.0f};
-  m_currentFrame.commandBuffer.setViewportWithCountEXT(1, &vp);
+  vk::CommandBuffer cb = m_currentFrame.commandBuffer;
+  cb.setViewportWithCountEXT(1, &vp);
+  // shader_object requires scissorCount == viewportCount at draw time. The
+  // engine leaves scissoring effectively disabled here (the GL path disabled
+  // GL_SCISSOR_TEST per pass), so cover the whole render target.
+  vk::Rect2D scissor{
+    {0, 0},
+    m_currentFrame.passExtent
+  };
+  cb.setScissorWithCountEXT(1, &scissor);
+  m_currentFrame.viewportCount = 1;
 }
 void RHIVK::setViewports(const RHIRect* rects, size_t count) {
   if (!m_currentFrame.passActive || count == 0) return;
   std::vector<vk::Viewport> vps(count);
+  std::vector<vk::Rect2D> scissors(count);
+  vk::Rect2D fullRT{
+    {0, 0},
+    m_currentFrame.passExtent
+  };
   for (size_t i = 0; i < count; ++i) {
     vps[i] = vk::Viewport{
       float(rects[i].x), float(rects[i].y), float(rects[i].width), float(rects[i].height),
       0.0f, 1.0f};
+    // Matching full-RT scissor per viewport (see setViewport).
+    scissors[i] = fullRT;
   }
-  m_currentFrame.commandBuffer.setViewportWithCountEXT(uint32_t(count), vps.data());
+  vk::CommandBuffer cb = m_currentFrame.commandBuffer;
+  cb.setViewportWithCountEXT(uint32_t(count), vps.data());
+  cb.setScissorWithCountEXT(uint32_t(count), scissors.data());
+  m_currentFrame.viewportCount = uint32_t(count);
 }
 void RHIVK::setDepthBias(float slopeScale, float constantBias) {
   if (!m_currentFrame.passActive) return;
@@ -760,6 +789,7 @@ void RHIVK::setDynamicStateDefaults() {
     m_currentFrame.passExtent
   };
   cb.setScissorWithCountEXT(1, &scissor);
+  m_currentFrame.viewportCount = 1;
 }
 
 void RHIVK::bindStreamBuffer(size_t streamIndex, RHIBuffer::ptr buffer, size_t baseOffsetBytes) {
@@ -857,7 +887,11 @@ void RHIVK::setScissorRect(const RHIRect& r) {
     {     int32_t(r.x),       int32_t(r.y)},
     {uint32_t(r.width), uint32_t(r.height)}
   };
-  m_currentFrame.commandBuffer.setScissorWithCountEXT(1, &scissor);
+  // Replicate across the current viewport count to satisfy shader_object's
+  // scissorCount == viewportCount requirement (single-rect API → same rect
+  // for every viewport).
+  std::vector<vk::Rect2D> scissors(m_currentFrame.viewportCount, scissor);
+  m_currentFrame.commandBuffer.setScissorWithCountEXT(m_currentFrame.viewportCount, scissors.data());
 }
 void RHIVK::clearScissorRect() {
   if (!m_currentFrame.passActive) return;
@@ -865,7 +899,8 @@ void RHIVK::clearScissorRect() {
     {0, 0},
     m_currentFrame.passExtent
   };
-  m_currentFrame.commandBuffer.setScissorWithCountEXT(1, &scissor);
+  std::vector<vk::Rect2D> scissors(m_currentFrame.viewportCount, scissor);
+  m_currentFrame.commandBuffer.setScissorWithCountEXT(m_currentFrame.viewportCount, scissors.data());
 }
 
 void RHIVK::bindComputePipeline(RHIComputePipeline::ptr) { RHI_VK_NOT_IMPLEMENTED(); }

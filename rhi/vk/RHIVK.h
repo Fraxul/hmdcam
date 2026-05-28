@@ -214,6 +214,11 @@ protected:
     vk::ImageView passImageView;
     vk::Format passFormat{};
 
+    // Number of viewports currently set. shader_object requires the scissor
+    // count to match the viewport count at draw time, so the scissor setters
+    // replicate across this count. Reset to 1 by setDynamicStateDefaults.
+    uint32_t viewportCount = 1;
+
     // ---- Frame scope: pending PNG dumps (debug, env-var-gated) ----
     // One entry per endRenderPass on a dump frame. Drained in swapBuffers /
     // flush after the queue submit has completed (waitIdle), then the

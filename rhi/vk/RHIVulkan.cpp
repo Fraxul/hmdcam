@@ -28,6 +28,10 @@ const std::vector<const char*> kDeviceExtensions = {
   VK_KHR_SWAPCHAIN_EXTENSION_NAME,
   VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
   VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+  // Camera NvBuf surfaces are imported as dma-buf FDs
+  // (VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT); that handle type requires
+  // this extension to be enabled.
+  VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
   VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
   VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
   VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
@@ -214,16 +218,24 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
     vk::PhysicalDeviceVertexInputDynamicStateFeaturesEXT vertexInputFeatures{};
     vertexInputFeatures.vertexInputDynamicState = VK_TRUE;
 
-    // Host-side reset of query pools lets RHITimerQueryVK avoid recording
-    // a vkCmdResetQueryPool into each frame's CB. Core in VK 1.2; the
-    // EXT struct + extension are still recognized for explicitness.
-    vk::PhysicalDeviceHostQueryResetFeatures hostQueryResetFeatures{};
-    hostQueryResetFeatures.hostQueryReset = VK_TRUE;
+    // Vulkan 1.2 features rolled into the aggregate struct so we can enable
+    // shaderOutputViewportIndex, which has no standalone feature struct.
+    //   - hostQueryReset lets RHITimerQueryVK skip per-frame vkCmdResetQueryPool.
+    //   - timelineSemaphore backs RHIInteropSync's CUDA↔VK ordering.
+    //   - shaderOutputViewportIndex is required by the stereo shaders that
+    //     write gl_ViewportIndex (SPIR-V ShaderViewportIndex capability).
+    // The aggregate Vulkan12Features cannot coexist with the individual
+    // VkPhysicalDeviceHostQueryReset/TimelineSemaphore feature structs, so
+    // those are folded in here.
+    vk::PhysicalDeviceVulkan12Features vulkan12Features{};
+    vulkan12Features.hostQueryReset = VK_TRUE;
+    vulkan12Features.timelineSemaphore = VK_TRUE;
+    vulkan12Features.shaderOutputViewportIndex = VK_TRUE;
 
-    // Timeline semaphores: backs RHIInteropSync's CUDA↔VK ordering.
-    // Core since Vulkan 1.2; the feature must still be opted into.
-    vk::PhysicalDeviceTimelineSemaphoreFeatures timelineSemaphoreFeatures{};
-    timelineSemaphoreFeatures.timelineSemaphore = VK_TRUE;
+    // Some fragment shaders use demote (SPIR-V DemoteToHelperInvocation).
+    // Core since Vulkan 1.3; opt in explicitly.
+    vk::PhysicalDeviceShaderDemoteToHelperInvocationFeatures demoteFeatures{};
+    demoteFeatures.shaderDemoteToHelperInvocation = VK_TRUE;
 
     // YCbCr sampler conversion: required for the NV12 camera immutable sampler
     // (Phase 6). Core since Vulkan 1.1; must be explicitly enabled or
@@ -242,9 +254,9 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
     eds2Features.setPNext(&eds1Features);
     eds1Features.setPNext(&shaderObjectFeatures);
     shaderObjectFeatures.setPNext(&dynamicRenderingFeatures);
-    dynamicRenderingFeatures.setPNext(&hostQueryResetFeatures);
-    hostQueryResetFeatures.setPNext(&timelineSemaphoreFeatures);
-    timelineSemaphoreFeatures.setPNext(&ycbcrConversionFeatures);
+    dynamicRenderingFeatures.setPNext(&vulkan12Features);
+    vulkan12Features.setPNext(&demoteFeatures);
+    demoteFeatures.setPNext(&ycbcrConversionFeatures);
 
     vk::DeviceCreateInfo dci{
       vk::DeviceCreateFlags(),
