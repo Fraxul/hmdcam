@@ -63,46 +63,46 @@ void initRHIResources() {
     // Draws a single triangle that's big enough to get clipped into a screen-filling rectangle.
     // CCW winding in Vulkan framebuffer (Y-down).
     static const float fullscreenPassData[] = {
-      -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,  // left-top
-      -1.0f,  3.0f, 0.0f, 0.0f, 2.0f,  // left-bottom
-       3.0f, -1.0f, 0.0f, 2.0f, 0.0f}; // right-top
+      -1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 0.0f,  // left-top
+      -1.0f,  3.0f, 0.0f, 1.0f, 0.0f, 2.0f,  // left-bottom
+       3.0f, -1.0f, 0.0f, 1.0f, 2.0f, 0.0f}; // right-top
 
-    fullscreenPassVBO = rhi()->newBufferWithContents(fullscreenPassData, sizeof(float) * 15);
+    fullscreenPassVBO = rhi()->newBufferWithContents(fullscreenPassData, sizeof(fullscreenPassData));
   }
 
   {
     // Triangle strip; CCW winding in Vulkan framebuffer (Y-down).
     static const float ndcQuadData[] = {
-       1.0f,  1.0f, 0.0f, 1.0f, 1.0f,  // right-bottom
-       1.0f, -1.0f, 0.0f, 1.0f, 0.0f,  // right-top
-      -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  // left-bottom
-      -1.0f, -1.0f, 0.0f, 0.0f, 0.0f}; // left-top
+       1.0f,  1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  // right-bottom
+       1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 0.0f,  // right-top
+      -1.0f,  1.0f, 0.0f, 1.0f, 0.0f, 1.0f,  // left-bottom
+      -1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 0.0f}; // left-top
 
-    ndcQuadVBO = rhi()->newBufferWithContents(ndcQuadData, sizeof(float) * 20);
+    ndcQuadVBO = rhi()->newBufferWithContents(ndcQuadData, sizeof(ndcQuadData));
   }
 
   {
     // Triangle strip; CCW winding in Vulkan framebuffer (Y-down).
     static const float modelSpaceUnitQuadData[] = {
-       0.5f,  0.5f, 0.0f, 1.0f, 0.0f,  // right-top
-       0.5f, -0.5f, 0.0f, 1.0f, 1.0f,  // right-bottom
-      -0.5f,  0.5f, 0.0f, 0.0f, 0.0f,  // left-top
-      -0.5f, -0.5f, 0.0f, 0.0f, 1.0f}; // left-bottom
+       0.5f,  0.5f, 0.0f, 1.0f, 1.0f, 0.0f,  // right-top
+       0.5f, -0.5f, 0.0f, 1.0f, 1.0f, 1.0f,  // right-bottom
+      -0.5f,  0.5f, 0.0f, 1.0f, 0.0f, 0.0f,  // left-top
+      -0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 1.0f}; // left-bottom
 
-    modelSpaceUnitQuadVBO = rhi()->newBufferWithContents(modelSpaceUnitQuadData, sizeof(float) * 20);
+    modelSpaceUnitQuadVBO = rhi()->newBufferWithContents(modelSpaceUnitQuadData, sizeof(modelSpaceUnitQuadData));
   }
 
   ndcQuadVertexLayout.elements.clear();
-  ndcQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position",            0, sizeof(float) * 5));
-  ndcQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates", 12, sizeof(float) * 5));
+  ndcQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "position",            0, sizeof(float) * 6));
+  ndcQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates", 16, sizeof(float) * 6));
 
   modelSpaceUnitQuadVertexLayout.elements.clear();
-  modelSpaceUnitQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position",            0, sizeof(float) * 5));
-  modelSpaceUnitQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates", 12, sizeof(float) * 5));
+  modelSpaceUnitQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "position",            0, sizeof(float) * 6));
+  modelSpaceUnitQuadVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates", 16, sizeof(float) * 6));
 
   fullscreenPassVertexLayout.elements.clear();
-  fullscreenPassVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position",            0, sizeof(float) * 5));
-  fullscreenPassVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates", 12, sizeof(float) * 5));
+  fullscreenPassVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "position",            0, sizeof(float) * 6));
+  fullscreenPassVertexLayout.elements.push_back(RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "textureCoordinates", 16, sizeof(float) * 6));
 
   tristripPipelineDescriptor.primitiveTopology = kPrimitiveTopologyTriangleStrip;
 
