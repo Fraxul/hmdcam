@@ -11,12 +11,18 @@ debugClientEnv.Append(
     'pthread', 'rt',
     'boost_chrono', 'boost_system', 'boost_thread',
     'SDL2',
-    'epoxy',
+    'epoxy',  # transitive: librhi still bundles the GL backend (gone in migration Phase 7)
     'cuda', 'cudart',
     'nppc', 'nppidei', 'nppicc', 'nppif',
     'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect', 'opencv_cudastereo',
+    'shaderc_combined',  # GLSL -> SPIR-V for the Vulkan RHI backend; bundles glslang + SPIRV-Tools
   ]
 )
+
+# ImGui's platform backend for SDL2 isn't part of libimgui (which has no SDL
+# dependency). Compile it directly into the binary. The renderer-side backend
+# (ImGui_ImplFxRHI_*) lives in librhi at rhi/imgui/.
+imguiSdlBackend = ['#imgui/backends/imgui_impl_sdl2.cpp']
 
 tegraSrc = []
 if debugClientEnv['IS_TEGRA']:
@@ -40,7 +46,7 @@ debugClientEnv.ProgramWithWholeArchive(
     + Glob('debug-client/*.cu')
     + Glob('common/*.cpp')
     + Glob('common/*.cu')
-    + tegraSrc,
+    + tegraSrc
+    + imguiSdlBackend,
   whole_archive_libs = [librhi, libimgui]
 )
-

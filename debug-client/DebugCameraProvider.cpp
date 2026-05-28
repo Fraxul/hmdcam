@@ -7,8 +7,8 @@
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/CudaUtil.h"
-#include "rhi/cuda/RHICVInterop.h"
-#include "rhi/gl/GLCommon.h"
+#include "rhi/cuda/RHICUDA.h"
+#include "rhi/vk/RHIInteropSurfaceVK.h"
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
 #include <opencv2/core.hpp>
@@ -20,7 +20,6 @@
 #include <assert.h>
 #include <cuda.h>
 #include <npp.h>
-#include <epoxy/gl.h> // epoxy_is_desktop_gl
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -223,7 +222,12 @@ bool DebugCameraProvider::connect(const char* debugHost) {
     CUDA_CHECK(cuMemHostAlloc(&sd.hostLumaBuffer, m_lumaResourceDescriptor.res.pitch2D.pitchInBytes * m_lumaResourceDescriptor.res.pitch2D.height, /*flags=*/ 0));
     CUDA_CHECK(cuMemHostAlloc(&sd.hostChromaBuffer, m_chromaResourceDescriptor.res.pitch2D.pitchInBytes * m_chromaResourceDescriptor.res.pitch2D.height, /*flags=*/ 0));
 
-    sd.rhiSurfaceRGBA = rhi()->newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
+    // Allocate as an RHI interop surface so we can copy from CUDA GpuMat
+    // (NPP NV12->RGBA conversion lands in a GpuMat) without round-tripping
+    // through host memory. The VK backend doesn't implement the cudaArray-
+    // via-cuGraphicsResource path that the GL backend used; interop surfaces
+    // export their VkImage as an external-memory FD that CUDA imports.
+    sd.rhiSurfaceRGBA = RHIInteropSurfaceVK::newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8), RHIInteropSyncDescriptor(/*sync=*/ nullptr));
   }
 
   // Ensure gpumats are created
@@ -315,9 +319,6 @@ DebugCameraProvider::~DebugCameraProvider() {
 
     if (sd.hostChromaBuffer)
       cuMemFreeHost(sd.hostChromaBuffer);
-
-    if (sd.hostRGBABuffer)
-      cuMemFreeHost(sd.hostRGBABuffer);
   }
 }
 
@@ -362,28 +363,10 @@ void DebugCameraProvider::updateSurfaces() {
       (Npp8u*) sd.gpuMatRGBA.cudaPtr(), sd.gpuMatRGBA.step,
       sz, destinationOrder, /*constant (source channel 3) value=*/ 0xff);
 
-    if (m_doCudaGLInterop) {
-      // Direct path
-      RHICUDA::copyGpuMatToSurface(sd.gpuMatRGBA, sd.rhiSurfaceRGBA);
-    } else {
-      // Fallback path
-      if (!sd.hostRGBABuffer) {
-        CUDA_CHECK(cuMemHostAlloc(&sd.hostRGBABuffer, streamWidth() * streamHeight() * 4, /*flags=*/ 0));
-      }
-
-      CUDA_MEMCPY2D copyDescriptor;
-      memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
-      copyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-      copyDescriptor.srcDevice = (CUdeviceptr) sd.gpuMatRGBA.cudaPtr();
-      copyDescriptor.srcPitch = sd.gpuMatRGBA.step;
-      copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
-      copyDescriptor.dstHost = sd.hostRGBABuffer;
-      copyDescriptor.dstPitch = streamWidth() * 4;
-      copyDescriptor.WidthInBytes = streamWidth() * 4;
-      copyDescriptor.Height = streamHeight();
-      CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
-      rhi()->loadTextureData(sd.rhiSurfaceRGBA, kVertexElementTypeUByte4N, sd.hostRGBABuffer);
-    }
+    // Async D2D copy on the default stream; the global signalCUDAToRHI at
+    // the end of the frame extends the timeline past this work, so the
+    // following VK render submit's wait covers it.
+    sd.rhiSurfaceRGBA->copyFromGpuMatAsync(sd.gpuMatRGBA, RHICUDA::defaultAsyncStream);
   }
 
   uint32_t srcStereoViewIdx = 0;
@@ -461,12 +444,6 @@ void DebugCameraProvider::internalUpdateViewData() {
     // These can directly alias the receivedDisparityInput to save a copy
     vd->m_debugCPUDisparityInput[0] = vd->receivedDisparityInput[0];
     vd->m_debugCPUDisparityInput[1] = vd->receivedDisparityInput[1];
-
-    if (!m_doCudaGLInterop) {
-      // If we're not doing CUDA-GL interop, the disparity debug view mats can also directly alias its receive mat.
-      // The debug mat won't be written because internalFinalizeDisparityTexture won't be called.
-      vd->m_debugCPUDisparity = vd->receivedDisparity;
-    }
   }
 }
 
@@ -487,30 +464,17 @@ void DebugCameraProvider::internalProcessFrame() {
       // to follow the data path of the other backends.
 
       if (!vd->m_leftGray)
-        vd->m_leftGray = RHIInteropSurfaceGL::newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
+        vd->m_leftGray = RHIInteropSurfaceVK::newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
 
       if (!vd->m_rightGray)
-        vd->m_rightGray = RHIInteropSurfaceGL::newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
+        vd->m_rightGray = RHIInteropSurfaceVK::newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
 
       rhi()->loadTextureData(vd->m_leftGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[0].ptr());
       rhi()->loadTextureData(vd->m_rightGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[1].ptr());
     }
-
-    if (!m_doCudaGLInterop) {
-      // Skip CUDA filtering, just upload the disparity and debug-residual directly
-      if (m_populateDebugTextures) {
-        if (!vd->m_debugResidual)
-          vd->m_debugResidual = RHIInteropSurfaceGL::newTexture2D(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
-
-        rhi()->loadTextureData(vd->m_debugResidual, kVertexElementTypeUByte1N, vd->receivedDisparityDebugResidual.ptr());
-      }
-      rhi()->loadTextureData(vd->m_disparityTexture, kVertexElementTypeShort1, vd->receivedDisparity.data);
-    }
   }
 
-  if (m_doCudaGLInterop) {
-    internalFinalizeDisparityTexture();
-  }
+  internalFinalizeDisparityTexture();
 }
 
 void DebugCameraProvider::internalRenderIMGUI() {

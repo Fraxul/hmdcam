@@ -66,7 +66,8 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
 
 } // namespace
 
-/*static*/ std::unique_ptr<RHIVulkan> RHIVulkan::create(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID) {
+/*static*/ std::unique_ptr<RHIVulkan> RHIVulkan::create(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID,
+  const std::vector<const char*>& extraInstanceExtensions) {
   std::unique_ptr<RHIVulkan> v(new RHIVulkan());
   try {
     PFN_vkGetInstanceProcAddr pfn = v->m_dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
@@ -83,6 +84,20 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
     std::vector<const char*> instanceExtensions(kInstanceExtensions.begin(), kInstanceExtensions.end());
     if (enableValidation) {
       instanceExtensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+    }
+    // Caller-supplied extensions (e.g. SDL2's required surface extensions
+    // for the host platform). Deduplicate against the built-in list since
+    // SDL will typically also ask for VK_KHR_surface, which is already in.
+    for (const char* extName : extraInstanceExtensions) {
+      bool alreadyPresent = false;
+      for (const char* have : instanceExtensions) {
+        if (strcmp(have, extName) == 0) {
+          alreadyPresent = true;
+          break;
+        }
+      }
+      if (!alreadyPresent)
+        instanceExtensions.push_back(extName);
     }
     static const vk::ValidationFeatureEnableEXT kEnabledValidationFeatures[] = {
       vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
@@ -398,9 +413,10 @@ RHIVulkan* RHI::vk() const {
   return s_rhiVk.get();
 }
 
-bool rhiVulkanInstallSingleton(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID) {
+bool rhiVulkanInstallSingleton(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID,
+  const std::vector<const char*>& extraInstanceExtensions) {
   assert(!s_rhiVk);
-  s_rhiVk = RHIVulkan::create(gpuUUID);
+  s_rhiVk = RHIVulkan::create(gpuUUID, extraInstanceExtensions);
   return s_rhiVk != nullptr;
 }
 

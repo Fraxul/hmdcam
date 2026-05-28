@@ -133,6 +133,13 @@ void RHIVK::setFrameSource(VKFrameSource* source) {
   }
 }
 
+void RHIVK::invalidateSwapchainResources() {
+  // Caller must have waitIdle'd the device. Wipe the image-view cache —
+  // each entry references a VkImage that the driver is about to destroy
+  // (or already has).
+  m_swapImageViews.clear();
+}
+
 vk::ImageView RHIVK::swapImageViewFor(vk::Image image, vk::Format format) {
   auto it = m_swapImageViews.find(static_cast<VkImage>(image));
   if (it != m_swapImageViews.end())
@@ -1511,10 +1518,10 @@ void RHIVK::dumpWorkerThread() {
 
 // -------- Top-level VK backend init --------
 
-void initRHIVulkan() {
+void initRHIVulkan(const std::vector<const char*>& extraInstanceExtensions) {
   // No GL context to UUID-match against; select the first enumerated device.
   std::array<uint8_t, VK_UUID_SIZE> uuid{};
-  if (!rhiVulkanInstallSingleton(uuid)) {
+  if (!rhiVulkanInstallSingleton(uuid, extraInstanceExtensions)) {
     fprintf(stderr, "initRHIVulkan: RHIVulkan::create() failed; cannot bring up VK RHI backend\n");
     abort();
   }

@@ -33,7 +33,11 @@ void installRHIInstance(RHI*);
 // device-owning singleton like rhi()->vk() goes out of scope).
 void shutdownRHI();
 void initRHIGL(); // convenience method, defined in rhi/gl/RHIGL.cpp
-void initRHIVulkan(); // top-level VK backend init, defined in rhi/vk/RHIVK.cpp
+// Top-level VK backend init, defined in rhi/vk/RHIVK.cpp.
+// extraInstanceExtensions is forwarded to the underlying RHIVulkan instance
+// creation (e.g. the surface-extension names returned by
+// SDL_Vulkan_GetInstanceExtensions for a presenting host platform).
+void initRHIVulkan(const std::vector<const char*>& extraInstanceExtensions = {});
 void initRHIVulkanInteropContext(); // headless VK allocator init for the GL backend's CUDA/GL interop; defined in rhi/vk/RHIVulkan.cpp. Must run after a GL context is current and after initRHIGL().
 
 enum RHICullState : unsigned char {

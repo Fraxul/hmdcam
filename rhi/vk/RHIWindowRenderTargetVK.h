@@ -36,6 +36,15 @@ public:
 
   vk::Format format() const { return m_format; }
 
+  // Called by the owning frame source after a swapchain recreation (e.g.
+  // window resize). The dimensions/format are queried at next beginRenderPass
+  // — there is no internal VkImage state to update.
+  void platformSetUpdatedWindowParameters(uint32_t width, uint32_t height, vk::Format format) {
+    m_width = width;
+    m_height = height;
+    m_format = format;
+  }
+
 protected:
   uint32_t m_width;
   uint32_t m_height;

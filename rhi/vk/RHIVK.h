@@ -34,6 +34,14 @@ public:
   void setInteropSync(RHIInteropSync* sync) { m_interopSync = sync; }
   RHIInteropSync* interopSync() const { return m_interopSync; }
 
+  // Drop cached resources tied to the previous swapchain's VkImages. The
+  // frame source must call this after a swapchain recreation (and after
+  // device.waitIdle()) so that stale VkImageView handles aren't held against
+  // images the driver has destroyed. The frame slots themselves (command
+  // buffers + fences + transient ring) are retained — swap-image count is
+  // assumed stable across the recreation.
+  void invalidateSwapchainResources();
+
   virtual RHIDepthStencilState::ptr compileDepthStencilState(const RHIDepthStencilStateDescriptor&) override;
   virtual RHIRenderTarget::ptr compileRenderTarget(const RHIRenderTargetDescriptor&) override;
   virtual RHISampler::ptr compileSampler(const RHISamplerDescriptor&) override;

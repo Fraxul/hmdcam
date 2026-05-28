@@ -1,9 +1,8 @@
 #pragma once
 #include "imgui.h"
-#include "rhi/RHIRenderTarget.h"
+#include "rhi/imgui/RHIImGuiBackend.h"
+
+// hmdcam-specific: bridge ImGui input to the InputListener (media remote +
+// keyboard) thread.
 void ImGui_ImplInputListener_Init();
 void ImGui_ImplInputListener_NewFrame();
-
-void ImGui_ImplFxRHI_Init();
-void ImGui_ImplFxRHI_NewFrame();
-void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawData* draw_data);

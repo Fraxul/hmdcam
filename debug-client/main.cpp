@@ -1,8 +1,9 @@
-#include "imgui_backend.h"
 #include "imgui.h"
+#include "imgui/backends/imgui_impl_sdl2.h"
 #include "implot/implot.h"
 #include <stdio.h>
 #include <SDL.h>
+#include <SDL_vulkan.h>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/aruco/charuco.hpp>
 #include <glm/gtx/transform.hpp>
@@ -12,6 +13,7 @@
 #include "stb/stb_image_write.h"
 
 #include "DebugCameraProvider.h"
+#include "RenderBackendSDLVK.h"
 #include "common/CameraSystem.h"
 #include "common/CharucoMultiViewCalibration.h"
 #include "common/FxCamera.h"
@@ -22,50 +24,26 @@
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
-#include "rhi/gl/RHIWindowRenderTargetGL.h"
-#include "rhi/gl/RHISurfaceGL.h"
 #include "rhi/cuda/RHICUDA.h"
+#include "rhi/imgui/RHIImGuiBackend.h"
+#include "rhi/vk/RHIInteropSync.h"
+#include "rhi/vk/RHIVK.h"
 
 #include <cuda.h>
-#include <cudaGL.h>
-
-RHIWindowRenderTargetGL::ptr windowRenderTarget;
-class RHISDLWindowRenderTargetGL : public RHIWindowRenderTargetGL {
-public:
-  RHISDLWindowRenderTargetGL(SDL_Window* w) :
-    m_window(w) {}
-  typedef boost::intrusive_ptr<RHISDLWindowRenderTargetGL> ptr;
-  virtual ~RHISDLWindowRenderTargetGL() {}
-  virtual void platformSwapBuffers() {
-    SDL_GL_SwapWindow(m_window);
-  }
-
-protected:
-  SDL_Window* m_window;
-};
 
 DebugCameraProvider* cameraProvider;
 CameraSystem* cameraSystem;
 FxCamera* sceneCamera;
 DepthMapGenerator* depthMapGenerator;
 SHMSegment<DepthMapSHM>* shm;
+RenderBackendSDLVK* renderBackend;
+RHIRenderTarget::ptr windowRenderTarget;
 
 extern FxAtomicString ksDistortionMap;
 extern cv::Ptr<cv::aruco::CharucoBoard> s_charucoBoard;
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_64FC1);
 
 RHIRenderPipeline::ptr camNdcQuadPipeline;
-
-#if 0
-RHIRenderPipeline::ptr meshVertexColorPipeline;
-RHIBuffer::ptr meshQuadVBO;
-
-FxAtomicString ksMeshTransformUniformBlock("MeshTransformUniformBlock");
-struct MeshTransformUniformBlock {
-  glm::mat4 modelViewProjection;
-};
-#endif
-
 
 static FxAtomicString ksDisparityScaleUniformBlock("DisparityScaleUniformBlock");
 struct DisparityScaleUniformBlock {
@@ -93,9 +71,11 @@ struct NDCQuadUniformBlock {
   glm::mat4 modelViewProjection;
 };
 
+// ImTextureID is a raw RHISurface* (matches the hmdcam ImGui backend's
+// convention; see ImGui_ImplFxRHI_Init's setTexID call).
 void ImGui_Image(RHISurface::ptr img, const ImVec2& uv0 = ImVec2(0, 0), const ImVec2& uv1 = ImVec2(1, 1)) {
   if (img)
-    ImGui::Image((ImTextureID) static_cast<uintptr_t>(static_cast<RHISurfaceGL*>(img.get())->glId()), ImVec2(img->width(), img->height()), uv0, uv1);
+    ImGui::Image((ImTextureID) img.get(), ImVec2(img->width(), img->height()), uv0, uv1);
   else
     ImGui::Text("<null image>");
 }
@@ -212,54 +192,45 @@ int main(int argc, char** argv) {
 
   FxThreading::detail::init();
 
-
-  // GL/window init
+  // SDL + window init
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
     printf("Error: %s\n", SDL_GetError());
     return -1;
   }
 
-  // Decide GL+GLSL versions
-  const char* glsl_version = "#version 130";
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+  // The Vulkan loader is opened on demand; ask SDL to do that now so
+  // SDL_Vulkan_GetInstanceExtensions has something to inspect.
+  if (SDL_Vulkan_LoadLibrary(nullptr) != 0) {
+    printf("SDL_Vulkan_LoadLibrary failed: %s\n", SDL_GetError());
+    return -1;
+  }
 
-  // Create window with graphics context
-  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-  SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-  SDL_WindowFlags window_flags = (SDL_WindowFlags) (SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+  SDL_WindowFlags window_flags = (SDL_WindowFlags) (SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
   SDL_Window* window = SDL_CreateWindow("debug-client", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1920, 1080, window_flags);
-  SDL_GLContext gl_context = SDL_GL_CreateContext(window);
-  SDL_GL_MakeCurrent(window, gl_context);
-  SDL_GL_SetSwapInterval(1); // Enable vsync
+  if (!window) {
+    printf("SDL_CreateWindow failed: %s\n", SDL_GetError());
+    return -1;
+  }
 
-  initRHIGL();
-  initRHIVulkanInteropContext();
-  windowRenderTarget = new RHISDLWindowRenderTargetGL(window);
+  // RHI/VK bringup. RHIVulkan needs the host-platform surface extension
+  // (e.g. VK_KHR_xlib_surface) in its instance-extension list, which is
+  // platform-dependent — SDL knows which one.
+  std::vector<const char*> sdlInstanceExtensions;
+  if (!RenderBackendSDLVK::getRequiredInstanceExtensions(window, sdlInstanceExtensions)) {
+    return -1;
+  }
+  RHICUDA::initRHICUDA();
+  initRHIVulkan(sdlInstanceExtensions);
+
+  renderBackend = new RenderBackendSDLVK(window);
+  renderBackend->createPresentation();
+  windowRenderTarget = renderBackend->windowRenderTarget();
+  static_cast<RHIVK*>(rhi())->setFrameSource(renderBackend);
+
   sceneCamera = new FxCamera();
 
-#if 0
-  // clang-format off
-  meshVertexColorPipeline = rhi()->compileRenderPipeline("shaders/meshVertexColor.vtx.glsl", "shaders/meshVertexColor.frag.glsl", RHIVertexLayout({
-      RHIVertexLayoutElement(0, kVertexElementTypeFloat3, "position", 0,                 sizeof(float) * 7),
-      RHIVertexLayoutElement(0, kVertexElementTypeFloat4, "color",    sizeof(float) * 3, sizeof(float) * 7)
-    }), kPrimitiveTopologyTriangleStrip);
-
-  {
-    static const float sampleQuadData[] = {
-    //   x      y     z     r     g     b     a
-       1.0f,  1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f,  // right-top
-       1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,  // right-bottom
-      -1.0f,  1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,  // left-top
-      -1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f}; // left-bottom
-
-    meshQuadVBO = rhi()->newBufferWithContents(sampleQuadData, sizeof(float) * 7 * 4);
-  }
-  // clang-format on
-#endif
+  // Shared interop sync object for handoff from CUDA to RHI.
+  RHIInteropSync::ptr interopSync = new RHIInteropSync();
 
   RHISurface::ptr disparityScaleSurface;
   RHIRenderTarget::ptr disparityScaleTarget;
@@ -273,32 +244,18 @@ int main(int argc, char** argv) {
   RHISurface::ptr confidenceColorMapSurface;
   RHIRenderTarget::ptr confidenceColorMapTarget;
 
-
-  // CUDA init
-  bool cudaGLInteropOK = true;
-  RHICUDA::initRHICUDA();
-  {
-    unsigned int cudaGLDeviceCount = 0;
-    CUdevice cudaGLDevices[8];
-    if (CUDA_SUCCESS != cuGLGetDevices(&cudaGLDeviceCount, cudaGLDevices, 8, CU_GL_DEVICE_LIST_ALL) || cudaGLDeviceCount == 0) {
-      printf("WARNING: CUDA-OpenGL interop is not possible with this rendering configuration.\n");
-      cudaGLInteropOK = false;
-    }
-  }
   cv::cuda::Stream cvCudaStream;
   CUstream cuStream = (CUstream) cvCudaStream.cudaPtr();
 
-
   // Debug server connection
   cameraProvider = new DebugCameraProvider();
-  cameraProvider->setCudaGLInteropOK(cudaGLInteropOK);
 
   if (!cameraProvider->connect(debugHost)) {
     printf("Failed to connect to debug server (%s)\n", debugHost);
     return -1;
   }
 
-  cameraSystem = new CameraSystem(cameraProvider);
+  cameraSystem = new CameraSystem(cameraProvider, interopSync);
 
   {
     // Load remote config
@@ -318,7 +275,7 @@ int main(int argc, char** argv) {
   }
 
   depthMapGenerator->setDebugDisparityCPUAccessEnabled(true);
-  depthMapGenerator->initWithCameraSystem(cameraSystem);
+  depthMapGenerator->initWithCameraSystem(cameraSystem, interopSync);
   depthMapGenerator->loadSettings();
   depthMapGenerator->setPopulateDebugTextures(true);
 
@@ -339,13 +296,11 @@ int main(int argc, char** argv) {
     }
     debugSurfaceWidth = debugColumns * cameraProvider->streamWidth();
     debugSurfaceHeight = debugRows * cameraProvider->streamHeight();
-    // printf("Debug stream: selected a %ux%u layout on a %ux%u surface for %zu cameras\n", debugColumns, debugRows, debugSurfaceWidth, debugSurfaceHeight, cameraProvider->streamCount());
 
     for (size_t cameraIdx = 0; cameraIdx < cameraProvider->streamCount(); ++cameraIdx) {
       unsigned int col = cameraIdx % debugColumns;
       unsigned int row = cameraIdx / debugColumns;
       RHIRect r = RHIRect::xywh(col * cameraProvider->streamWidth(), row * cameraProvider->streamHeight(), cameraProvider->streamWidth(), cameraProvider->streamHeight());
-      // printf("  [%zu] (%ux%u) +(%u, %u)\n", cameraIdx, r.width, r.height, r.x, r.y);
       debugSurfaceCameraRects.push_back(r);
     }
   }
@@ -357,15 +312,13 @@ int main(int argc, char** argv) {
   ImGuiIO& io = ImGui::GetIO();
   (void) io;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
-  //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
   // Setup Dear ImGui style
   ImGui::StyleColorsDark();
-  //ImGui::StyleColorsClassic();
 
   // Setup Platform/Renderer bindings
-  ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
-  ImGui_ImplOpenGL3_Init(glsl_version);
+  ImGui_ImplSDL2_InitForVulkan(window);
+  ImGui_ImplFxRHI_Init();
 
   // Our state
   ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
@@ -376,11 +329,9 @@ int main(int argc, char** argv) {
   bool done = false;
   while (!done) {
 
+    bool wantSwapchainRecreate = false;
+
     // Poll and handle events (inputs, window resize, etc.)
-    // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
-    // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application.
-    // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application.
-    // Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       ImGui_ImplSDL2_ProcessEvent(&event);
@@ -388,6 +339,8 @@ int main(int argc, char** argv) {
         done = true;
       if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE && event.window.windowID == SDL_GetWindowID(window))
         done = true;
+      if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED && event.window.windowID == SDL_GetWindowID(window))
+        wantSwapchainRecreate = true;
 
       if (io.WantCaptureKeyboard || io.WantCaptureMouse) {
         // Try to avoid getting stuck in relative mouse mode
@@ -421,12 +374,14 @@ int main(int argc, char** argv) {
       }
     }
 
+    if (wantSwapchainRecreate) {
+      renderBackend->recreateSwapchain();
+    }
+
     // Start the Dear ImGui frame
-    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplFxRHI_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
-
-    windowRenderTarget->platformSetUpdatedWindowDimensions(io.DisplaySize.x, io.DisplaySize.y);
 
     {
       ImGui::Begin("Debug-Client");
@@ -453,25 +408,6 @@ int main(int argc, char** argv) {
         if (ImGui::DragFloat("Camera Horizontal FoV", &fov, /*speed=*/ 1.0f, /*min=*/ 20.0f, /*max=*/ 170.0f, /*format=*/ "%.1fdeg")) {
           sceneCamera->setFieldOfView(fov);
         }
-#if 0
-          FxRenderView renderView = sceneCamera->toRenderView(static_cast<float>(io.DisplaySize.x) / static_cast<float>(io.DisplaySize.y));
-          {
-            glm::mat4 m = renderView.viewMatrix;
-            ImGui::Text("View");
-            for (size_t i = 0; i < 4; ++i) {
-              ImGui::Text("% .3f % .3f % .3f % .3f",
-                m[i][0], m[i][1], m[i][2], m[i][3]);
-            }
-          }
-          {
-            glm::mat4 m = renderView.projectionMatrix;
-            ImGui::Text("Projection");
-            for (size_t i = 0; i < 4; ++i) {
-              ImGui::Text("% .3f % .3f % .3f % .3f",
-                m[i][0], m[i][1], m[i][2], m[i][3]);
-            }
-          }
-#endif
 
         ImGui::Checkbox("Charuco detection", &enableCharucoDetection);
         ImGui::SliderInt("Charuco Disp Scale", &triangulationDisparityScaleInv, 1, 256); // TODO remove
@@ -529,16 +465,9 @@ int main(int argc, char** argv) {
       }
 
       if (usingRemoteDisparity) {
-        if (!cudaGLInteropOK) {
-          ImGui::Text("CUDA-GL interop not possible on this platform.");
-          ImGui::Text("Disparity is being streamed from the remote machine.");
-        }
-        ImGui::BeginDisabled(!cudaGLInteropOK);
         depthMapGenerator->renderIMGUI();
-        ImGui::EndDisabled();
       } else {
         depthMapGenerator->renderIMGUI();
-
         depthMapGenerator->renderIMGUIPerformanceGraphs();
       }
 
@@ -636,12 +565,6 @@ int main(int argc, char** argv) {
       ImGui::Begin(windowName, NULL, ImGuiWindowFlags_AlwaysAutoResize);
 
       for (size_t viewCameraIdx = 0; viewCameraIdx < v.cameraCount(); ++viewCameraIdx) {
-        /*
-          if (viewCameraIdx == 1) {
-            ImGui::SameLine();
-          }
-*/
-
         size_t cameraIdx = v.cameraIndices[viewCameraIdx];
         // TODO apply distortion correction here
         ImGui_Image(cameraProvider->rgbTexture(cameraIdx));
@@ -840,6 +763,9 @@ int main(int argc, char** argv) {
 
     depthMapGenerator->processFrame();
 
+    // CUDA-to-RHI handoff after depthMapGenerator finishes
+    interopSync->signalCUDAToRHI(RHICUDA::defaultAsyncStream);
+
     // Rendering
     FxRenderView renderView = sceneCamera->toRenderView(static_cast<float>(io.DisplaySize.x) / static_cast<float>(io.DisplaySize.y));
 
@@ -849,19 +775,6 @@ int main(int argc, char** argv) {
     rhi()->setClearDepth(0.0f);
     rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
     rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
-
-#if 0
-      { // Draw test quad
-        rhi()->bindRenderPipeline(meshVertexColorPipeline);
-        rhi()->bindStreamBuffer(0, meshQuadVBO);
-
-        MeshTransformUniformBlock ub;
-        ub.modelViewProjection = renderView.viewProjectionMatrix;
-        rhi()->loadUniformBlockImmediate(ksMeshTransformUniformBlock, &ub, sizeof(MeshTransformUniformBlock));
-        rhi()->drawPrimitives(0, 4);
-      }
-#endif
-
 
     if (render2dMode) {
       // Render 2d views
@@ -1040,28 +953,36 @@ int main(int argc, char** argv) {
     }
 
 
-    // May modify GL state, so this should be done at the end of the renderpass.
     ImGui::Render();
-
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    ImGui_ImplFxRHI_RenderDrawData(windowRenderTarget, ImGui::GetDrawData());
     rhi()->endRenderPass(windowRenderTarget);
 
     rhi()->swapBuffers(windowRenderTarget);
   }
 
-  // Cleanup
-  ImGui_ImplOpenGL3_Shutdown();
+  // Cleanup. Release order matters: anything holding RHI handles must drop
+  // them before shutdownRHI() destroys the VK device. ImGui_ImplFxRHI_Shutdown
+  // releases the static font atlas + pipeline that would otherwise outlive
+  // the RHI device into static-destructor time.
+  ImGui_ImplFxRHI_Shutdown();
   ImGui_ImplSDL2_Shutdown();
+  ImPlot::DestroyContext();
   ImGui::DestroyContext();
 
   FxThreading::detail::shutdown();
 
   windowRenderTarget.reset();
+  shutdownRHI();
 
-  // XXX: We just leak the GL context to prevent a crash at shutdown due to static resource destruction
-  // SDL_GL_DeleteContext(gl_context);
-  // SDL_DestroyWindow(window);
-  // SDL_Quit();
+  delete renderBackend;
 
-  return 0;
+  SDL_DestroyWindow(window);
+  SDL_Vulkan_UnloadLibrary();
+  SDL_Quit();
+
+  // _exit skips static destructors. Several global RHI::ptr / CUDA / NPP /
+  // OpenCV singletons race during static teardown after main returns and
+  // segfault; the original GL path here had the same workaround. The
+  // explicit cleanup above releases what we actually own.
+  _exit(0);
 }

@@ -3,10 +3,10 @@
 #include "common/ICameraProvider.h"
 #include "common/SerializationBuffer.h"
 #include "rhi/RHISurface.h"
+#include "rhi/vk/RHIInteropSurfaceVK.h"
 #include <vector>
 #include <opencv2/core/mat.hpp>
-#include "rhi/gl/GLCommon.h" // must be included before cudaEGL
-#include <cudaEGL.h>
+#include <cuda.h>
 
 class DebugCameraProvider : public ICameraProvider, public DepthMapGenerator {
 public:
@@ -36,7 +36,6 @@ public:
 
   // -- Other DebugCameraProvider-specific functions
 
-  void setCudaGLInteropOK(bool value) { m_doCudaGLInterop = value; }
   cv::Mat cvMatLuma(size_t streamIdx) const;
   cv::Mat cvMatChroma(size_t streamIdx) const;
   bool connect(const char* hostname);
@@ -45,7 +44,6 @@ public:
   const cv::String& cameraSystemConfig() const { return m_cameraSystemConfig; }
 
 protected:
-  bool m_doCudaGLInterop = true;
   int m_fd = -1;
 
   static void* streamThreadEntryPoint(void* x) {
@@ -63,7 +61,6 @@ protected:
   size_t m_streamCount = 0;
   unsigned int m_streamWidth = 0, m_streamHeight = 0;
 
-  CUeglColorFormat m_eglColorFormat;
   CUDA_RESOURCE_DESC m_lumaResourceDescriptor;
   CUDA_RESOURCE_DESC m_chromaResourceDescriptor;
   uint32_t m_lumaPlaneSizeBytes = 0, m_chromaPlaneSizeBytes = 0;
@@ -76,10 +73,12 @@ protected:
     void* hostLumaBuffer = nullptr;
     void* hostChromaBuffer = nullptr;
 
-    RHISurface::ptr rhiSurfaceRGBA;
+    // VK + CUDA dual-imported optimal-tiled image. CUDA writes via
+    // copyFromGpuMatAsync (no per-frame cuGraphicsMap/Unmap); VK reads via
+    // the standard RHISurface path (it's a real RHISurfaceVK underneath).
+    RHIInteropSurfaceVK::ptr rhiSurfaceRGBA;
     cv::cuda::GpuMat gpuMatLuma, gpuMatChroma, gpuMatRGBA;
 
-    void* hostRGBABuffer = nullptr; // used on fallback path
     CUtexObject cudaLumaTexObject = 0;
     CUtexObject cudaChromaTexObject = 0;
   };

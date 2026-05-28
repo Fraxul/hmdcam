@@ -14,6 +14,7 @@
 
 #include <array>
 #include <memory>
+#include <vector>
 
 class RHIVulkan {
 public:
@@ -21,8 +22,12 @@ public:
   // Pass the all-zero UUID to skip matching and select the first enumerated
   // physical device (with a warning) — used as a fallback when the GL context
   // does not expose GL_DEVICE_UUID_EXT.
+  // extraInstanceExtensions adds names to the VkInstance's enabled-extensions
+  // list (e.g. VK_KHR_xlib_surface) on top of the built-in set. Pass an empty
+  // vector for the default.
   // Returns nullptr on failure.
-  static std::unique_ptr<RHIVulkan> create(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID);
+  static std::unique_ptr<RHIVulkan> create(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID,
+    const std::vector<const char*>& extraInstanceExtensions = {});
 
   ~RHIVulkan();
 
@@ -100,6 +105,8 @@ void initRHIVulkanInteropContext();
 // both initRHIVulkanInteropContext (GL backend's interop helper) and the
 // top-level initRHIVulkan (RHIVK backend) so the singleton-management code
 // lives in one place. Pass the all-zero UUID to select the first enumerated
-// physical device. Returns true on success; asserts if a singleton is already
-// installed.
-bool rhiVulkanInstallSingleton(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID);
+// physical device. extraInstanceExtensions appends to the built-in instance-
+// extension list (e.g. SDL_Vulkan_GetInstanceExtensions output). Returns true
+// on success; asserts if a singleton is already installed.
+bool rhiVulkanInstallSingleton(const std::array<uint8_t, VK_UUID_SIZE>& gpuUUID,
+  const std::vector<const char*>& extraInstanceExtensions = {});
