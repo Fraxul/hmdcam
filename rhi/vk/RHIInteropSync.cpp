@@ -10,17 +10,13 @@ RHIInteropSync::RHIInteropSync() {
     abort();
   }
 
-  // One exported timeline semaphore shared with CUDA. Counter starts at 0;
-  // CUDA's first signalCUDAToRHI bumps to 1, which RHIVK's per-frame submit
-  // waits on. RHIVK's per-frame submit also signals, allocating values
-  // strictly greater than any CUDA-signaled value (because both sides bump
-  // m_cudaSignaledValue / m_vkSignaledValue independently — the monotonicity
-  // is per-side, the underlying VK counter only requires its writes to be
-  // monotonic too, which holds because each side controls its own writes).
+  // One exported timeline semaphore shared with CUDA. A single monotonic counter
+  // hands out strictly-increasing values to both producers, so their value
+  // sequences interleave on the shared timeline without ever colliding.
   m_timeline = vk->createExternalSemaphore(vk::SemaphoreType::eTimeline);
 
   // CUDA-side import. cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd
-  // tells CUDA the FD points at a timeline semaphore — required for the
+  // tells CUDA the FD points at a timeline semaphore -- required for the
   // params.fence.value field on Signal/WaitExternalSemaphoresAsync to
   // mean anything.
   cudaExternalSemaphoreHandleDesc desc = {};
@@ -54,11 +50,10 @@ RHIInteropSync::~RHIInteropSync() {
 }
 
 void RHIInteropSync::signalCUDAToRHI(CUstream stream) {
-  // Bump first so the value passed to CUDA is the one the RHI consumer
-  // (RHIVK::swapBuffers) will subsequently wait on. The counter is
-  // monotonically increasing — VK side reads m_cudaSignaledValue when it
-  // builds the next submit's TimelineSemaphoreSubmitInfo.
-  ++m_cudaSignaledValue;
+  // Allocate the next value from the single shared counter.
+  // The RHI consumer (RHIVK::swapBuffers / flush) reads m_cudaSignaledValue as its wait value
+  // when it builds the next submit's TimelineSemaphoreSubmitInfo.
+  m_cudaSignaledValue = ++m_nextValue;
   cudaExternalSemaphoreSignalParams params = {};
   params.params.fence.value = m_cudaSignaledValue;
   CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&m_timelineCU, &params, 1, stream));
@@ -69,7 +64,7 @@ void RHIInteropSync::signalRHIToCUDA(CUstream stream) {
   // swap/flush submit (see RHIVK::swapBuffers / RHIVK::flush), so this
   // value is whatever VK most recently committed. If no VK submit has
   // happened yet this run, m_vkSignaledValue == 0 and the wait completes
-  // immediately — consistent with "nothing to wait on."
+  // immediately -- consistent with "nothing to wait on."
   cudaExternalSemaphoreWaitParams params = {};
   params.params.fence.value = m_vkSignaledValue;
   CUDA_CHECK(cudaWaitExternalSemaphoresAsync(&m_timelineCU, &params, 1, stream));

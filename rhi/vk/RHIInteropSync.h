@@ -33,16 +33,22 @@ public:
   // recently signaled; the VK signal value is allocated here so a single
   // monotonic counter is shared across both directions.
   vk::Semaphore vkSemaphore() const { return m_timeline.semaphore.get(); }
+  // VK's per-frame submit waits on the most recent value CUDA signaled.
   uint64_t cudaSignaledValue() const { return m_cudaSignaledValue; }
-  uint64_t allocateVKSignalValue() { return ++m_vkSignaledValue; }
+  // Allocate the next value for a VK signal. Drawn from the single shared
+  // counter (see m_nextValue) so VK- and CUDA-signaled values never collide.
+  uint64_t allocateVKSignalValue() { return (m_vkSignaledValue = ++m_nextValue); }
 
 protected:
   RHIVulkan::ExternalSemaphore m_timeline;
   cudaExternalSemaphore_t m_timelineCU = nullptr;
 
-  // Last value signaled by CUDA (advances in signalCUDAToRHI).
+  // Single monotonic value allocator shared by both producers. Every signal consumes
+  // the next value from here, so no two signals ever target the same timeline
+  // value, and a given wait value can only be reached by its intended producer.
+  uint64_t m_nextValue = 0;
+  // Last value signaled by CUDA (set in signalCUDAToRHI). VK waits on this.
   uint64_t m_cudaSignaledValue = 0;
-  // Last value signaled by VK (advances in allocateVKSignalValue, called
-  // from RHIVK::swapBuffers / RHIVK::flush before submit).
+  // Last value signaled by VK (set in allocateVKSignalValue). CUDA (signalRHIToCUDA) waits on this.
   uint64_t m_vkSignaledValue = 0;
 };
