@@ -83,5 +83,15 @@ bool rhiSurfaceFormatHasStencil(RHISurfaceFormat format) {
 RHISurface::~RHISurface() {
 }
 
+// CUDA Interop surface support
+bool RHISurface::isInteropSurface() const {
+  return false;
+}
+
+cudaArray_t RHISurface::cudaArray() const {
+  assert(false && "RHISurface::cudaArray(): not an interop surface!");
+  return (cudaArray_t) 0;
+}
+
 RHISampler::~RHISampler() {
 }

@@ -20,7 +20,6 @@ public:
   virtual uint32_t samples() const override { return m_samples; }
   virtual uint32_t mipLevels() const override { return m_levels; }
   virtual bool isArray() const override { return m_isArrayTexture; }
-  virtual CUgraphicsResource& cuGraphicsResource() const override;
 
   vk::Image vkImage() const { return m_image.get(); }
   vk::ImageView vkImageView() const { return m_imageView.get(); }

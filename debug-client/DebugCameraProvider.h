@@ -3,7 +3,6 @@
 #include "common/ICameraProvider.h"
 #include "common/SerializationBuffer.h"
 #include "rhi/RHISurface.h"
-#include "rhi/vk/RHIInteropSurfaceVK.h"
 #include <vector>
 #include <opencv2/core/mat.hpp>
 #include <cuda.h>
@@ -73,10 +72,7 @@ protected:
     void* hostLumaBuffer = nullptr;
     void* hostChromaBuffer = nullptr;
 
-    // VK + CUDA dual-imported optimal-tiled image. CUDA writes via
-    // copyFromGpuMatAsync (no per-frame cuGraphicsMap/Unmap); VK reads via
-    // the standard RHISurface path (it's a real RHISurfaceVK underneath).
-    RHIInteropSurfaceVK::ptr rhiSurfaceRGBA;
+    RHISurface::ptr rhiSurfaceRGBA;
     cv::cuda::GpuMat gpuMatLuma, gpuMatChroma, gpuMatRGBA;
 
     CUtexObject cudaLumaTexObject = 0;

@@ -180,8 +180,3 @@ void RHISurfaceVK::loadFromCPU(const void* data, size_t bytes) {
   queue.submit(submit, vk::Fence());
   queue.waitIdle();
 }
-
-CUgraphicsResource& RHISurfaceVK::cuGraphicsResource() const {
-  fprintf(stderr, "RHISurfaceVK::cuGraphicsResource: not implemented (no CUDA interop yet)\n");
-  abort();
-}

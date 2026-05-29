@@ -1,9 +1,6 @@
 #include "rhi/gl/RHISurfaceGL.h"
 #include "rhi/FxMath.h"
 #include <algorithm>
-#include <cuda.h>
-#include <cudaGL.h>
-#include "rhi/cuda/CudaUtil.h"
 
 GLenum RHISurfaceFormatToGL(RHISurfaceFormat format) {
   switch (format) {
@@ -117,15 +114,11 @@ RHISurfaceGL::RHISurfaceGL() :
   m_samples(1),
   m_levels(1),
   m_rhiFormat(kSurfaceFormat_Invalid),
-  m_isArrayTexture(false),
-  m_cuGraphicsResource(NULL) {
+  m_isArrayTexture(false) {
 }
 
 RHISurfaceGL::~RHISurfaceGL() {
   if (m_glId) {
-    if (m_cuGraphicsResource)
-      cuGraphicsUnregisterResource(m_cuGraphicsResource);
-
     if (m_glTarget == GL_RENDERBUFFER) {
       glDeleteRenderbuffers(1, &m_glId);
     } else {
@@ -282,12 +275,4 @@ uint32_t RHISurfaceGL::mipLevels() const {
 
 bool RHISurfaceGL::isArray() const {
   return m_isArrayTexture;
-}
-
-CUgraphicsResource& RHISurfaceGL::cuGraphicsResource() const {
-  if (!m_cuGraphicsResource) {
-    CUDA_CHECK(cuGraphicsGLRegisterImage(&m_cuGraphicsResource, glId(), glTarget(), CU_GRAPHICS_REGISTER_FLAGS_NONE));
-  }
-
-  return m_cuGraphicsResource;
 }

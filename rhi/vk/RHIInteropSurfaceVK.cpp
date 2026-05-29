@@ -1,7 +1,6 @@
 #include "rhi/vk/RHIInteropSurfaceVK.h"
 #include "rhi/RHI.h"
 #include "rhi/cuda/CudaUtil.h"
-#include "rhi/vk/RHIInteropSync.h"
 #include <stdio.h>
 #include <unistd.h>
 
@@ -61,14 +60,6 @@ RHIInteropSurfaceVK::RHIInteropSurfaceVK() :
   RHISurfaceVK() {}
 
 RHIInteropSurfaceVK::~RHIInteropSurfaceVK() {
-  if (m_cudaSurfaceObject) {
-    cudaDestroySurfaceObject(m_cudaSurfaceObject);
-    m_cudaSurfaceObject = 0;
-  }
-  if (m_cudaTextureObject) {
-    cudaDestroyTextureObject(m_cudaTextureObject);
-    m_cudaTextureObject = 0;
-  }
   // m_cudaArray is a level of m_cudaMipmappedArray and is implicitly
   // released when the mipmapped array is destroyed.
   m_cudaArray = nullptr;
@@ -83,7 +74,7 @@ RHIInteropSurfaceVK::~RHIInteropSurfaceVK() {
   // Base RHISurfaceVK destructor releases m_image / m_memory / m_imageView.
 }
 
-/*static*/ RHIInteropSurfaceVK* RHIInteropSurfaceVK::newTexture2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor& descriptor, const RHIInteropSyncDescriptor& syncDescriptor) {
+/*static*/ RHIInteropSurfaceVK* RHIInteropSurfaceVK::newTexture2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor& descriptor) {
   RHIVulkan* vk = rhi()->vk();
   if (!vk) {
     fprintf(stderr, "RHIInteropSurfaceVK::newTexture2D: rhi()->vk() is null; cannot allocate interop surface\n");
@@ -101,7 +92,6 @@ RHIInteropSurfaceVK::~RHIInteropSurfaceVK() {
   tex->m_vkFormat = fmt.vkFormat;
   tex->m_width = width;
   tex->m_height = height;
-  tex->m_syncDescriptor = syncDescriptor;
 
   // VK side: exportable optimal-tiled image. Permissive usage so the VK
   // backend can bind the surface anywhere it likes.
@@ -179,29 +169,13 @@ RHIInteropSurfaceVK::~RHIInteropSurfaceVK() {
   CUDA_CHECK(cudaExternalMemoryGetMappedMipmappedArray(&tex->m_cudaMipmappedArray, tex->m_cudaExtMem, &arrDesc));
   CUDA_CHECK(cudaGetMipmappedArrayLevel(&tex->m_cudaArray, tex->m_cudaMipmappedArray, 0));
 
-  cudaResourceDesc resDesc = {};
-  resDesc.resType = cudaResourceTypeArray;
-  resDesc.res.array.array = tex->m_cudaArray;
-  CUDA_CHECK(cudaCreateSurfaceObject(&tex->m_cudaSurfaceObject, &resDesc));
-
-  cudaTextureDesc texDesc = {};
-  texDesc.addressMode[0] = cudaAddressModeClamp;
-  texDesc.addressMode[1] = cudaAddressModeClamp;
-  texDesc.filterMode = cudaFilterModePoint;
-  texDesc.readMode = cudaReadModeElementType;
-  texDesc.normalizedCoords = 0;
-  CUDA_CHECK(cudaCreateTextureObject(&tex->m_cudaTextureObject, &resDesc, &texDesc, /*resViewDesc=*/ nullptr));
-
   return tex;
 }
 
-void RHIInteropSurfaceVK::copyFromGpuMatAsync(const cv::cuda::GpuMat& src, cudaStream_t stream) {
-  size_t copyWidth = std::min<size_t>(m_width, static_cast<size_t>(src.cols));
-  size_t copyHeight = std::min<size_t>(m_height, static_cast<size_t>(src.rows));
+bool RHIInteropSurfaceVK::isInteropSurface() const {
+  return true;
+}
 
-  CUDA_CHECK(cudaMemcpy2DToArrayAsync(
-    m_cudaArray, /*wOffsetBytes=*/ 0, /*hOffset=*/ 0,
-    src.cudaPtr(), src.step,
-    copyWidth * src.elemSize(), copyHeight,
-    cudaMemcpyDeviceToDevice, stream));
+cudaArray_t RHIInteropSurfaceVK::cudaArray() const {
+  return m_cudaArray;
 }

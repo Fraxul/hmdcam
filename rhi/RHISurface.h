@@ -3,7 +3,9 @@
 #include <glm/glm.hpp>
 
 // Forward decl borrowed from <cuda.h>
-typedef struct CUgraphicsResource_st* CUgraphicsResource; /**< CUDA graphics interop resource */
+typedef unsigned long long cudaSurfaceObject_t;
+typedef unsigned long long cudaTextureObject_t;
+typedef struct cudaArray* cudaArray_t;
 
 enum RHISamplerWrapMode : unsigned char {
   kWrapClamp,
@@ -172,13 +174,16 @@ public:
   virtual uint32_t mipLevels() const = 0;
   virtual bool isArray() const = 0;
 
-  virtual CUgraphicsResource& cuGraphicsResource() const = 0;
-
   bool isMultisampled() const { return samples() > 1; }
   bool hasMipLevels() const { return mipLevels() > 1; }
   glm::vec2 dimensions() const { return glm::vec2(width(), height()); }
   glm::vec3 dimensions3() const { return glm::vec3(width(), height(), depth()); }
   float aspectRatio() const { return static_cast<float>(width()) / static_cast<float>(height()); }
+
+  // CUDA Interop surface support
+  virtual bool isInteropSurface() const;
+  // cudaArray() is stable across the surface's lifetime.
+  virtual cudaArray_t cudaArray() const;
 };
 
 class RHISampler : public RHIObject {

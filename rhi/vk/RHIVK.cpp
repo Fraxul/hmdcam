@@ -4,8 +4,6 @@
 #include "rhi/vk/RHIDepthStencilStateVK.h"
 #include "rhi/vk/RHIInteropBufferVK.h"
 #include "rhi/vk/RHIInteropSurfaceVK.h"
-#include "rhi/vk/RHIInteropSync.h"
-#include "rhi/vk/RHIInteropSyncDescriptor.h"
 #include "rhi/vk/RHIQueryVK.h"
 #include "rhi/vk/RHIRenderPipelineVK.h"
 #include "rhi/vk/RHIRenderTargetVK.h"
@@ -15,6 +13,7 @@
 #include "rhi/vk/RHIVKFrameSource.h"
 #include "rhi/vk/RHIVulkan.h"
 #include "rhi/vk/RHIWindowRenderTargetVK.h"
+#include "rhi/cuda/CudaUtil.h"
 #include "stb/stb_image_write.h"
 #include <assert.h>
 #include <cstring>
@@ -52,6 +51,11 @@ RHIVK::~RHIVK() {
   // views so the destruction order is safe.
   if (rhi() && rhi()->vk()) {
     rhi()->vk()->device().waitIdle();
+  }
+
+  if (m_interopTimelineCU) {
+    cudaDestroyExternalSemaphore(m_interopTimelineCU);
+    m_interopTimelineCU = nullptr;
   }
 }
 
@@ -131,6 +135,25 @@ void RHIVK::setFrameSource(VKFrameSource* source) {
     printf("RHIVK: will dump frame %lld render-target passes to %s\n",
       (long long) m_dumpFrameIndex, m_dumpDir.c_str());
   }
+
+  // Build interop sync
+
+  // One exported timeline semaphore shared with CUDA. A single monotonic counter
+  // hands out strictly-increasing values to both producers, so their value
+  // sequences interleave on the shared timeline without ever colliding.
+  m_interopTimeline = rhi()->vk()->createExternalSemaphore(vk::SemaphoreType::eTimeline);
+
+  // CUDA-side import. cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd
+  // tells CUDA the FD points at a timeline semaphore -- required for the
+  // params.fence.value field on Signal/WaitExternalSemaphoresAsync to
+  // mean anything.
+  cudaExternalSemaphoreHandleDesc desc = {};
+  desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
+  desc.handle.fd = m_interopTimeline.fd;
+  CUDA_CHECK(cudaImportExternalSemaphore(&m_interopTimelineCU, &desc));
+  // cudaImportExternalSemaphore takes ownership of the FD; null out our
+  // handle so the dtor doesn't double-close.
+  m_interopTimeline.fd = -1;
 }
 
 void RHIVK::invalidateSwapchainResources() {
@@ -180,12 +203,6 @@ RHIBuffer::ptr RHIVK::newEmptyBuffer(size_t size, RHIBufferUsageMode mode) {
 }
 RHIBuffer::ptr RHIVK::newUniformBufferWithContents(const void* data, size_t size) {
   return RHIBufferVK::create(size, kBufferUsageCPUWriteOnly, data);
-}
-RHIBuffer::ptr RHIVK::newInteropBuffer(size_t size, RHIBufferUsageMode mode, const RHIInteropSyncDescriptor& sync) {
-  return RHIBuffer::ptr(RHIInteropBufferVK::newBuffer(size, mode, sync));
-}
-RHISurface::ptr RHIVK::newInteropSurface(uint32_t w, uint32_t h, const RHISurfaceDescriptor& d, const RHIInteropSyncDescriptor& sync) {
-  return RHISurface::ptr(RHIInteropSurfaceVK::newTexture2D(w, h, d, sync));
 }
 void RHIVK::loadBufferData(RHIBuffer::ptr buf, const void* data, size_t offset, size_t length) {
   if (length == 0) length = buf->size() - offset;
@@ -1376,7 +1393,8 @@ void RHIVK::swapBuffers(RHIRenderTarget::ptr /*target*/) {
 
   // Submit: wait on imageAcquired (colour attachment output stage),
   // signal renderFinished (for present) + per-frame fence (for CB recycling).
-  // When an RHIInteropSync is attached, also wait on the interop timeline at
+
+  // For interop sync, also wait on the interop timeline at
   // CUDA's latest signaled value, and signal the next VK value on it. The
   // wait stage on the interop semaphore is eAllCommands — interop surfaces
   // can be sampled in any stage, so we conservatively pessimize until
@@ -1390,12 +1408,14 @@ void RHIVK::swapBuffers(RHIRenderTarget::ptr /*target*/) {
   std::array<uint64_t, 2> signalValues{0, 0};
   uint32_t waitCount = 1;
   uint32_t signalCount = 1;
-  if (m_interopSync) {
-    waitSemaphores[waitCount] = m_interopSync->vkSemaphore();
-    waitValues[waitCount] = m_interopSync->cudaSignaledValue();
+
+  // Handle interop sync wait/signal
+  {
+    waitSemaphores[waitCount] = m_interopTimeline.semaphore.get();
+    waitValues[waitCount] = m_interopTimelineCudaSignaledValue;
     ++waitCount;
-    signalSemaphores[signalCount] = m_interopSync->vkSemaphore();
-    signalValues[signalCount] = m_interopSync->allocateVKSignalValue();
+    signalSemaphores[signalCount] = m_interopTimeline.semaphore.get();
+    signalValues[signalCount] = interopAllocateVKSignalValue();
     ++signalCount;
   }
   // Timeline submit info: pValues entries are ignored for binary semaphores
@@ -1409,9 +1429,7 @@ void RHIVK::swapBuffers(RHIRenderTarget::ptr /*target*/) {
   submit.setWaitDstStageMask(vk::ArrayProxyNoTemporaries<const vk::PipelineStageFlags>(waitCount, waitStages.data()));
   submit.setCommandBuffers(cb);
   submit.setSignalSemaphores(vk::ArrayProxyNoTemporaries<const vk::Semaphore>(signalCount, signalSemaphores.data()));
-  if (m_interopSync) {
-    submit.setPNext(&timelineSubmit);
-  }
+  submit.setPNext(&timelineSubmit);
   rhi()->vk()->queue().submit(submit, m_currentFrame.frameFence);
 
   // Present via the frame source. Backend manages its own per-frame index.
@@ -1466,10 +1484,12 @@ void RHIVK::flush() {
   vk::TimelineSemaphoreSubmitInfo timelineSubmit{};
   vk::SubmitInfo submit;
   submit.setCommandBuffers(cb);
-  if (m_interopSync) {
-    interopSem = m_interopSync->vkSemaphore();
-    interopWaitValue = m_interopSync->cudaSignaledValue();
-    interopSignalValue = m_interopSync->allocateVKSignalValue();
+
+  // Handle interop sync
+  {
+    interopSem = m_interopTimeline.semaphore.get();
+    interopWaitValue = m_interopTimelineCudaSignaledValue;
+    interopSignalValue = interopAllocateVKSignalValue();
     submit.setWaitSemaphores(interopSem);
     submit.setWaitDstStageMask(interopWaitStage);
     submit.setSignalSemaphores(interopSem);
@@ -1492,6 +1512,42 @@ void RHIVK::flush() {
 void RHIVK::flushAndWaitForGPUScheduling() { RHI_VK_NOT_IMPLEMENTED(); }
 uint32_t RHIVK::maxMultisampleSamples() { RHI_VK_NOT_IMPLEMENTED(); }
 bool RHIVK::supportsGeometryShaders() { RHI_VK_NOT_IMPLEMENTED(); }
+
+// ---------- Interop support ----------
+bool RHIVK::supportsCUDAInterop() {
+  return true;
+}
+
+void RHIVK::signalCUDAToRHI(CUstream stream) {
+  // Allocate the next value from the single shared counter.
+  // The RHI consumer (RHIVK::swapBuffers / flush) reads m_interopTimelineCudaSignaledValue as its wait value
+  // when it builds the next submit's TimelineSemaphoreSubmitInfo.
+  m_interopTimelineCudaSignaledValue = ++m_interopTimelineNextValue;
+  cudaExternalSemaphoreSignalParams params = {};
+  params.params.fence.value = m_interopTimelineCudaSignaledValue;
+  CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&m_interopTimelineCU, &params, 1, stream));
+}
+
+void RHIVK::signalRHIToCUDA(CUstream stream) {
+  // Wait on the most recent VK-signaled value. RHIVK signals at every
+  // swap/flush submit (see RHIVK::swapBuffers / RHIVK::flush), so this
+  // value is whatever VK most recently committed. If no VK submit has
+  // happened yet this run, m_interopTimelineVkSignaledValue == 0 and the wait completes
+  // immediately -- consistent with "nothing to wait on."
+  cudaExternalSemaphoreWaitParams params = {};
+  params.params.fence.value = m_interopTimelineVkSignaledValue;
+  CUDA_CHECK(cudaWaitExternalSemaphoresAsync(&m_interopTimelineCU, &params, 1, stream));
+}
+
+RHIBuffer::ptr RHIVK::newInteropBuffer(size_t size, RHIBufferUsageMode mode) {
+  return RHIBuffer::ptr(RHIInteropBufferVK::newBuffer(size, mode));
+}
+RHISurface::ptr RHIVK::newInteropSurface(uint32_t w, uint32_t h, const RHISurfaceDescriptor& d) {
+  return RHISurface::ptr(RHIInteropSurfaceVK::newTexture2D(w, h, d));
+}
+
+
+// ----------- Misc internals ----------
 
 RHIShader::ptr RHIVK::internalCompileShader(const RHIShaderDescriptor& descriptor) {
   return RHIShaderVK::compileFromDescriptor(descriptor);

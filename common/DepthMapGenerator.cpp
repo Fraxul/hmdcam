@@ -19,9 +19,6 @@
 #include "rhi/cuda/RHICUDA.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
-#include "rhi/RHIInteropBuffer.h"
-#include "rhi/vk/RHIInteropSyncDescriptor.h"
-#include "rhi/RHIInteropSurface.h"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc/types_c.h>
 #include <opencv2/calib3d.hpp>
@@ -137,9 +134,8 @@ DepthMapGenerator::DepthMapGenerator(DepthMapGeneratorBackend backend_) :
   CUDA_CHECK_NONFATAL(cuEventRecord(m_finalizeDisparityFinishedEvent, (CUstream) m_globalStream.cudaPtr()));
 }
 
-void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs, RHIInteropSync::ptr interopSync) {
+void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
   m_cameraSystem = cs;
-  m_interopSync = interopSync;
 
   // Compute internal dimensions
   m_internalWidth = cameraStreamWidth() / m_algoDownsampleX;
@@ -712,7 +708,7 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
     }
 
     // Copy filtered disparity into the interop surface's CUDA-side storage.
-    vd->m_disparityTextureInterop->copyFromGpuMatAsync(*workMat, (cudaStream_t) m_globalStream.cudaPtr());
+    RHICUDA::copyGpuMatToSurface(*workMat, vd->m_disparityTexture, (CUstream) m_globalStream.cudaPtr());
 
     // Build the adaptive triangle mesh from the post-processed disparity.
     {
@@ -731,9 +727,9 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
         static_cast<uint16_t>(m_adaptiveDepthDiscontinuityThreshold),
         m_adaptiveCellOverlapMultiplier,
         effTrimL, effTrimT, effTrimR, effTrimB,
-        vd->m_adaptiveVertexInterop->cudaPointer(),
-        vd->m_adaptiveIndexInterop->cudaPointer(),
-        vd->m_adaptiveIndirectArgsInterop->cudaPointer(),
+        vd->m_adaptiveVertexBuffer->cudaPointer(),
+        vd->m_adaptiveIndexBuffer->cudaPointer(),
+        vd->m_adaptiveIndirectArgsBuffer->cudaPointer(),
         vd->m_adaptiveScratch,
         (CUstream) m_globalStream.cudaPtr());
     }
@@ -743,20 +739,16 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       cudaStream_t cudaStream = (cudaStream_t) m_globalStream.cudaPtr();
 
       if (!vd->m_debugResidual) {
-        vd->m_debugResidual = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
-        vd->m_debugResidualInterop = dynamic_cast<RHIInteropSurface*>(vd->m_debugResidual.get());
-        assert(vd->m_debugResidualInterop);
+        vd->m_debugResidual = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
       }
 
       if (!vd->m_confidenceTexture) {
-        vd->m_confidenceTexture = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
-        vd->m_confidenceTextureInterop = dynamic_cast<RHIInteropSurface*>(vd->m_confidenceTexture.get());
-        assert(vd->m_confidenceTextureInterop);
+        vd->m_confidenceTexture = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
       }
 
-      vd->m_debugResidualInterop->copyFromGpuMatAsync(vd->m_disparityDebugResidual, cudaStream);
+      RHICUDA::copyGpuMatToSurface(vd->m_disparityDebugResidual, vd->m_debugResidual, cudaStream);
 
-      vd->m_confidenceTextureInterop->copyFromGpuMatAsync(vd->m_disparityConfidence, cudaStream);
+      RHICUDA::copyGpuMatToSurface(vd->m_disparityConfidence, vd->m_confidenceTexture, cudaStream);
     }
 
     if (debugDisparityCPUAccessEnabled()) {
@@ -870,32 +862,17 @@ void DepthMapGenerator::ViewData::updateDisparityTexture(DepthMapGenerator* dept
   m_fgsFilterState.ensureAllocated(/*newWidth=*/ w, /*newHeight=*/ h);
   m_fgsFilterInOutPacked.create(/*rows=*/ h, /*cols=*/ w, /*type=*/ CV_32FC2);
 
-  // Disparity output: VK-allocated, dual-imported into GL (texture) and CUDA
-  // (the surface's GpuMat). Dropping the legacy newTexture2D + per-frame
-  // copyGpuMatToSurface(cuGraphicsMap/Unmap) pair eliminates the ~150-200µs
-  // GL-context-switch bubble that used to show up around the map call.
-  m_disparityTexture = rhi()->newInteropSurface(w, h, RHISurfaceDescriptor(format), RHIInteropSyncDescriptor(depthMapGenerator->m_interopSync));
-  m_disparityTextureInterop = dynamic_cast<RHIInteropSurface*>(m_disparityTexture.get());
-  assert(m_disparityTextureInterop);
+  // Disparity output interop surface.
+  m_disparityTexture = rhi()->newInteropSurface(w, h, RHISurfaceDescriptor(format));
 
   // Adaptive-mesh buffers. Worst case is one quad per leaf cell (every cell stays at level 0).
-  // Interop-backed so the CUDA mesh-build kernels can write through a stable
-  // CUdeviceptr without a per-frame cuGraphicsMap/Unmap round-trip.
+  // Interop-backed so the CUDA mesh-build kernels can write through a stable CUdeviceptr
   const size_t worstCaseQuads = size_t(w) * size_t(h);
   const size_t vboBytes = worstCaseQuads * 4 * sizeof(AdaptiveMeshVertex);
   const size_t iboBytes = worstCaseQuads * 6 * sizeof(uint32_t);
-  RHIInteropSyncDescriptor syncDesc(depthMapGenerator->m_interopSync);
-  m_adaptiveVertexBuffer = rhi()->newInteropBuffer(vboBytes, kBufferUsageGPUPrivate, syncDesc);
-  m_adaptiveIndexBuffer = rhi()->newInteropBuffer(iboBytes, kBufferUsageGPUPrivate, syncDesc);
-  m_adaptiveIndirectArgsBuffer = rhi()->newInteropBuffer(2 * sizeof(DrawElementsIndirectCommand), kBufferUsageGPUPrivate, syncDesc);
-  // Cache the RHIInteropBuffer view of each buffer for cudaPointer/cudaSize
-  // access. Each concrete implementation (GL or VK) inherits from both
-  // RHIBuffer and RHIInteropBuffer, so the dynamic_cast always succeeds for
-  // buffers returned by newInteropBuffer.
-  m_adaptiveVertexInterop = dynamic_cast<RHIInteropBuffer*>(m_adaptiveVertexBuffer.get());
-  m_adaptiveIndexInterop = dynamic_cast<RHIInteropBuffer*>(m_adaptiveIndexBuffer.get());
-  m_adaptiveIndirectArgsInterop = dynamic_cast<RHIInteropBuffer*>(m_adaptiveIndirectArgsBuffer.get());
-  assert(m_adaptiveVertexInterop && m_adaptiveIndexInterop && m_adaptiveIndirectArgsInterop);
+  m_adaptiveVertexBuffer = rhi()->newInteropBuffer(vboBytes, kBufferUsageGPUPrivate);
+  m_adaptiveIndexBuffer = rhi()->newInteropBuffer(iboBytes, kBufferUsageGPUPrivate);
+  m_adaptiveIndirectArgsBuffer = rhi()->newInteropBuffer(2 * sizeof(DrawElementsIndirectCommand), kBufferUsageGPUPrivate);
 
   m_adaptiveScratch.allocate(w, h);
 }

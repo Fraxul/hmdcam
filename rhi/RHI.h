@@ -20,6 +20,17 @@ namespace vr {
 struct Texture_t;
 }
 
+// Minimal set of CUDA type forward declarations
+typedef struct CUstream_st* CUstream;
+typedef struct CUarray_st* CUarray;
+typedef unsigned long long CUtexObject_v1;
+typedef CUtexObject_v1 CUtexObject;
+typedef unsigned long long CUsurfObject_v1;
+typedef CUsurfObject_v1 CUsurfObject;
+typedef unsigned long long cudaSurfaceObject_t;
+typedef unsigned long long cudaTextureObject_t;
+typedef struct cudaArray* cudaArray_t;
+
 RHI* rhi(); // render thread owned
 
 void initRHI(RHI*);
@@ -91,24 +102,11 @@ public:
   virtual RHIBuffer::ptr newUniformBufferWithContents(const void*, size_t) = 0;
   // virtual void clearBuffer(RHIBuffer::ptr) = 0; // Not implemented on ES3
   virtual void loadBufferData(RHIBuffer::ptr, const void*, size_t offset = 0, size_t length = 0) = 0;
-  // Allocate a buffer whose memory is shared with CUDA via the supplied
-  // RHIInteropSync. The returned RHIBuffer::ptr can be bound through the
-  // normal RHI APIs (vertex/index/indirect); dynamic_cast it to
-  // RHIInteropBuffer* (rhi/RHIInteropBuffer.h) to retrieve the CUDA device
-  // pointer for CUDA writers/readers. Each backend returns a concrete
-  // subclass: GL → RHIInteropBufferGL, VK → RHIInteropBufferVK.
-  virtual RHIBuffer::ptr newInteropBuffer(size_t sizeBytes, RHIBufferUsageMode, const class RHIInteropSyncDescriptor&) = 0;
 
   virtual RHISurface::ptr newTexture2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) = 0;
   virtual RHISurface::ptr newTexture3D(uint32_t width, uint32_t height, uint32_t depth, const RHISurfaceDescriptor&) = 0;
   virtual RHISurface::ptr newRenderbuffer2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) = 0;
   virtual RHISurface::ptr newHMDSwapTexture(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) = 0;
-  // Allocate a 2D surface whose memory is shared with CUDA via the
-  // supplied RHIInteropSync. The returned RHISurface::ptr is bindable as a
-  // normal texture/render target; dynamic_cast it to RHIInteropSurface*
-  // (rhi/RHIInteropSurface.h) for CUDA-side mappings (cudaArray, surface
-  // object, texture object). Each backend returns a concrete subclass.
-  virtual RHISurface::ptr newInteropSurface(uint32_t width, uint32_t height, const RHISurfaceDescriptor&, const class RHIInteropSyncDescriptor&) = 0;
   virtual void loadTextureData(RHISurface::ptr texture, RHIVertexElementType sourceDataFormat, const void* sourceData) = 0;
   virtual void generateTextureMips(RHISurface::ptr texture) = 0;
   virtual void readbackTexture(RHISurface::ptr, uint8_t layer, RHIVertexElementType dataFormat, void* outData) = 0;
@@ -190,7 +188,26 @@ public:
   virtual void pushDebugGroup(const char*) = 0;
   virtual void popDebugGroup() = 0;
 
-  // misc features / caps
+  // ===== CUDA interop support =====
+  // Optional feature; if supportsCUDAInterop() returns false, all other calls in this section will abort at runtime.
+  virtual bool supportsCUDAInterop();
+
+  // Call this when you're done with CUDA work and will be switching to RHI.
+  // Records a CUDA-side signal on the supplied stream. The RHI consumer (RHIVK's per-frame submit) waits on the latest value.
+  virtual void signalCUDAToRHI(CUstream);
+
+  // Call this when you're done with RHI work and will be switching to CUDA.
+  // Records a CUDA-side wait on the latest RHI-signaled value. The RHI side signals on flush or swapBuffers.
+  virtual void signalRHIToCUDA(CUstream);
+
+  // Allocate a buffer whose memory is shared with CUDA.
+  virtual RHIBuffer::ptr newInteropBuffer(size_t sizeBytes, RHIBufferUsageMode);
+
+  // Allocate a 2D surface whose memory is shared with CUDA.
+  virtual RHISurface::ptr newInteropSurface(uint32_t width, uint32_t height, const RHISurfaceDescriptor&);
+
+
+  // ===== Misc features / caps =====
   virtual void swapBuffers(RHIRenderTarget::ptr) = 0;
   virtual void flush() = 0;
   virtual void flushAndWaitForGPUScheduling() = 0;

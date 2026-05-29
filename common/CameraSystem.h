@@ -2,9 +2,7 @@
 #include <vector>
 #include <string>
 #include "rhi/RHI.h"
-#include "rhi/RHIInteropSurface.h"
-#include "rhi/vk/RHIInteropSync.h"
-#include "rhi/vk/RHIInteropSyncDescriptor.h"
+#include "rhi/cuda/CudaUtil.h"
 #include "common/ICameraProvider.h"
 #include "common/glmCvInterop.h"
 #include <opencv2/core.hpp>
@@ -12,6 +10,7 @@
 #include "glm/gtx/euler_angles.hpp"
 #include "glm/gtx/transform.hpp"
 #include <cuda.h>
+#include <cuda_runtime.h>
 
 class CameraSystem;
 class CharucoMultiViewCalibration;
@@ -27,7 +26,7 @@ float computePointSetLinearTransform(const std::vector<glm::vec3>& pVec1, const 
 
 class CameraSystem {
 public:
-  CameraSystem(ICameraProvider*, RHIInteropSync::ptr);
+  CameraSystem(ICameraProvider*);
 
   bool loadCalibrationData();
   bool loadCalibrationData(cv::FileStorage&);
@@ -50,10 +49,6 @@ public:
       fovY(0) {}
 
     RHISurface::ptr intrinsicDistortionMap;
-    // Non-owning view of the same object cast to the interop interface;
-    // used by CUDA code paths to access cudaSurfaceObject/cudaArray etc.
-    // Stays in sync with intrinsicDistortionMap.
-    RHIInteropSurface* intrinsicDistortionMapInterop = nullptr;
     RHISurface::ptr mask;
     cv::Mat intrinsicMatrix; // From calibration
     cv::Mat distCoeffs;
@@ -66,6 +61,12 @@ public:
 
   struct View {
     View() {}
+    ~View() {
+      for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+        CUDA_SAFE_FREE_SURFACE_OBJECT(stereoDistortionCudaSurface[eyeIdx]);
+        CUDA_SAFE_FREE_TEXTURE_OBJECT(stereoDistortionCudaTexture[eyeIdx]);
+      }
+    }
 
     DepthMapGenerator* depthMapGenerator = nullptr;
 
@@ -94,8 +95,9 @@ public:
     cv::Mat stereoDisparityToDepth;
     cv::Rect stereoValidROI[2];
     RHISurface::ptr stereoDistortionMap[2]; // Combined intrinsic and stereo distortion
-    // Non-owning interop view of each entry above; populated alongside.
-    RHIInteropSurface* stereoDistortionMapInterop[2] = {nullptr, nullptr};
+    cudaSurfaceObject_t stereoDistortionCudaSurface[2] = {0, 0}; // CUDA surface object for stereoDistortionMap cudaArray
+    cudaTextureObject_t stereoDistortionCudaTexture[2] = {0, 0}; // CUDA texture object for stereoDistortionMap cudaArray
+
     double fovX = 0, fovY = 0; // Values for the stereo projection, in degrees
 
     // ----- Per-frame distortion-map regeneration (rolling-shutter correction) -----
@@ -450,8 +452,6 @@ public:
 protected:
   ICameraProvider* m_cameraProvider;
   unsigned int m_calibrationDataRevision;
-
-  RHIInteropSync::ptr m_interopSync;
 
   std::vector<Camera> m_cameras;
   std::vector<View> m_views;

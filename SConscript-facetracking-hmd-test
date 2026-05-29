@@ -45,6 +45,7 @@ ftEnv.Append(
     'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync', 'nvmedia_ijpd_sci',
     'nvToolsExt',
     'nvrm_host1x',
+    'shaderc_combined',
   ] + ftEnv['CERES_LIBS']
 )
 monadoStatics = \

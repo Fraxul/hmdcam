@@ -11,14 +11,11 @@ public:
   virtual void map(RHIBufferMapMode);
   virtual void unmap();
 
-  virtual CUgraphicsResource& cuGraphicsResource() const;
-
   GLuint glId() const { return m_buffer; }
   void bufferData(const void*, size_t);
   void bufferSubData(const void*, size_t length, size_t offset = 0);
 
 protected:
-  RHIBufferGL();
-  GLuint m_buffer;
-  mutable CUgraphicsResource m_cuGraphicsResource;
+  RHIBufferGL() = default;
+  GLuint m_buffer = 0;
 };

@@ -8,9 +8,6 @@
 #include "rhi/RHISurface.h"
 #include "rhi/RHIBuffer.h"
 #include "rhi/cuda/CudaUtil.h"
-#include "rhi/vk/RHIInteropSync.h"
-#include "rhi/vk/RHIInteropSurfaceGL.h"
-#include "rhi/RHIInteropBuffer.h"
 #include <glm/glm.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
@@ -40,7 +37,7 @@ public:
   DepthMapGenerator(DepthMapGeneratorBackend);
   ~DepthMapGenerator();
 
-  void initWithCameraSystem(CameraSystem*, RHIInteropSync::ptr);
+  void initWithCameraSystem(CameraSystem*);
   void processFrame();
   void renderDisparityDepthMapStereo(size_t viewIdx, const FxRenderView& leftRenderView, const FxRenderView& rightRenderView);
   void renderDisparityDepthMap(size_t viewIdx, const FxRenderView& renderView);
@@ -90,9 +87,6 @@ protected:
   // CUDA and NPP stream context
   cv::cuda::Stream m_globalStream; // Wraps RHICUDA::defaultAsyncStream
   NppStreamContext m_nppStreamContext;
-
-  // CUDA-to-RHI sync object
-  RHIInteropSync::ptr m_interopSync;
 
   virtual void internalLoadSettings(cv::FileStorage&) = 0;
   virtual void internalSaveSettings(cv::FileStorage&) = 0;
@@ -175,13 +169,6 @@ protected:
 
     RHISurface::ptr m_disparityTexture;
     RHISurface::ptr m_leftGray, m_rightGray, m_confidenceTexture, m_debugResidual;
-    // Non-owning interop views of the same objects above for CUDA access.
-    // Populated alongside; see DepthMapGenerator.cpp/updateDisparityTexture.
-    RHIInteropSurface* m_disparityTextureInterop = nullptr;
-    RHIInteropSurface* m_leftGrayInterop = nullptr;
-    RHIInteropSurface* m_rightGrayInterop = nullptr;
-    RHIInteropSurface* m_confidenceTextureInterop = nullptr;
-    RHIInteropSurface* m_debugResidualInterop = nullptr;
 
     cv::Mat m_debugCPUDisparityInput[2]; // L/R inputs to stereo matching algorithm
     cv::Mat m_debugCPUDisparity;
@@ -192,17 +179,9 @@ protected:
     // post-processed disparity. Buffers are GPU-private and CUDA-mapped during the build,
     // then drawn via drawIndexedPrimitivesIndirect. Sized for the worst case (every cell is
     // its own quad) so they never need reallocation.
-    //
-    // The buffers are allocated via rhi()->newInteropBuffer; the returned ptrs are
-    // bindable through the standard RHIBuffer API. The cudaPointer/cudaSize for
-    // CUDA writes are accessed through a cached RHIInteropBuffer* view that
-    // dynamic_casts from the same underlying object (cheap setup-time cast).
     RHIBuffer::ptr m_adaptiveVertexBuffer;
     RHIBuffer::ptr m_adaptiveIndexBuffer;
     RHIBuffer::ptr m_adaptiveIndirectArgsBuffer; // 2x DrawElementsIndirectCommand: [stereo, mono]
-    RHIInteropBuffer* m_adaptiveVertexInterop = nullptr; // non-owning view; backed by m_adaptiveVertexBuffer
-    RHIInteropBuffer* m_adaptiveIndexInterop = nullptr;
-    RHIInteropBuffer* m_adaptiveIndirectArgsInterop = nullptr;
     DepthMeshAdaptiveScratch m_adaptiveScratch;
 
   private:

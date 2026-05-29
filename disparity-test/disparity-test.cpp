@@ -434,8 +434,8 @@ int main(int argc, char* argv[]) {
   NVMEDIA_CHECK(NvMediaIOFAInit(iofa, &iofaParams, /*maxInputBuffering=*/ 4));
 
   // Create and register sync objects between NvSci and CUDA
-  NvSciCudaInteropSync preSync(NvSciCudaInteropSync::kSyncCudaSignalerToNvSciWaiter, iofa);
-  NvSciCudaInteropSync eofSync(NvSciCudaInteropSync::kSyncNvSciSignalerToCudaWaiter, iofa);
+  NvSciCudaInteropSync preSync(NvSciCudaInteropSync::kSyncCudaSignalerToNvSciWaiter, iofa, /*allowCpuWaiter=*/ false);
+  NvSciCudaInteropSync eofSync(NvSciCudaInteropSync::kSyncNvSciSignalerToCudaWaiter, iofa, /*allowCpuWaiter=*/ false);
 
   NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(iofa, NVMEDIA_PRESYNCOBJ, preSync.m_nvSciSync));
   NVMEDIA_CHECK(NvMediaIOFARegisterNvSciSyncObj(iofa, NVMEDIA_EOFSYNCOBJ, eofSync.m_nvSciSync));

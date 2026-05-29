@@ -221,7 +221,7 @@ bool isZeroUUID(const std::array<uint8_t, VK_UUID_SIZE>& uuid) {
     // Vulkan 1.2 features rolled into the aggregate struct so we can enable
     // shaderOutputViewportIndex, which has no standalone feature struct.
     //   - hostQueryReset lets RHITimerQueryVK skip per-frame vkCmdResetQueryPool.
-    //   - timelineSemaphore backs RHIInteropSync's CUDA↔VK ordering.
+    //   - timelineSemaphore backs RHIVK's CUDA<->VK ordering.
     //   - shaderOutputViewportIndex is required by the stereo shaders that
     //     write gl_ViewportIndex (SPIR-V ShaderViewportIndex capability).
     // The aggregate Vulkan12Features cannot coexist with the individual

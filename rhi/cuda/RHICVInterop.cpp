@@ -10,14 +10,10 @@ void copyGpuMatToSurface(const cv::cuda::GpuMat& gpuMat, RHISurface::ptr surface
 }
 
 void copyGpuMatToSurface(const cv::cuda::GpuMat& gpuMat, RHISurface::ptr surface, CUstream stream) {
+  assert(surface->isInteropSurface());
 
   size_t copyWidth = std::min<size_t>(surface->width(), gpuMat.cols);
   size_t copyHeight = std::min<size_t>(surface->height(), gpuMat.rows);
-
-  CUarray pSurfaceMip0Array;
-  CUDA_CHECK(cuGraphicsResourceSetMapFlags(surface->cuGraphicsResource(), CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD));
-  CUDA_CHECK(cuGraphicsMapResources(1, &surface->cuGraphicsResource(), stream));
-  CUDA_CHECK(cuGraphicsSubResourceGetMappedArray(&pSurfaceMip0Array, surface->cuGraphicsResource(), /*arrayIndex=*/ 0, /*mipLevel=*/ 0));
 
   CUDA_MEMCPY2D copyDescriptor;
   memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
@@ -26,7 +22,7 @@ void copyGpuMatToSurface(const cv::cuda::GpuMat& gpuMat, RHISurface::ptr surface
   copyDescriptor.srcPitch = gpuMat.step;
 
   copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
-  copyDescriptor.dstArray = pSurfaceMip0Array;
+  copyDescriptor.dstArray = (CUarray) surface->cudaArray();
 
   copyDescriptor.WidthInBytes = copyWidth * gpuMat.elemSize();
   copyDescriptor.Height = copyHeight;
@@ -35,8 +31,6 @@ void copyGpuMatToSurface(const cv::cuda::GpuMat& gpuMat, RHISurface::ptr surface
   } else {
     CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
   }
-
-  CUDA_CHECK(cuGraphicsUnmapResources(1, &surface->cuGraphicsResource(), stream));
 }
 
 void copySurfaceToGpuMat(RHISurface::ptr surface, cv::cuda::GpuMat& gpuMat, const cv::cuda::Stream& stream) {
@@ -44,19 +38,15 @@ void copySurfaceToGpuMat(RHISurface::ptr surface, cv::cuda::GpuMat& gpuMat, cons
 }
 
 void copySurfaceToGpuMat(RHISurface::ptr surface, cv::cuda::GpuMat& gpuMat, CUstream stream) {
+  assert(surface->isInteropSurface());
 
   size_t copyWidth = std::min<size_t>(surface->width(), gpuMat.cols);
   size_t copyHeight = std::min<size_t>(surface->height(), gpuMat.rows);
 
-  CUarray pSurfaceMip0Array;
-  CUDA_CHECK(cuGraphicsResourceSetMapFlags(surface->cuGraphicsResource(), CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY));
-  CUDA_CHECK(cuGraphicsMapResources(1, &surface->cuGraphicsResource(), stream));
-  CUDA_CHECK(cuGraphicsSubResourceGetMappedArray(&pSurfaceMip0Array, surface->cuGraphicsResource(), /*arrayIndex=*/ 0, /*mipLevel=*/ 0));
-
   CUDA_MEMCPY2D copyDescriptor;
   memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
   copyDescriptor.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-  copyDescriptor.srcArray = pSurfaceMip0Array;
+  copyDescriptor.srcArray = (CUarray) surface->cudaArray();
 
   copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
   copyDescriptor.dstDevice = (CUdeviceptr) gpuMat.cudaPtr();
@@ -69,9 +59,6 @@ void copySurfaceToGpuMat(RHISurface::ptr surface, cv::cuda::GpuMat& gpuMat, CUst
   } else {
     CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
   }
-
-
-  CUDA_CHECK(cuGraphicsUnmapResources(1, &surface->cuGraphicsResource(), stream));
 }
 
 

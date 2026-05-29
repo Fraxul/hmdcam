@@ -22,7 +22,6 @@
 
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
-#include "rhi/vk/RHIInteropSync.h"
 #include "rhi/cuda/RHICUDA.h"
 
 #include "IArgusCamera.h"
@@ -347,9 +346,6 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  // Shared interop sync object for handoff from CUDA to RHI.
-  RHIInteropSync::ptr interopSync = new RHIInteropSync();
-
   int tempSensorFd = open(tempSensorFilename.c_str(), 0, O_RDONLY);
   if (tempSensorFd < 0) {
     printf("Warning: Couldn't open temperature sensor %s\n", tempSensorFilename.c_str());
@@ -473,7 +469,7 @@ int main(int argc, char* argv[]) {
     printf("Render debug subsystem disabled at compile time.\n");
   }
 
-  cameraSystem = new CameraSystem(argusCamera, interopSync);
+  cameraSystem = new CameraSystem(argusCamera);
   // Load whatever calibration we have (may be nothing)
   if (!calibrationFilename.empty()) {
     printf("Using calibration file \"%s\"\n", calibrationFilename.c_str());
@@ -493,7 +489,7 @@ int main(int argc, char* argv[]) {
 
 
   if (depthMapGenerator) {
-    depthMapGenerator->initWithCameraSystem(cameraSystem, interopSync);
+    depthMapGenerator->initWithCameraSystem(cameraSystem);
     depthMapGenerator->loadSettings();
   }
 
@@ -910,7 +906,7 @@ int main(int argc, char* argv[]) {
       }
 
       // Frame processing should be done. Sync cameraSystem and depthMapGenerator updates to RHI before starting rendering.
-      interopSync->signalCUDAToRHI(RHICUDA::defaultAsyncStream);
+      rhi()->signalCUDAToRHI(RHICUDA::defaultAsyncStream);
 
 
 #ifdef USE_EYETRACKING

@@ -77,9 +77,3 @@ void RHIBufferVK::unmap() {
   rhi()->vk()->device().unmapMemory(m_memory.get());
   m_data = nullptr;
 }
-
-CUgraphicsResource& RHIBufferVK::cuGraphicsResource() const {
-  // Stub: This style of CUDA interop will be removed from the codebase.
-  fprintf(stderr, "RHIBufferVK::cuGraphicsResource: not implemented (no CUDA interop yet)\n");
-  abort();
-}

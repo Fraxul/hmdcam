@@ -344,14 +344,8 @@ void NvEncSession::cudaWorker() {
 
     eglDestroySync(renderBackend->eglDisplay(), surfaceSync);
 
-    // Map the GL surface for CUDA read access
-    CUDA_CHECK(cuGraphicsMapResources(1, &surface->cuGraphicsResource(), 0));
-
-    CUmipmappedArray pReadMip = NULL;
-    CUDA_CHECK(cuGraphicsResourceGetMappedMipmappedArray(&pReadMip, surface->cuGraphicsResource()));
-
-    CUarray pReadArray = NULL;
-    CUDA_CHECK(cuMipmappedArrayGetLevel(&pReadArray, pReadMip, 0));
+    // Get the input interop surface's CUDA array
+    CUarray pReadArray = (CUarray) surface->cudaArray();
 
     // for debugging
     // CUDA_ARRAY_DESCRIPTOR readArrayDescriptor;
@@ -377,8 +371,6 @@ void NvEncSession::cudaWorker() {
     copyDescriptor.WidthInBytes = m_vicInputSurfaces[surfaceIdx]->surfaceList[0].planeParams.width[0] * m_vicInputSurfaces[surfaceIdx]->surfaceList[0].planeParams.bytesPerPix[0];
     copyDescriptor.Height = m_vicInputSurfaces[surfaceIdx]->surfaceList[0].height;
     CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
-
-    cuGraphicsUnmapResources(1, &surface->cuGraphicsResource(), 0);
 
     // Issue transform
     NvBufSurfTransformRect src_rect, dest_rect;

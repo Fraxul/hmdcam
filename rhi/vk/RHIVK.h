@@ -1,6 +1,7 @@
 #pragma once
 #include "rhi/RHI.h"
 #include "rhi/vk/RHIVulkan.h"
+#include <cuda_runtime.h>
 #include <condition_variable>
 #include <deque>
 #include <glm/glm.hpp>
@@ -10,7 +11,6 @@
 class VKFrameSource;
 class RHIWindowRenderTargetVK;
 class RHIRenderPipelineVK;
-class RHIInteropSync;
 
 class RHIVK : public RHI {
 public:
@@ -22,17 +22,6 @@ public:
   // run so the swap image count is known. Allocates the command pool +
   // per-frame ring (one slot per swap image).
   void setFrameSource(VKFrameSource* source);
-
-  // Attach the process-wide RHIInteropSync (one VK timeline semaphore shared
-  // with CUDA via opaque-FD import). Once set, every swapBuffers / flush
-  // submit chains a VkTimelineSemaphoreSubmitInfo onto its VkSubmitInfo:
-  //   wait  = sync->cudaSignaledValue()    (CUDA producers' latest signal)
-  //   signal = sync->allocateVKSignalValue()  (consumed by future signalRHIToCUDA)
-  // Caller is main.cpp, immediately after `new RHIInteropSync()`. Null is
-  // permitted (e.g. desktop/test builds with no CUDA producers); in that
-  // mode the submit doesn't touch the timeline at all.
-  void setInteropSync(RHIInteropSync* sync) { m_interopSync = sync; }
-  RHIInteropSync* interopSync() const { return m_interopSync; }
 
   // Drop cached resources tied to the previous swapchain's VkImages. The
   // frame source must call this after a swapchain recreation (and after
@@ -50,14 +39,12 @@ public:
   virtual RHIBuffer::ptr newBufferWithContents(const void*, size_t, RHIBufferUsageMode) override;
   virtual RHIBuffer::ptr newEmptyBuffer(size_t, RHIBufferUsageMode) override;
   virtual RHIBuffer::ptr newUniformBufferWithContents(const void*, size_t) override;
-  virtual RHIBuffer::ptr newInteropBuffer(size_t, RHIBufferUsageMode, const class RHIInteropSyncDescriptor&) override;
   virtual void loadBufferData(RHIBuffer::ptr, const void*, size_t offset, size_t length) override;
 
   virtual RHISurface::ptr newTexture2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) override;
   virtual RHISurface::ptr newTexture3D(uint32_t width, uint32_t height, uint32_t depth, const RHISurfaceDescriptor&) override;
   virtual RHISurface::ptr newRenderbuffer2D(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) override;
   virtual RHISurface::ptr newHMDSwapTexture(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) override;
-  virtual RHISurface::ptr newInteropSurface(uint32_t width, uint32_t height, const RHISurfaceDescriptor&, const class RHIInteropSyncDescriptor&) override;
   virtual void loadTextureData(RHISurface::ptr texture, RHIVertexElementType sourceDataFormat, const void* sourceData) override;
   virtual void generateTextureMips(RHISurface::ptr texture) override;
   virtual void readbackTexture(RHISurface::ptr, uint8_t layer, RHIVertexElementType dataFormat, void* outData) override;
@@ -123,6 +110,14 @@ public:
   virtual uint32_t maxMultisampleSamples() override;
   virtual bool supportsGeometryShaders() override;
 
+  // CUDA interop support
+
+  virtual bool supportsCUDAInterop() override;
+  virtual void signalCUDAToRHI(CUstream) override;
+  virtual void signalRHIToCUDA(CUstream) override;
+  virtual RHIBuffer::ptr newInteropBuffer(size_t, RHIBufferUsageMode) override;
+  virtual RHISurface::ptr newInteropSurface(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) override;
+
 protected:
   virtual RHIShader::ptr internalCompileShader(const RHIShaderDescriptor&) override;
   virtual RHIRenderPipeline::ptr internalCompileRenderPipeline(RHIShader::ptr, const RHIRenderPipelineDescriptor&) override;
@@ -131,7 +126,6 @@ protected:
   // -------- Phase 3: frame / command buffer state --------
 
   VKFrameSource* m_frameSource = nullptr;
-  RHIInteropSync* m_interopSync = nullptr;
 
   // Command pool with per-buffer reset support; one command buffer + fence
   // per swap image, sized to allow that many frames in flight.
@@ -328,6 +322,23 @@ protected:
   // Helper called by bindRenderPipeline to set every shader_object dynamic
   // state to a sensible default.
   void setDynamicStateDefaults();
+
+  // -------- CUDA-VK interop sync ----------
+
+  RHIVulkan::ExternalSemaphore m_interopTimeline;
+  cudaExternalSemaphore_t m_interopTimelineCU = nullptr;
+
+  // Single monotonic value allocator shared by both producers. Every signal consumes
+  // the next value from here, so no two signals ever target the same timeline
+  // value, and a given wait value can only be reached by its intended producer.
+  uint64_t m_interopTimelineNextValue = 0;
+  // Last value signaled by CUDA (set in signalCUDAToRHI). VK waits on this.
+  uint64_t m_interopTimelineCudaSignaledValue = 0;
+  // Last value signaled by VK (set in allocateVKSignalValue). CUDA (signalRHIToCUDA) waits on this.
+  uint64_t m_interopTimelineVkSignaledValue = 0;
+  // Allocate the next value for a VK signal. Drawn from the single shared counter.
+  uint64_t interopAllocateVKSignalValue() { return (m_interopTimelineVkSignaledValue = ++m_interopTimelineNextValue); }
+
 
   // -------- debug: per-frame render-target dump --------
   //

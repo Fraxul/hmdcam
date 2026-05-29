@@ -20,7 +20,6 @@ public:
 
   virtual void map(RHIBufferMapMode) override;
   virtual void unmap() override;
-  virtual CUgraphicsResource& cuGraphicsResource() const override;
 
   vk::Buffer vkBuffer() const { return m_buffer.get(); }
 

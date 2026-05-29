@@ -8,7 +8,7 @@
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/CudaUtil.h"
 #include "rhi/cuda/RHICUDA.h"
-#include "rhi/vk/RHIInteropSurfaceVK.h"
+#include "rhi/cuda/RHICVInterop.h"
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
 #include <opencv2/core.hpp>
@@ -222,12 +222,8 @@ bool DebugCameraProvider::connect(const char* debugHost) {
     CUDA_CHECK(cuMemHostAlloc(&sd.hostLumaBuffer, m_lumaResourceDescriptor.res.pitch2D.pitchInBytes * m_lumaResourceDescriptor.res.pitch2D.height, /*flags=*/ 0));
     CUDA_CHECK(cuMemHostAlloc(&sd.hostChromaBuffer, m_chromaResourceDescriptor.res.pitch2D.pitchInBytes * m_chromaResourceDescriptor.res.pitch2D.height, /*flags=*/ 0));
 
-    // Allocate as an RHI interop surface so we can copy from CUDA GpuMat
-    // (NPP NV12->RGBA conversion lands in a GpuMat) without round-tripping
-    // through host memory. The VK backend doesn't implement the cudaArray-
-    // via-cuGraphicsResource path that the GL backend used; interop surfaces
-    // export their VkImage as an external-memory FD that CUDA imports.
-    sd.rhiSurfaceRGBA = RHIInteropSurfaceVK::newTexture2D(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8), RHIInteropSyncDescriptor(/*sync=*/ nullptr));
+    // Allocate as an RHI interop surface so we can copy from CUDA GpuMat without round-tripping through host memory.
+    sd.rhiSurfaceRGBA = rhi()->newInteropSurface(streamWidth(), streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
   }
 
   // Ensure gpumats are created
@@ -366,7 +362,7 @@ void DebugCameraProvider::updateSurfaces() {
     // Async D2D copy on the default stream; the global signalCUDAToRHI at
     // the end of the frame extends the timeline past this work, so the
     // following VK render submit's wait covers it.
-    sd.rhiSurfaceRGBA->copyFromGpuMatAsync(sd.gpuMatRGBA, RHICUDA::defaultAsyncStream);
+    RHICUDA::copyGpuMatToSurface(sd.gpuMatRGBA, sd.rhiSurfaceRGBA, RHICUDA::defaultAsyncStream);
   }
 
   uint32_t srcStereoViewIdx = 0;
@@ -459,15 +455,15 @@ void DebugCameraProvider::internalProcessFrame() {
     vd->currentDisparityMat().upload(vd->receivedDisparity);
 
     if (m_populateDebugTextures) {
-      // TODO: These are interop textures for consistency, but they have no sync direction.
+      // TODO: These are interop textures for consistency, but we don't write to them from CUDA.
       // Maybe we should switch from using loadTextureData to doing a cuda memcpy into the CUDA side
       // to follow the data path of the other backends.
 
       if (!vd->m_leftGray)
-        vd->m_leftGray = RHIInteropSurfaceVK::newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
+        vd->m_leftGray = rhi()->newInteropSurface(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
 
       if (!vd->m_rightGray)
-        vd->m_rightGray = RHIInteropSurfaceVK::newTexture2D(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
+        vd->m_rightGray = rhi()->newInteropSurface(algoInputWidth(), algoInputHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
 
       rhi()->loadTextureData(vd->m_leftGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[0].ptr());
       rhi()->loadTextureData(vd->m_rightGray, kVertexElementTypeUByte1N, vd->receivedDisparityInput[1].ptr());

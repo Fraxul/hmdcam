@@ -1,25 +1,12 @@
 #include "rhi/gl/RHIBufferGL.h"
-#include <cuda.h>
-#include <cudaGL.h>
-#include "rhi/cuda/CudaUtil.h"
-
-RHIBufferGL::RHIBufferGL() :
-  m_buffer(0),
-  m_cuGraphicsResource(NULL) {
-  m_size = 0;
-}
 
 RHIBufferGL::RHIBufferGL(GLuint bufferId, size_t size, RHIBufferUsageMode usageMode_) :
-  m_buffer(bufferId),
-  m_cuGraphicsResource(NULL) {
+  m_buffer(bufferId) {
   m_size = size;
   m_usageMode = usageMode_;
 }
 
 RHIBufferGL::~RHIBufferGL() {
-  if (m_cuGraphicsResource)
-    cuGraphicsUnregisterResource(m_cuGraphicsResource);
-
   if (m_buffer)
     glDeleteBuffers(1, &m_buffer);
 }
@@ -73,12 +60,4 @@ void RHIBufferGL::bufferSubData(const void* data, size_t size, size_t offset) {
   GL(glBindBuffer(GL_ARRAY_BUFFER, m_buffer));
   GL(glBufferSubData(GL_ARRAY_BUFFER, offset, size, data));
   m_size = size;
-}
-
-CUgraphicsResource& RHIBufferGL::cuGraphicsResource() const {
-  if (!m_cuGraphicsResource) {
-    CUDA_CHECK(cuGraphicsGLRegisterBuffer(&m_cuGraphicsResource, glId(), CU_GRAPHICS_REGISTER_FLAGS_NONE));
-  }
-
-  return m_cuGraphicsResource;
 }

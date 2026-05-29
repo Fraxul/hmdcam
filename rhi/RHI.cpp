@@ -210,3 +210,24 @@ size_t RHIIndexBufferTypeSize(RHIIndexBufferType indexBufferType) {
       return 4;
   };
 }
+
+bool RHI::supportsCUDAInterop() {
+  return false;
+}
+void RHI::signalCUDAToRHI(CUstream) {
+  assert(false && "RHI::signalCUDAToRHI(): interop support not implemented on this backend.");
+}
+
+void RHI::signalRHIToCUDA(CUstream) {
+  assert(false && "RHI::signalRHIToCUDA(): interop support not implemented on this backend.");
+}
+
+RHIBuffer::ptr RHI::newInteropBuffer(size_t sizeBytes, RHIBufferUsageMode) {
+  assert(false && "RHI::newInteropBuffer(): interop support not implemented on this backend.");
+  return RHIBuffer::ptr();
+}
+
+RHISurface::ptr RHI::newInteropSurface(uint32_t width, uint32_t height, const RHISurfaceDescriptor&) {
+  assert(false && "RHI::newInteropSurface(): interop support not implemented on this backend.");
+  return RHISurface::ptr();
+}

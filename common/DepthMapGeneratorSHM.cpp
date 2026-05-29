@@ -11,7 +11,6 @@
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICVInterop.h"
 #include "rhi/gl/GLCommon.h"
-#include "rhi/RHIInteropSurface.h"
 #include <opencv2/cvconfig.h>
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
@@ -425,20 +424,16 @@ void DepthMapGeneratorSHM::internalProcessFrame() {
       cudaStream_t cudaStream = (cudaStream_t) m_globalStream.cudaPtr();
 
       if (!vd->m_leftGray) {
-        vd->m_leftGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
-        vd->m_leftGrayInterop = dynamic_cast<RHIInteropSurface*>(vd->m_leftGray.get());
-        assert(vd->m_leftGrayInterop);
+        vd->m_leftGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
       }
 
       if (!vd->m_rightGray) {
-        vd->m_rightGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8), RHIInteropSyncDescriptor(m_interopSync));
-        vd->m_rightGrayInterop = dynamic_cast<RHIInteropSurface*>(vd->m_rightGray.get());
-        assert(vd->m_rightGrayInterop);
+        vd->m_rightGray = rhi()->newInteropSurface(internalWidth(), internalHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
       }
 
-      vd->m_leftGrayInterop->copyFromGpuMatAsync(vd->resizedLeft_gpu, cudaStream);
+      RHICUDA::copyGpuMatToSurface(vd->resizedLeft_gpu, vd->m_leftGray, cudaStream);
 
-      vd->m_rightGrayInterop->copyFromGpuMatAsync(vd->resizedRight_gpu, cudaStream);
+      RHICUDA::copyGpuMatToSurface(vd->resizedRight_gpu, vd->m_rightGray, cudaStream);
     }
 
     if (debugDisparityCPUAccessEnabled()) {

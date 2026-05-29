@@ -1,7 +1,6 @@
 #include "rhi/vk/RHIInteropBufferVK.h"
 #include "rhi/RHI.h"
 #include "rhi/cuda/CudaUtil.h"
-#include "rhi/vk/RHIInteropSync.h"
 #include <stdio.h>
 #include <unistd.h>
 
@@ -11,9 +10,9 @@ RHIInteropBufferVK::RHIInteropBufferVK() :
 }
 
 RHIInteropBufferVK::~RHIInteropBufferVK() {
-  if (m_cudaPtr) {
-    cuMemFree(m_cudaPtr);
-    m_cudaPtr = 0;
+  if (m_cudaPointer) {
+    cuMemFree(m_cudaPointer);
+    m_cudaPointer = 0;
   }
   if (m_cudaExtMem) {
     cudaDestroyExternalMemory(m_cudaExtMem);
@@ -22,7 +21,7 @@ RHIInteropBufferVK::~RHIInteropBufferVK() {
   // Base RHIBufferVK destructor releases m_buffer / m_memory (UniqueXxx).
 }
 
-/*static*/ RHIInteropBufferVK* RHIInteropBufferVK::newBuffer(size_t sizeBytes, RHIBufferUsageMode usageMode, const RHIInteropSyncDescriptor& syncDescriptor) {
+/*static*/ RHIInteropBufferVK* RHIInteropBufferVK::newBuffer(size_t sizeBytes, RHIBufferUsageMode usageMode) {
   RHIVulkan* vk = rhi()->vk();
   if (!vk) {
     fprintf(stderr, "RHIInteropBufferVK::newBuffer: rhi()->vk() is null; cannot allocate interop buffer\n");
@@ -32,7 +31,6 @@ RHIInteropBufferVK::~RHIInteropBufferVK() {
   RHIInteropBufferVK* buf = new RHIInteropBufferVK();
   buf->m_size = sizeBytes;
   buf->m_usageMode = usageMode;
-  buf->m_syncDescriptor = syncDescriptor;
 
   // Permissive usage so the buffer can stand in anywhere the VK draw API
   // chooses to bind it. CUDA accesses the underlying memory directly
@@ -73,8 +71,8 @@ RHIInteropBufferVK::~RHIInteropBufferVK() {
   bufDesc.flags = 0;
   void* cudaPtrRaw = nullptr;
   CUDA_CHECK(cudaExternalMemoryGetMappedBuffer(&cudaPtrRaw, buf->m_cudaExtMem, &bufDesc));
-  buf->m_cudaPtr = reinterpret_cast<CUdeviceptr>(cudaPtrRaw);
-  buf->m_cudaSize = sizeBytes;
+  buf->m_cudaPointer = reinterpret_cast<CUdeviceptr>(cudaPtrRaw);
+  buf->m_isInteropBuffer = true;
 
   return buf;
 }

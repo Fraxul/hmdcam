@@ -4,7 +4,8 @@
 #include <stdint.h>
 
 // Forward decl borrowed from <cuda.h>
-typedef struct CUgraphicsResource_st* CUgraphicsResource; /**< CUDA graphics interop resource */
+typedef unsigned long long CUdeviceptr_v2;
+typedef CUdeviceptr_v2 CUdeviceptr; /**< CUDA device pointer */
 
 enum RHIBufferUsageMode {
   kBufferUsageCPUWriteOnly, // Contents written once by CPU
@@ -30,11 +31,17 @@ public:
   size_t size() const { return m_size; }
   RHIBufferUsageMode usageMode() const { return m_usageMode; }
 
-  virtual CUgraphicsResource& cuGraphicsResource() const = 0;
+  bool isInteropBuffer() const { return m_isInteropBuffer; }
+  CUdeviceptr cudaPointer() const {
+    assert(m_isInteropBuffer);
+    return m_cudaPointer;
+  }
 
 protected:
-  RHIBuffer();
-  void* m_data;
-  size_t m_size;
-  RHIBufferUsageMode m_usageMode;
+  RHIBuffer() = default;
+  void* m_data = nullptr;
+  size_t m_size = 0;
+  RHIBufferUsageMode m_usageMode = kBufferUsageGPUPrivate;
+  bool m_isInteropBuffer = false;
+  CUdeviceptr m_cudaPointer = 0;
 };

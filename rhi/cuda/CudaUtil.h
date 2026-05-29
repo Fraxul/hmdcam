@@ -17,6 +17,20 @@
       x = 0;                   \
     }                          \
   } while (0)
+#define CUDA_SAFE_FREE_SURFACE_OBJECT(x) \
+  do {                                   \
+    if (x) {                             \
+      cudaDestroySurfaceObject(x);       \
+      x = 0;                             \
+    }                                    \
+  } while (0)
+#define CUDA_SAFE_FREE_TEXTURE_OBJECT(x) \
+  do {                                   \
+    if (x) {                             \
+      cudaDestroyTextureObject(x);       \
+      x = 0;                             \
+    }                                    \
+  } while (0)
 #define NPP_CHECK(x)                                                                             \
   do {                                                                                           \
     NppStatus _nppStatus = x;                                                                    \

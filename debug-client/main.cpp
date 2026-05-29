@@ -26,7 +26,6 @@
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICUDA.h"
 #include "rhi/imgui/RHIImGuiBackend.h"
-#include "rhi/vk/RHIInteropSync.h"
 #include "rhi/vk/RHIVK.h"
 
 #include <cuda.h>
@@ -230,9 +229,6 @@ int main(int argc, char** argv) {
 
   sceneCamera = new FxCamera();
 
-  // Shared interop sync object for handoff from CUDA to RHI.
-  RHIInteropSync::ptr interopSync = new RHIInteropSync();
-
   RHISurface::ptr disparityScaleSurface;
   RHIRenderTarget::ptr disparityScaleTarget;
   RHIRenderPipeline::ptr disparityScalePipeline = rhi()->compileRenderPipeline("shaders/ndcQuad.vtx.glsl", "shaders/disparityScale.frag.glsl", fullscreenPassVertexLayout, kPrimitiveTopologyTriangleStrip);
@@ -256,7 +252,7 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  cameraSystem = new CameraSystem(cameraProvider, interopSync);
+  cameraSystem = new CameraSystem(cameraProvider);
 
   {
     // Load remote config
@@ -276,7 +272,7 @@ int main(int argc, char** argv) {
   }
 
   depthMapGenerator->setDebugDisparityCPUAccessEnabled(true);
-  depthMapGenerator->initWithCameraSystem(cameraSystem, interopSync);
+  depthMapGenerator->initWithCameraSystem(cameraSystem);
   depthMapGenerator->loadSettings();
   depthMapGenerator->setPopulateDebugTextures(true);
 
@@ -765,7 +761,7 @@ int main(int argc, char** argv) {
     depthMapGenerator->processFrame();
 
     // CUDA-to-RHI handoff after depthMapGenerator finishes
-    interopSync->signalCUDAToRHI(RHICUDA::defaultAsyncStream);
+    rhi()->signalCUDAToRHI(RHICUDA::defaultAsyncStream);
 
     // Rendering
     FxRenderView renderView = sceneCamera->toRenderView(static_cast<float>(io.DisplaySize.x) / static_cast<float>(io.DisplaySize.y));
