@@ -136,6 +136,17 @@ void RHIVK::setFrameSource(VKFrameSource* source) {
       (long long) m_dumpFrameIndex, m_dumpDir.c_str());
   }
 
+  // Frame-completion timeline: a plain (non-exported) timeline semaphore that
+  // every swapBuffers/flush submit signals with an incrementing value. Drives
+  // registerFrameCompletionFence (host-side cross-thread "wait for this frame").
+  {
+    vk::SemaphoreTypeCreateInfo stci{vk::SemaphoreType::eTimeline, /*initialValue=*/ 0};
+    vk::SemaphoreCreateInfo sci{};
+    sci.setPNext(&stci);
+    m_frameCompletionTimeline = device.createSemaphoreUnique(sci);
+    m_frameCompletionValue = 0;
+  }
+
   // Build interop sync
 
   // One exported timeline semaphore shared with CUDA. A single monotonic counter
@@ -1362,6 +1373,19 @@ bool RHIVK::getTimerQueryDisjointState() {
   return false;
 }
 
+RHIFence::ptr RHIVK::registerFrameCompletionFence() {
+  // Make sure a frame CB is open so the registration ties to a real frame that
+  // a subsequent swapBuffers/flush will submit. In practice this is called
+  // mid-frame (after the caller's render passes) so the CB is already open and
+  // this is a no-op.
+  ensureFrameCBOpen();
+  // The next swapBuffers/flush submit signals m_frameCompletionValue + 1 on the
+  // frame-completion timeline (see swapBuffers/flush). Hand the consumer a fence
+  // that host-waits on exactly that value. Multiple registrations in the same
+  // frame share the value -- they all resolve at that frame's submit.
+  return RHIFence::ptr(new RHIFenceVK(m_frameCompletionTimeline.get(), m_frameCompletionValue + 1));
+}
+
 void RHIVK::dispatchCompute(uint32_t, uint32_t, uint32_t) { RHI_VK_NOT_IMPLEMENTED(); }
 void RHIVK::dispatchComputeIndirect(RHIBuffer::ptr) { RHI_VK_NOT_IMPLEMENTED(); }
 
@@ -1399,13 +1423,15 @@ void RHIVK::swapBuffers(RHIRenderTarget::ptr /*target*/) {
   // wait stage on the interop semaphore is eAllCommands — interop surfaces
   // can be sampled in any stage, so we conservatively pessimize until
   // profiling shows it matters.
+  // Signals: renderFinished (binary, present) + interop timeline + frame-
+  // completion timeline. Waits: imageAcquired (binary) + interop timeline.
   std::array<vk::Semaphore, 2> waitSemaphores{m_currentFrame.imageAcquired, vk::Semaphore{}};
   std::array<vk::PipelineStageFlags, 2> waitStages{
     vk::PipelineStageFlagBits::eColorAttachmentOutput,
     vk::PipelineStageFlagBits::eAllCommands};
   std::array<uint64_t, 2> waitValues{0, 0};
-  std::array<vk::Semaphore, 2> signalSemaphores{m_currentFrame.renderFinished, vk::Semaphore{}};
-  std::array<uint64_t, 2> signalValues{0, 0};
+  std::array<vk::Semaphore, 3> signalSemaphores{m_currentFrame.renderFinished, vk::Semaphore{}, vk::Semaphore{}};
+  std::array<uint64_t, 3> signalValues{0, 0, 0};
   uint32_t waitCount = 1;
   uint32_t signalCount = 1;
 
@@ -1418,6 +1444,12 @@ void RHIVK::swapBuffers(RHIRenderTarget::ptr /*target*/) {
     signalValues[signalCount] = interopAllocateVKSignalValue();
     ++signalCount;
   }
+
+  // Signal the frame-completion timeline so any RHIFence registered this frame
+  // resolves on this submit's GPU completion.
+  signalSemaphores[signalCount] = m_frameCompletionTimeline.get();
+  signalValues[signalCount] = ++m_frameCompletionValue;
+  ++signalCount;
   // Timeline submit info: pValues entries are ignored for binary semaphores
   // (imageAcquired / renderFinished), but counts must match the outer
   // VkSubmitInfo's wait / signal counts when the chain is present.
@@ -1476,27 +1508,25 @@ void RHIVK::flush() {
   cb.end();
   // Same interop-timeline plumbing as swapBuffers, minus the per-swap-image
   // imageAcquired/renderFinished pair (flush() is for off-screen frames
-  // with no present).
-  vk::Semaphore interopSem;
+  // with no present). Signals: interop timeline + frame-completion timeline.
+  vk::Semaphore interopSem = m_interopTimeline.semaphore.get();
   vk::PipelineStageFlags interopWaitStage = vk::PipelineStageFlagBits::eAllCommands;
-  uint64_t interopWaitValue = 0;
-  uint64_t interopSignalValue = 0;
+  uint64_t interopWaitValue = m_interopTimelineCudaSignaledValue;
+
+  std::array<vk::Semaphore, 2> signalSemaphores{interopSem, m_frameCompletionTimeline.get()};
+  std::array<uint64_t, 2> signalValues{interopAllocateVKSignalValue(), ++m_frameCompletionValue};
+
   vk::TimelineSemaphoreSubmitInfo timelineSubmit{};
+  timelineSubmit.setWaitSemaphoreValues(interopWaitValue);
+  timelineSubmit.setSignalSemaphoreValues(vk::ArrayProxyNoTemporaries<const uint64_t>(2, signalValues.data()));
+
   vk::SubmitInfo submit;
   submit.setCommandBuffers(cb);
+  submit.setWaitSemaphores(interopSem);
+  submit.setWaitDstStageMask(interopWaitStage);
+  submit.setSignalSemaphores(vk::ArrayProxyNoTemporaries<const vk::Semaphore>(2, signalSemaphores.data()));
+  submit.setPNext(&timelineSubmit);
 
-  // Handle interop sync
-  {
-    interopSem = m_interopTimeline.semaphore.get();
-    interopWaitValue = m_interopTimelineCudaSignaledValue;
-    interopSignalValue = interopAllocateVKSignalValue();
-    submit.setWaitSemaphores(interopSem);
-    submit.setWaitDstStageMask(interopWaitStage);
-    submit.setSignalSemaphores(interopSem);
-    timelineSubmit.setWaitSemaphoreValues(interopWaitValue);
-    timelineSubmit.setSignalSemaphoreValues(interopSignalValue);
-    submit.setPNext(&timelineSubmit);
-  }
   rhi()->vk()->queue().submit(submit, m_currentFrame.frameFence);
 
   processPendingDumps();

@@ -1,5 +1,6 @@
 #pragma once
 #include "rhi/RHI.h"
+#include "rhi/vk/RHIFenceVK.h"
 #include "rhi/vk/RHIVulkan.h"
 #include <cuda_runtime.h>
 #include <condition_variable>
@@ -97,6 +98,8 @@ public:
   virtual uint64_t getQueryResult(RHITimerQuery::ptr) override;
   virtual uint64_t getTimestampImmediate() override;
   virtual bool getTimerQueryDisjointState() override;
+
+  virtual RHIFence::ptr registerFrameCompletionFence() override;
 
   virtual void dispatchCompute(uint32_t threadgroupCountX, uint32_t threadgroupCountY, uint32_t threadgroupCountZ) override;
   virtual void dispatchComputeIndirect(RHIBuffer::ptr) override;
@@ -338,6 +341,23 @@ protected:
   uint64_t m_interopTimelineVkSignaledValue = 0;
   // Allocate the next value for a VK signal. Drawn from the single shared counter.
   uint64_t interopAllocateVKSignalValue() { return (m_interopTimelineVkSignaledValue = ++m_interopTimelineNextValue); }
+
+  // -------- Frame-completion timeline (host-waitable, internal) ----------
+
+  // A non-exported timeline semaphore signaled at every swapBuffers/flush
+  // submit with a monotonically increasing value. registerFrameCompletionFence()
+  // hands out RHIFenceVK objects that host-wait on a target value, letting
+  // another thread (e.g. the NvEnc submit worker) block until a frame's GPU
+  // work completes. Because the semaphore is owned here for the device's
+  // lifetime, a consumer that times out and drops its RHIFence can never
+  // destroy a sync object a queue submission still references -- unlike a
+  // per-frame VkFence. Created in setFrameSource.
+  vk::UniqueSemaphore m_frameCompletionTimeline;
+  // Last value allocated for the frame-completion timeline. Each swapBuffers/
+  // flush submit signals ++m_frameCompletionValue; registerFrameCompletionFence
+  // targets m_frameCompletionValue + 1 (the value the next submit will signal).
+  // Touched only on the render thread.
+  uint64_t m_frameCompletionValue = 0;
 
 
   // -------- debug: per-frame render-target dump --------

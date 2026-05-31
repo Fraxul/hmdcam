@@ -1,20 +1,15 @@
 #include "NvEncSession.h"
-#include "Render.h"
-#include "RenderBackend.h"
+#include "hmdcam/tegra/nvenc/NvEncSurfaceVK.h"
 #include "rhi/RHI.h"
-#include "rhi/gl/RHISurfaceGL.h"
-#include "rhi/cuda/RHICUDA.h"
+#include "rhi/RHISurface.h"
 #include <cassert>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <cudaEGL.h>
-#include <cudaGL.h>
 #include <linux/videodev2.h>
 #include <linux/v4l2-controls.h>
 #include <libv4l2.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/time.h>
 
 #include "nvbufsurface.h"
 #include "nvbufsurftransform.h"
@@ -60,67 +55,17 @@ NvEncSession::NvEncSession(uint32_t _width, uint32_t _height) :
   pthread_mutex_init(&m_gpuSubmissionQueueLock, NULL);
   pthread_cond_init(&m_gpuSubmissionQueueCond, NULL);
 
-  pthread_mutex_init(&m_cudaWorkerActiveLock, NULL);
+  pthread_mutex_init(&m_submitWorkerActiveLock, NULL);
 
-  // Allocate surface pool
-  NvBufSurfaceAllocateParams vicInputSurfaceParams;
-  memset(&vicInputSurfaceParams, 0, sizeof(vicInputSurfaceParams));
-  vicInputSurfaceParams.params.width = m_width;
-  vicInputSurfaceParams.params.height = m_height;
-  vicInputSurfaceParams.params.layout = NVBUF_LAYOUT_PITCH;
-  vicInputSurfaceParams.params.colorFormat = NVBUF_COLOR_FORMAT_RGBA;
-  vicInputSurfaceParams.params.memType = NVBUF_MEM_SURFACE_ARRAY;
-  vicInputSurfaceParams.memtag = NvBufSurfaceTag_VIDEO_CONVERT;
-
-  m_vicInputSurfaces.resize(kInputBufferCount);
-  for (size_t i = 0; i < kInputBufferCount; ++i) {
-#if L4T_RELEASE < 34
-    // use old API
-    CHECK_ZERO(NvBufSurfaceCreate(&m_vicInputSurfaces[i], 1, &vicInputSurfaceParams.params));
-#else
-    CHECK_ZERO(NvBufSurfaceAllocate(&m_vicInputSurfaces[i], 1, &vicInputSurfaceParams));
-#endif
-    m_vicInputSurfaces[i]->numFilled = 1;
-
-    CHECK_ZERO(NvBufSurfaceMapEglImage(m_vicInputSurfaces[i], 0));
-  }
-
-  // Setup matching rendertarget pool:
-  // Create the images in GL, then use EGL to get the backing dmabufs and convert those into NvBufSurfaces.
-  // We should then be able to pass those NvBufSurfaces directly to the VIC
-  m_rhiSurfaces.clear();
-  m_rhiSurfaceEGLImages.clear();
+  // Allocate the rotating render-target pool. Each NvEncSurfaceVK owns an RGBA
+  // NvBufSurface (the VIC input) imported into Vulkan as a color attachment, so
+  // the render thread can draw directly into the surface the VIC will later
+  // read -- no separate GL texture pool and no CUDA copy.
+  m_surfaces.clear();
   m_currentSurfaceIndex = 0;
-
-  EGLContext eglThreadCtx = eglGetCurrentContext();
-  assert(eglThreadCtx != EGL_NO_CONTEXT);
-
+  m_surfaces.reserve(kInputBufferCount);
   for (size_t i = 0; i < kInputBufferCount; ++i) {
-    RHISurface::ptr srf = rhi()->newTexture2D(m_width, m_height, RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
-    m_rhiSurfaces.push_back(srf);
-#if 0
-    // clang-format off
-    EGLAttrib attrs[] = {
-      EGL_GL_TEXTURE_LEVEL, 0,
-      EGL_NONE
-    };
-    // clang-format on
-
-    EGLImage img;
-    CHECK_NOT_NULL(img = eglCreateImage(renderBackend->eglDisplay(), eglThreadCtx, EGL_GL_TEXTURE_2D, (EGLClientBuffer) ((/*eliminate size conversion warning*/ intptr_t) static_cast<RHISurfaceGL*>(srf.get())->glId()), attrs));
-    m_rhiSurfaceEGLImages.push_back(img);
-
-    surfaceDmaBufInfo info;
-    CHECK_TRUE(eglExportDMABUFImageQueryMESA(renderBackend->eglDisplay(), img, &info.fourcc, &info.num_planes, &info.modifiers));
-
-    assert(info.num_planes <= NVBUF_MAX_PLANES);
-    CHECK_TRUE(eglExportDMABUFImageMESA(renderBackend->eglDisplay(), img, info.plane_fds, info.plane_strides, info.plane_offsets));
-
-    assert(info.num_planes == 1); // only support single RGB plane
-    // We'll populate the NvBufSurface pointer later.
-
-    m_rhiSurfaceDmaBufs.push_back(info);
-#endif
+    m_surfaces.push_back(NvEncSurfaceVK::create(m_width, m_height));
   }
 
   // Create output plane DMABUFs
@@ -136,12 +81,7 @@ NvEncSession::NvEncSession(uint32_t _width, uint32_t _height) :
 
     m_encOutputPlaneSurfaces.resize(kInputBufferCount);
     for (uint32_t i = 0; i < kInputBufferCount; i++) {
-#if L4T_RELEASE < 34
-      // use old API
-      CHECK_ZERO(NvBufSurfaceCreate(&m_encOutputPlaneSurfaces[i], 1, &encInputSurfaceAllocParams.params));
-#else
       CHECK_ZERO(NvBufSurfaceAllocate(&m_encOutputPlaneSurfaces[i], 1, &encInputSurfaceAllocParams));
-#endif
       m_encOutputPlaneSurfaces[i]->numFilled = 1;
     }
   }
@@ -149,14 +89,14 @@ NvEncSession::NvEncSession(uint32_t _width, uint32_t _height) :
 
 NvEncSession::~NvEncSession() {
 
-  if (m_cudaWorkerThreadRunning) {
+  if (m_submitWorkerThreadRunning) {
     pthread_mutex_lock(&m_gpuSubmissionQueueLock);
-    m_gpuSubmissionQueue.push(std::make_pair(-1, EGL_NO_SYNC));
+    m_gpuSubmissionQueue.push(std::make_pair(static_cast<ssize_t>(-1), RHIFence::ptr()));
     pthread_cond_broadcast(&m_gpuSubmissionQueueCond);
     pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
-    pthread_join(m_cudaWorkerThread, NULL);
-    printf("NvEncSession: CUDA worker stopped\n");
-    m_cudaWorkerThreadRunning = false;
+    pthread_join(m_submitWorkerThread, NULL);
+    printf("NvEncSession: submit worker stopped\n");
+    m_submitWorkerThreadRunning = false;
   }
 
   // Make sure that the encoder has been completely stopped before deleting anything
@@ -167,34 +107,19 @@ NvEncSession::~NvEncSession() {
   pthread_mutex_destroy(&m_stateLock);
   pthread_mutex_destroy(&m_callbackLock);
 
-  pthread_mutex_destroy(&m_cudaWorkerActiveLock);
+  pthread_mutex_destroy(&m_submitWorkerActiveLock);
 
   pthread_mutex_destroy(&m_gpuSubmissionQueueLock);
   pthread_cond_destroy(&m_gpuSubmissionQueueCond);
 
-  for (size_t i = 0; i < m_rhiSurfaceDmaBufs.size(); ++i) {
-    for (size_t planeIdx = 0; planeIdx < m_rhiSurfaceDmaBufs[i].num_planes; ++i) {
-      close(m_rhiSurfaceDmaBufs[i].plane_fds[planeIdx]);
-    }
-  }
-  m_rhiSurfaceDmaBufs.clear();
-
-  for (size_t i = 0; i < m_rhiSurfaceEGLImages.size(); ++i) {
-    eglDestroyImage(renderBackend->eglDisplay(), m_rhiSurfaceEGLImages[i]);
-  }
-  m_rhiSurfaceEGLImages.clear();
-  m_rhiSurfaces.clear();
+  // Releasing the NvEncSurfaceVK pool frees both the VK imports and the
+  // underlying RGBA NvBufSurfaces.
+  m_surfaces.clear();
 
   for (size_t i = 0; i < m_encOutputPlaneSurfaces.size(); ++i) {
     NvBufSurfaceDestroy(m_encOutputPlaneSurfaces[i]);
   }
   m_encOutputPlaneSurfaces.clear();
-
-  for (size_t i = 0; i < m_vicInputSurfaces.size(); ++i) {
-    NvBufSurfaceUnMapEglImage(m_vicInputSurfaces[i], 0);
-    NvBufSurfaceDestroy(m_vicInputSurfaces[i]);
-  }
-  m_vicInputSurfaces.clear();
 }
 
 size_t NvEncSession::registerEncodedFrameDeliveryCallback(const std::function<void(const char*, size_t, struct timeval&)>& cb) {
@@ -214,12 +139,14 @@ void NvEncSession::unregisterEncodedFrameDeliveryCallback(size_t cbId) {
 }
 
 RHISurface::ptr NvEncSession::acquireSurface() {
+  // Prevents stalling the main render thread during encoder startup, when m_stateLock may be held for a long time.
   if (pthread_mutex_trylock(&m_stateLock) != 0)
     return RHISurface::ptr();
 
   RHISurface::ptr res;
-  if (!m_rhiSurfaces.empty())
-    res = m_rhiSurfaces[m_currentSurfaceIndex];
+  // Only return a surface if the encoder is running.
+  if (m_startCount && !m_surfaces.empty())
+    res = m_surfaces[m_currentSurfaceIndex];
 
   pthread_mutex_unlock(&m_stateLock);
   return res;
@@ -229,23 +156,29 @@ bool NvEncSession::submitSurface(RHISurface::ptr surface, bool blockIfQueueFull)
   if (pthread_mutex_trylock(&m_stateLock) != 0)
     return false;
 
-  if (m_inShutdown) {
+  // If the encoder is not running or is in shutdown, just ignore the submission.
+  if (m_startCount == 0 || m_inShutdown) {
     pthread_mutex_unlock(&m_stateLock);
     return false;
   }
 
-  assert(m_rhiSurfaces[m_currentSurfaceIndex] == surface);
+  assert(m_surfaces[m_currentSurfaceIndex].get() == surface.get());
 
   bool res = true;
 
   pthread_mutex_lock(&m_gpuSubmissionQueueLock);
-  if (m_gpuSubmissionQueue.size() >= m_rhiSurfaces.size()) {
+  if (m_gpuSubmissionQueue.size() >= m_surfaces.size()) {
     printf("NvEncSession::submitSurface: queue is full\n");
     res = false; // queue is full
   } else {
-    m_gpuSubmissionQueue.push(std::make_pair(m_currentSurfaceIndex, eglCreateSync(renderBackend->eglDisplay(), EGL_SYNC_FENCE, NULL)));
+    // Register a fence that signals when this frame's GPU work (including the
+    // render pass that just filled this surface) completes. The worker waits
+    // on it before handing the surface to the VIC. Called on the render thread,
+    // which owns the RHI frame state. Replaces the old EGLSync-from-GL path.
+    RHIFence::ptr fence = rhi()->registerFrameCompletionFence();
+    m_gpuSubmissionQueue.push(std::make_pair(static_cast<ssize_t>(m_currentSurfaceIndex), fence));
     m_currentSurfaceIndex++;
-    if (m_currentSurfaceIndex >= m_rhiSurfaces.size())
+    if (m_currentSurfaceIndex >= m_surfaces.size())
       m_currentSurfaceIndex = 0;
   }
   pthread_cond_broadcast(&m_gpuSubmissionQueueCond);
@@ -255,40 +188,23 @@ bool NvEncSession::submitSurface(RHISurface::ptr surface, bool blockIfQueueFull)
   return res;
 }
 
-void NvEncSession::cudaWorker() {
-  prctl(PR_SET_NAME, "NvEncSessn-CUDA", 0, 0, 0);
+void NvEncSession::submitWorker() {
+  prctl(PR_SET_NAME, "NvEncSessn-submit", 0, 0, 0);
 
-  // Setup an EGL share context
-  // clang-format off
-  EGLint ctxAttrs[] = {
-    EGL_CONTEXT_CLIENT_VERSION, 3,
-    EGL_NONE
-  };
-  // clang-format on
+  // Orientation of the rendered RGBA surface relative to the encoder. The
+  // GL-era path rendered with GL's bottom-left origin and flipped Y in the VIC
+  // to hand the encoder a top-left-origin frame. The VK RHI renders with a
+  // top-left-origin viewport (RHIVK::setViewport uses a positive-height
+  // viewport, not the negative-height flip trick), so the surface is already
+  // upright and no VIC flip is needed. If the on-device stream comes out
+  // vertically mirrored, flip this to true.
+  constexpr bool kFlipYForEncoder = false;
 
-  EGLContext eglCtx = eglCreateContext(renderBackend->eglDisplay(), renderBackend->eglConfig(), renderBackend->eglContext(), ctxAttrs);
-  if (!eglCtx) {
-    die("rtspServerThreadEntryPoint: unable to create EGL share context\n");
-  }
-
-  bool res = eglMakeCurrent(renderBackend->eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, eglCtx);
-  if (!res) {
-    die("rtspServerThreadEntryPoint: eglMakeCurrent() failed\n");
-  }
-
-  // use the default global CUDA context
-  cuCtxSetCurrent(RHICUDA::cudaContext);
-
+  // VIC session for the RGBA -> YUV420 conversion. Unlike the old path this
+  // worker needs no EGL context and no CUDA context: it only waits on a
+  // VkFence (host-side) and drives the VIC + V4L2.
   NvBufSurfTransformConfigParams config_params = {NvBufSurfTransformCompute_VIC, 0, NULL};
   CHECK_ZERO(NvBufSurfTransformSetSessionParams(&config_params));
-
-  // Register EGL images for VIC interop
-  std::vector<CUgraphicsResource> vicInputSurfaceResources;
-  for (size_t i = 0; i < m_vicInputSurfaces.size(); ++i) {
-    CUgraphicsResource pWriteResource = NULL;
-    CUDA_CHECK(cuGraphicsEGLRegisterImage(&pWriteResource, m_vicInputSurfaces[i]->surfaceList[0].mappedAddr.eglImage, CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD));
-    vicInputSurfaceResources.push_back(pWriteResource);
-  }
 
   while (true) {
     // Wait for next surface index in gpu submission queue
@@ -297,17 +213,16 @@ void NvEncSession::cudaWorker() {
       pthread_cond_wait(&m_gpuSubmissionQueueCond, &m_gpuSubmissionQueueLock);
     }
     ssize_t surfaceIdx = m_gpuSubmissionQueue.front().first;
-    EGLSyncKHR surfaceSync = m_gpuSubmissionQueue.front().second;
+    RHIFence::ptr surfaceFence = m_gpuSubmissionQueue.front().second;
+    size_t submissionQueueSize = m_gpuSubmissionQueue.size();
     m_gpuSubmissionQueue.pop();
     pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
 
     if (surfaceIdx < 0) {
-      fprintf(stderr, "NvEncSession::cudaWorker(): thread stop requested\n");
+      fprintf(stderr, "NvEncSession::submitWorker(): thread stop requested\n");
       break;
     }
-    pthread_mutex_lock(&m_cudaWorkerActiveLock);
-
-    RHISurface::ptr surface = m_rhiSurfaces[surfaceIdx];
+    pthread_mutex_lock(&m_submitWorkerActiveLock);
 
     NvBuffer* encoderInputBuffer = NULL;
 
@@ -331,48 +246,21 @@ void NvEncSession::cudaWorker() {
       m_encoderOutputPlaneBufferQueue.pop();
     }
 
-    // Access VIC input surface (will be the target for this copy)
-    CUeglFrame eglFrame;
-    CUDA_CHECK(cuGraphicsResourceGetMappedEglFrame(&eglFrame, vicInputSurfaceResources[surfaceIdx], 0, 0));
-
-    // Sync with EGL prior to issuing copy
-    CUevent hEvent;
-    if (CUDA_CHECK_NONFATAL(cuEventCreateFromEGLSync(&hEvent, surfaceSync, CU_EVENT_BLOCKING_SYNC))) { // CU_EVENT_DEFAULT);
-      CUDA_CHECK_NONFATAL(cuEventSynchronize(hEvent));
-      cuEventDestroy(hEvent);
+    // Wait for the render thread's GPU work that filled this surface to finish.
+    // The fence signals on frame-completion (see RHIVK::registerFrameCompletionFence).
+    // A 1s timeout guards against a frame that never submitted (e.g. a stall on
+    // shutdown); on timeout we skip the conversion and recycle the encoder
+    // buffer rather than encode undefined contents.
+    if (surfaceFence && !surfaceFence->wait(1'000'000'000ull /* 1s */)) {
+      fprintf(stderr, "NvEncSession::submitWorker(): render fence wait timed out; dropping frame. submissionQueueSize=%zu\n", submissionQueueSize);
+      m_encoderOutputPlaneBufferQueue.push(encoderInputBuffer);
+      pthread_mutex_unlock(&m_submitWorkerActiveLock);
+      continue;
     }
 
-    eglDestroySync(renderBackend->eglDisplay(), surfaceSync);
-
-    // Get the input interop surface's CUDA array
-    CUarray pReadArray = (CUarray) surface->cudaArray();
-
-    // for debugging
-    // CUDA_ARRAY_DESCRIPTOR readArrayDescriptor;
-    // CUDA_CHECK(cuArrayGetDescriptor(&readArrayDescriptor, pReadArray));
-
-    CUDA_MEMCPY2D copyDescriptor;
-    memset(&copyDescriptor, 0, sizeof(CUDA_MEMCPY2D));
-    copyDescriptor.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-    copyDescriptor.srcArray = pReadArray;
-
-#if 0
-    // this might work for CU_EGL_FRAME_TYPE_ARRAY? untested.
-    copyDescriptor.dstMemoryType = CU_MEMORYTYPE_ARRAY;
-    copyDescriptor.dstArray = eglFrame.frame.pArray[0];
-#else
-    // CU_EGL_FRAME_TYPE_PITCH destination
-    assert(eglFrame.frameType == CU_EGL_FRAME_TYPE_PITCH);
-    copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    copyDescriptor.dstDevice = (CUdeviceptr) eglFrame.frame.pPitch[0];
-    copyDescriptor.dstPitch = eglFrame.pitch;
-#endif
-
-    copyDescriptor.WidthInBytes = m_vicInputSurfaces[surfaceIdx]->surfaceList[0].planeParams.width[0] * m_vicInputSurfaces[surfaceIdx]->surfaceList[0].planeParams.bytesPerPix[0];
-    copyDescriptor.Height = m_vicInputSurfaces[surfaceIdx]->surfaceList[0].height;
-    CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
-
-    // Issue transform
+    // VIC: convert the rendered RGBA surface directly into the YUV420 encoder
+    // input plane. The RGBA source is the same NvBufSurface the render thread
+    // drew into -- no intervening copy.
     NvBufSurfTransformRect src_rect, dest_rect;
     src_rect.top = 0;
     src_rect.left = 0;
@@ -386,14 +274,18 @@ void NvEncSession::cudaWorker() {
     NvBufSurfTransformParams xfParams;
     memset(&xfParams, 0, sizeof(xfParams));
 
-    xfParams.transform_flag = NVBUFSURF_TRANSFORM_FILTER | NVBUFSURF_TRANSFORM_FLIP;
-    xfParams.transform_flip = NvBufSurfTransform_FlipY;
+    xfParams.transform_flag = NVBUFSURF_TRANSFORM_FILTER;
+    if (kFlipYForEncoder) {
+      xfParams.transform_flag |= NVBUFSURF_TRANSFORM_FLIP;
+      xfParams.transform_flip = NvBufSurfTransform_FlipY;
+    }
     xfParams.transform_filter = NvBufSurfTransformInter_Algo3;
     xfParams.src_rect = &src_rect;
     xfParams.dst_rect = &dest_rect;
 
+    NvBufSurface* srcSurf = m_surfaces[surfaceIdx]->nvBufSurface();
     NvBufSurface* encoderInputSrf = m_encOutputPlaneSurfaces[encoderInputBuffer->index];
-    NvBufSurfTransform_Error xfErr = NvBufSurfTransform(/*src=*/ m_vicInputSurfaces[surfaceIdx], /*dst=*/ encoderInputSrf, &xfParams);
+    NvBufSurfTransform_Error xfErr = NvBufSurfTransform(/*src=*/ srcSurf, /*dst=*/ encoderInputSrf, &xfParams);
     if (xfErr != NvBufSurfTransformError_Success) {
       switch (xfErr) {
         case NvBufSurfTransformError_ROI_Error: die("NvBufSurfTransformError_ROI_Error");
@@ -425,14 +317,8 @@ void NvEncSession::cudaWorker() {
     int ret = m_enc->output_plane.qBuffer(v4l2_buf, encoderInputBuffer);
     if (ret < 0)
       die("Error while queueing buffer at encoder output plane");
-    pthread_mutex_unlock(&m_cudaWorkerActiveLock);
+    pthread_mutex_unlock(&m_submitWorkerActiveLock);
   }
-
-  for (size_t i = 0; i < vicInputSurfaceResources.size(); ++i) {
-    cuGraphicsUnregisterResource(vicInputSurfaceResources[i]);
-  }
-
-  eglDestroyContext(renderBackend->eglDisplay(), eglCtx);
 }
 
 void NvEncSession::start() {
@@ -546,13 +432,13 @@ void NvEncSession::start() {
     if (ret < 0) die("Error while queueing buffer at capture plane");
   }
 
-  // Start the CUDA worker thread
+  // Start the submit worker thread
   while (!m_gpuSubmissionQueue.empty())
     m_gpuSubmissionQueue.pop();
 
-  if (!m_cudaWorkerThreadRunning) {
-    pthread_create(&m_cudaWorkerThread, NULL, cudaWorker_thunk, this);
-    m_cudaWorkerThreadRunning = true;
+  if (!m_submitWorkerThreadRunning) {
+    pthread_create(&m_submitWorkerThread, NULL, submitWorker_thunk, this);
+    m_submitWorkerThreadRunning = true;
   }
 
   printf("NvEncSession: started.\n");
@@ -573,13 +459,13 @@ void NvEncSession::stop() {
 
   m_inShutdown = true;
 
-  // Ensure the CUDA worker thread has drained its work queue
+  // Ensure the submit worker thread has drained its work queue
   pthread_mutex_lock(&m_gpuSubmissionQueueLock);
-  pthread_mutex_lock(&m_cudaWorkerActiveLock); // Wait for the CUDA worker to finish and return to servicing the submission queue
+  pthread_mutex_lock(&m_submitWorkerActiveLock); // Wait for the submit worker to finish and return to servicing the submission queue
   while (!m_gpuSubmissionQueue.empty()) {
     m_gpuSubmissionQueue.pop();
   }
-  pthread_mutex_unlock(&m_cudaWorkerActiveLock);
+  pthread_mutex_unlock(&m_submitWorkerActiveLock);
   pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
 
   // Wait till capture plane DQ Thread finishes
@@ -671,7 +557,7 @@ bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer* v4l2_bu
   return reinterpret_cast<NvEncSession*>(arg)->encoder_capture_plane_dq_callback(v4l2_buf, buffer, shared_buffer);
 }
 
-/*static*/ void* NvEncSession::cudaWorker_thunk(void* arg) {
-  reinterpret_cast<NvEncSession*>(arg)->cudaWorker();
+/*static*/ void* NvEncSession::submitWorker_thunk(void* arg) {
+  reinterpret_cast<NvEncSession*>(arg)->submitWorker();
   return NULL;
 }

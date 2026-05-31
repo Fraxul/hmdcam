@@ -231,3 +231,10 @@ RHISurface::ptr RHI::newInteropSurface(uint32_t width, uint32_t height, const RH
   assert(false && "RHI::newInteropSurface(): interop support not implemented on this backend.");
   return RHISurface::ptr();
 }
+
+RHIFence::ptr RHI::registerFrameCompletionFence() {
+  // Optional capability: backends without frame-completion fence support
+  // (currently the GL backend) return null. Callers that require a fence must
+  // check the result.
+  return RHIFence::ptr();
+}

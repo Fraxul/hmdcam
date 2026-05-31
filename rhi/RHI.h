@@ -3,6 +3,7 @@
 #include "rhi/RHIBuffer.h"
 #include "rhi/RHIComputePipeline.h"
 #include "rhi/RHIDepthStencilState.h"
+#include "rhi/RHIFence.h"
 #include "rhi/RHIQuery.h"
 #include "rhi/RHIRect.h"
 #include "rhi/RHIRenderPipeline.h"
@@ -180,6 +181,15 @@ public:
   virtual uint64_t getQueryResult(RHITimerQuery::ptr) = 0;
   virtual uint64_t getTimestampImmediate() = 0;
   virtual bool getTimerQueryDisjointState() = 0;
+
+  // Register a fence that becomes signaled once the GPU work recorded so far
+  // this frame has completed. On the VK backend the signal is enqueued at the
+  // next swapBuffers()/flush() submit -- render passes are batched into a
+  // single per-frame submit, so the fence resolves at end-of-frame GPU
+  // completion rather than at the end of an individual render pass. Intended
+  // for cross-thread handoff of a render target to another engine (see
+  // RHIFence). Returns null on backends without fence support.
+  virtual RHIFence::ptr registerFrameCompletionFence();
 
   // compute dispatch functions for compute pass
   virtual void dispatchCompute(uint32_t threadgroupCountX, uint32_t threadgroupCountY = 1, uint32_t threadgroupCountZ = 1) = 0;

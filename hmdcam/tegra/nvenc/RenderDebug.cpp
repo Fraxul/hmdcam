@@ -1,12 +1,7 @@
 #include "Render.h"
-#include "RenderBackend.h"
 #include "common/Timing.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
-#include "rhi/gl/GLCommon.h"
-#include "rhi/cuda/RHICUDA.h"
-
-#include <cuda.h>
 
 #include "NvEncSession.h"
 #include "liveMedia.hh"
@@ -32,25 +27,11 @@ uint64_t rtspRenderIntervalNs = 33333333; // 30fps
 void* rtspServerThreadEntryPoint(void* arg) {
   pthread_setname_np(pthread_self(), "RTSP-Server");
 
-  // Initialize EGL share context and CUDA
-  // clang-format off
-  EGLint ctxAttrs[] = {
-    EGL_CONTEXT_CLIENT_VERSION, 3,
-    EGL_NONE
-  };
-  // clang-format on
-
-  EGLContext eglCtx = eglCreateContext(renderBackend->eglDisplay(), renderBackend->eglConfig(), renderBackend->eglContext(), ctxAttrs);
-  if (!eglCtx) {
-    die("rtspServerThreadEntryPoint: unable to create EGL share context\n");
-  }
-
-  bool res = eglMakeCurrent(renderBackend->eglDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, eglCtx);
-  if (!res) {
-    die("rtspServerThreadEntryPoint: eglMakeCurrent() failed\n");
-  }
-
-  cuCtxSetCurrent(RHICUDA::cudaContext);
+  // This thread only runs the live555 event loop and pulls encoded NAL units
+  // from NvEncSession's delivery callbacks (CPU buffers). The GPU/VIC work
+  // happens on NvEncSession's own submit worker, so no EGL or CUDA context is
+  // needed here anymore (the GL-era path set one up for the now-removed
+  // CUDA copy).
 
   // Set up the RTSP server
   rtspScheduler = BasicTaskScheduler::createNew();
@@ -86,7 +67,6 @@ void* rtspServerThreadEntryPoint(void* arg) {
   rtspEnv->taskScheduler().doEventLoop();
 
   // Thread shutdown if the event loop returns (which it shouldn't)
-  eglDestroyContext(renderBackend->eglDisplay(), eglCtx);
   return NULL;
 }
 
@@ -102,9 +82,10 @@ void RenderInitDebugSurface(uint32_t width, uint32_t height) {
 }
 
 bool RenderDebugSubsystemEnabled() {
-  // The VK RHI backend gates RenderInitDebugSurface (NvEncSession needs an
-  // EGL context — see main.cpp). Without nvencSession the subsystem can't
-  // do anything, so report disabled so per-frame paths skip the work.
+  // True once RenderInitDebugSurface has created the NvEncSession. main.cpp
+  // only calls that on the VK RHI backend (NvEncSession renders into a
+  // VK-imported NvBufSurface). Per-frame paths use this to skip the work when
+  // the subsystem isn't up.
   return nvencSession != nullptr;
 }
 

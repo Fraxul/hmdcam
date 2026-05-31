@@ -440,11 +440,14 @@ int main(int argc, char* argv[]) {
 
 
   std::vector<RHIRect> debugSurfaceCameraRects;
-  // Render debug subsystem uses NvEncSession which needs an EGL context.
-  // Skip when running on the VK RHI backend (Phase 4 transitional — Phase 7
-  // will rework NvEnc to accept VK image input).
+  // The render debug subsystem (NvEncSession) renders directly into a
+  // VK-imported NvBufSurface and registers RHI fences for the VIC handoff, so
+  // it requires the Vulkan RHI backend. RenderInitDebugSurface is a weak no-op
+  // stub on builds without the real (Tegra) implementation, so calling it off
+  // the VK backend on a non-Tegra build is harmless (nvencSession stays null
+  // and RenderDebugSubsystemEnabled() reports disabled).
   const bool vkRHIBackend = renderBackend && renderBackend->eglContext() == EGL_NO_CONTEXT;
-  if (RenderDebugSubsystemEnabled() && !vkRHIBackend) {
+  if (vkRHIBackend) {
     // Size and allocate debug surface area based on camera count
     unsigned int debugColumns = 1, debugRows = 1;
     if (argusCamera->streamCount() > 1) {
@@ -463,10 +466,8 @@ int main(int argc, char* argv[]) {
       debugSurfaceCameraRects.push_back(r);
     }
     RenderInitDebugSurface(dsW, dsH);
-  } else if (vkRHIBackend) {
-    printf("Render debug subsystem disabled: NvEncSession needs an EGL context, unavailable on the VK RHI backend.\n");
   } else {
-    printf("Render debug subsystem disabled at compile time.\n");
+    printf("Render debug subsystem disabled: requires the Vulkan RHI backend.\n");
   }
 
   cameraSystem = new CameraSystem(argusCamera);

@@ -2,17 +2,33 @@
 #include <functional>
 #include <map>
 #include <queue>
+#include <vector>
 #include <pthread.h>
 #include <stdint.h>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 #include "rhi/RHISurface.h"
-#include <epoxy/egl.h>
+#include "rhi/RHIFence.h"
 #include "nvbufsurface.h"
 
 class NvBuffer;
-class NvVideoConverter;
 class NvVideoEncoder;
 struct v4l2_buffer;
+// Forward-declared to keep vulkan-hpp out of the RTSP/live555 translation units
+// that include this header; NvEncSession.cpp includes the full definition.
+class NvEncSurfaceVK;
 
+// NvEncSession: drives the Tegra H.264 encoder for the remote-debug RTSP
+// stream. The render thread acquires a surface, draws into it via the RHI, and
+// submits it; a worker thread converts and feeds it to the encoder.
+//
+// Post-Vulkan-migration data path (no CUDA / no EGLImage):
+//   1. acquireSurface() hands out an NvEncSurfaceVK from a rotating pool. Each
+//      wraps an RGBA NvBufSurface imported into Vulkan as a color attachment.
+//   2. The render thread draws directly into that surface (RHI render pass).
+//   3. submitSurface() registers an RHIFence (signals on frame-GPU-completion)
+//      and queues the (surface index, fence) pair for the worker.
+//   4. The worker waits the fence, then NvBufSurfTransform (VIC) converts the
+//      RGBA surface to the YUV420 encoder input plane and hands it to V4L2.
 class NvEncSession {
 public:
   NvEncSession(uint32_t width, uint32_t height);
@@ -55,47 +71,26 @@ protected:
   NvVideoEncoder* m_enc = NULL;
   std::vector<NvBufSurface*> m_encOutputPlaneSurfaces;
 
-
+  // Rotating pool of render-target surfaces (RGBA NvBufSurface + VK import).
   size_t m_currentSurfaceIndex = 0;
-  std::vector<NvBufSurface*> m_vicInputSurfaces;
-  std::vector<RHISurface::ptr> m_rhiSurfaces;
-  std::vector<EGLImage> m_rhiSurfaceEGLImages;
-  struct surfaceDmaBufInfo {
-    surfaceDmaBufInfo() {
-      for (int i = 0; i < NVBUF_MAX_PLANES; ++i) {
-        plane_fds[i] = 0;
-        plane_strides[i] = 0;
-        plane_offsets[i] = 0;
-      }
-    }
+  std::vector<boost::intrusive_ptr<NvEncSurfaceVK>> m_surfaces;
 
-    int fourcc = 0;
-    int num_planes = 0;
-    EGLuint64KHR modifiers = 0;
-
-    int plane_fds[NVBUF_MAX_PLANES];
-    EGLint plane_strides[NVBUF_MAX_PLANES];
-    EGLint plane_offsets[NVBUF_MAX_PLANES];
-
-    NvBufSurface* nvBuf = NULL;
-  };
-  std::vector<surfaceDmaBufInfo> m_rhiSurfaceDmaBufs;
-
-  std::queue<std::pair<ssize_t, EGLSyncKHR>> m_gpuSubmissionQueue;
+  // (surface index, render-completion fence) pairs awaiting VIC conversion.
+  std::queue<std::pair<ssize_t, RHIFence::ptr>> m_gpuSubmissionQueue;
   pthread_mutex_t m_gpuSubmissionQueueLock;
   pthread_cond_t m_gpuSubmissionQueueCond;
-  pthread_t m_cudaWorkerThread;
-  pthread_mutex_t m_cudaWorkerActiveLock;
-  bool m_cudaWorkerThreadRunning = false;
+  pthread_t m_submitWorkerThread;
+  pthread_mutex_t m_submitWorkerActiveLock;
+  bool m_submitWorkerThreadRunning = false;
 
   std::queue<NvBuffer*> m_encoderOutputPlaneBufferQueue;
 
   static bool encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void* arg);
-  static void* cudaWorker_thunk(void*);
+  static void* submitWorker_thunk(void*);
 
   bool encoder_capture_plane_dq_callback(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer);
 
-  void cudaWorker();
+  void submitWorker();
 
 private:
   // noncopyable
