@@ -13,8 +13,9 @@
 class NvBuffer;
 class NvVideoEncoder;
 struct v4l2_buffer;
-// Forward-declared to keep vulkan-hpp out of the RTSP/live555 translation units
-// that include this header; NvEncSession.cpp includes the full definition.
+// Forward-declared to keep vulkan-hpp out of the remote-debug translation unit
+// (RenderDebug.cpp) that includes this header; NvEncSession.cpp includes the full
+// definition.
 class NvEncSurfaceVK;
 
 // NvEncSession: drives the Tegra H.264 encoder for the remote-debug RTSP
@@ -64,6 +65,11 @@ protected:
 
   uint32_t m_startCount = 0;
   bool m_inShutdown = false;
+
+  // Real (CLOCK_MONOTONIC) microsecond timestamp of the last access unit delivered
+  // to consumers, used to keep delivered timestamps strictly increasing across
+  // pipeline catch-up -- see encoder_capture_plane_dq_callback. Reset on start().
+  uint64_t m_lastEmitTimeUs = 0;
 
   pthread_mutex_t m_stateLock;
   pthread_mutex_t m_callbackLock;

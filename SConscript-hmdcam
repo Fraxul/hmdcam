@@ -61,13 +61,12 @@ monadoStatics = \
 
 if tegraEnv['IS_TEGRA']:
   # Building natively on Tegra enables Argus camera library, eyetracking, and nvenc support
-  # Pull in nvargus, nvbuf, nvmedia, nvsci, cudla, v4l2, and live555
+  # Pull in nvargus, nvbuf, nvmedia, nvsci, cudla, and v4l2
   tegraEnv.Append(
     CPPPATH=[
       '#hmdcam/tegra',
       '#eyetracking',
       '#common/tegra',
-      '#live555/include',
       tegraEnv['TEGRA_MMAPI'],
       tegraEnv['TEGRA_MMAPI'] + '/include',
       tegraEnv['TEGRA_MMAPI'] + '/argus/include',
@@ -83,10 +82,7 @@ if tegraEnv['IS_TEGRA']:
       'nvrm_host1x',
       'cudla',
       'v4l2'
-    ] + tegraEnv['CERES_LIBS'],
-    CPPDEFINES=[
-      'NO_OPENSSL', # live555 config directive
-    ]
+    ] + tegraEnv['CERES_LIBS']
   )
 
   if (tegraEnv['TEGRA_RELEASE'] < 35):
@@ -110,11 +106,6 @@ if (tegraEnv['IS_TEGRA'] and not tegraEnv['nsight']):
   tegraEnv.Append(
     CPPPATH=['#hmdcam/tegra/nvenc']
   )
-  liveMediaStatics = [
-    '#live555/libliveMedia.a',
-    '#live555/libgroupsock.a',
-    '#live555/libBasicUsageEnvironment.a',
-    '#live555/libUsageEnvironment.a']
 
   # Pull in a few classes from tegra_mmapi
   tegra_mmapi_class_src_base = tegraEnv['TEGRA_MMAPI'] + '/samples/common/classes'
@@ -134,7 +125,6 @@ if (tegraEnv['IS_TEGRA'] and not tegraEnv['nsight']):
 
 else:
   # building on desktop for testing or in NSight compatibility mode; NVEnc bits will be stubbed out
-  liveMediaStatics = []
   tegra_mmapi_src = []
 
 if (env['HAVE_OPENCV_CUDA']):
@@ -154,7 +144,6 @@ tegraEnv.ProgramWithWholeArchive(
     + Glob('canbus/libcanard/libcanard/*.c')
     + tegra_src
     + tegra_mmapi_src
-    + liveMediaStatics
     + monadoStatics,
   whole_archive_libs = [librhi, libimgui]
 )

@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/time.h>
+#include <time.h>
 
 #include "nvbufsurface.h"
 #include "nvbufsurftransform.h"
@@ -40,6 +41,14 @@
 
 static const uint32_t kInputBufferCount = 6;
 static const uint32_t kOutputBufferCount = 10;
+
+// Interval between IDR (keyframe) frames, in frames (~1 second at 30 fps). The
+// stream needs recurring IDRs as random-access / recovery points: a decoder that
+// joins mid-stream, drops a frame, or (like ffmpeg/ffplay) consumes the opening
+// IDR while probing the container must be able to re-sync at the next one. The
+// keyframe bitrate spike is bounded instead by the encoder's virtual buffer (see
+// setVirtualBufferSize in start()).
+static const uint32_t kKeyframeInterval = 30;
 
 NvEncSession::NvEncSession(uint32_t _width, uint32_t _height) :
   m_width(_width),
@@ -339,12 +348,27 @@ void NvEncSession::start() {
   printf("NvEncSession: starting\n");
   m_inShutdown = false;
 
+  // Reset the strictly-increasing emission-timestamp guard for this stream.
+  m_lastEmitTimeUs = 0;
+
   m_enc = NvVideoEncoder::createVideoEncoder("enc0");
   if (!m_enc) die("Could not create encoder");
 
   // It is necessary that Capture Plane format be set before Output Plane format.
   // Set encoder capture plane format. It is necessary to set width and height on the capture plane as well.
-  ret = m_enc->setCapturePlaneFormat(m_encoderPixfmt, m_width, m_height, 2 * 1024 * 1024);
+  //
+  // The last argument is the per-buffer sizeimage for *encoded* output: it must
+  // be large enough to hold the single largest access unit the encoder emits, or
+  // the V4L2 encoder truncates the frame to fit (bytesused is capped at capacity)
+  // and the decoder sees a slice cut off mid-macroblock -- a clean top, then green
+  // to the bottom. With B-frames disabled and no slice splitting, each frame is one
+  // slice NAL, and a 4K IDR can run well past the 2 MiB the NVIDIA samples use for
+  // 1080p. Size it to one byte per pixel (~7.9 MiB at 3840x2160), which comfortably
+  // covers even a quality-uncapped first IDR while scaling with resolution. The
+  // remote-debug stream (RenderDebug.cpp) writes whatever NAL the encoder emits
+  // straight to the client socket, so this buffer is the only size cap in the path.
+  const uint32_t encodedFrameBufferSize = m_width * m_height;
+  ret = m_enc->setCapturePlaneFormat(m_encoderPixfmt, m_width, m_height, encodedFrameBufferSize);
   if (ret < 0) die("Could not set output plane format");
 
   ret = m_enc->setOutputPlaneFormat(V4L2_PIX_FMT_YUV420M, m_width, m_height);
@@ -377,9 +401,25 @@ void NvEncSession::start() {
   ret = m_enc->setFrameRate(m_framerateNumerator, m_framerateDenominator);
   if (ret < 0) die("Could not set framerate");
 
-  // Set up for streaming -- insert SPS and PPS every 60 frames so the decoder can sync to an in-progress stream.
+  // Streaming config tuned for low-latency live delivery to a single client:
+  //  - SPS/PPS inline at every IDR so a decoder can initialize at any keyframe
+  //    (mid-stream attach, post-probe start, or recovery after a dropped frame).
+  //  - Recurring IDRs as random-access points -- see kKeyframeInterval. We tried
+  //    periodic intra-refresh with no recurring IDR to avoid keyframe bitrate
+  //    spikes, but a stream with a single IDR cannot be re-synced once that IDR is
+  //    gone: ffmpeg/ffplay consumes it while probing the container and then has no
+  //    entry point, so it never displays. Intra-refresh's payoff (recovery without
+  //    an IDR) needs a recovery-point SEI the encoder does not emit, and is only
+  //    worthwhile on lossy links -- not on this lossless TCP path.
+  //  - A virtual-buffer (VBV/HRD) cap so the keyframe does not burst the network:
+  //    the encoder spends extra QP on the IDR to stay within the buffer instead of
+  //    spiking the instantaneous bitrate. Sized (in bits) at ~0.5 s of the
+  //    configured bitrate; lower it to cap spikes more tightly, at some
+  //    keyframe-quality cost.
   m_enc->setInsertSpsPpsAtIdrEnabled(true);
-  m_enc->setIDRInterval(10 /*frames*/);
+  m_enc->setIFrameInterval(kKeyframeInterval);
+  m_enc->setIDRInterval(kKeyframeInterval);
+  m_enc->setVirtualBufferSize(m_bitsPerSecond / 2);
   m_enc->setMaxPerfMode(1);
   m_enc->setNumBFrames(0); // Disable B-frames for low latency
   // Insert VUI so that the RTSP server can pull framerate information out of it
@@ -494,52 +534,42 @@ bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer* v4l2_bu
   }
 
   if (buffer->planes[0].bytesused >= 4) {
-    // TODO: v4l2_buf->timestamp should have a valid PTS passed through the encoder chain, but using that causes the test player (vlc)
-    // to complain about frames being too old to display. might want to offset it somehow?
-    // Just calling gettimeofday here to conjure a new PTS seems to work fine
-
+    // Presentation timestamp for this access unit. This is a *live* stream, so we
+    // stamp each frame with the real time it is emitted (CLOCK_MONOTONIC) rather
+    // than an evenly-spaced frame-counter cadence. An assumed-even cadence drifts
+    // against the true frame-production rate -- the render loop cannot deliver
+    // exactly the nominal fps -- and the downstream MPEG-TS muxer's PCR is slaved
+    // to this value, so an even cadence makes the player's clock run slightly fast,
+    // its decode buffer underruns, and it periodically declares pictures late and
+    // re-buffers. A real emission timestamp keeps PCR matched to actual delivery.
+    //
+    // The DQ thread can emit two access units within the same microsecond during
+    // pipeline catch-up, so clamp to keep the delivered timestamp strictly
+    // increasing (a stalled or backward PTS/PCR corrupts playback timing).
     struct timeval pts;
-    gettimeofday(&pts, NULL);
+    {
+      struct timespec now;
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      uint64_t nowUs = (static_cast<uint64_t>(now.tv_sec) * 1000000ull) + (now.tv_nsec / 1000ull);
+      if (nowUs <= m_lastEmitTimeUs)
+        nowUs = m_lastEmitTimeUs + 1;
+      m_lastEmitTimeUs = nowUs;
+
+      pts.tv_sec = static_cast<time_t>(nowUs / 1000000ull);
+      pts.tv_usec = static_cast<suseconds_t>(nowUs % 1000000ull);
+    }
 
     pthread_mutex_lock(&m_callbackLock);
 
     const char* data = reinterpret_cast<const char*>(buffer->planes[0].data);
     size_t dataSize = buffer->planes[0].bytesused;
 
-    // Break the delivered buffer up into NAL units, removing start codes, and deliver them individually to downstream clients (RTSP sessions).
-    // We only ever get a buffer with an optional SPS (type 7) and PPS (type 8) and then a slice (type 5 or 1)
-    const char startCode[] = {0x00, 0x00, 0x00, 0x01};
-    const size_t startCodeLength = 4;
-
-    const char* start = data;
-    size_t remaining = dataSize;
-
-    if (!memcmp(data, startCode, startCodeLength)) {
-      // Skip the first start code
-      start += startCodeLength;
-      remaining -= startCodeLength;
-    } else {
-      printf("NvEncSession::encoder_capture_plane_dq_callback: WARNING: delivered buffer is missing start code");
-    }
-
-    while (remaining) {
-      size_t nextBlockLength = remaining;
-
-      // Split at the next start code in the buffer, if there is one
-      const void* nextStartCode = memmem(start, remaining, startCode, startCodeLength);
-      if (nextStartCode) {
-        nextBlockLength = reinterpret_cast<const char*>(nextStartCode) - start;
-      }
-
-      for (const auto& cbIt : m_encodedFrameDeliveryCallbacks) {
-        cbIt.second(start, nextBlockLength, pts);
-      }
-
-      if (!nextStartCode) // current NALU is the entire rest of the buffer
-        break;
-
-      remaining -= nextBlockLength + startCodeLength;
-      start += nextBlockLength + startCodeLength;
+    // Deliver the whole access unit (one encoded frame) to each consumer. The
+    // encoder hands us exactly one access unit per capture-plane buffer -- B-frames
+    // are disabled and there is one slice per frame, with SPS/PPS inline only at
+    // IDR -- already in Annex-B byte-stream form (start-code delimited NALs).
+    for (const auto& cbIt : m_encodedFrameDeliveryCallbacks) {
+      cbIt.second(data, dataSize, pts);
     }
 
     pthread_mutex_unlock(&m_callbackLock);

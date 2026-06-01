@@ -14,7 +14,7 @@ Features:
     - Luxonis DepthAI VPU modules
     - OpenCV+CUDA on a separate Nvidia discrete GPU (Not recommended for battery-powered systems)
 - Configuration menu with built-in calibration tools
-- Remote viewing via RTSP (embedded live555 server + nvenc)
+- Remote viewing via RTSP (embedded MPEG-TS-over-TCP server + nvenc)
 - Remote depth processing debugging (`debug-client` binary)
 
 Important repository structure:

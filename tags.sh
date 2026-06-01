@@ -10,7 +10,6 @@ ctags -R \
   imgui/*.h \
   imgui/*.cpp \
   implot \
-  live555/include \
   nvmedia \
   nvsci_headers \
   rhi \
