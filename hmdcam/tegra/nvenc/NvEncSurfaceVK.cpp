@@ -59,6 +59,10 @@ NvEncSurfaceVK::~NvEncSurfaceVK() {
   tex->m_surf = surf;
   tex->m_vkFormat = kRGBAFormat;
   tex->m_rhiFormat = kSurfaceFormat_RGBA8;
+  // Since this is a linear-tiling image, we ask the render pass system to keep
+  // it in eGeneral format after it has been populated. Linear-tiling images
+  // do not typically support eShaderReadOnlyOptimal.
+  tex->m_vkDesiredImageLayout = vk::ImageLayout::eGeneral;
   // width()/height() report the logical (requested) dims; extent.width carries
   // the padded dim. RHIRenderTargetVK uses width()/height() for the render
   // area, so we draw into the logical [0, width()) sub-region.

@@ -90,6 +90,7 @@ RHIInteropSurfaceVK::~RHIInteropSurfaceVK() {
   RHIInteropSurfaceVK* tex = new RHIInteropSurfaceVK();
   tex->m_rhiFormat = descriptor.format;
   tex->m_vkFormat = fmt.vkFormat;
+  tex->m_vkDesiredImageLayout = vk::ImageLayout::eGeneral;
   tex->m_width = width;
   tex->m_height = height;
 

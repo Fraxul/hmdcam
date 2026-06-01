@@ -328,6 +328,8 @@ void RHIVK::beginRenderPass(RHIRenderTarget::ptr target,
     att.image = frame.swapchainImage;
     att.view = swapImageViewFor(frame.swapchainImage, frame.format);
     att.format = frame.format;
+    // Window RTs need to end up in ePresentSrcKHR
+    att.targetLayout = vk::ImageLayout::ePresentSrcKHR;
     m_currentFrame.passColorAttachments.push_back(att);
     m_currentFrame.passExtent = frame.extent;
   } else {
@@ -345,6 +347,9 @@ void RHIVK::beginRenderPass(RHIRenderTarget::ptr target,
       att.image = c->vkImage();
       att.view = c->vkImageView();
       att.format = c->vkFormat();
+      // Offscreen surfaces can specify their desired at-rest image layout.
+      // Typically, this will be eShaderReadOnlyOptimal.
+      att.targetLayout = c->vkDesiredImageLayout();
       m_currentFrame.passColorAttachments.push_back(att);
     }
     if (offRT->hasDepthStencilTarget()) {
@@ -362,10 +367,12 @@ void RHIVK::beginRenderPass(RHIRenderTarget::ptr target,
     m_currentFrame.passImage = m_currentFrame.passColorAttachments[0].image;
     m_currentFrame.passImageView = m_currentFrame.passColorAttachments[0].view;
     m_currentFrame.passFormat = m_currentFrame.passColorAttachments[0].format;
+    m_currentFrame.passImageLayout = m_currentFrame.passColorAttachments[0].targetLayout;
   } else {
     m_currentFrame.passImage = nullptr;
     m_currentFrame.passImageView = nullptr;
     m_currentFrame.passFormat = vk::Format{};
+    m_currentFrame.passImageLayout = vk::ImageLayout{};
   }
 
   m_currentFrame.passActive = true;
@@ -506,12 +513,9 @@ void RHIVK::endRenderPass(RHIRenderTarget::ptr /*target*/) {
   vk::CommandBuffer cb = m_currentFrame.commandBuffer;
   cb.endRenderingKHR();
 
-  // Final color layout depends on RT type: present for window, shader-read for
-  // offscreen (so the result can be sampled by a subsequent pass in the same
-  // CB — the pipeline barrier orders the writes against later reads).
-  vk::ImageLayout colorFinalLayout = m_currentFrame.passIsWindowRT
-    ? vk::ImageLayout::ePresentSrcKHR
-    : vk::ImageLayout::eShaderReadOnlyOptimal;
+  // Destination stage and access is set for non-window RTs so that they can
+  // be sampled in subsequent fragment shaders. For window RTs, eBottomOfPipe
+  // guarantees that everything's done before handoff to the presentation engine.
   vk::AccessFlags colorDstAccess = m_currentFrame.passIsWindowRT
     ? vk::AccessFlags()
     : vk::AccessFlagBits::eShaderRead;
@@ -526,7 +530,7 @@ void RHIVK::endRenderPass(RHIRenderTarget::ptr /*target*/) {
       vk::AccessFlagBits::eColorAttachmentWrite,
       colorDstAccess,
       vk::ImageLayout::eColorAttachmentOptimal,
-      colorFinalLayout,
+      att.targetLayout,
       VK_QUEUE_FAMILY_IGNORED,
       VK_QUEUE_FAMILY_IGNORED,
       att.image,
@@ -567,7 +571,7 @@ void RHIVK::endRenderPass(RHIRenderTarget::ptr /*target*/) {
   // only on the configured frame. The dump path snapshots the primary color
   // attachment, so skip it for a depth-only pass (no color image to copy).
   if (m_currentFrame.passImage && static_cast<int64_t>(m_dumpFrameCounter) == m_dumpFrameIndex) {
-    enqueuePassDump(colorFinalLayout);
+    enqueuePassDump();
   }
   ++m_passCounterThisFrame;
 
@@ -1624,7 +1628,7 @@ DumpFormatInfo classifyDumpFormat(vk::Format f) {
 
 } // namespace
 
-void RHIVK::enqueuePassDump(vk::ImageLayout finalLayout) {
+void RHIVK::enqueuePassDump() {
   DumpFormatInfo fmt = classifyDumpFormat(m_currentFrame.passFormat);
   if (fmt.bpp == 0) {
     fprintf(stderr, "RHIVK: pass %u dump skipped: unsupported VkFormat (%u)\n",
@@ -1660,7 +1664,7 @@ void RHIVK::enqueuePassDump(vk::ImageLayout finalLayout) {
     w, h, fmt.tag);
   pd.filepath = filename;
 
-  // Transition finalLayout -> TRANSFER_SRC_OPTIMAL, copy, transition back.
+  // Transition passImageLayout -> TRANSFER_SRC_OPTIMAL, copy, transition back.
   // Source-stage of the toFinal barrier was eColorAttachmentOutput; we
   // need the writes to be visible to TRANSFER reads, so srcStage matches
   // the toFinal transition's dstStage.
@@ -1668,7 +1672,7 @@ void RHIVK::enqueuePassDump(vk::ImageLayout finalLayout) {
   vk::ImageMemoryBarrier toSrc{
     vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite,
     vk::AccessFlagBits::eTransferRead,
-    finalLayout,
+    m_currentFrame.passImageLayout,
     vk::ImageLayout::eTransferSrcOptimal,
     VK_QUEUE_FAMILY_IGNORED,
     VK_QUEUE_FAMILY_IGNORED,
@@ -1696,7 +1700,7 @@ void RHIVK::enqueuePassDump(vk::ImageLayout finalLayout) {
     vk::AccessFlagBits::eTransferRead,
     vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite,
     vk::ImageLayout::eTransferSrcOptimal,
-    finalLayout,
+    m_currentFrame.passImageLayout,
     VK_QUEUE_FAMILY_IGNORED,
     VK_QUEUE_FAMILY_IGNORED,
     m_currentFrame.passImage,

@@ -191,6 +191,7 @@ protected:
       vk::Image image;
       vk::ImageView view;
       vk::Format format{};
+      vk::ImageLayout targetLayout{vk::ImageLayout::eShaderReadOnlyOptimal};
     };
     std::vector<PassColorAttachment> passColorAttachments;
 
@@ -210,6 +211,7 @@ protected:
     vk::Image passImage;
     vk::ImageView passImageView;
     vk::Format passFormat{};
+    vk::ImageLayout passImageLayout{};
 
     // Number of viewports currently set. shader_object requires the scissor
     // count to match the viewport count at draw time, so the scissor setters
@@ -378,9 +380,7 @@ protected:
   // Insert copyImageToBuffer + per-pass staging-buffer alloc into the
   // current CB; record the PendingDump on m_currentFrame for later write.
   // Called from endRenderPass when (m_dumpFrameCounter == m_dumpFrameIndex).
-  // finalLayout is the image's layout after endRenderPass's normal toFinal
-  // transition (PRESENT_SRC for window RT, SHADER_READ_ONLY for offscreen).
-  void enqueuePassDump(vk::ImageLayout finalLayout);
+  void enqueuePassDump();
 
   // Submit a signal-only fence after the just-submitted frame CB and queue
   // a job for the background worker to wait on, then map and PNG-encode.

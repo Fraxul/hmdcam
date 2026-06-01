@@ -24,6 +24,7 @@ public:
   vk::Image vkImage() const { return m_image.get(); }
   vk::ImageView vkImageView() const { return m_imageView.get(); }
   vk::Format vkFormat() const { return m_vkFormat; }
+  vk::ImageLayout vkDesiredImageLayout() const { return m_vkDesiredImageLayout; }
 
   // Upload `data` into mip level 0, layer 0 of this image. Data layout must
   // match the surface format (tightly packed).
@@ -36,6 +37,7 @@ protected:
   vk::UniqueDeviceMemory m_memory;
   vk::UniqueImageView m_imageView;
   vk::Format m_vkFormat{vk::Format::eUndefined};
+  vk::ImageLayout m_vkDesiredImageLayout{vk::ImageLayout::eShaderReadOnlyOptimal};
 
   RHISurfaceFormat m_rhiFormat{kSurfaceFormat_Invalid};
   uint32_t m_width = 0;
