@@ -221,6 +221,21 @@ public:
   virtual void swapBuffers(RHIRenderTarget::ptr) = 0;
   virtual void flush() = 0;
   virtual void flushAndWaitForGPUScheduling() = 0;
+
+  // Block the calling thread until all GPU work submitted through this RHI --
+  // and any CUDA work feeding the CUDA<->RHI interop timeline -- has completed.
+  // Intended for shutdown, before GPU-backed resources are destroyed. Default
+  // is a no-op for backends with no async queue; the Vulkan backend overrides
+  // it (and drains CUDA first, since VK submits can be parked on the interop
+  // timeline waiting for a CUDA signal).
+  virtual void waitForGPUIdle() {}
+
+  // True once a GPU operation has reported VK_ERROR_DEVICE_LOST (set by the
+  // bounded drain in waitForGPUIdle). Shutdown paths use this to skip further
+  // VK teardown, which can hang indefinitely on a lost device (e.g.
+  // vkDestroySwapchainKHR busy-spinning in the NVIDIA driver). Default false.
+  virtual bool isDeviceLost() const { return false; }
+
   virtual uint32_t maxMultisampleSamples() = 0;
   virtual bool supportsGeometryShaders() = 0;
   static bool allowsLayerSelectionFromVertexShader() { return s_allowsLayerSelectionFromVertexShader; }

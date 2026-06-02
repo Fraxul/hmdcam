@@ -126,6 +126,13 @@ protected:
   uint32_t m_frameIndex = 0;
   std::vector<VKGLSyncData> m_syncData;
   std::vector<vk::UniqueSemaphore> m_imageAcquiredSemaphores;
+  // VK-native mode only: per-frame acquire fences. acquireVKFrame acquires the
+  // swap image with a fence (not a semaphore) and host-waits it, so the render
+  // submit never has to wait on imageAcquired. A semaphore-based acquire makes
+  // the graphics queue wait on the presentation engine; once presentation
+  // stops at shutdown the whole image pool can deadlock (all images acquired,
+  // none freed), which loses the device. Indexed by m_frameIndex.
+  std::vector<vk::UniqueFence> m_imageAcquiredFences;
   // GL-interop mode: indexed by m_frameIndex, signaled by the blit submit,
   //   waited on by present.
   // VK-native mode: unused; m_renderFinishedSemaphoresPerImage replaces it.

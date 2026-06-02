@@ -57,6 +57,10 @@ RHIVK::~RHIVK() {
     cudaDestroyExternalSemaphore(m_interopTimelineCU);
     m_interopTimelineCU = nullptr;
   }
+  if (m_rhiToCudaTimelineCU) {
+    cudaDestroyExternalSemaphore(m_rhiToCudaTimelineCU);
+    m_rhiToCudaTimelineCU = nullptr;
+  }
 }
 
 void RHIVK::setFrameSource(VKFrameSource* source) {
@@ -147,24 +151,28 @@ void RHIVK::setFrameSource(VKFrameSource* source) {
     m_frameCompletionValue = 0;
   }
 
-  // Build interop sync
+  // Build interop sync. Two separate single-writer timelines (see header): one
+  // for CUDA->VK (CUDA signals, VK waits) and one for VK->CUDA (VK signals, CUDA
+  // waits). Each is exported to CUDA. Keeping the directions on distinct
+  // timelines is what keeps each one reliably monotonic.
 
-  // One exported timeline semaphore shared with CUDA. A single monotonic counter
-  // hands out strictly-increasing values to both producers, so their value
-  // sequences interleave on the shared timeline without ever colliding.
+  // cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd tells CUDA the FD points
+  // at a timeline semaphore -- required for the params.fence.value field on
+  // Signal/WaitExternalSemaphoresAsync to mean anything. cudaImportExternalSemaphore
+  // takes ownership of the FD, so we null out our copy to avoid a double-close.
+  auto importToCuda = [](RHIVulkan::ExternalSemaphore& sem, cudaExternalSemaphore_t* outCu) {
+    cudaExternalSemaphoreHandleDesc desc = {};
+    desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
+    desc.handle.fd = sem.fd;
+    CUDA_CHECK(cudaImportExternalSemaphore(outCu, &desc));
+    sem.fd = -1;
+  };
+
   m_interopTimeline = rhi()->vk()->createExternalSemaphore(vk::SemaphoreType::eTimeline);
+  importToCuda(m_interopTimeline, &m_interopTimelineCU);
 
-  // CUDA-side import. cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd
-  // tells CUDA the FD points at a timeline semaphore -- required for the
-  // params.fence.value field on Signal/WaitExternalSemaphoresAsync to
-  // mean anything.
-  cudaExternalSemaphoreHandleDesc desc = {};
-  desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
-  desc.handle.fd = m_interopTimeline.fd;
-  CUDA_CHECK(cudaImportExternalSemaphore(&m_interopTimelineCU, &desc));
-  // cudaImportExternalSemaphore takes ownership of the FD; null out our
-  // handle so the dtor doesn't double-close.
-  m_interopTimeline.fd = -1;
+  m_rhiToCudaTimeline = rhi()->vk()->createExternalSemaphore(vk::SemaphoreType::eTimeline);
+  importToCuda(m_rhiToCudaTimeline, &m_rhiToCudaTimelineCU);
 }
 
 void RHIVK::invalidateSwapchainResources() {
@@ -1428,31 +1436,51 @@ void RHIVK::swapBuffers(RHIRenderTarget::ptr /*target*/) {
   // can be sampled in any stage, so we conservatively pessimize until
   // profiling shows it matters.
   // Signals: renderFinished (binary, present) + interop timeline + frame-
-  // completion timeline. Waits: imageAcquired (binary) + interop timeline.
-  std::array<vk::Semaphore, 2> waitSemaphores{m_currentFrame.imageAcquired, vk::Semaphore{}};
+  // completion timeline. Waits: imageAcquired (binary, only if the frame source
+  // provides one) + interop timeline.
+  std::array<vk::Semaphore, 2> waitSemaphores{vk::Semaphore{}, vk::Semaphore{}};
   std::array<vk::PipelineStageFlags, 2> waitStages{
     vk::PipelineStageFlagBits::eColorAttachmentOutput,
     vk::PipelineStageFlagBits::eAllCommands};
   std::array<uint64_t, 2> waitValues{0, 0};
   std::array<vk::Semaphore, 3> signalSemaphores{m_currentFrame.renderFinished, vk::Semaphore{}, vk::Semaphore{}};
   std::array<uint64_t, 3> signalValues{0, 0, 0};
-  uint32_t waitCount = 1;
+  uint32_t waitCount = 0;
   uint32_t signalCount = 1;
 
-  // Handle interop sync wait/signal
+  // The frame source may host-synchronize the acquire (fence-based) and hand
+  // back a null imageAcquired — in which case there is no GPU wait to add. When
+  // it is present, wait on it at the colour-attachment-output stage.
+  if (m_currentFrame.imageAcquired) {
+    waitSemaphores[waitCount] = m_currentFrame.imageAcquired;
+    waitStages[waitCount] = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    ++waitCount;
+  }
+
+  // Interop sync: wait on the CUDA->VK timeline at CUDA's latest signaled
+  // value. The timeline is CUDA-signal-only -- VK does NOT signal it. Nothing
+  // waits on a VK-signaled interop value (signalRHIToCUDA is unused), so a VK
+  // signal here would only make the timeline a fragile two-writer object: CUDA
+  // and VK interleaving values on one timeline can wedge it (the producer/
+  // consumer lockstep breaks at shutdown and the timeline stalls below the
+  // last CUDA value, stranding this very wait). Keeping it single-writer lets
+  // the host force-complete it cleanly at teardown (see waitForGPUIdle).
   {
+    waitStages[waitCount] = vk::PipelineStageFlagBits::eAllCommands;
     waitSemaphores[waitCount] = m_interopTimeline.semaphore.get();
     waitValues[waitCount] = m_interopTimelineCudaSignaledValue;
     ++waitCount;
-    signalSemaphores[signalCount] = m_interopTimeline.semaphore.get();
-    signalValues[signalCount] = interopAllocateVKSignalValue();
-    ++signalCount;
   }
 
   // Signal the frame-completion timeline so any RHIFence registered this frame
   // resolves on this submit's GPU completion.
   signalSemaphores[signalCount] = m_frameCompletionTimeline.get();
   signalValues[signalCount] = ++m_frameCompletionValue;
+  ++signalCount;
+  // Signal the VK->CUDA interop timeline so a later signalRHIToCUDA() can make a
+  // CUDA stream wait on this frame's GPU completion. Single-writer (VK only).
+  signalSemaphores[signalCount] = m_rhiToCudaTimeline.semaphore.get();
+  signalValues[signalCount] = rhiToCudaAllocateSignalValue();
   ++signalCount;
   // Timeline submit info: pValues entries are ignored for binary semaphores
   // (imageAcquired / renderFinished), but counts must match the outer
@@ -1511,14 +1539,16 @@ void RHIVK::flush() {
   vk::CommandBuffer cb = m_currentFrame.commandBuffer;
   cb.end();
   // Same interop-timeline plumbing as swapBuffers, minus the per-swap-image
-  // imageAcquired/renderFinished pair (flush() is for off-screen frames
-  // with no present). Signals: interop timeline + frame-completion timeline.
+  // imageAcquired/renderFinished pair (flush() is for off-screen frames with no
+  // present). Wait on the CUDA->VK interop timeline (CUDA-signal-only; VK does
+  // not signal it -- see swapBuffers). Signal the frame-completion timeline and
+  // the VK->CUDA interop timeline (both VK-signal-only).
   vk::Semaphore interopSem = m_interopTimeline.semaphore.get();
   vk::PipelineStageFlags interopWaitStage = vk::PipelineStageFlagBits::eAllCommands;
   uint64_t interopWaitValue = m_interopTimelineCudaSignaledValue;
 
-  std::array<vk::Semaphore, 2> signalSemaphores{interopSem, m_frameCompletionTimeline.get()};
-  std::array<uint64_t, 2> signalValues{interopAllocateVKSignalValue(), ++m_frameCompletionValue};
+  std::array<vk::Semaphore, 2> signalSemaphores{m_frameCompletionTimeline.get(), m_rhiToCudaTimeline.semaphore.get()};
+  std::array<uint64_t, 2> signalValues{++m_frameCompletionValue, rhiToCudaAllocateSignalValue()};
 
   vk::TimelineSemaphoreSubmitInfo timelineSubmit{};
   timelineSubmit.setWaitSemaphoreValues(interopWaitValue);
@@ -1544,6 +1574,77 @@ void RHIVK::flush() {
   m_passCounterThisFrame = 0;
 }
 void RHIVK::flushAndWaitForGPUScheduling() { RHI_VK_NOT_IMPLEMENTED(); }
+
+void RHIVK::waitForGPUIdle() {
+  // Force-complete both interop timelines from the host so neither direction can
+  // deadlock the drain. Both are single-writer (see header), so jumping each
+  // forward to its highest allocated value is safe -- there is no producer
+  // signal to invalidate, and shutdown discards in-flight frame data anyway. At
+  // shutdown a timeline can stall below its last allocated value (a producer's
+  // final async signals don't land once the render loop stops feeding the
+  // pipeline), stranding the consumer on its wait -> GPU host watchdog -> device
+  // lost; force-signaling forward releases it. vkSignalSemaphore requires a
+  // strictly-greater value, so this only signals when actually behind.
+  auto forceTimelineForward = [](RHIVulkan::ExternalSemaphore& sem, uint64_t target, const char* label) {
+    if (!sem.semaphore)
+      return;
+    try {
+      vk::Device dev = rhi()->vk()->device();
+      uint64_t cur = dev.getSemaphoreCounterValue(sem.semaphore.get());
+      if (cur < target) {
+        vk::SemaphoreSignalInfo si{};
+        si.semaphore = sem.semaphore.get();
+        si.value = target;
+        dev.signalSemaphore(si);
+        fprintf(stderr, "RHIVK::waitForGPUIdle: host-signaled %s interop timeline %llu -> %llu to unblock stranded waits\n",
+          label, (unsigned long long) cur, (unsigned long long) target);
+      }
+    } catch (const vk::SystemError& ex) {
+      fprintf(stderr, "RHIVK::waitForGPUIdle: %s interop timeline host-signal failed (%s)\n", label, ex.what());
+    }
+  };
+
+  if (supportsCUDAInterop()) {
+    // VK->CUDA first, so the cuCtxSynchronize() below can't block on a CUDA
+    // stream still waiting on a VK value.
+    forceTimelineForward(m_rhiToCudaTimeline, m_rhiToCudaNextValue, "VK->CUDA");
+    // Drain CUDA: lets CUDA's pending CUDA->VK signals land before we release
+    // the VK side. Result dropped on purpose -- on a clean shutdown it succeeds,
+    // and once the device is lost there's nothing to recover.
+    (void) cuCtxSynchronize();
+    // CUDA->VK: release any VK submit still parked on a CUDA value.
+    forceTimelineForward(m_interopTimeline, m_interopTimelineNextValue, "CUDA->VK");
+  }
+
+  // Now drain the in-flight per-frame fences with a single bounded timeout
+  // (well under the GPU's ~2 s acquire watchdog) rather than device.waitIdle().
+  // Frames that can complete drain promptly; anything still parked times out and
+  // we return so teardown proceeds before the watchdog can lose the device.
+  // Fences for never-used slots were created signaled, so they don't extend it.
+  vk::Device device = rhi()->vk()->device();
+  std::vector<vk::Fence> fences;
+  fences.reserve(m_frameContexts.size());
+  for (auto& fc : m_frameContexts) {
+    if (fc.frameFence)
+      fences.push_back(fc.frameFence.get());
+  }
+  if (fences.empty())
+    return;
+
+  constexpr uint64_t kDrainTimeoutNs = 200'000'000ull; // 200 ms << ~2 s GPU acquire watchdog
+  try {
+    vk::Result r = device.waitForFences(fences, /*waitAll=*/ VK_TRUE, kDrainTimeoutNs);
+    if (r == vk::Result::eTimeout) {
+      fprintf(stderr, "RHIVK::waitForGPUIdle: %zu frame fence(s) still unsignaled after %llu ms -- "
+                      "a submit is likely parked on the swapchain imageAcquired semaphore. "
+                      "Proceeding to teardown before the GPU host watchdog fires.\n",
+        fences.size(), (unsigned long long) (kDrainTimeoutNs / 1'000'000ull));
+    }
+  } catch (const vk::SystemError& ex) {
+    fprintf(stderr, "RHIVK::waitForGPUIdle: waitForFences failed (%s); device may already be lost.\n", ex.what());
+    m_deviceLost = true;
+  }
+}
 uint32_t RHIVK::maxMultisampleSamples() { RHI_VK_NOT_IMPLEMENTED(); }
 bool RHIVK::supportsGeometryShaders() { RHI_VK_NOT_IMPLEMENTED(); }
 
@@ -1553,9 +1654,10 @@ bool RHIVK::supportsCUDAInterop() {
 }
 
 void RHIVK::signalCUDAToRHI(CUstream stream) {
-  // Allocate the next value from the single shared counter.
-  // The RHI consumer (RHIVK::swapBuffers / flush) reads m_interopTimelineCudaSignaledValue as its wait value
-  // when it builds the next submit's TimelineSemaphoreSubmitInfo.
+  // CUDA-side signal on the CUDA->VK timeline. Allocate the next value from this
+  // timeline's own counter (CUDA is its only writer). The RHI consumer
+  // (swapBuffers / flush) reads m_interopTimelineCudaSignaledValue as its wait
+  // value when it builds the next submit's TimelineSemaphoreSubmitInfo.
   m_interopTimelineCudaSignaledValue = ++m_interopTimelineNextValue;
   cudaExternalSemaphoreSignalParams params = {};
   params.params.fence.value = m_interopTimelineCudaSignaledValue;
@@ -1563,14 +1665,21 @@ void RHIVK::signalCUDAToRHI(CUstream stream) {
 }
 
 void RHIVK::signalRHIToCUDA(CUstream stream) {
-  // Wait on the most recent VK-signaled value. RHIVK signals at every
-  // swap/flush submit (see RHIVK::swapBuffers / RHIVK::flush), so this
-  // value is whatever VK most recently committed. If no VK submit has
-  // happened yet this run, m_interopTimelineVkSignaledValue == 0 and the wait completes
-  // immediately -- consistent with "nothing to wait on."
+  // CUDA-side wait on the VK->CUDA timeline: make `stream` block until VK has
+  // finished the work submitted up to the most recent swapBuffers/flush. VK
+  // signals that timeline at every such submit (see swapBuffers / flush), so we
+  // wait on its latest signaled value. If no VK submit has happened yet,
+  // m_rhiToCudaSignaledValue == 0 and the wait resolves immediately ("nothing
+  // to wait on").
+  //
+  // Will-not-hang-at-shutdown: this timeline is VK-signal-only, so waitForGPUIdle()
+  // can host-signal it forward to release any still-pending CUDA wait before it
+  // drains CUDA -- the symmetric escape hatch to the CUDA->VK direction. As long
+  // as either VK reaches the value or the host force-signals it, cuCtxSynchronize
+  // can never deadlock on this wait.
   cudaExternalSemaphoreWaitParams params = {};
-  params.params.fence.value = m_interopTimelineVkSignaledValue;
-  CUDA_CHECK(cudaWaitExternalSemaphoresAsync(&m_interopTimelineCU, &params, 1, stream));
+  params.params.fence.value = m_rhiToCudaSignaledValue;
+  CUDA_CHECK(cudaWaitExternalSemaphoresAsync(&m_rhiToCudaTimelineCU, &params, 1, stream));
 }
 
 RHIBuffer::ptr RHIVK::newInteropBuffer(size_t size, RHIBufferUsageMode mode) {

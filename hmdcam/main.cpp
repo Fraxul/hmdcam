@@ -172,6 +172,17 @@ static void signal_handler(int) {
   signal(SIGQUIT, SIG_DFL);
 }
 
+// Block until the GPU is fully idle.
+// Registered with atexit() so the exit(0) self-termination path drains in-flight GPU work.
+// Without this drain, destroying GPU-backed resources (or terminating the process) while
+// a VK queue submit is still parked on the interop timeline leaves a GPU channel blocked
+// on a semaphore acquire that never completes. The kernel reports "semaphore acquire timeout", the
+// Vulkan device is lost, and the nvidia driver usually hangs until the module is removed and reloaded.
+static void drainGPUAtExit() {
+  if (rhi())
+    rhi()->waitForGPUIdle();
+}
+
 int restartSkipFrameCounter = 0;
 void debugRestartCapture() {
   argusCamera->stop(); // will automatically restart on next frame when we call setRepeatCapture again
@@ -345,6 +356,11 @@ int main(int argc, char* argv[]) {
     printf("RenderInit() failed\n");
     return 1;
   }
+
+  // The RHI and its GPU device now exist. Register a GPU drain on every exit
+  // path (return from main, exit(0)) so in-flight interop work can never strand
+  // a GPU channel on an unsatisfied semaphore acquire during process teardown.
+  atexit(drainGPUAtExit);
 
   int tempSensorFd = open(tempSensorFilename.c_str(), 0, O_RDONLY);
   if (tempSensorFd < 0) {
@@ -1766,10 +1782,19 @@ int main(int argc, char* argv[]) {
   signal(SIGTERM, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
 
-  // clear screen
-  rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
-  rhi()->endRenderPass(windowRenderTarget);
-  rhi()->swapBuffers(windowRenderTarget);
+  // Drain in-flight GPU work first.
+  rhi()->waitForGPUIdle();
+
+  // Clear the screen, but only if the device is healthy — once it's lost, any
+  // queue submit throws vk::SystemError and would terminate the process on an
+  // uncaught exception instead of shutting down. (The clear also pumps the
+  // swapchain one more cycle on a healthy device.)
+  if (!rhi()->isDeviceLost()) {
+    rhi()->beginRenderPass(windowRenderTarget, kLoadClear);
+    rhi()->endRenderPass(windowRenderTarget);
+    rhi()->swapBuffers(windowRenderTarget);
+    rhi()->waitForGPUIdle();
+  }
 
   argusCamera->stop();
   delete argusCamera;

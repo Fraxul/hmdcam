@@ -110,6 +110,8 @@ public:
   virtual void swapBuffers(RHIRenderTarget::ptr) override;
   virtual void flush() override;
   virtual void flushAndWaitForGPUScheduling() override;
+  virtual void waitForGPUIdle() override;
+  virtual bool isDeviceLost() const override { return m_deviceLost; }
   virtual uint32_t maxMultisampleSamples() override;
   virtual bool supportsGeometryShaders() override;
 
@@ -129,6 +131,9 @@ protected:
   // -------- Phase 3: frame / command buffer state --------
 
   VKFrameSource* m_frameSource = nullptr;
+
+  // Sticky: set true when a drain observes VK_ERROR_DEVICE_LOST. See isDeviceLost().
+  bool m_deviceLost = false;
 
   // Command pool with per-buffer reset support; one command buffer + fence
   // per swap image, sized to allow that many frames in flight.
@@ -328,21 +333,28 @@ protected:
   // state to a sensible default.
   void setDynamicStateDefaults();
 
-  // -------- CUDA-VK interop sync ----------
-
+  // -------- CUDA -> VK interop (CUDA signals, VK waits) ----------
+  // SINGLE-WRITER timeline: CUDA is the only signaler (signalCUDAToRHI). VK
+  // submits wait on it (swapBuffers/flush) so the GPU never samples a CUDA-
+  // produced surface before CUDA finishes writing it.
+  // Single-writer so we can force-complete it at device teardown.
   RHIVulkan::ExternalSemaphore m_interopTimeline;
   cudaExternalSemaphore_t m_interopTimelineCU = nullptr;
+  uint64_t m_interopTimelineNextValue = 0; // CUDA-only monotonic counter
+  uint64_t m_interopTimelineCudaSignaledValue = 0; // last value CUDA signaled; VK waits on this
 
-  // Single monotonic value allocator shared by both producers. Every signal consumes
-  // the next value from here, so no two signals ever target the same timeline
-  // value, and a given wait value can only be reached by its intended producer.
-  uint64_t m_interopTimelineNextValue = 0;
-  // Last value signaled by CUDA (set in signalCUDAToRHI). VK waits on this.
-  uint64_t m_interopTimelineCudaSignaledValue = 0;
-  // Last value signaled by VK (set in allocateVKSignalValue). CUDA (signalRHIToCUDA) waits on this.
-  uint64_t m_interopTimelineVkSignaledValue = 0;
-  // Allocate the next value for a VK signal. Drawn from the single shared counter.
-  uint64_t interopAllocateVKSignalValue() { return (m_interopTimelineVkSignaledValue = ++m_interopTimelineNextValue); }
+  // -------- VK -> CUDA interop (VK signals, CUDA waits) ----------
+  // The mirror image, on its OWN dedicated timeline (never shared with the
+  // CUDA->VK one above). VK is the only signaler: every swapBuffers/flush submit
+  // signals the next value; signalRHIToCUDA makes a CUDA stream wait on the
+  // latest, so CUDA work doesn't read a VK-produced surface before VK finishes.
+  // Single-writer so we can force-complete it at device teardown.
+  RHIVulkan::ExternalSemaphore m_rhiToCudaTimeline;
+  cudaExternalSemaphore_t m_rhiToCudaTimelineCU = nullptr;
+  uint64_t m_rhiToCudaNextValue = 0; // VK-only monotonic counter
+  uint64_t m_rhiToCudaSignaledValue = 0; // last value VK signaled; CUDA waits on this
+  // Allocate + record the next VK->CUDA signal value (called from swap/flush).
+  uint64_t rhiToCudaAllocateSignalValue() { return (m_rhiToCudaSignaledValue = ++m_rhiToCudaNextValue); }
 
   // -------- Frame-completion timeline (host-waitable, internal) ----------
 

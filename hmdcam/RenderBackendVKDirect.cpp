@@ -507,6 +507,8 @@ void RenderBackendVKDirect::createPresentation() {
       for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
         vk::SemaphoreCreateInfo ci{};
         m_renderFinishedSemaphoresPerImage.push_back(device.createSemaphoreUnique(ci));
+        // Acquire fences: created unsignaled; acquireVKFrame resets before use.
+        m_imageAcquiredFences.push_back(device.createFenceUnique(vk::FenceCreateInfo{}));
       }
     }
 
@@ -595,15 +597,30 @@ RenderBackendVKDirect::~RenderBackendVKDirect() {
   if (m_scanoutThread.joinable())
     m_scanoutThread.join();
 
-  // Wait for all in-flight GPU work to complete before destroying VK objects.
-  // RHIVulkan owns the device; if its allocator context is gone, there's
-  // nothing to wait on.
+  // Drain in-flight GPU work before destroying VK objects. Use the RHI's
+  // bounded drain rather than device.waitIdle(): by this point presentation has
+  // stopped, so the graphics queue may be parked forever on the swapchain
+  // imageAcquired semaphore (see RHIVK::waitForGPUIdle). An unbounded waitIdle()
+  // here would block until the GPU host watchdog fires and loses the device,
+  // wedging the display driver -- the very crash this teardown is trying to
+  // avoid. RHIVulkan owns the device; if its context is gone there's nothing to
+  // wait on.
   if (rhi() && rhi()->vk()) {
-    vk::Device device = rhi()->vk()->device();
-    device.waitIdle();
+    rhi()->waitForGPUIdle();
+
+    // If the GPU is already lost, any further VK teardown is unsafe: on this
+    // driver vkDestroySwapchainKHR (and friends) busy-spin forever instead of
+    // returning. Nothing in-process can recover a lost device, so terminate
+    // immediately rather than hang. Process teardown reclaims the resources.
+    if (rhi()->isDeviceLost()) {
+      fprintf(stderr, "RenderBackendVKDirect: device lost during shutdown; exiting to avoid a hang in VK teardown.\n");
+      fflush(stderr);
+      _exit(0);
+    }
 
 #ifndef IS_TEGRA
     // Destroy any fence left in the mailbox.
+    vk::Device device = rhi()->vk()->device();
     VkFence leftover = m_scanoutFenceMailbox.load(std::memory_order_acquire);
     if (leftover != VK_NULL_HANDLE)
       device.destroyFence(leftover);
@@ -804,12 +821,23 @@ VKFrameInfo RenderBackendVKDirect::acquireVKFrame() {
   assert(m_backendMode == kVKNative);
   vk::Device device = rhi()->vk()->device();
 
-  vk::Semaphore imageAcquired = m_imageAcquiredSemaphores[m_frameIndex].get();
+  // Acquire with a fence (not a semaphore) and wait host-side. This keeps
+  // image-readiness entirely CPU-side, so the render submit that RHIVK builds
+  // never has to wait on an imageAcquired semaphore. That matters at shutdown:
+  // a semaphore-based acquire parks the graphics queue on the presentation
+  // engine, and once presentation stops the image pool deadlocks (every image
+  // acquired, none freed), the GPU host watchdog fires, and the device is lost.
+  // With a host wait there is no GPU-side acquire to strand.
+  vk::Fence acquireFence = m_imageAcquiredFences[m_frameIndex].get();
+  device.resetFences(acquireFence);
 
-  auto r = device.acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), imageAcquired, vk::Fence());
+  auto r = device.acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), vk::Semaphore(), acquireFence);
   if (r.result == vk::Result::eSuboptimalKHR)
     fprintf(stderr, "RenderBackendVKDirect::acquireVKFrame: eSuboptimalKHR\n");
   uint32_t swapchainIndex = r.value;
+
+  // Block until the presentation engine has released this image for rendering.
+  (void) device.waitForFences(acquireFence, VK_TRUE, std::numeric_limits<uint64_t>::max());
 
   // renderFinished is indexed by swap image (not frame slot) — see member
   // comment. Safe because acquireNextImageKHR returning image I implies the
@@ -821,7 +849,7 @@ VKFrameInfo RenderBackendVKDirect::acquireVKFrame() {
   frame.swapchainImage = m_swapchainImages[swapchainIndex];
   frame.extent = m_swapchainExtent;
   frame.format = m_swapchainFormat;
-  frame.imageAcquired = imageAcquired;
+  frame.imageAcquired = vk::Semaphore(); // host-synchronized; no GPU wait needed
   frame.renderFinished = renderFinished;
   return frame;
 }
