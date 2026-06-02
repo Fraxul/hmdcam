@@ -241,9 +241,6 @@ int main(int argc, char** argv) {
   RHISurface::ptr confidenceColorMapSurface;
   RHIRenderTarget::ptr confidenceColorMapTarget;
 
-  cv::cuda::Stream cvCudaStream;
-  CUstream cuStream = (CUstream) cvCudaStream.cudaPtr();
-
   // Debug server connection
   cameraProvider = new DebugCameraProvider();
 
@@ -497,6 +494,7 @@ int main(int argc, char** argv) {
       ImGui::End();
     }
 
+#if 0
     // distortion test
     if (ImGui::Begin("Distortion test", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
       static RHISurface::ptr testSrf;
@@ -554,6 +552,7 @@ int main(int argc, char** argv) {
       ImGui_Image(testSrf);
     }
     ImGui::End();
+#endif
 
     for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
       CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);

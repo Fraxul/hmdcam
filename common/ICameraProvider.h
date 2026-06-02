@@ -10,6 +10,7 @@ public:
 
   virtual size_t streamCount() const = 0;
   virtual RHISurface::ptr rgbTexture(size_t sensorIndex) const = 0;
+  // Luma and Chroma CUtexObjects use linear filtering, clamp-to-edge, and normalized (0-1) coordinates.
   virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const = 0;
   virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const = 0;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex) = 0;

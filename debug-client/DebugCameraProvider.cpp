@@ -243,7 +243,7 @@ bool DebugCameraProvider::connect(const char* debugHost) {
       texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
       texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
       texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
-      // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
+      texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES;
       texDesc.maxAnisotropy = 1;
 
       CUDA_CHECK(cuTexObjectCreate(&sd.cudaLumaTexObject, &m_lumaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));
@@ -259,7 +259,7 @@ bool DebugCameraProvider::connect(const char* debugHost) {
       texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
       texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
       texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
-      // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
+      texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES;
       texDesc.maxAnisotropy = 1;
 
       CUDA_CHECK(cuTexObjectCreate(&sd.cudaChromaTexObject, &m_chromaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));

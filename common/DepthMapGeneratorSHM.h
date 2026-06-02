@@ -30,8 +30,6 @@ protected:
 
     size_t m_shmViewIndex;
 
-    cv::cuda::GpuMat m_undistortRectifyMap_gpu[2];
-
     RHISurface::ptr origLeftBlitSrf;
     RHISurface::ptr origRightBlitSrf;
     RHIRenderTarget::ptr origLeftBlitRT;

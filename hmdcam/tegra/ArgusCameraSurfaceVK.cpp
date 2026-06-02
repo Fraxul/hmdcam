@@ -296,6 +296,7 @@ ArgusCameraSurfaceVK::~ArgusCameraSurfaceVK() {
     texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
     texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
     texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
+    texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES;
     texDesc.maxAnisotropy = 1;
     CUDA_CHECK(cuTexObjectCreate(&tex->m_cudaLumaTexObject, &resDesc, &texDesc, nullptr));
   }
@@ -315,6 +316,7 @@ ArgusCameraSurfaceVK::~ArgusCameraSurfaceVK() {
     texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
     texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
     texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
+    texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES;
     texDesc.maxAnisotropy = 1;
     CUDA_CHECK(cuTexObjectCreate(&tex->m_cudaChromaTexObject, &resDesc, &texDesc, nullptr));
   }

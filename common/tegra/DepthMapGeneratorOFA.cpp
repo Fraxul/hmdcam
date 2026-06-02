@@ -310,21 +310,12 @@ void DepthMapGeneratorOFA::internalSaveSettings(cv::FileStorage& fs) {
 
 void DepthMapGeneratorOFA::internalUpdateViewData() {
   for (size_t viewIdx = 0; viewIdx < m_viewData.size(); ++viewIdx) {
-    CameraSystem::View& v = m_cameraSystem->viewAtIndex(viewIdx);
     auto vd = viewDataAtIndex(viewIdx);
 
     if (!vd->m_isStereoView)
       continue;
 
     vd->updateDisparityTexture(this, internalWidth(), internalHeight(), kSurfaceFormat_R16i);
-
-    // If the gridSizeShift is <= 1, we build a half-res undistortRectifyMap to save some processing time in remapArray.
-    unsigned int downsampleFactor = (kOFAGridSizeShift <= 1) ? 2 : 1;
-
-    PER_EYE {
-      CameraSystem::Camera& cam = m_cameraSystem->cameraAtIndex(v.cameraIndices[eyeIdx]);
-      vd->m_undistortRectifyMap_gpu[eyeIdx] = remapArray_initUndistortRectifyMap(cam.intrinsicMatrix, cam.distCoeffs, v.stereoRectification[eyeIdx], v.stereoProjection[eyeIdx], cv::Size(cameraStreamWidth(), cameraStreamHeight()), downsampleFactor);
-    }
 
     // Output from remapArray
     PER_EYE vd->m_rectifiedLuma[eyeIdx].create(cv::Size(m_algoInputWidth, m_algoInputHeight), CV_8U);
@@ -475,6 +466,8 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     if (!vd->m_isStereoView || vd->anyCameraStreamFailed())
       continue;
 
+    const auto& view = m_cameraSystem->viewAtIndex(viewIdx);
+
     // Try to allocate a ring entry for this view.
     uint32_t ringIndex = m_nextRingIndex;
     SubmissionRingEntry* ringEntry = m_ring[ringIndex];
@@ -502,14 +495,13 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
       m_nextRingIndex = 0;
 
     // Remap for distortion correction
-    cv::Size inputSize = cv::Size(cameraStreamWidth(), cameraStreamHeight());
 
-    // We pick a downsampleFactor based on the grid size shift, assuming that the undistortRectifyMap is half-res at grid size shifts of <= 1.
-    // We only need to downsample again if the OFA grid size shift is zero, to get a total 4x downsample.
-    // Grid size shift of 1 (2x2) will have the half-res undistortRectifyMap and does not require downsampling here.
-    // Grid size shift of 2 (4x4) will have a full-res undistortRectifyMap and also does not require downsampling here.
-    unsigned int remapDownsampleFactor = (kOFAGridSizeShift == 0) ? 2 : 1;
-    PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), inputSize, vd->m_undistortRectifyMap_gpu[eyeIdx], vd->m_rectifiedLuma[eyeIdx], (CUstream) m_globalStream.cudaPtr(), /*downsampleFactor=*/ remapDownsampleFactor);
+    // We pick an oversampleFactor based on the grid size shift:
+    // Grid size shift of 2 (4x4) will have a full-res output and does not require oversampling.
+    // Grid size shift of 1 (2x2) will have half-res output and oversampling of 2 (2x2 filter kernel)
+    // Grid size shift of 0 (1x1) will have quarter-res output. 2x2 oversampling is probably sufficient for this case as well.
+    unsigned int remapOversampleFactor = (kOFAGridSizeShift == 2) ? 1 : 2;
+    PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), view.stereoDistortionCudaTexture[eyeIdx], vd->m_rectifiedLuma[eyeIdx], (CUstream) m_globalStream.cudaPtr(), /*oversampleFactor=*/ remapOversampleFactor);
 
     // Populate NvSci input buffer
     // TODO: This really should be merged in with the remap above -- write straight to the CUarray, skip a copy.

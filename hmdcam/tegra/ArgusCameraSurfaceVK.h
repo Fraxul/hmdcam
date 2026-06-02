@@ -48,6 +48,7 @@ public:
 
   virtual ~ArgusCameraSurfaceVK();
 
+  // Luma and chroma surfaces are linear filter, normalized coordinates, clamp-to-edge.
   CUtexObject cudaLumaTexObject() const { return m_cudaLumaTexObject; }
   CUtexObject cudaChromaTexObject() const { return m_cudaChromaTexObject; }
 

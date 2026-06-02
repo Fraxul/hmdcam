@@ -130,7 +130,7 @@ bool ArgusCameraMock::readFrame() {
           texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
           texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
           texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
-          // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
+          texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
           texDesc.maxAnisotropy = 1;
 
           CUDA_CHECK(cuTexObjectCreate(&stream.cudaLumaTexObject, &lumaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));
@@ -154,7 +154,7 @@ bool ArgusCameraMock::readFrame() {
           texDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
           texDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
           texDesc.filterMode = CU_TR_FILTER_MODE_LINEAR;
-          // texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
+          texDesc.flags = CU_TRSF_NORMALIZED_COORDINATES; // optional
           texDesc.maxAnisotropy = 1;
 
           CUDA_CHECK(cuTexObjectCreate(&stream.cudaChromaTexObject, &chromaResourceDescriptor, &texDesc, /*resourceViewDescriptor=*/ nullptr));

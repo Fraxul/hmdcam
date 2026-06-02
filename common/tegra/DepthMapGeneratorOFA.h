@@ -79,9 +79,6 @@ protected:
     virtual ~ViewDataOFA() {
     }
 
-    // Remap payloads for rectification
-    cv::cuda::GpuMat m_undistortRectifyMap_gpu[2];
-
     // The remapped luma is kept on the base class as m_rectifiedLuma[2].
 
     // Which buffer in the ring was last submitted by this view.
