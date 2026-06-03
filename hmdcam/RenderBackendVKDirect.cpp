@@ -132,16 +132,14 @@ extern "C" int ioctl(int fd, unsigned long request, ...) {
 }
 #endif // IS_TEGRA
 
-RenderBackend* createVKDirectBackend() { return new RenderBackendVKDirect(RenderBackendVKDirect::kGLInteropBlit); }
-RenderBackend* createVKDirectBackend_VKNative() { return new RenderBackendVKDirect(RenderBackendVKDirect::kVKNative); }
+RenderBackend* createVKDirectBackend() { return new RenderBackendVKDirect(); }
 
 template <typename T>
 bool contains(const std::vector<T>& container, const T& value) {
   return std::find(container.begin(), container.end(), value) != container.end();
 }
 
-RenderBackendVKDirect::RenderBackendVKDirect(BackendMode mode) :
-  m_backendMode(mode) {
+RenderBackendVKDirect::RenderBackendVKDirect() {
 }
 
 void RenderBackendVKDirect::createGLContext() {
@@ -159,24 +157,6 @@ void RenderBackendVKDirect::createGLContext() {
     // clang-format on
     EGL_CHECK(m_eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_SURFACELESS_MESA, /*native_display=*/ nullptr, attrs));
     EGL_CHECK(eglInitialize(m_eglDisplay, NULL, NULL));
-  }
-
-  if (m_backendMode == kVKNative) {
-    // VK-native mode: EGL display only. No GL context — RHIVK renders directly
-    // into swap images, and the only EGL consumer is the ArgusCamera buffer
-    // handle path documented above.
-    return;
-  }
-
-  // GL-interop mode: also create the GL context for VK<->GL blit.
-  {
-    EGLint ctx_attr[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
-    eglBindAPI(EGL_OPENGL_ES_API);
-
-    EGL_CHECK(m_eglContext = eglCreateContext(m_eglDisplay, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ctx_attr)); // EGL_KHR_no_config_context
-    EGL_CHECK(eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext));
-
-    printf("OpenGL Renderer: %s || Version: %s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION));
   }
 }
 
@@ -408,173 +388,124 @@ void RenderBackendVKDirect::createPresentation() {
       m_swapchainFormat = format.format;
     }
 
-    // Per-swapchain-image GL interop textures + GL/VK shared semaphores.
-    // VK-native mode skips this — RHIVK renders directly into swap images
-    // without GL involvement.
-    if (m_backendMode == kGLInteropBlit) {
-      m_syncData.resize(m_swapchainImages.size());
-      for (auto& s : m_syncData) {
-        // Interop texture
-
-        // clang-format off
-        vk::StructureChain<vk::ImageCreateInfo, vk::ExternalMemoryImageCreateInfo> imageCreateInfo = {
-          vk::ImageCreateInfo({
-            vk::ImageCreateFlags(),
-             vk::ImageType::e2D,
-             vk::Format::eR8G8B8A8Unorm,
-             vk::Extent3D(m_swapchainExtent, 1),
-             /*mipLevels=*/ 1,
-             /*arrayLayers=*/ 1,
-             vk::SampleCountFlagBits::e1,
-             vk::ImageTiling::eOptimal,
-             vk::ImageUsageFlags(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc),
-             vk::SharingMode::eExclusive,
-             /*queueFamilies=*/ 0, nullptr,
-             /*initialLayout=*/ vk::ImageLayout::eUndefined
-          }),
-          vk::ExternalMemoryImageCreateInfo({
-            vk::ExternalMemoryHandleTypeFlags(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd)
-          }),
-        };
-        // clang-format on
-
-        s.m_image = device.createImageUnique(imageCreateInfo.get());
-
-        vk::MemoryRequirements memoryRequirements = device.getImageMemoryRequirements(s.m_image.get());
-        vk::MemoryAllocateInfo memoryAllocateInfo{memoryRequirements.size, findMemoryType(memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlags())};
-
-        // pass in hint that we want to export this memory
-        vk::ExportMemoryAllocateInfo exportMemoryAllocateInfo(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd);
-        memoryAllocateInfo.setPNext(&exportMemoryAllocateInfo);
-
-        s.m_deviceMemory = device.allocateMemoryUnique(memoryAllocateInfo);
-
-        device.bindImageMemory(s.m_image.get(), s.m_deviceMemory.get(), 0);
-
-        // create OpenGL interop data
-        vk::MemoryGetFdInfoKHR getHandleInfo = {s.m_deviceMemory.get(), vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd};
-        s.m_handle = device.getMemoryFdKHR(getHandleInfo);
-
-
-        GL(glCreateMemoryObjectsEXT(1, &s.m_memoryObject));
-        GL(glImportMemoryFdEXT(s.m_memoryObject, memoryRequirements.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, s.m_handle));
-
-        glGenTextures(1, &s.m_textureGL);
-        glBindTexture(GL_TEXTURE_2D, s.m_textureGL);
-        GL(glTexStorageMem2DEXT(GL_TEXTURE_2D, /*levels=*/ 1, GL_RGBA8, m_swapchainExtent.width, m_swapchainExtent.height, s.m_memoryObject, /*offset=*/ 0));
-
-        GL(glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, (GLint*) &s.m_internalFormat));
-
-        GL(glGenFramebuffers(1, &s.m_framebufferGL));
-        GL(glBindFramebuffer(GL_FRAMEBUFFER, s.m_framebufferGL));
-        GL(glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, s.m_textureGL, /*level=*/ 0));
-
-        GLenum framebufferStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        CHECK(framebufferStatus == GL_FRAMEBUFFER_COMPLETE);
-
-
-        // Interop Semaphore
-        vk::SemaphoreCreateInfo createInfo{};
-        vk::ExportSemaphoreCreateInfo exportCreateInfo{vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd};
-        createInfo.setPNext(&exportCreateInfo);
-
-        auto makeSemaphore = [&](vk::UniqueSemaphore& s, int& fd, GLuint& g) {
-          s = device.createSemaphoreUnique(createInfo);
-          vk::SemaphoreGetFdInfoKHR getHandleInfo = {s.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd};
-          fd = device.getSemaphoreFdKHR(getHandleInfo);
-
-          glGenSemaphoresEXT(1, &g);
-          GL(glImportSemaphoreFdEXT(g, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd));
-        };
-
-        makeSemaphore(s.m_available, s.m_availableHandle, s.m_availableGL);
-        makeSemaphore(s.m_finished, s.m_finishedHandle, s.m_finishedGL);
-      }
-    } // end GL-interop sync objects
-
-    // Swapchain management semaphores — required for both modes
-    // (acquireNextImageKHR signals imageAcquired; presentKHR waits on
-    // renderFinished / blitFinished).
+    // Swapchain management semaphores
+    // (acquireNextImageKHR signals imageAcquired)
     for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
       vk::SemaphoreCreateInfo ci{};
       m_imageAcquiredSemaphores.push_back(device.createSemaphoreUnique(ci));
-      m_blitFinishedSemaphores.push_back(device.createSemaphoreUnique(ci));
     }
     // VK-native: additional per-swap-image renderFinished semaphores so the
     // signal/wait sequencing on the presentation semaphore is safe across
     // reordered present modes. See member comment in the header.
-    if (m_backendMode == kVKNative) {
-      for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
-        vk::SemaphoreCreateInfo ci{};
-        m_renderFinishedSemaphoresPerImage.push_back(device.createSemaphoreUnique(ci));
-        // Acquire fences: created unsignaled; acquireVKFrame resets before use.
-        m_imageAcquiredFences.push_back(device.createFenceUnique(vk::FenceCreateInfo{}));
-      }
+    for (size_t i = 0; i < m_swapchainImages.size(); ++i) {
+      vk::SemaphoreCreateInfo ci{};
+      m_renderFinishedSemaphoresPerImage.push_back(device.createSemaphoreUnique(ci));
+      // Acquire fences: created unsignaled; acquireVKFrame resets before use.
+      m_imageAcquiredFences.push_back(device.createFenceUnique(vk::FenceCreateInfo{}));
     }
 
-    // Command pool + per-frame blit command buffers — only used for the
-    // GL→VK blit submit in GL-interop mode. RHIVK has its own pool in
-    // VK-native mode.
-    if (m_backendMode == kGLInteropBlit) {
-      vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlagBits::eResetCommandBuffer, queueFamily};
-      m_commandPool = device.createCommandPoolUnique(commandPoolCreateInfo);
-
-      vk::CommandBufferAllocateInfo commandBufferAllocateInfo = {m_commandPool.get(), vk::CommandBufferLevel::ePrimary, uint32_t(m_swapchainImages.size())};
-      m_blitCommandBuffers = device.allocateCommandBuffers(commandBufferAllocateInfo);
-
-      m_unsignaledFrames = static_cast<uint32_t>(m_swapchainImages.size());
-    }
-
-    // Window RT differs per mode.
-    if (m_backendMode == kGLInteropBlit) {
-      m_windowRenderTarget = new VKDirectSwapchainRenderTarget(this);
-      static_cast<VKDirectSwapchainRenderTarget*>(m_windowRenderTarget.get())
-        ->platformSetUpdatedWindowDimensions(surfaceWidth(), surfaceHeight());
-    } else {
-      // VK-native: lightweight handle that RHIVK updates with the
-      // currently-acquired swap image per frame.
-      m_windowRenderTarget = new RHIWindowRenderTargetVK(
-        m_swapchainExtent.width, m_swapchainExtent.height, m_swapchainFormat);
-    }
+    // VK-native: lightweight handle that RHIVK updates with the
+    // currently-acquired swap image per frame.
+    m_windowRenderTarget = new RHIWindowRenderTargetVK(
+      m_swapchainExtent.width, m_swapchainExtent.height, m_swapchainFormat);
 
 
     // Scanout timestamp source setup.
-    //
-    // VK-native mode skips this entirely for Phase 3 — the existing path
-    // captures the vblank syncpt during a first-frame submit that uses
-    // GL/interop primitives. A VK-native equivalent is a Phase 5 polish
-    // item; until then, lastPresentationTimestamp stays 0 in VK-native mode.
-    if (m_backendMode == kGLInteropBlit) {
+
 #ifdef IS_TEGRA
-      // Tegra: host1x vblank syncpoint. If init fails, leave the worker thread
-      // unstarted; lastPresentationTimestamp stays at 0. The render loop will
-      // continue to function; only consumers that depend on the timestamp are
-      // affected.
+    // Tegra: host1x vblank syncpoint. If init fails, leave the worker thread
+    // unstarted; lastPresentationTimestamp stays at 0. The render loop will
+    // continue to function; only consumers that depend on the timestamp are
+    // affected.
 
-      // We first need to render a frame to the device to get the output configured;
-      // without this, the ioctl hook can't catch the vblank syncpt ID.
-      {
-        VKGLSyncData* frame = acquireTexture();
-        glBindFramebuffer(GL_FRAMEBUFFER, frame->m_framebufferGL);
-        glViewport(0, 0, surfaceWidth(), surfaceHeight());
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glFlush();
-        submitTexture(frame);
-      }
+    // We first need to render a frame to the device to get the output configured;
+    // without this, the ioctl hook can't catch the vblank syncpt ID.
+    {
+      VKFrameInfo frameInfo = acquireVKFrame();
+      // We need to submit a command buffer that just clears this swapchain image.
 
-      if (initScanoutSyncpt()) {
-        m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
-      } else {
-        fprintf(stderr, "RenderBackendVKDirect: host1x syncpt init failed; lastPresentationTimestamp will remain 0\n");
+      // Create a temporary command pool and a single command buffer.
+      vk::CommandPoolCreateInfo commandPoolCreateInfo = {vk::CommandPoolCreateFlagBits::eResetCommandBuffer, queueFamily};
+      vk::UniqueCommandPool commandPool = device.createCommandPoolUnique(commandPoolCreateInfo);
+
+      vk::CommandBufferAllocateInfo commandBufferAllocateInfo = {commandPool.get(), vk::CommandBufferLevel::ePrimary, 1};
+      auto commandBuffers = device.allocateCommandBuffersUnique(commandBufferAllocateInfo);
+
+      auto cb = std::move(commandBuffers[0]);
+
+
+      // Record a one-time-submit command buffer that clears the freshly
+      // acquired swap image to black and leaves it ready for presentation.
+      cb->begin(vk::CommandBufferBeginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+      vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+
+      // UNDEFINED -> TRANSFER_DST_OPTIMAL: discard prior contents, ready to clear.
+      vk::ImageMemoryBarrier toTransfer{
+        vk::AccessFlags(), vk::AccessFlagBits::eTransferWrite,
+        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+        VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+        frameInfo.swapchainImage, range};
+      cb->pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer,
+        vk::DependencyFlags(), 0, nullptr, 0, nullptr, 1, &toTransfer);
+
+      vk::ClearColorValue clearColor{
+        std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}
+      };
+      cb->clearColorImage(frameInfo.swapchainImage, vk::ImageLayout::eTransferDstOptimal, clearColor, range);
+
+      // TRANSFER_DST_OPTIMAL -> PRESENT_SRC_KHR: hand the image to the presentation engine.
+      vk::ImageMemoryBarrier toPresent{
+        vk::AccessFlagBits::eTransferWrite, vk::AccessFlags(),
+        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR,
+        VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+        frameInfo.swapchainImage, range};
+      cb->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eBottomOfPipe,
+        vk::DependencyFlags(), 0, nullptr, 0, nullptr, 1, &toPresent);
+
+      cb->end();
+
+      // Submit, signaling renderFinished so the following present waits on the
+      // clear. acquireVKFrame() host-waits on a fence and returns a null
+      // imageAcquired semaphore, so there is normally no GPU-side acquire wait
+      // to add; guard on it in case that contract ever changes.
+      vk::CommandBuffer rawCb = cb.get();
+      vk::Semaphore waitSem = frameInfo.imageAcquired;
+      vk::Semaphore signalSem = frameInfo.renderFinished;
+      vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eTransfer;
+
+      vk::SubmitInfo submit;
+      submit.setCommandBuffers(rawCb);
+      submit.setSignalSemaphores(signalSem);
+      if (waitSem) {
+        submit.setWaitSemaphores(waitSem);
+        submit.setWaitDstStageMask(waitStage);
       }
-#else
-      // Non-Tegra: Vulkan display-event fence path.
-      m_scanoutEventFd = eventfd(0, 0);
-      CHECK(m_scanoutEventFd >= 0);
+      rhi()->vk()->queue().submit(submit, vk::Fence());
+
+      // Present (waits on renderFinished), then drain the queue -- including this
+      // present -- before proceeding. This synchronous drain is the whole point
+      // of the prologue: it forces the driver to configure its scanout path so
+      // the following init code can snoop the vblank syncpt.
+      presentVKFrame(frameInfo);
+      rhi()->vk()->queue().waitIdle();
+
+      // commandPool and cb are locals scoped to this block: the waitIdle above
+      // guarantees the GPU is done with them, and RAII frees the buffer before
+      // destroying its pool (pool declared first => destroyed last).
+    }
+
+    if (initScanoutSyncpt()) {
       m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+    } else {
+      fprintf(stderr, "RenderBackendVKDirect: host1x syncpt init failed; lastPresentationTimestamp will remain 0\n");
+    }
+#else
+    // Non-Tegra: Vulkan display-event fence path.
+    m_scanoutEventFd = eventfd(0, 0);
+    CHECK(m_scanoutEventFd >= 0);
+    m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
 #endif
-    } // end if (kGLInteropBlit) scanout setup
 
   } catch (const std::exception& ex) {
     printf("%s\n", ex.what());
@@ -818,7 +749,6 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
 // sync primitives. RHIVK records render commands directly into the image,
 // then submit + present via presentVKFrame.
 VKFrameInfo RenderBackendVKDirect::acquireVKFrame() {
-  assert(m_backendMode == kVKNative);
   vk::Device device = rhi()->vk()->device();
 
   // Acquire with a fence (not a semaphore) and wait host-side. This keeps
@@ -855,7 +785,6 @@ VKFrameInfo RenderBackendVKDirect::acquireVKFrame() {
 }
 
 void RenderBackendVKDirect::presentVKFrame(const VKFrameInfo& frame) {
-  assert(m_backendMode == kVKNative);
   vk::Queue presentQueue = rhi()->vk()->queue();
 
   // Present waits on renderFinished (which the caller's render submit was
@@ -873,163 +802,6 @@ void RenderBackendVKDirect::presentVKFrame(const VKFrameInfo& frame) {
   m_frameIndex = (m_frameIndex + 1) % m_swapchainImages.size();
 }
 
-VKGLSyncData* RenderBackendVKDirect::acquireTexture() {
-  assert(m_backendMode == kGLInteropBlit);
-  if (m_unsignaledFrames > 0) {
-    // Skip the wait for the first cycle through all swapchain images -- the
-    // available semaphore for each index is first signaled by its blit submit,
-    // so there is nobody to signal it on the very first use.
-    --m_unsignaledFrames;
-  } else {
-    GLenum srcLayout = GL_LAYOUT_COLOR_ATTACHMENT_EXT;
-    glWaitSemaphoreEXT(m_syncData[m_frameIndex].m_availableGL, 0, nullptr, 1, &m_syncData[m_frameIndex].m_textureGL, &srcLayout);
-  }
-  return &(m_syncData[m_frameIndex]);
-}
-
-void RenderBackendVKDirect::submitTexture(VKGLSyncData*) {
-  assert(m_backendMode == kGLInteropBlit);
-  vk::Device device = rhi()->vk()->device();
-  vk::Queue presentQueue = rhi()->vk()->queue();
-
-  // Synchronization overview (all semaphores are VK/GL-shared via EXT_external_semaphore):
-  //
-  //   acquireTexture:  GL waits on  "available"  -- blocks until VK is done reading the interop texture
-  //                    ... GL renders into the interop texture ...
-  //   submitTexture:   GL signals   "finished"   -- tells VK that GL rendering is complete
-  //                    VK waits on  "finished" + "imageAcquired"
-  //                    VK blits interop texture -> swapchain image
-  //                    VK signals   "blitFinished" + "available"
-  //                       blitFinished: gates presentKHR
-  //                       available:    unblocks the next acquireTexture for this index
-
-  // Signal VK that GL is done rendering into the interop texture.
-  // The layout transition to TRANSFER_SRC prepares it for the VK blit read.
-  GLenum targetLayout = GL_LAYOUT_TRANSFER_SRC_EXT;
-  glSignalSemaphoreEXT(m_syncData[m_frameIndex].m_finishedGL, 0, nullptr, 1, &m_syncData[m_frameIndex].m_textureGL, &targetLayout);
-
-  // Flush GL command stream so the semaphore signal is submitted to the GPU.
-  glFlush();
-
-  auto r = device.acquireNextImageKHR(m_swapchain.get(), std::numeric_limits<uint64_t>::max(), m_imageAcquiredSemaphores[m_frameIndex].get(), vk::Fence());
-  if (r.result == vk::Result::eSuboptimalKHR)
-    fprintf(stderr, "RenderBackendVKDirect: acquireNextImageKHR returned eSuboptimalKHR\n");
-  uint32_t swapchainIndex = r.value;
-
-  // Record the blit command buffer for this frame. The interop texture index
-  // (m_frameIndex) and the swapchain image index (from acquireNextImageKHR) are
-  // independent, so we record on the fly rather than pre-baking a 1:1 mapping.
-  {
-    auto& b = m_blitCommandBuffers[m_frameIndex];
-    b.reset();
-    b.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-    vk::ImageSubresourceRange subresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
-
-    // clang-format off
-    vk::ImageMemoryBarrier swapchainTransferDstBarrier = {
-      /*srcAccessMask=*/ vk::AccessFlagBits::eNone,
-      /*dstAccessMask=*/ vk::AccessFlagBits::eTransferWrite,
-      /*oldLayout=*/ vk::ImageLayout::eUndefined,
-      /*newLayout=*/ vk::ImageLayout::eTransferDstOptimal,
-      /*srcQueueFamilyIndex=*/ 0,
-      /*dstQueueFamilyIndex=*/ 0,
-      /*image=*/ m_swapchainImages[swapchainIndex],
-      /*subresourceRange=*/ subresourceRange
-    };
-    // clang-format on
-
-    b.pipelineBarrier(
-      /*srcStageMask=*/ vk::PipelineStageFlagBits::eTopOfPipe,
-      /*dstStageMask=*/ vk::PipelineStageFlagBits::eTransfer,
-      /*dependencyFlags=*/ vk::DependencyFlagBits::eByRegion,
-      /*memory barriers=*/ nullptr,
-      /*buffer memory barriers=*/ nullptr,
-      /*image memory barriers=*/ swapchainTransferDstBarrier);
-
-    std::array<vk::Offset3D, 2> srcoffsets{
-      vk::Offset3D{                               0,                                 0, 0},
-      vk::Offset3D{int32_t(m_swapchainExtent.width), int32_t(m_swapchainExtent.height), 1}
-    };
-    std::array<vk::Offset3D, 2> dstoffsets{
-      vk::Offset3D{                               0, int32_t(m_swapchainExtent.height), 0},
-      vk::Offset3D{int32_t(m_swapchainExtent.width),                                 0, 1}
-    };
-    vk::ImageSubresourceLayers layers{vk::ImageAspectFlagBits::eColor, 0, 0, 1};
-    vk::ImageBlit region{layers, srcoffsets, layers, dstoffsets};
-
-    b.blitImage(m_syncData[m_frameIndex].m_image.get(), vk::ImageLayout::eTransferSrcOptimal,
-      m_swapchainImages[swapchainIndex], vk::ImageLayout::eTransferDstOptimal,
-      vk::ArrayProxy<const vk::ImageBlit>{1, &region}, vk::Filter::eNearest);
-
-    // clang-format off
-    vk::ImageMemoryBarrier swapchainPresentSrcBarrier = {
-      /*srcAccessMask=*/ vk::AccessFlagBits::eTransferWrite,
-      /*dstAccessMask=*/ vk::AccessFlagBits::eNone,
-      /*oldLayout=*/ vk::ImageLayout::eTransferDstOptimal,
-      /*newLayout=*/ vk::ImageLayout::ePresentSrcKHR,
-      /*srcQueueFamilyIndex=*/ 0,
-      /*dstQueueFamilyIndex=*/ 0,
-      /*image=*/ m_swapchainImages[swapchainIndex],
-      /*subresourceRange=*/ subresourceRange
-    };
-    // clang-format on
-
-    b.pipelineBarrier(
-      /*srcStageMask=*/ vk::PipelineStageFlagBits::eTransfer,
-      /*dstStageMask=*/ vk::PipelineStageFlagBits::eBottomOfPipe,
-      /*dependencyFlags=*/ vk::DependencyFlagBits::eByRegion,
-      /*memory barriers=*/ nullptr,
-      /*buffer memory barriers=*/ nullptr,
-      /*image memory barriers=*/ swapchainPresentSrcBarrier);
-
-    b.end();
-  }
-
-  // Submit the blit.
-  // Wait: "finished" (GL done) + "imageAcquired" (swapchain image ready).
-  // Signal: "blitFinished" (for present) + "available" (GL can reuse this interop texture).
-  std::array<vk::Semaphore, 2> blitWaitSemaphores{m_syncData[m_frameIndex].m_finished.get(), m_imageAcquiredSemaphores[m_frameIndex].get()};
-  std::array<vk::PipelineStageFlags, 2> blitWaitStages{vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTopOfPipe};
-
-  std::array<vk::Semaphore, 2> blitSignalSemaphores{m_blitFinishedSemaphores[m_frameIndex].get(), m_syncData[m_frameIndex].m_available.get()};
-
-  vk::SubmitInfo submitInfo{blitWaitSemaphores,
-    blitWaitStages,
-    m_blitCommandBuffers[m_frameIndex],
-    blitSignalSemaphores};
-
-  presentQueue.submit(submitInfo, vk::Fence{});
-
-  // Present: waits for the blit to finish before scanning out.
-  std::vector<vk::Semaphore> presentWaitSemaphores{m_blitFinishedSemaphores[m_frameIndex].get()};
-  vk::Result presentResult = presentQueue.presentKHR({presentWaitSemaphores, m_swapchain.get(), swapchainIndex});
-  if (presentResult == vk::Result::eSuboptimalKHR)
-    fprintf(stderr, "RenderBackendVKDirect: presentKHR returned eSuboptimalKHR\n");
-
-#ifndef IS_TEGRA
-  // VK_EXT_display_control: register a first-pixel-out fence and post it to
-  // the scanout worker thread via atomic mailbox. Only compiled on non-Tegra
-  // builds; on Tegra the worker thread waits directly on the host1x vblank
-  // syncpoint and doesn't need per-frame fence registration.
-  {
-    vk::DisplayEventInfoEXT eventInfo{vk::DisplayEventTypeEXT::eFirstPixelOut};
-    vk::Fence scanoutFence = device.registerDisplayEventEXT(m_display.m_displayKHR, eventInfo);
-
-    // Exchange into the mailbox; destroy any stale fence we displaced.
-    VkFence prev = m_scanoutFenceMailbox.exchange(static_cast<VkFence>(scanoutFence), std::memory_order_acq_rel);
-    if (prev != VK_NULL_HANDLE)
-      device.destroyFence(prev);
-
-    // Wake the worker thread
-    uint64_t val = 1;
-    write(m_scanoutEventFd, &val, sizeof(val));
-  }
-#endif
-
-  m_frameIndex = (m_frameIndex + 1) % m_swapchainImages.size();
-}
-
 uint32_t RenderBackendVKDirect::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
   vk::PhysicalDeviceMemoryProperties memProperties = rhi()->vk()->physicalDevice().getMemoryProperties();
 
@@ -1039,34 +811,4 @@ uint32_t RenderBackendVKDirect::findMemoryType(uint32_t typeFilter, vk::MemoryPr
     }
   }
   throw std::runtime_error("failed to find suitable memory type!");
-}
-
-VKDirectSwapchainRenderTarget::VKDirectSwapchainRenderTarget(RenderBackendVKDirect* backend) :
-  m_backend(backend) {
-
-  m_width = m_backend->surfaceWidth();
-  m_height = m_backend->surfaceHeight();
-  m_layers = 1;
-  m_samples = 1;
-  m_colorTargetCount = 1;
-  m_isArray = false;
-  m_hasDepthStencilTarget = false;
-  internalAcquireTexture();
-}
-
-VKDirectSwapchainRenderTarget::~VKDirectSwapchainRenderTarget() {
-  if (m_syncTex)
-    m_backend->submitTexture(m_syncTex);
-  m_syncTex = NULL;
-}
-
-void VKDirectSwapchainRenderTarget::platformSwapBuffers() {
-  if (m_syncTex)
-    m_backend->submitTexture(m_syncTex);
-
-  internalAcquireTexture();
-}
-void VKDirectSwapchainRenderTarget::internalAcquireTexture() {
-  m_syncTex = m_backend->acquireTexture();
-  m_glFramebufferId = m_syncTex->m_framebufferGL;
 }

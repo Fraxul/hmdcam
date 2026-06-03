@@ -149,18 +149,14 @@ bool RenderInit(ERenderBackend backendType) {
     printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
   }
 
-  // Construct RenderBackendVKDirect in VK-native mode. earlyInit is a no-op
+  // Construct RenderBackendVKDirect for native Vulkan rendering. earlyInit is a no-op
   // on VKDirect, createGLContext becomes a no-op, createPresentation skips
   // VKGLSyncData and uses RHIWindowRenderTargetVK.
-  auto* vkBackend = new RenderBackendVKDirect(RenderBackendVKDirect::kVKNative);
+  auto* vkBackend = new RenderBackendVKDirect();
   renderBackend = vkBackend;
   vkBackend->earlyInit();
-  vkBackend->createGLContext(); // no-op in VK-native mode
+  vkBackend->createGLContext(); // Only creates an EGL context.
 
-  // initRHIVulkan() calls initRHI() which runs initRHIResources(). As
-  // unimplemented RHIVK methods get called, they abort with the method
-  // name + source location — incrementally fill them in (see Vulkan-
-  // Migration.md Phase 4).
   initRHIVulkan();
 
   vkBackend->createPresentation();

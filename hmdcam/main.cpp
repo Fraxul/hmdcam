@@ -1128,7 +1128,7 @@ int main(int argc, char* argv[]) {
             ImPlot::SetupAxis(ImAxis_X1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_NoTickLabels);
             ImPlot::SetupAxis(ImAxis_Y1, /*label=*/ nullptr, /*flags=*/ ImPlotAxisFlags_AutoFit); // | ImPlotAxisFlags_LockMin);
             ImPlot::SetupAxisLimits(ImAxis_X1, 0, s_timingDataBuffer.size(), ImPlotCond_Always);
-            ImPlot::SetupAxisLimits(ImAxis_Y1, -12.0f, 12.0f, ImPlotCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, -35.0f, 0.0f, ImPlotCond_Always);
             ImPlot::SetupFinish();
 
             ImPlot::PlotLine("Present-Capture Offset", &s_timingDataBuffer.data()[0].presentToCaptureOffsetMs, s_timingDataBuffer.size(), /*xscale=*/ 1, /*xstart=*/ 0, /*flags=*/ 0, s_timingDataBuffer.offset(), sizeof(FrameTimingData));
