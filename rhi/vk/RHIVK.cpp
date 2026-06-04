@@ -291,10 +291,9 @@ void RHIVK::beginRenderPass(RHIRenderTarget::ptr target,
   RHIRenderTargetLoadAction colorLoadAction,
   RHIRenderTargetLoadAction depthLoadAction,
   RHIRenderTargetLoadAction stencilLoadAction) {
-  if (m_currentFrame.passActive) {
-    fprintf(stderr, "RHIVK::beginRenderPass: previous render pass not closed\n");
-    abort();
-  }
+
+  assert(!m_currentFrame.passActive && "beginRenderPass: endRenderPass was not called for the previous pass");
+  assert(colorLoadAction != kLoadUnspecified && "beginRenderPass: kLoadUnspecified is not a valid load action type");
 
   // Mirror the GL backend's load-action defaulting: depth follows color and
   // stencil follows depth when left unspecified.
@@ -677,7 +676,7 @@ vk::BlendOp vkBlendOpFor(RHIBlendFunc f) {
 } // namespace
 
 void RHIVK::setViewport(const RHIRect& r) {
-  if (!m_currentFrame.passActive) return;
+  assert(m_currentFrame.passActive && "setViewport: can only be called during a render pass.");
   vk::Viewport vp{
     float(r.x), float(r.y), float(r.width), float(r.height),
     0.0f, 1.0f};
@@ -694,7 +693,7 @@ void RHIVK::setViewport(const RHIRect& r) {
   m_currentFrame.viewportCount = 1;
 }
 void RHIVK::setViewports(const RHIRect* rects, size_t count) {
-  if (!m_currentFrame.passActive || count == 0) return;
+  assert(m_currentFrame.passActive && "setViewports: can only be called during a render pass.");
   std::vector<vk::Viewport> vps(count);
   std::vector<vk::Rect2D> scissors(count);
   vk::Rect2D fullRT{
@@ -714,16 +713,13 @@ void RHIVK::setViewports(const RHIRect* rects, size_t count) {
   m_currentFrame.viewportCount = uint32_t(count);
 }
 void RHIVK::setDepthBias(float slopeScale, float constantBias) {
-  if (!m_currentFrame.passActive) return;
+  assert(m_currentFrame.passActive && "setDepthBias: can only be called during a render pass.");
   m_currentFrame.commandBuffer.setDepthBiasEnableEXT(VK_TRUE);
   m_currentFrame.commandBuffer.setDepthBias(constantBias, /*clamp=*/ 0.0f, slopeScale);
 }
 
 void RHIVK::bindRenderPipeline(RHIRenderPipeline::ptr pipeline) {
-  if (!m_currentFrame.passActive) {
-    fprintf(stderr, "RHIVK::bindRenderPipeline: no render pass active\n");
-    abort();
-  }
+  assert(m_currentFrame.passActive && "bindRenderPipeline: can only be called during a render pass.");
   RHIRenderPipelineVK* p = static_cast<RHIRenderPipelineVK*>(pipeline.get());
   m_boundPipeline = p;
 
@@ -858,7 +854,7 @@ void RHIVK::keepAliveForFrame(boost::intrusive_ptr<RHIObject> obj) {
 }
 
 void RHIVK::bindDepthStencilState(RHIDepthStencilState::ptr state) {
-  if (!m_currentFrame.passActive) return;
+  assert(m_currentFrame.passActive && "bindDepthStencilState: can only be called during a render pass.");
   const RHIDepthStencilStateDescriptor& d = static_cast<RHIDepthStencilStateVK*>(state.get())->descriptor();
   vk::CommandBuffer cb = m_currentFrame.commandBuffer;
   cb.setDepthTestEnableEXT(d.depthTestEnable ? VK_TRUE : VK_FALSE);
@@ -884,7 +880,7 @@ void RHIVK::bindDepthStencilState(RHIDepthStencilState::ptr state) {
 }
 
 void RHIVK::bindBlendState(RHIBlendState::ptr state) {
-  if (!m_currentFrame.passActive) return;
+  assert(m_currentFrame.passActive && "bindBlendState: can only be called during a render pass.");
   const RHIBlendStateDescriptor& d = static_cast<RHIBlendStateVK*>(state.get())->descriptor();
   vk::CommandBuffer cb = m_currentFrame.commandBuffer;
 
@@ -911,7 +907,7 @@ void RHIVK::bindBlendState(RHIBlendState::ptr state) {
 }
 
 void RHIVK::setCullState(RHICullState s) {
-  if (!m_currentFrame.passActive) return;
+  assert(m_currentFrame.passActive && "setCullState: can only be called during a render pass.");
   vk::CullModeFlags mode;
   switch (s) {
     case kCullFrontFaces: mode = vk::CullModeFlagBits::eFront; break;
@@ -922,7 +918,7 @@ void RHIVK::setCullState(RHICullState s) {
 }
 
 void RHIVK::setScissorRect(const RHIRect& r) {
-  if (!m_currentFrame.passActive) return;
+  assert(m_currentFrame.passActive && "setScissorRect: can only be called during a render pass.");
   vk::Rect2D scissor{
     {     int32_t(r.x),       int32_t(r.y)},
     {uint32_t(r.width), uint32_t(r.height)}
@@ -934,7 +930,7 @@ void RHIVK::setScissorRect(const RHIRect& r) {
   m_currentFrame.commandBuffer.setScissorWithCountEXT(m_currentFrame.viewportCount, scissors.data());
 }
 void RHIVK::clearScissorRect() {
-  if (!m_currentFrame.passActive) return;
+  assert(m_currentFrame.passActive && "clearScissorRect: can only be called during a render pass.");
   vk::Rect2D scissor{
     {0, 0},
     m_currentFrame.passExtent
@@ -967,10 +963,7 @@ RHIVK::TransientBufferAlloc RHIVK::allocTransientUniform(const void* data, size_
 }
 
 void RHIVK::loadUniformBlock(FxAtomicString name, RHIBuffer::ptr buffer) {
-  if (!m_boundPipeline) {
-    fprintf(stderr, "RHIVK::loadUniformBlock(\"%s\"): no pipeline bound\n", name.c_str());
-    return;
-  }
+  assert(m_boundPipeline && "RHIVK::loadTexture(): no active pipeline");
   const auto& bindings = m_boundPipeline->resourceBindings();
   auto it = bindings.find(name.c_str());
   if (it == bindings.end()) return; // shader does not use this block
@@ -996,7 +989,7 @@ void RHIVK::loadUniformBlock(FxAtomicString name, RHIBuffer::ptr buffer) {
 }
 
 void RHIVK::loadUniformBlockImmediate(FxAtomicString name, const void* data, size_t size) {
-  if (!m_boundPipeline) return;
+  assert(m_boundPipeline && "RHIVK::loadTexture(): no active pipeline");
   const auto& bindings = m_boundPipeline->resourceBindings();
   auto it = bindings.find(name.c_str());
   if (it == bindings.end()) return;
@@ -1017,7 +1010,7 @@ void RHIVK::loadUniformBlockImmediate(FxAtomicString name, const void* data, siz
 }
 
 void RHIVK::loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr buffer) {
-  if (!m_boundPipeline) return;
+  assert(m_boundPipeline && "RHIVK::loadTexture(): no active pipeline");
   const auto& bindings = m_boundPipeline->resourceBindings();
   auto it = bindings.find(name.c_str());
   if (it == bindings.end()) return;
@@ -1039,7 +1032,7 @@ void RHIVK::loadShaderBuffer(FxAtomicString name, RHIBuffer::ptr buffer) {
 }
 
 void RHIVK::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::ptr sampler) {
-  if (!m_boundPipeline) return;
+  assert(m_boundPipeline && "RHIVK::loadTexture(): no active pipeline");
   if (!tex) {
     printf("RHIVK::loadTexture(\"%s\"): texture is null\n", name.c_str());
     return;
@@ -1048,7 +1041,10 @@ void RHIVK::loadTexture(FxAtomicString name, RHISurface::ptr tex, RHISampler::pt
   if (s_skipName && strcmp(s_skipName, name.c_str()) == 0) return;
   const auto& bindings = m_boundPipeline->resourceBindings();
   auto it = bindings.find(name.c_str());
-  if (it == bindings.end()) return;
+  if (it == bindings.end()) {
+    // printf("RHIVK::loadTexture(\"%s\"): no matching texture slot in current pipeline\n", name.c_str());
+    return;
+  }
 
   vk::ImageView imageView = static_cast<RHISurfaceVK*>(tex.get())->vkImageView();
   // VK CIS descriptors require a real sampler handle. Callers that pass
@@ -1094,7 +1090,11 @@ vk::Sampler RHIVK::defaultSampler() {
 }
 
 void RHIVK::loadImage(FxAtomicString name, RHISurface::ptr tex, RHIImageAccessType, uint32_t /*mipLevel*/, int32_t /*layerIndex*/) {
-  if (!m_boundPipeline) return;
+  assert(m_boundPipeline && "RHIVK::loadImage(): no active pipeline");
+  if (!tex) {
+    printf("RHIVK::loadImage(\"%s\"): texture is null\n", name.c_str());
+    return;
+  }
   const auto& bindings = m_boundPipeline->resourceBindings();
   auto it = bindings.find(name.c_str());
   if (it == bindings.end()) return;
