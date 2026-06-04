@@ -12,6 +12,45 @@ static RHISurface::ptr imguiFontAtlas;
 static RHIBlendState::ptr imguiBlendState;
 static RHIRenderPipeline::ptr imguiPipeline;
 
+static constexpr size_t kVertexCountIncrement = (1 << 16);
+static constexpr size_t kIndexCountIncrement = (1 << 18);
+
+
+struct FrameData {
+  // Host-mapped buffers.
+
+  RHIBuffer::ptr vertexBuffer;
+  RHIBuffer::ptr indexBuffer;
+
+  // Ensure buffers exist and are large enough to hold the specified vertex and index counts.
+  void ensureBufferSize(ImDrawData* drawData) {
+    int TotalVtxCount = drawData->TotalVtxCount;
+    int TotalIdxCount = drawData->TotalIdxCount;
+    if (!vertexBuffer || vertexBuffer->size() < (sizeof(ImDrawVert) * TotalVtxCount)) {
+      size_t newVertexBufferSize = sizeof(ImDrawVert) * ((TotalVtxCount + (kVertexCountIncrement - 1)) & (~(kVertexCountIncrement - 1)));
+      // fprintf(stderr, "RHIImGuiBackend::FrameData(%p): new vertex buffer size %zu bytes\n", this, newVertexBufferSize);
+      vertexBuffer = rhi()->newEmptyBuffer(newVertexBufferSize, kBufferUsageCPUWriteOnly);
+      vertexBuffer->map(kBufferMapWriteOnly);
+    }
+
+    if (!indexBuffer || indexBuffer->size() < (sizeof(ImDrawIdx) * TotalIdxCount)) {
+      size_t newIndexBufferSize = sizeof(ImDrawIdx) * ((TotalIdxCount + (kIndexCountIncrement - 1)) & (~(kIndexCountIncrement - 1)));
+      // fprintf(stderr, "RHIImGuiBackend::FrameData(%p): new index buffer size %zu bytes\n", this, newIndexBufferSize);
+      indexBuffer = rhi()->newEmptyBuffer(newIndexBufferSize, kBufferUsageCPUWriteOnly);
+      indexBuffer->map(kBufferMapWriteOnly);
+    }
+  }
+
+  void releaseResources() {
+    vertexBuffer.reset();
+    indexBuffer.reset();
+  }
+};
+
+static constexpr size_t kFrameDataRingSize = 4;
+static FrameData frameDataRing[kFrameDataRingSize];
+static uint32_t frameDataRingIndex = 0;
+
 void ImGui_ImplFxRHI_Init() {
   ImGuiIO& io = ImGui::GetIO();
   io.BackendRendererName = "FxEngine";
@@ -43,7 +82,10 @@ void ImGui_ImplFxRHI_Init() {
 }
 
 void ImGui_ImplFxRHI_NewFrame() {
-  // Nothing to do here
+  // Advance frame data ring buffer cursor
+  frameDataRingIndex += 1;
+  if (frameDataRingIndex >= kFrameDataRingSize)
+    frameDataRingIndex = 0;
 }
 
 void ImGui_ImplFxRHI_Shutdown() {
@@ -55,14 +97,20 @@ void ImGui_ImplFxRHI_Shutdown() {
   imguiFontAtlas.reset();
   imguiBlendState.reset();
   imguiPipeline.reset();
+  for (size_t i = 0; i < kFrameDataRingSize; ++i) {
+    frameDataRing[i].releaseResources();
+  }
 }
 
 void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawData* draw_data) {
   ImDrawData* drawData = ImGui::GetDrawData();
   if (drawData->TotalVtxCount && drawData->TotalIdxCount) {
 
-    ImDrawVert* vertexData = new ImDrawVert[drawData->TotalVtxCount];
-    ImDrawIdx* indexData = new ImDrawIdx[drawData->TotalIdxCount];
+    FrameData& frameData = frameDataRing[frameDataRingIndex];
+    frameData.ensureBufferSize(drawData);
+
+    ImDrawVert* vertexData = reinterpret_cast<ImDrawVert*>(frameData.vertexBuffer->data());
+    ImDrawIdx* indexData = reinterpret_cast<ImDrawIdx*>(frameData.indexBuffer->data());
 
     size_t vertexBase = 0;
     size_t indexBase = 0;
@@ -89,9 +137,6 @@ void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawDat
     }
 
     if (!drawCommands.empty()) {
-      RHIBuffer::ptr uiVertexBuffer = rhi()->newBufferWithContents(vertexData, drawData->TotalVtxCount * sizeof(ImDrawVert), kBufferUsageCPUWriteOnly);
-      RHIBuffer::ptr uiIndexBuffer = rhi()->newBufferWithContents(indexData, drawData->TotalIdxCount * sizeof(ImDrawIdx), kBufferUsageCPUWriteOnly);
-
       rhi()->bindDepthStencilState(disabledDepthStencilState);
       rhi()->bindBlendState(imguiBlendState);
       rhi()->bindRenderPipeline(imguiPipeline);
@@ -116,13 +161,10 @@ void ImGui_ImplFxRHI_RenderDrawData(RHIRenderTarget::ptr renderTarget, ImDrawDat
           rhi()->setScissorRect(scissor);
           rhi()->loadTexture(ksTexture, static_cast<RHISurface*>(drawCmd.TextureId), linearClampSampler);
 
-          rhi()->bindStreamBuffer(0, uiVertexBuffer, /*offsetBytes=*/ drawCmd.VtxOffset * sizeof(ImDrawVert));
-          rhi()->drawIndexedPrimitives(uiIndexBuffer, kIndexBufferTypeUInt16, drawCmd.ElemCount, drawCmd.IdxOffset);
+          rhi()->bindStreamBuffer(0, frameData.vertexBuffer, /*offsetBytes=*/ drawCmd.VtxOffset * sizeof(ImDrawVert));
+          rhi()->drawIndexedPrimitives(frameData.indexBuffer, kIndexBufferTypeUInt16, drawCmd.ElemCount, drawCmd.IdxOffset);
         }
       }
     }
-
-    delete[] vertexData;
-    delete[] indexData;
   }
 }

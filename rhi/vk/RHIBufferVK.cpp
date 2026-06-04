@@ -11,6 +11,8 @@ RHIBufferVK::RHIBufferVK() {
 }
 
 RHIBufferVK::~RHIBufferVK() {
+  if (m_data)
+    unmap();
   // m_buffer / m_memory are UniqueXxx — auto-destroyed.
 }
 
@@ -68,12 +70,16 @@ void RHIBufferVK::loadData(const void* src, size_t length, size_t offset) {
 }
 
 void RHIBufferVK::map(RHIBufferMapMode) {
-  // Map the whole buffer; expose via m_data.
-  // Coherent memory means no explicit flushes are needed.
-  m_data = rhi()->vk()->device().mapMemory(m_memory.get(), 0, VK_WHOLE_SIZE);
+  if (!m_data) {
+    // Map the whole buffer; expose via m_data.
+    // Coherent memory means no explicit flushes are needed.
+    m_data = rhi()->vk()->device().mapMemory(m_memory.get(), 0, VK_WHOLE_SIZE);
+  }
 }
 
 void RHIBufferVK::unmap() {
-  rhi()->vk()->device().unmapMemory(m_memory.get());
-  m_data = nullptr;
+  if (m_data) {
+    rhi()->vk()->device().unmapMemory(m_memory.get());
+    m_data = nullptr;
+  }
 }
