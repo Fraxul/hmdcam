@@ -10,12 +10,9 @@ __global__ void undistortRectifyKernel(
   const float* __restrict__ invRectifiedProjectionPerRow,
   cudaSurfaceObject_t outMap) {
 
-  const int32_t width = params->width;
-  const int32_t height = params->height;
-
-  const int x = blockIdx.x * blockDim.x + threadIdx.x;
-  const int y = blockIdx.y * blockDim.y + threadIdx.y;
-  if (x >= width || y >= height) return;
+  const uint32_t x = static_cast<uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+  const uint32_t y = static_cast<uint32_t>(blockIdx.y * blockDim.y + threadIdx.y);
+  if (x >= params->distortionMapWidth || y >= params->distortionMapHeight) return;
 
   const float fx = params->cameraMatrix[0];
   const float fy = params->cameraMatrix[4];
@@ -35,8 +32,9 @@ __global__ void undistortRectifyKernel(
   // (u, v, 1) -> ray in source camera's normalized frame at this row's
   // exposure time, via inv(P * R) pre-folded with the per-row rolling-shutter
   // correction.
-  const float u = static_cast<float>(x);
-  const float v = static_cast<float>(y);
+  // First requires a scale-bias coordinate-system conversion from distortion map pixels to stream pixels.
+  const float u = (static_cast<float>(x) * params->distortionMapToStreamScale[0]) + params->distortionMapToStreamBias[0];
+  const float v = (static_cast<float>(y) * params->distortionMapToStreamScale[1]) + params->distortionMapToStreamBias[1];
   const float xR = u * iR[0] + v * iR[1] + iR[2];
   const float yR = u * iR[3] + v * iR[4] + iR[5];
   const float wR = u * iR[6] + v * iR[7] + iR[8];
@@ -58,10 +56,11 @@ __global__ void undistortRectifyKernel(
   const float uSrc = fx * xd + cx;
   const float vSrc = fy * yd + cy;
 
-  const float fwidth = static_cast<float>(width);
-  const float fheight = static_cast<float>(height);
-  const float nx = __saturatef(__fdividef(uSrc + params->texelBiasX, fwidth));
-  const float ny = __saturatef(__fdividef(vSrc + params->texelBiasY, fheight));
+  const float fwidth = static_cast<float>(params->streamWidth);
+  const float fheight = static_cast<float>(params->streamHeight);
+  constexpr float texelBias = 0.5f; // Half-texel bias to align sampling; matches cv::remap.
+  const float nx = __saturatef(__fdividef(uSrc + texelBias, fwidth));
+  const float ny = __saturatef(__fdividef(vSrc + texelBias, fheight));
 
   // Round-toward-zero (== floor for non-negative) to match the CPU baseline's
   // static_cast<uint16_t>() truncation.
@@ -79,10 +78,10 @@ extern "C" void launchUndistortRectifyKernel(
   const UndistortRectifyParams* paramsDevicePtr,
   const float* invRectifiedProjectionPerRowDevicePtr,
   cudaSurfaceObject_t outDistortionMap,
-  int width, int height,
+  int distortionMapWidth, int distortionMapHeight,
   cudaStream_t stream) {
   const dim3 block(32, 8);
-  const dim3 grid(divUp(width, block.x), divUp(height, block.y));
+  const dim3 grid(divUp(distortionMapWidth, block.x), divUp(distortionMapHeight, block.y));
   undistortRectifyKernel<<<grid, block, 0, stream>>>(
     paramsDevicePtr,
     invRectifiedProjectionPerRowDevicePtr,

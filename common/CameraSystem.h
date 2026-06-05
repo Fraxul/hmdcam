@@ -456,6 +456,9 @@ protected:
   std::vector<Camera> m_cameras;
   std::vector<View> m_views;
 
+  // Stereo distortion map dimensions -- typically half of the stream size.
+  uint32_t m_distortionMapWidth = 0, m_distortionMapHeight = 0;
+
   RHISurface::ptr generateGPUDistortionMap(cv::Mat map1, cv::Mat map2, cv::Size sourceImageSize);
 
   RHIRenderPipeline::ptr m_camGreyscalePipeline;

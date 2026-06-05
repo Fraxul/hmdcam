@@ -15,14 +15,16 @@ struct UndistortRectifyParams {
   // Brown-Conrady distortion: k1, k2, p1, p2, k3.
   float distCoeffs[5];
 
-  // Output map / source image dimensions in pixels. Assumes output resolution
-  // equals source resolution.
-  int32_t width;
-  int32_t height;
+  // Output map dimensions in pixels.
+  uint32_t distortionMapWidth, distortionMapHeight;
 
-  // Half-texel bias matching cv::remap sampling convention. Typically 0.5f.
-  float texelBiasX;
-  float texelBiasY;
+  // Input camera stream dimensions in pixels.
+  uint32_t streamWidth, streamHeight;
+
+  // Scale-bias to convert from distortion map pixel space to input camera pixel space.
+  // streamPixel = (distortionMapPixel * distortionMapScale) + distortionMapBias
+  float distortionMapToStreamScale[2];
+  float distortionMapToStreamBias[2];
 };
 
 // Per-output-row 3x3 matrices for rolling-shutter correction. Layout: tightly
@@ -53,5 +55,5 @@ extern "C"
     const UndistortRectifyParams* paramsDevicePtr,
     const float* invRectifiedProjectionPerRowDevicePtr,
     cudaSurfaceObject_t outDistortionMap,
-    int width, int height,
+    int distortionMapWidth, int distortionMapHeight,
     cudaStream_t stream);

@@ -93,6 +93,13 @@ CameraSystem::CameraSystem(ICameraProvider* cam) :
 
   m_cameras.resize(cameraProvider()->streamCount());
 
+  // Compute stereo distortion map size.
+  // The stereoDistortionMap will be generated at half-resolution relative to the stream size.
+  // This introduces a tiny amount of distortion error (typical <0.1px) in exchange for
+  // cutting the per-frame distortion map generation time to 1/4.
+  m_distortionMapWidth = cameraProvider()->streamWidth() / 2;
+  m_distortionMapHeight = cameraProvider()->streamHeight() / 2;
+
   // ycbcr immutable sampler — non-null for YUV providers (Tegra
   // ArgusCamera on VK). See main.cpp for the same pattern.
   RHISampler::ptr camYcbcrSampler = cam->cameraSampler();
@@ -132,17 +139,15 @@ void CameraSystem::processFrame() {
   // for now -- the IMU integration will populate non-trivial per-row rotations
   // in a later change. See SYNCHRONIZATION ASSUMPTION in UndistortRectifyKernel.h.
 
-  const int height = static_cast<int>(cameraProvider()->streamHeight());
-
   for (size_t viewIdx = 0; viewIdx < m_views.size(); ++viewIdx) {
     View& v = m_views[viewIdx];
     if (!v.isStereo) continue;
     if (v.rsParamsHost == nullptr) continue; // No calibration yet.
 
     for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-      float* eyeBase = v.rsPerRowIRHost + (eyeIdx * height * 9);
+      float* eyeBase = v.rsPerRowIRHost + (eyeIdx * m_distortionMapHeight * 9);
       const cv::Mat& iR = v.rsIRBase[eyeIdx];
-      for (int y = 0; y < height; ++y) {
+      for (int y = 0; y < m_distortionMapHeight; ++y) {
         // Identity R_y placeholder: every row gets the same iR. When IMU
         // integration lands, replace this with R_y * iR per row.
         for (int r = 0; r < 3; ++r) {
@@ -155,11 +160,11 @@ void CameraSystem::processFrame() {
 
     for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
       const UndistortRectifyParams* paramsDev = reinterpret_cast<const UndistortRectifyParams*>(v.rsParamsDevice) + eyeIdx;
-      const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * height * 9);
+      const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * m_distortionMapHeight * 9);
       launchUndistortRectifyKernel(
         paramsDev, perRowDev,
         v.stereoDistortionCudaSurface[eyeIdx],
-        static_cast<int>(cameraProvider()->streamWidth()), height,
+        m_distortionMapWidth, m_distortionMapHeight,
         RHICUDA::defaultAsyncStream);
     }
   }
@@ -425,7 +430,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   // empty -- the kernel fill below populates them.
   for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
     v.stereoDistortionMap[eyeIdx] = rhi()->newInteropSurface(
-      imageSize.width, imageSize.height,
+      m_distortionMapWidth, m_distortionMapHeight,
       RHISurfaceDescriptor(kSurfaceFormat_RG16));
 
     // Allocate CUDA surface object
@@ -459,7 +464,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     CUDA_CHECK(cuMemHostGetDevicePointer(&paramsDev, v.rsParamsHost, 0));
     v.rsParamsDevice = static_cast<unsigned long long>(paramsDev);
 
-    const size_t perRowBytes = 2 * static_cast<size_t>(imageSize.height) * 9 * sizeof(float);
+    const size_t perRowBytes = 2 * static_cast<size_t>(m_distortionMapHeight) * 9 * sizeof(float);
     CUdeviceptr perRowDev = 0;
     CUDA_CHECK(cuMemHostAlloc(reinterpret_cast<void**>(&v.rsPerRowIRHost),
       perRowBytes,
@@ -481,10 +486,17 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     for (int i = 0; i < 5; ++i) {
       p.distCoeffs[i] = static_cast<float>(c.distCoeffs.at<double>(i, 0));
     }
-    p.width = imageSize.width;
-    p.height = imageSize.height;
-    p.texelBiasX = 0.5f;
-    p.texelBiasY = 0.5f;
+    p.distortionMapWidth = m_distortionMapWidth;
+    p.distortionMapHeight = m_distortionMapHeight;
+    p.streamWidth = imageSize.width;
+    p.streamHeight = imageSize.height;
+
+    // For a half-resolution distortion map, we scale 2x to convert distortion map pixels to stream pixels.
+    p.distortionMapToStreamScale[0] = 2.0f;
+    p.distortionMapToStreamScale[1] = 2.0f;
+    // We also apply a 1-pixel bias to make each half-res distortion map sample land in the center of the 2x2 pixel neighborhood from its corresponding native-res map
+    p.distortionMapToStreamBias[0] = 1.0f;
+    p.distortionMapToStreamBias[1] = 1.0f;
 
     // cv::initUndistortRectifyMap takes a 3x4 newProjection but uses only its upper-left 3x3.
     cv::Mat newCam3x3 = v.stereoProjection[eyeIdx](cv::Rect(0, 0, 3, 3));
@@ -493,10 +505,9 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
 
   // Initial fill: identity per-row R (i.e., per-row entries == iRBase). Gives
   // stereoDistortionMap[] valid contents before the first processFrame.
-  const int height = imageSize.height;
   for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-    float* eyeBase = v.rsPerRowIRHost + (eyeIdx * height * 9);
-    for (int y = 0; y < height; ++y) {
+    float* eyeBase = v.rsPerRowIRHost + (eyeIdx * m_distortionMapHeight * 9);
+    for (int y = 0; y < m_distortionMapHeight; ++y) {
       for (int r = 0; r < 3; ++r) {
         for (int col = 0; col < 3; ++col) {
           eyeBase[y * 9 + r * 3 + col] = static_cast<float>(v.rsIRBase[eyeIdx].at<double>(r, col));
@@ -506,11 +517,11 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   }
   for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
     const UndistortRectifyParams* paramsDev = reinterpret_cast<const UndistortRectifyParams*>(v.rsParamsDevice) + eyeIdx;
-    const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * height * 9);
+    const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * m_distortionMapHeight * 9);
     launchUndistortRectifyKernel(
       paramsDev, perRowDev,
       v.stereoDistortionCudaSurface[eyeIdx],
-      imageSize.width, imageSize.height,
+      m_distortionMapWidth, m_distortionMapHeight,
       RHICUDA::defaultAsyncStream);
   }
 
