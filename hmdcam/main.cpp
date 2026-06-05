@@ -1782,7 +1782,10 @@ int main(int argc, char* argv[]) {
   signal(SIGTERM, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
 
-  // Drain in-flight GPU work first.
+  // Stop capture
+  argusCamera->stop();
+
+  // Drain in-flight GPU work
   rhi()->waitForGPUIdle();
 
   // Clear the screen, but only if the device is healthy — once it's lost, any
@@ -1796,7 +1799,11 @@ int main(int argc, char* argv[]) {
     rhi()->waitForGPUIdle();
   }
 
-  argusCamera->stop();
+  delete eyeTrackingService;
+  delete faceTrackingService;
+  delete debugServer;
+  delete cameraSystem;
+  delete depthMapGenerator;
   delete argusCamera;
 
   RenderShutdown();

@@ -35,7 +35,7 @@ DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend);
 class DepthMapGenerator {
 public:
   DepthMapGenerator(DepthMapGeneratorBackend);
-  ~DepthMapGenerator();
+  virtual ~DepthMapGenerator();
 
   void initWithCameraSystem(CameraSystem*);
   void processFrame();
