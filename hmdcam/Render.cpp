@@ -142,11 +142,6 @@ bool RenderInit(ERenderBackend backendType) {
     // Setup global state
     hmd_width = hmd->screens[0].w_pixels;
     hmd_height = hmd->screens[0].h_pixels;
-
-    // Eye target dimensions are 1.5x the per-eye viewport resolution, rounded up to the next 16 pixel block
-    eye_width = (((hmd->views[0].viewport.w_pixels * 3) / 2) + 0xf) & ~0xfUL;
-    eye_height = (((hmd->views[0].viewport.h_pixels * 3) / 2) + 0xf) & ~0xfUL;
-    printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
   }
 
   // Construct RenderBackendVKDirect for native Vulkan rendering. earlyInit is a no-op
@@ -246,6 +241,12 @@ bool RenderInit(ERenderBackend backendType) {
         hmd->views[eyeIndex].viewport.w_pixels,
         hmd->views[eyeIndex].viewport.h_pixels);
     }
+
+    // Eye target dimensions are 1.5x the per-eye viewport resolution, rounded up to the next 16 pixel block
+    eye_width = (((hmd->views[0].viewport.w_pixels * 3) / 2) + 0xf) & ~0xfUL;
+    eye_height = (((hmd->views[0].viewport.h_pixels * 3) / 2) + 0xf) & ~0xfUL;
+    printf("Eye target dimensions: %u x %u\n", eye_width, eye_height);
+
   } // Monado distortion setup
 
   // Set up uniform buffers for HMD distortion passes
@@ -264,6 +265,7 @@ bool RenderInit(ERenderBackend backendType) {
     eyePostDistortionViewports[0] = RHIRect::xywh(        0, 0, eye_width, eye_height);
     eyePostDistortionViewports[1] = RHIRect::xywh(eye_width, 0, eye_width, eye_height);
     // clang-format on
+    printf("Dummy HMD Eye target dimensions: %u x %u\n", eye_width, eye_height);
   }
 
   if (!(windowRenderTarget->width() == hmd_width && windowRenderTarget->height() == hmd_height)) {
