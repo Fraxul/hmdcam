@@ -52,6 +52,10 @@ static inline void delayNs(uint64_t ns) {
   } while (res == -1 && errno == EINTR);
 }
 
+static inline void delayMs(uint64_t ms) {
+  delayNs(ms * 1'000'000UL);
+}
+
 class PerfTimer {
 public:
   PerfTimer() {

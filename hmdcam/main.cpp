@@ -32,6 +32,7 @@
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
 #include "common/FxThreading.h"
+#include "common/IMUService.h"
 #include "common/ScrollingBuffer.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
@@ -83,6 +84,7 @@ IArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
 DebugServer* debugServer = nullptr;
 DepthMapGenerator* depthMapGenerator = nullptr;
+IMUService* imuService = nullptr;
 #ifdef USE_EYETRACKING
 EyeTrackingService* eyeTrackingService = nullptr;
 FaceTrackingService* faceTrackingService = nullptr;
@@ -272,6 +274,7 @@ int main(int argc, char* argv[]) {
   bool enableCANBus = true;
   bool enableEyetracking = true;
   bool enableExtsyncWait = true;
+  bool enableIMU = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
   bool debugNoRepeatingCapture = false;
@@ -301,6 +304,8 @@ int main(int argc, char* argv[]) {
       enableEyetracking = false;
     } else if (!strcmp(argv[i], "--disable-extsync-wait")) {
       enableExtsyncWait = false;
+    } else if (!strcmp(argv[i], "--disable-imu")) {
+      enableIMU = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
       debugInitOnly = true;
     } else if (!strcmp(argv[i], "--debug-no-repeating-capture")) {
@@ -393,6 +398,10 @@ int main(int argc, char* argv[]) {
   if (enableCANBus) {
     startPDUCommsThread();
     gloveController = new GloveController();
+  }
+
+  if (enableIMU) {
+    imuService = new IMUService();
   }
 
 
@@ -904,6 +913,10 @@ int main(int argc, char* argv[]) {
       }
       previousCaptureTimestamp = argusCamera->oldestSensorTimestamp();
 
+      // IMU service frame processing relies on camera capture timestamp
+      if (imuService) {
+        imuService->processFrame(argusCamera->oldestSensorTimestamp());
+      }
 
       // Hook for CameraSystem to do its post-capture frame processing -- this updates dynamic distortion maps
       cameraSystem->processFrame();
@@ -1093,6 +1106,10 @@ int main(int argc, char* argv[]) {
             faceTrackingService->renderIMGUI();
           }
 #endif
+
+          if (imuService && ImGui::CollapsingHeader("IMU")) {
+            imuService->renderIMGUI();
+          }
 
           if (enableCANBus && ImGui::CollapsingHeader("PDU Control")) {
             drawPDUCommandMenu();
