@@ -29,6 +29,11 @@ enum DepthMapGeneratorBackend {
   kDepthBackendOFA,
 };
 
+// Returns the default backend for the current platform, if it can be determined.
+// On Tegra, this will be kDepthBackendOFA.
+// Elsewhere, probably kDepthBackendNone.
+DepthMapGeneratorBackend platformDefaultDepthBackend();
+
 DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr);
 DepthMapGenerator* createDepthMapGenerator(DepthMapGeneratorBackend);
 

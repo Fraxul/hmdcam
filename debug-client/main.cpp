@@ -168,7 +168,7 @@ bool updateHoverPositionForLastItem(glm::vec2& hoverPositionNormalized) {
 int main(int argc, char** argv) {
 
   const char* debugHost = NULL;
-  DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
+  DepthMapGeneratorBackend depthBackend = platformDefaultDepthBackend();
 
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--depth-backend")) {

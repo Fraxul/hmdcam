@@ -267,7 +267,7 @@ int main(int argc, char* argv[]) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunknown-warning-option"
 #pragma clang diagnostic ignored "-Wunused-but-set-variable"
-  DepthMapGeneratorBackend depthBackend = kDepthBackendNone;
+  DepthMapGeneratorBackend depthBackend = platformDefaultDepthBackend();
   ERenderBackend renderBackendType = kRenderBackendVKDirect;
   bool enableCANBus = true;
   bool enableEyetracking = true;

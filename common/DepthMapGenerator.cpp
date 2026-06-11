@@ -29,6 +29,15 @@
 
 const char* settingsFilename = "depthMapSettings.yml";
 
+DepthMapGeneratorBackend platformDefaultDepthBackend() {
+#ifdef L4T_RELEASE_MAJOR
+  return kDepthBackendOFA;
+#else
+  // TODO: We might want to detect other depth backends and offer a better non-Tegra default than just "none"
+  return kDepthBackendNone;
+#endif
+}
+
 DepthMapGeneratorBackend depthBackendStringToEnum(const char* backendStr) {
   if (!strcasecmp(backendStr, "none")) {
     return kDepthBackendNone;
