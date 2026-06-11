@@ -581,12 +581,16 @@ bool ArgusCamera::readFrame() {
     // if there is not actually another buffer available (instead of just returning TIMEOUT)
     // so we try to guess based on the number of Capture Complete events received since the
     // previous frame.
-    if (captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)] > 1) {
+    for (uint32_t evIdx = 1; evIdx < captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)]; ++evIdx) {
+      printf("ArgusCamera::readFrame(): will try acquiring extra buffer %u/%u from stream %zu\n", evIdx, captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)], cameraIdx);
       Argus::Buffer* ffBuffer = iBufferOutputStream->acquireBuffer(/*timeout=*/ 0, &status);
       if (ffBuffer) {
         // Got another buffer immediatey. Use this one and release the previous.
         iBufferOutputStream->releaseBuffer(buffer);
         buffer = ffBuffer;
+      } else {
+        // No more buffers available to fast-forward through.
+        break;
       }
     }
 
