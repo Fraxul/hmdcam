@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <opencv2/core.hpp>
+#include <opencv2/core/cuda.hpp>
 #include "common/ICameraProvider.h"
 #include "rhi/RHISurface.h"
 #include "rhi/RHIRenderTarget.h"
@@ -14,6 +15,7 @@ class CharucoMultiViewCalibration {
 public:
   // Camera stereo view IDs are optional -- if provided, images will be undistorted using the stereo distortion maps for the associated view.
   CharucoMultiViewCalibration(CameraSystem*, const std::vector<size_t>& cameraIds, const std::vector<size_t>& cameraStereoViewIds = std::vector<size_t>());
+  ~CharucoMultiViewCalibration();
 
   // Returns true if a frame was actually captured (only if captureRequested is true)
   bool processFrame(bool captureRequested);
@@ -38,9 +40,8 @@ public:
   ICameraProvider* cameraProvider() const;
 
   // Per-camera
-  std::vector<RHISurface::ptr> m_fullGreyTex;
-  std::vector<RHIRenderTarget::ptr> m_fullGreyRT;
-  std::vector<cv::Mat> m_fullGreyMat; // capture of m_fullGreyTex. After distortion correction, if m_undistortCapturedViews is true.
+  std::vector<cv::cuda::GpuMat> m_fullGreyGpuMat;
+  std::vector<cv::Mat> m_fullGreyMat; // CPU-side capture of m_fullGreyGpuMat. After distortion correction, if m_undistortCapturedViews is true.
 
   std::vector<RHISurface::ptr> m_feedbackTex;
   std::vector<cv::Mat> m_feedbackView;

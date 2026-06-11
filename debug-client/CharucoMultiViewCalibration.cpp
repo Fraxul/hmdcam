@@ -1,7 +1,9 @@
-#include "common/CharucoMultiViewCalibration.h"
+#include "CharucoMultiViewCalibration.h"
 #include "common/CameraSystem.h"
 #include "common/FxThreading.h"
 #include "common/glmCvInterop.h"
+#include "common/remapArray.h"
+#include "rhi/cuda/RHICUDA.h"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/objdetect/aruco_board.hpp>
 #include <opencv2/objdetect/charuco_detector.hpp>
@@ -9,8 +11,32 @@
 #include <opencv2/calib3d.hpp>
 #include <set>
 
-extern cv::aruco::CharucoBoard* s_charucoBoard; // in CameraSystem
-extern cv::aruco::CharucoDetector createCharucoDetector(cv::Mat cameraMatrix = cv::Mat(), cv::Mat distCoeffs = cv::Mat()); // in CameraSystem
+// ChAruCo target pattern config
+constexpr cv::aruco::PredefinedDictionaryType kCharucoDictionaryName = cv::aruco::DICT_5X5_100;
+constexpr unsigned int kCharucoBoardSquareCountX = 12;
+constexpr unsigned int kCharucoBoardSquareCountY = 9;
+constexpr float kCharucoBoardSquareSideLengthMeters = 0.060f;
+// markers are 7x7 pixels, squares are 9x9 pixels (add 1px border), so the marker size is 7/9 of the square size
+constexpr float kCharucoBoardMarkerSideLengthMeters = kCharucoBoardSquareSideLengthMeters * (7.0f / 9.0f);
+
+cv::aruco::Dictionary charucoDictionary() { return cv::aruco::getPredefinedDictionary(kCharucoDictionaryName); }
+
+cv::Ptr<cv::aruco::CharucoBoard> charucoBoard() {
+  static cv::Ptr<cv::aruco::CharucoBoard> board = new cv::aruco::CharucoBoard(cv::Size(kCharucoBoardSquareCountX, kCharucoBoardSquareCountY), kCharucoBoardSquareSideLengthMeters, kCharucoBoardMarkerSideLengthMeters, charucoDictionary());
+  return board;
+}
+
+cv::aruco::CharucoDetector createCharucoDetector(cv::Mat cameraMatrix = cv::Mat(), cv::Mat distCoeffs = cv::Mat()) {
+  cv::aruco::CharucoParameters chParams;
+  chParams.cameraMatrix = cameraMatrix;
+  chParams.distCoeffs = distCoeffs;
+  chParams.tryRefineMarkers = true;
+
+  cv::aruco::DetectorParameters detectorParams;
+  detectorParams.cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX; // Enable subpixel refinement for higher precision
+
+  return cv::aruco::CharucoDetector(*charucoBoard(), chParams, detectorParams);
+}
 
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 5, CV_32FC1);
 
@@ -67,10 +93,9 @@ CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, cons
   m_cameraSystem(cs_),
   m_cameraIds(cameraIds_) {
 
-  m_fullGreyTex.resize(cameraCount());
-  m_fullGreyRT.resize(cameraCount());
-  m_feedbackTex.resize(cameraCount());
+  m_fullGreyGpuMat.resize(cameraCount());
   m_fullGreyMat.resize(cameraCount());
+  m_feedbackTex.resize(cameraCount());
   m_feedbackView.resize(cameraCount());
 
   m_calibrationPoints.resize(cameraCount());
@@ -85,11 +110,32 @@ CharucoMultiViewCalibration::CharucoMultiViewCalibration(CameraSystem* cs_, cons
     }
   }
 
+  // Figure out pitch alignment
+  int pitchAlignment = 0;
+  CUDA_CHECK(cuDeviceGetAttribute(&pitchAlignment, CU_DEVICE_ATTRIBUTE_TEXTURE_PITCH_ALIGNMENT, RHICUDA::cudaDevice));
+  uint32_t width = cameraProvider()->streamWidth();
+  uint32_t height = cameraProvider()->streamHeight();
+  uint32_t rowBytes = (width + (pitchAlignment - 1) / pitchAlignment) * pitchAlignment;
+
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
-    m_fullGreyTex[cameraIdx] = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_R8));
-    m_fullGreyRT[cameraIdx] = rhi()->compileRenderTarget(RHIRenderTargetDescriptor({m_fullGreyTex[cameraIdx]}));
+    // Create GpuMat / Mat pair as a CUDA pinned allocation
+    void* hostPtr = nullptr;
+    CUDA_CHECK(cuMemHostAlloc(&hostPtr, rowBytes * height, CU_MEMHOSTALLOC_DEVICEMAP));
+    CUdeviceptr devicePtr = 0;
+    CUDA_CHECK(cuMemHostGetDevicePointer(&devicePtr, hostPtr, /*flags=*/ 0));
+
+    m_fullGreyGpuMat[cameraIdx] = cv::cuda::GpuMat(/*rows=*/ height, /*cols=*/ width, /*type=*/ CV_8UC1, /*data=*/ (void*) devicePtr, /*step=*/ rowBytes);
+    m_fullGreyMat[cameraIdx] = cv::Mat(/*rows=*/ height, /*cols=*/ width, /*type=*/ CV_8UC1, /*data=*/ hostPtr, /*step=*/ rowBytes);
+
     m_feedbackTex[cameraIdx] = rhi()->newTexture2D(cameraProvider()->streamWidth(), cameraProvider()->streamHeight(), RHISurfaceDescriptor(kSurfaceFormat_RGBA8));
     m_feedbackView[cameraIdx].create(/*rows=*/ cameraProvider()->streamHeight(), /*columns=*/ cameraProvider()->streamWidth(), CV_8UC4);
+  }
+}
+
+CharucoMultiViewCalibration::~CharucoMultiViewCalibration() {
+  // Clean up CUDA host-pinned allocations
+  for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
+    cuMemFreeHost(m_fullGreyMat[cameraIdx].ptr<uint8_t>());
   }
 }
 
@@ -101,21 +147,34 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   // Capture and undistort camera views.
   for (size_t cameraIdx = 0; cameraIdx < cameraCount(); ++cameraIdx) {
 
-    RHISurface::ptr distortionMap;
-
     if (m_undistortCapturedViews) {
+      cudaTextureObject_t distortionCudaTexture = 0;
+
       if (m_cameraStereoViewIds[cameraIdx] >= 0) {
         // Stereo distortion correction
         CameraSystem::View& v = cameraSystem()->viewAtIndex(m_cameraStereoViewIds[cameraIdx]);
-        distortionMap = (m_cameraIds[cameraIdx] == v.cameraIndices[0]) ? v.stereoDistortionMap[0] : v.stereoDistortionMap[1];
-        assert(distortionMap);
+        distortionCudaTexture = (m_cameraIds[cameraIdx] == v.cameraIndices[0]) ? v.stereoDistortionCudaTexture[0] : v.stereoDistortionCudaTexture[1];
       } else {
         // Intrinsic distortion correction
-        distortionMap = cameraSystem()->cameraAtIndex(m_cameraIds[cameraIdx]).intrinsicDistortionMap;
+        // TODO: There's no CUDA intrinsic distortion map wired up yet.
+        assert(false && "CharucoMultiViewCalibration::processFrame(): CUDA-accelerated undistort using intrinsic parameters is not implemented.");
+        // distortionMap = cameraSystem()->cameraAtIndex(m_cameraIds[cameraIdx]).intrinsicDistortionMap;
       }
-    }
+      assert(distortionCudaTexture);
 
-    m_fullGreyMat[cameraIdx] = cameraSystem()->captureGreyscale(m_cameraIds[cameraIdx], m_fullGreyTex[cameraIdx], m_fullGreyRT[cameraIdx], distortionMap);
+      remapArray(cameraSystem()->cameraProvider()->cudaLumaTexObject(m_cameraIds[cameraIdx]), distortionCudaTexture, m_fullGreyGpuMat[cameraIdx], /*stream=*/ 0);
+
+    } else {
+      // Direct copy of luma surface
+      CUDA_MEMCPY2D copyDescriptor;
+      memset(&copyDescriptor, 0, sizeof(copyDescriptor));
+      cameraSystem()->cameraProvider()->fillCudaMemcpy2DForStreamSource(copyDescriptor, m_cameraIds[cameraIdx], /*fromChromaPlane=*/ false);
+
+      copyDescriptor.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+      copyDescriptor.dstDevice = (CUdeviceptr) m_fullGreyGpuMat[cameraIdx].ptr<const uint8_t>();
+      copyDescriptor.dstPitch = m_fullGreyGpuMat[cameraIdx].step;
+      CUDA_CHECK(cuMemcpy2D(&copyDescriptor));
+    }
   }
 
   std::vector<std::vector<cv::Point2f>> currentCharucoCornerPoints(cameraCount());
@@ -165,7 +224,7 @@ bool CharucoMultiViewCalibration::processFrame(bool captureRequested) {
   std::vector<int> thisFrameBoardRefIds;
   std::vector<std::vector<cv::Point2f>> thisFrameImageCorners(cameraCount());
 
-  std::vector<cv::Point3f> chessboardCorners = s_charucoBoard->getChessboardCorners();
+  std::vector<cv::Point3f> chessboardCorners = charucoBoard()->getChessboardCorners();
 
   for (std::set<int>::const_iterator corner_it = commonCornerIds.begin(); corner_it != commonCornerIds.end(); ++corner_it) {
     int cornerId = *corner_it;

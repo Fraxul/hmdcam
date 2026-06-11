@@ -650,7 +650,6 @@ int main(int argc, char* argv[]) {
     bool debugEnableFastDebugToggles = false;
     bool fastDebugEnableStateDidChange = false; // true for 1 frame when debugEnableFastDebugToggles is changed in the UI
     bool debugEnableDepthMapGenerator = true;
-    boost::scoped_ptr<CameraSystem::CalibrationContext> calibrationContext;
     boost::scoped_ptr<IDebugOverlay> debugOverlay;
 
 
@@ -837,9 +836,6 @@ int main(int argc, char* argv[]) {
         drawUI = !drawUI;
       }
 
-      // Force UI on if we're calibrating.
-      drawUI |= (!!calibrationContext);
-
       // Debug toggles
       if (debugEnableFastDebugToggles) {
         // Allow up/down arrows to toggle debug states while we're not curently drawing the UI
@@ -885,9 +881,7 @@ int main(int argc, char* argv[]) {
       }
 
       if (restartSkipFrameCounter <= 0) {
-        // Only use repeating captures if we're not in calibration. The variable CPU-side delays for calibration image processing usually end up crashing libargus.
-        if (!debugNoRepeatingCapture)
-          argusCamera->setRepeatCapture(!((bool) calibrationContext));
+        argusCamera->setRepeatCapture(!debugNoRepeatingCapture);
 
         nvtxMarkA("ArgusCamera::readFrame()");
         argusCamera->readFrame();
@@ -922,17 +916,9 @@ int main(int argc, char* argv[]) {
       cameraSystem->processFrame();
 
       // TODO move this inside CameraSystem
-      if (debugEnableDepthMapGenerator && depthMapGenerator && !calibrationContext) {
+      if (debugEnableDepthMapGenerator && depthMapGenerator) {
         nvtxMarkA("DepthMapGenerator::processFrame()");
         depthMapGenerator->processFrame();
-      }
-
-      if (calibrationContext && calibrationContext->finished()) {
-        calibrationContext.reset();
-      }
-
-      if (calibrationContext) {
-        calibrationContext->processFrame();
       }
 
       // Frame processing should be done. Sync cameraSystem and depthMapGenerator updates to RHI before starting rendering.
@@ -962,7 +948,7 @@ int main(int argc, char* argv[]) {
 #endif
 
 
-      if (calibrationContext || drawUI) {
+      if (drawUI) {
         nvtxMarkA("ImGUI (full)");
         // GUI support
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y), 0, /*pivot=*/ ImVec2(0.5f, 1.0f)); // bottom-center aligned
@@ -971,11 +957,7 @@ int main(int argc, char* argv[]) {
 
         bool settingsDirty = false;
 
-        if (calibrationContext) {
-
-          calibrationContext->processUI();
-
-        } else {
+        {
           {
             float ev = argusCamera->exposureCompensation();
             if (ImGui::SliderFloat("Exposure", &ev, -10.0f, 10.0f, "%.1f", ImGuiSliderFlags_None)) {
@@ -1008,51 +990,16 @@ int main(int argc, char* argv[]) {
 
           if (ImGui::CollapsingHeader("Calibration")) {
 
-            for (size_t cameraIdx = 0; cameraIdx < cameraSystem->cameras(); ++cameraIdx) {
-              const size_t captionLen = 128;
-              char caption[captionLen];
-              char* captionPtr = caption;
-
-              captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr, "Calibrate camera %zu", cameraIdx);
-              for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
-                CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
-                if (v.isStereo) {
-                  if (v.cameraIndices[0] == cameraIdx)
-                    captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr, " (View %zu %s)", viewIdx, v.isVerticalStereo() ? "top" : "left");
-                  if (v.cameraIndices[1] == cameraIdx)
-                    captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr, " (View %zu %s)", viewIdx, v.isVerticalStereo() ? "bottom" : "right");
-                } else {
-                  if (v.cameraIndices[0] == cameraIdx)
-                    captionPtr += snprintf(captionPtr, (caption + captionLen) - captionPtr, " (View %zu)", viewIdx);
-                }
-              }
-
-              if (ImGui::Button(caption)) {
-                calibrationContext.reset(cameraSystem->calibrationContextForCamera(cameraIdx));
-              }
-            }
             for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
               ImGui::PushID(viewIdx);
 
               CameraSystem::View& v = cameraSystem->viewAtIndex(viewIdx);
               if (v.isStereo) {
                 char caption[64];
-                sprintf(caption, "Calibrate stereo view %zu", viewIdx);
-                if (ImGui::Button(caption)) {
-                  calibrationContext.reset(cameraSystem->calibrationContextForView(viewIdx));
-                }
                 sprintf(caption, "View %zu is Panorama", viewIdx);
                 ImGui::Checkbox(caption, &v.isPanorama);
               }
 
-              if (v.isStereo && viewIdx != 0) {
-                // Autocalibration for secondary stereo views
-                char caption[64];
-                sprintf(caption, "Calibrate offset for stereo view %zu", viewIdx);
-                if (ImGui::Button(caption)) {
-                  calibrationContext.reset(cameraSystem->calibrationContextForStereoViewOffset(0, viewIdx));
-                }
-              }
               {
                 static int speed = 1;
                 ImGui::RadioButton("x0.01", &speed, 1);
@@ -1126,8 +1073,7 @@ int main(int argc, char* argv[]) {
             (unsigned int) (1000000.0f / static_cast<float>(meta.frameDurationNs / 1000)), (unsigned int) (1000000.0f / static_cast<float>(meta.sensorExposureTimeNs / 1000)), meta.sensorSensitivityISO, meta.ispDigitalGain, meta.sensorAnalogGain);
         }
 
-        // Skip perf data to save UI space if we're calibrating
-        if (!calibrationContext && ImGui::CollapsingHeader("Performance")) {
+        if (ImGui::CollapsingHeader("Performance")) {
           int plotFlags = ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
 
           if (ImPlot::BeginPlot("##FrameTiming", ImVec2(-1, 150), /*flags=*/ plotFlags)) {
@@ -1425,7 +1371,7 @@ int main(int argc, char* argv[]) {
         if (!v.debugEnableView)
           continue;
 
-        if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo && !calibrationContext) {
+        if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo) {
           {
             char buf[32];
             snprintf(buf, sizeof(buf), "SPS view %zu", viewIdx);
@@ -1520,11 +1466,7 @@ int main(int argc, char* argv[]) {
 
               RHISurface::ptr overlayTex, distortionTex;
               size_t drawFlags = 0;
-              if (calibrationContext && calibrationContext->involvesCamera(v.cameraIndices[viewEyeIdx])) {
-                // Calibrating a stereo view that includes this camera
-                overlayTex = calibrationContext->overlaySurfaceAtIndex(viewEyeIdx);
-                distortionTex = calibrationContext->previewDistortionMapForCamera(v.cameraIndices[viewEyeIdx]);
-              } else if (v.isStereo) {
+              if (v.isStereo) {
                 // Drawing this camera as part of a stereo pair
                 distortionTex = v.stereoDistortionMap[viewEyeIdx];
                 drawFlags = DRAW_FLAGS_USE_MASK;
@@ -1620,10 +1562,7 @@ int main(int argc, char* argv[]) {
 
             RHISurface::ptr overlayTex, distortionTex;
 
-            if (calibrationContext && calibrationContext->involvesCamera(cameraIdx)) {
-              overlayTex = calibrationContext->overlaySurfaceAtIndex(calibrationContext->overlaySurfaceIndexForCamera(cameraIdx));
-              distortionTex = calibrationContext->previewDistortionMapForCamera(cameraIdx);
-            } else if (debugOverlay) {
+            if (debugOverlay) {
               overlayTex = debugOverlay->overlaySurfaceForCamera(cameraIdx);
             } else if (debugUseDistortion) {
               // Distortion-corrected view
@@ -1694,18 +1633,6 @@ int main(int argc, char* argv[]) {
           {
             // Default to drawing the UI on the center-bottom of the debug surface
             RHIRect uiDestRect = RHIRect::xywh((debugSurface->width() / 2) - (guiTex->width() / 2), debugSurface->height() - guiTex->height(), guiTex->width(), guiTex->height());
-
-            // If a calibration context is active, try to find a camera region to draw the UI over that's not currently being calibrated.
-            if (calibrationContext) {
-              for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
-                if (!calibrationContext->involvesCamera(cameraIdx)) {
-                  const RHIRect& cameraRect = debugSurfaceCameraRects[cameraIdx];
-                  uiDestRect.x = cameraRect.x + ((cameraRect.width - uiDestRect.width) / 2); // center
-                  uiDestRect.y = cameraRect.y;
-                  break;
-                }
-              }
-            }
 
             // If the UI texture is taller than the debug surface, scale it down proportionally.
             // (We will hit this case with a common configuration of 1 or 2 1280x720 cameras)

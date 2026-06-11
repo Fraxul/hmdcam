@@ -14,6 +14,7 @@ public:
   virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const = 0;
   virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const = 0;
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex) = 0;
+  virtual bool fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const = 0;
   virtual unsigned int streamWidth() const = 0;
   virtual unsigned int streamHeight() const = 0;
   virtual bool isStreamFailed(size_t sensorIndex) const = 0;
@@ -48,6 +49,7 @@ public:
   virtual CUtexObject cudaLumaTexObject(size_t sensorIndex) const { return 0; }
   virtual CUtexObject cudaChromaTexObject(size_t sensorIndex) const { return 0; }
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t sensorIndex) { return cv::cuda::GpuMat(); }
+  virtual bool fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const { return false; }
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
   virtual bool isStreamFailed(size_t sensorIndex) const { return false; }

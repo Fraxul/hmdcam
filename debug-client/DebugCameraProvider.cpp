@@ -396,6 +396,24 @@ cv::cuda::GpuMat DebugCameraProvider::gpuMatGreyscale(size_t streamIdx) {
   return m_streamData[streamIdx].gpuMatLuma;
 }
 
+bool DebugCameraProvider::fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const {
+  if (sensorIndex >= m_streamData.size())
+    return false;
+
+  const cv::cuda::GpuMat* src = fromChromaPlane ? &m_streamData[sensorIndex].gpuMatChroma : &m_streamData[sensorIndex].gpuMatLuma;
+
+  if (src->empty())
+    return false;
+
+  outCopyDescriptor.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+  outCopyDescriptor.srcDevice = (CUdeviceptr) src->ptr<const uint8_t>();
+  outCopyDescriptor.srcPitch = src->step;
+
+  outCopyDescriptor.WidthInBytes = src->cols * src->elemSize1();
+  outCopyDescriptor.Height = src->rows;
+  return true;
+}
+
 RHISurface::ptr DebugCameraProvider::rgbTexture(size_t streamIdx) const {
   return m_streamData[streamIdx].rhiSurfaceRGBA;
 }

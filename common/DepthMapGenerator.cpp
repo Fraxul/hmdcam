@@ -27,6 +27,8 @@
 #include <glm/gtc/packing.hpp>
 #include <npp.h>
 
+FxAtomicString ksDistortionMap("distortionMap");
+
 const char* settingsFilename = "depthMapSettings.yml";
 
 DepthMapGeneratorBackend platformDefaultDepthBackend() {
