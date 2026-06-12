@@ -13,18 +13,20 @@ Features:
     - Jetson Orin's integrated Optical Flow Accelerator hardware (Recommended, supports up to 2 stereo pairs, 1920x1080 at 90fps)
     - Luxonis DepthAI VPU modules
     - OpenCV+CUDA on a separate Nvidia discrete GPU (Not recommended for battery-powered systems)
-- Configuration menu with built-in calibration tools
-- Remote viewing via RTSP (embedded MPEG-TS-over-TCP server + nvenc)
+- Configuration menu
+- Multi-camera calibration tool
+- Remote viewing (embedded MPEG-TS-over-TCP server + nvenc)
 - Remote depth processing debugging (`debug-client` binary)
 
 Important repository structure:
 | Path           | Description  |
 | -------------- | ------------ |
 | hmdcam         |  Main application -- runs on the Jetson |
+| calibration    | Multi-stereo-camera calibration tool. Handles offline camera intrinsics and view-to-view offset calibration using images captured by `hmdcam`. |
 | debug-client   | Remote-debugging application; streams uncompressed framebuffers from `hmdcam` over Ethernet. |
 | dgpu-worker    | Stereo disparity computation worker for CUDA discrete GPUs. Runs under `hmdcam` or `debug-client` |
 | depthai-worker | Stereo disparity computation worker for Luxonis DepthAI VPUs. Runs under `hmdcam` or `debug-client` |
-| rhi            | Render Hardware Interface -- wrappers over OpenGL. |
+| rhi            | Render Hardware Interface -- wrappers over Vulkan. |
 | common         | Library functions shared between `hmdcam` and `debug-client` (mostly camera related) |
 
 Requirements:
