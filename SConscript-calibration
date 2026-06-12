@@ -1,0 +1,35 @@
+import os
+Import('env')
+
+calibrationEnv = env.Clone()
+calibrationEnv.Append(
+  CPPPATH=[
+    '/usr/include/eigen3',
+    '#calibration',
+    '#calibration/industrial_calibration/core/include',
+    '#calibration/industrial_calibration/optimizations/include',
+  ],
+)
+
+# clang++ -Wall -I/usr/include/eigen3 solver-test.cpp -o solver-test -lceres -lglog
+
+calibrationEnv.Program(
+  target = '../bin/multiCameraCalibration',
+  source = ['calibration/multiCameraCalibration.cpp'] +
+    Glob('#calibration/industrial_calibration/core/src/*.cpp') +
+    Glob('#calibration/industrial_calibration/optimizations/src/*.cpp'),
+
+  LIBS = ['glog',
+    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
+    'pthread', 'rt',
+    'boost_chrono', 'boost_filesystem', 'boost_system', 'boost_thread'
+  ] + calibrationEnv['CERES_LIBS'],
+)
+
+calibrationEnv.Program(
+  target = '../bin/charuco-benchmark',
+  source = ['calibration/charuco-benchmark.cpp'],
+  LIBS = ['opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect',
+    'pthread', 'rt',
+  ]
+)

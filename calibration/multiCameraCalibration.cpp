@@ -528,9 +528,8 @@ void generateMultiCameraCalibrationData(const char* srcPath, MultiCameraCalibrat
   printf("=== industrial_calibration intrinsic calibration ===\n");
   perfTimer.checkpoint();
 
-  for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+  FxThreading::runArrayTask(0, data.cameras.size(), [&](size_t cameraIdx) {
     CameraCalibrationData& cameraData = data.cameras[cameraIdx];
-    printf("Camera %zu\n", cameraIdx);
 
     industrial_calibration::CameraIntrinsicProblem intrinsicProblem;
 
@@ -546,7 +545,7 @@ void generateMultiCameraCalibrationData(const char* srcPath, MultiCameraCalibrat
 
     cv::Mat intrinsicGuess = cv::initCameraMatrix2D(/*objectPoints=*/ objectPoints, /*imagePoints=*/ imagePoints, cameraData.imageSize);
 
-    printf("\nIntrinsic initial guess:\n");
+    printf("Camera %zu Intrinsic initial guess:\n", cameraIdx);
     for (size_t i = 0; i < 3; ++i) {
       printf("%.6f %.6f %.6f\n",
         intrinsicGuess.ptr<double>(i)[0],
@@ -592,7 +591,6 @@ void generateMultiCameraCalibrationData(const char* srcPath, MultiCameraCalibrat
     }
 
     cameraData.intrinsicCalibration = industrial_calibration::optimize(intrinsicProblem);
-    std::cout << cameraData.intrinsicCalibration << std::endl;
 
 #if 0
     for (size_t i = 0; i < intrinsicProblem.extrinsic_guesses.size(); ++i) {
@@ -605,12 +603,14 @@ void generateMultiCameraCalibrationData(const char* srcPath, MultiCameraCalibrat
     for (size_t i = 0; i < targetTransformToObservationIdx.size(); ++i) {
       cameraData.observations[targetTransformToObservationIdx[i]].targetTransform = cameraData.intrinsicCalibration.target_transforms[i];
     }
+  }); // Intrinsic calibration array task
 
-    printf("Calibration complete in %.3f ms\n", perfTimer.checkpoint());
-
-  } // Camera loop
-
-
+  printf("All intrinsic calibration complete in %.3f ms\n", perfTimer.checkpoint());
+  for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
+    printf("Camera %zu\n", cameraIdx);
+    std::cout << data.cameras[cameraIdx].intrinsicCalibration << std::endl;
+  }
+  printf("\n\n");
   data.saveCalibrationData(srcPath);
 }
 
@@ -892,8 +892,11 @@ int main(int argc, char** argv) {
     }
 
 
-    // Save calibration data
-    cv::FileStorage fs("calibration.yml", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+    // Save calibration data.
+    // Use a different filename so that we don't accidentally clobber the production calibration file.
+    // The user can move it into place.
+    const char* kOutputFilename = "multiCameraCalibration-results.yml";
+    cv::FileStorage fs(kOutputFilename, cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
 
     fs.startWriteStruct("cameras", cv::FileNode::SEQ, cv::String());
     for (size_t cameraIdx = 0; cameraIdx < data.cameras.size(); ++cameraIdx) {
@@ -965,6 +968,7 @@ int main(int argc, char** argv) {
                   << viewData.stereoValidROI[eyeIdx] << std::endl;
       }
     }
+    printf("\n\nWrote calibration results to %s\n", kOutputFilename);
 
 
 #if 0

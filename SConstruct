@@ -221,6 +221,7 @@ if (is_tegra and (not os.path.isdir('/usr/local/nvidia-dgpu-support'))):
 
 SConscript('SConscript-hmdcam', variant_dir = 'build/hmdcam', duplicate = 0)
 SConscript('SConscript-canbus-test', variant_dir = 'build/canbus-test', duplicate = 0)
+SConscript('SConscript-calibration', variant_dir = 'build/calibration', duplicate = 0)
 
 if not is_tegra:
   # Only build test apps on desktop
