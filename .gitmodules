@@ -37,3 +37,6 @@
 [submodule "shaderc"]
 	path = shaderc
 	url = https://github.com/google/shaderc.git
+[submodule "calibration/industrial_calibration"]
+	path = calibration/industrial_calibration
+	url = https://github.com/Fraxul/industrial_calibration.git
