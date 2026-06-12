@@ -11,7 +11,8 @@ constexpr size_t kMaxIMUSamplesPerFrame = 64;
 
 // Contains one sample in an IMU frame
 struct IMUSample {
-  uint32_t lineOffset; // Tiemstamp as a line offset (with fractional component) since start-of-frame.
+  uint64_t timestampNs; // Timestamp relative to the currentTimeNs() timebase. Computed from lineOffset and frameStartTimestamp.
+  uint32_t lineOffset; // Line offset (with fractional component) since start-of-frame.
   float gyroDPS[3]; // XYZ, degrees/sec
   float accelG[3]; // XYZ, G
 };
@@ -67,9 +68,15 @@ protected:
   // Current-frame state, updated in processFrame()
   IMUFrame* m_currentIMUFrame = nullptr; // non-owning pointer into m_imuFrameRing
 
+  // Frame interval rolling-average tracking, used to compute absolute timestamps
+  static constexpr uint32_t kFrameIntervalSampleCount = 64;
+  uint64_t m_averageFrameIntervalNs = 0;
+  uint64_t m_previousCaptureTimestampNs = 0;
+
   // Calibration data
   int32_t m_accelMicroGPerLSB = 244; // Default: LSM6DS3 CTRL1_XL_SCALE = 0b11 / 8g full-scale
   int32_t m_gyroMicroDPSPerLSB = 35000; // Default: LSM6DS3 CTRL2_G_SCALE = 0b100 / 1000 DPS full-scale
+  int32_t m_imuTimestampTicksPerFrame = 1250 * 256; // Default: IMX662 1250-line readout with 8-bit sub-line precision, as reported by our sync controller.
 
   std::string m_imuHIDEndpoint; // Path to hidraw endpoint for IMU data streaming
 };

@@ -36,6 +36,7 @@
 #include "common/ScrollingBuffer.h"
 #include "common/Timing.h"
 #include "common/glmCvInterop.h"
+#include "CalibrationWriter.h"
 #include "DebugServer.h"
 #ifdef IS_TEGRA
 #define USE_EYETRACKING
@@ -85,6 +86,7 @@ CameraSystem* cameraSystem;
 DebugServer* debugServer = nullptr;
 DepthMapGenerator* depthMapGenerator = nullptr;
 IMUService* imuService = nullptr;
+CalibrationWriter* calibrationWriter = nullptr;
 #ifdef USE_EYETRACKING
 EyeTrackingService* eyeTrackingService = nullptr;
 FaceTrackingService* faceTrackingService = nullptr;
@@ -418,6 +420,8 @@ int main(int argc, char* argv[]) {
 
   if (!argusCamera)
     argusCamera = new ArgusCameraMock(4, 1920, 1080, 90.0);
+
+  calibrationWriter = new CalibrationWriter(argusCamera);
 
   // Setup render pipelines for camera sampling
   {
@@ -920,6 +924,10 @@ int main(int argc, char* argv[]) {
         depthMapGenerator->processFrame();
       }
 
+      // Calibration writer uses CUDA, so needs to happen after cameraSystem/depthMapGenerator but before the CUDA-RHI handoff
+      if (calibrationWriter)
+        calibrationWriter->processFrame(/*imuFrame=*/ imuService ? imuService->currentIMUFrame() : nullptr);
+
       // Frame processing should be done. Sync cameraSystem and depthMapGenerator updates to RHI before starting rendering.
       rhi()->signalCUDAToRHI(RHICUDA::defaultAsyncStream);
 
@@ -988,6 +996,10 @@ int main(int argc, char* argv[]) {
           }
 
           if (ImGui::CollapsingHeader("Calibration")) {
+            if (calibrationWriter) {
+              calibrationWriter->renderIMGUI();
+              ImGui::Separator();
+            }
 
             for (size_t viewIdx = 0; viewIdx < cameraSystem->views(); ++viewIdx) {
               ImGui::PushID(viewIdx);

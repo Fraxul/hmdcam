@@ -50,6 +50,7 @@ bool IMUService::loadCalibrationData() {
   try {
     readNode(fs, accelMicroGPerLSB);
     readNode(fs, gyroMicroDPSPerLSB);
+    readNode(fs, imuTimestampTicksPerFrame);
     readNode(fs, imuHIDEndpoint);
 
   } catch (const std::exception& ex) {
@@ -66,11 +67,25 @@ void IMUService::saveCalibrationData() {
 
   writeNode(fs, accelMicroGPerLSB);
   writeNode(fs, gyroMicroDPSPerLSB);
+  writeNode(fs, imuTimestampTicksPerFrame);
   writeNode(fs, imuHIDEndpoint);
 }
 #undef writeNode
 
-void IMUService::processFrame(uint64_t lastCaptureTimestampNs) {
+void IMUService::processFrame(uint64_t captureTimestampNs) {
+  // Update frame-interval tracking
+  if (m_previousCaptureTimestampNs != 0) {
+    uint64_t interval = captureTimestampNs - m_previousCaptureTimestampNs;
+
+    if (m_averageFrameIntervalNs == 0) {
+      // First-time init of frame interval
+      m_averageFrameIntervalNs = interval;
+    } else {
+      m_averageFrameIntervalNs = (interval + (m_averageFrameIntervalNs * (kFrameIntervalSampleCount - 1))) / kFrameIntervalSampleCount;
+    }
+  }
+  m_previousCaptureTimestampNs = captureTimestampNs;
+
   // Find the IMU frame that best matches the provided capture timestamp.
   // Since we only call processFrame() once per frame with increasing timestamps,
   // this should be a frame that we haven't delivered before -- one with isApproximateTimestamp set.
@@ -85,7 +100,7 @@ void IMUService::processFrame(uint64_t lastCaptureTimestampNs) {
     if (frame.validSampleCount == 0 || frame.frameStartTimestampNs == 0) {
       continue; // No valid data.
     }
-    int64_t delta = std::abs(static_cast<int64_t>(frame.frameStartTimestampNs) - static_cast<int64_t>(lastCaptureTimestampNs));
+    int64_t delta = std::abs(static_cast<int64_t>(frame.frameStartTimestampNs) - static_cast<int64_t>(captureTimestampNs));
 
     if (delta < minTSDelta) {
       // Better candidate than the previous one.
@@ -102,8 +117,13 @@ void IMUService::processFrame(uint64_t lastCaptureTimestampNs) {
 
   // Select current frame and lock in the timestamp
   m_currentIMUFrame = &(m_imuFrameRing[selectedRingIdx]);
-  m_currentIMUFrame->frameStartTimestampNs = lastCaptureTimestampNs;
+  m_currentIMUFrame->frameStartTimestampNs = captureTimestampNs;
   m_currentIMUFrame->isApproximateTimestamp = false;
+  // Generate per-sample absolute timestamps from the capture timestamp, frame interval, and line offsets.
+  for (uint32_t sampleIdx = 0; sampleIdx < m_currentIMUFrame->validSampleCount; ++sampleIdx) {
+    IMUSample& sample = m_currentIMUFrame->samples[sampleIdx];
+    sample.timestampNs = static_cast<uint64_t>((static_cast<float>(sample.lineOffset) / static_cast<float>(m_imuTimestampTicksPerFrame)) * static_cast<float>(m_averageFrameIntervalNs)) + captureTimestampNs;
+  }
 }
 
 void IMUService::imuReaderThreadFn() {
@@ -208,6 +228,7 @@ void IMUService::renderIMGUI() {
   // TODO: graphs
   if (m_currentIMUFrame && m_currentIMUFrame->validSampleCount) {
     const IMUSample& sample = m_currentIMUFrame->samples[0];
+    const IMUSample& maxSample = m_currentIMUFrame->samples[m_currentIMUFrame->validSampleCount - 1];
     ImGui::Text("Accel: %.3f %.3f %.3f\nGyro: %.3f %.3f %.3f",
       sample.accelG[0],
       sample.accelG[1],
@@ -215,6 +236,10 @@ void IMUService::renderIMGUI() {
       sample.gyroDPS[0],
       sample.gyroDPS[1],
       sample.gyroDPS[2]);
+    ImGui::Text("IMU Samples this frame: %u", m_currentIMUFrame->validSampleCount);
+    ImGui::Text("Min line offset: %u (%u + %u/256)", sample.lineOffset, sample.lineOffset >> 8, sample.lineOffset & 0xff);
+    ImGui::Text("Max line offset: %u (%u + %u/256)", maxSample.lineOffset, maxSample.lineOffset >> 8, maxSample.lineOffset & 0xff);
+    ImGui::Text("Average frame interval: %lu ns", m_averageFrameIntervalNs);
   } else {
     ImGui::Text("No IMU frame!");
   }
