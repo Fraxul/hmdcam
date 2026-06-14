@@ -275,6 +275,7 @@ int main(int argc, char* argv[]) {
   bool enableEyetracking = true;
   bool enableExtsyncWait = true;
   bool enableIMU = true;
+  bool enableNvEnc = true;
   bool debugInitOnly = false;
   bool debugMockCameras = false;
   bool debugNoRepeatingCapture = false;
@@ -306,6 +307,8 @@ int main(int argc, char* argv[]) {
       enableExtsyncWait = false;
     } else if (!strcmp(argv[i], "--disable-imu")) {
       enableIMU = false;
+    } else if (!strcmp(argv[i], "--disable-nvenc")) {
+      enableNvEnc = false;
     } else if (!strcmp(argv[i], "--debug-init-only")) {
       debugInitOnly = true;
     } else if (!strcmp(argv[i], "--debug-no-repeating-capture")) {
@@ -465,34 +468,30 @@ int main(int argc, char* argv[]) {
 
 
   std::vector<RHIRect> debugSurfaceCameraRects;
-  // The render debug subsystem (NvEncSession) renders directly into a
-  // VK-imported NvBufSurface and registers RHI fences for the VIC handoff, so
-  // it requires the Vulkan RHI backend. RenderInitDebugSurface is a weak no-op
-  // stub on builds without the real (Tegra) implementation, so calling it off
-  // the VK backend on a non-Tegra build is harmless (nvencSession stays null
-  // and RenderDebugSubsystemEnabled() reports disabled).
-  const bool vkRHIBackend = renderBackend && renderBackend->eglContext() == EGL_NO_CONTEXT;
-  if (vkRHIBackend) {
+  if (enableNvEnc) {
     // Size and allocate debug surface area based on camera count
     unsigned int debugColumns = 1, debugRows = 1;
     if (argusCamera->streamCount() > 1) {
       debugColumns = 2;
       debugRows = (argusCamera->streamCount() + 1) / 2; // round up
     }
-    uint32_t dsW = debugColumns * argusCamera->streamWidth();
-    uint32_t dsH = debugRows * argusCamera->streamHeight();
+    uint32_t dsW = argusCamera->streamWidth();
+    uint32_t dsH = argusCamera->streamHeight();
+
+    uint32_t debugTileWidth = argusCamera->streamWidth() / debugColumns;
+    uint32_t debugTileHeight = argusCamera->streamHeight() / debugRows;
     printf("Debug stream: selected a %ux%u layout on a %ux%u surface for %zu cameras\n", debugColumns, debugRows, dsW, dsH, argusCamera->streamCount());
 
     for (size_t cameraIdx = 0; cameraIdx < argusCamera->streamCount(); ++cameraIdx) {
       unsigned int col = cameraIdx % debugColumns;
       unsigned int row = cameraIdx / debugColumns;
-      RHIRect r = RHIRect::xywh(col * argusCamera->streamWidth(), row * argusCamera->streamHeight(), argusCamera->streamWidth(), argusCamera->streamHeight());
+      RHIRect r = RHIRect::xywh(col * debugTileWidth, row * debugTileHeight, debugTileWidth, debugTileHeight);
       printf("  [%zu] (%ux%u) +(%u, %u)\n", cameraIdx, r.width, r.height, r.x, r.y);
       debugSurfaceCameraRects.push_back(r);
     }
     RenderInitDebugSurface(dsW, dsH);
   } else {
-    printf("Render debug subsystem disabled: requires the Vulkan RHI backend.\n");
+    printf("Render debug subsystem disabled by commandline flag.\n");
   }
 
   cameraSystem = new CameraSystem(argusCamera);
