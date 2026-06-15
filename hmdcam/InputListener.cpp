@@ -238,36 +238,37 @@ void* inputListenerThread(void*) {
         // Right => "Next Slide" (Page Down)
 
         // Now using keycodes for a media remote. More direct mapping.
-        // Additional BTN_* keycodes for an 8BitDo Zero 2 controller connected via bluetooth in "MacOS" mode and held sideways (d-pad at bottom)
+        // Additional BTN_* keycodes for an 8BitDo Zero 2 controller connected via bluetooth in "Android" mode and held sideways (d-pad at bottom)
 
         switch (ev.code) {
           case KEY_DOWN:
           //case KEY_ESC:
           //case KEY_F5:
-          case BTN_A: // 8BitDo Zero 2: Y
+          case BTN_WEST: // 8BitDo Zero 2: Y
             buttonState[kButtonDown].store(true);
             break;
 
           case KEY_LEFT:
           //case KEY_PAGEUP:
-          case BTN_X: // 8BitDo Zero 2: X
+          case BTN_NORTH: // 8BitDo Zero 2: X
             buttonState[kButtonLeft].store(true);
             break;
 
           case KEY_RIGHT:
           //case KEY_PAGEDOWN:
-          case BTN_B: // 8BitDo Zero 2: B
+          case BTN_EAST: // 8BitDo Zero 2: B
             buttonState[kButtonRight].store(true);
             break;
 
           case KEY_UP:
           //case KEY_B:
-          case BTN_C: // 8BitDo Zero 2: A
+          case BTN_SOUTH: // 8BitDo Zero 2: A
             buttonState[kButtonUp].store(true);
             break;
 
           case KEY_POWER:
-          case BTN_TL2: // 8BitDo Zero 2: Select
+          case BTN_TL2: // 8BitDo Zero 2 (macOS mode): Select
+          case BTN_SELECT: // 8BitDo Zero 2 (Android mode): Select
             buttonState[kButtonPower].store(true);
             break;
 
@@ -281,13 +282,15 @@ void* inputListenerThread(void*) {
 
           case KEY_ESC:
           case KEY_BACK:
-          case BTN_Y: // 8BitDo Zero 2: Left bumper
+          // case BTN_Y: // 8BitDo Zero 2 (macOS mode): Left bumper
+          case BTN_TL: // 8BitDo Zero 2 (Android  mode): Left bumper
             buttonState[kButtonBack].store(true);
             break;
 
           case KEY_ENTER:
           case BTN_LEFT: // for kbd/mouse combo remote mode-switching
-          case BTN_Z: // 8BitDo Zero 2: Right bumper
+          case BTN_Z: // 8BitDo Zero 2 (macOS mode): Right bumper
+          case BTN_TR: // 8BitDo Zero 2 (Android mode): Right bumper
             buttonState[kButtonOK].store(true);
             break;
 
