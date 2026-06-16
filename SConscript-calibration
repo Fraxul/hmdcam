@@ -33,3 +33,63 @@ calibrationEnv.Program(
     'pthread', 'rt',
   ]
 )
+
+# Camera-IMU autosync calibrator (gyro <-> dense optical flow).
+# Estimator core is hardware-independent; the synthetic self-test exercises it end-to-end
+# and is the convention/sign guard (build and run this first).
+# Shared, hardware-independent core objects -- compiled once with calibrationEnv and reused
+# by both the self-test and the full tool (avoids two-environment object conflicts).
+cameraImuCalibCore = [calibrationEnv.Object(s) for s in [
+  'calibration/cameraImuCalibration/ImuTrace.cpp',
+  'calibration/cameraImuCalibration/Intrinsics.cpp',
+  'calibration/cameraImuCalibration/Estimator.cpp',
+  'calibration/cameraImuCalibration/SyntheticFlowSource.cpp',
+]]
+cameraImuCalibLibs = ['glog',
+  'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d',
+  'pthread', 'rt',
+] + calibrationEnv['CERES_LIBS']
+
+calibrationEnv.Program(
+  target = '../bin/cameraImuCalibrationSelfTest',
+  source = cameraImuCalibCore + ['calibration/cameraImuCalibration/SelfTest.cpp'],
+  LIBS = cameraImuCalibLibs,
+)
+
+# The full tool drives the Jetson Orin OFA for dense flow, so it only builds on Tegra. It
+# reuses the in-tree CUDA/NvSci interop (rhi/cuda + common/tegra) rather than vendoring the
+# nvmedia-iep helpers; only the PYDOF flow setup is tool-specific.
+if calibrationEnv['IS_TEGRA']:
+  ofaEnv = calibrationEnv.Clone()
+  ofaEnv.Append(
+    CPPPATH=[
+      '#nvsci_headers',
+      '#nvmedia',
+      calibrationEnv['TEGRA_MMAPI'],
+      calibrationEnv['TEGRA_MMAPI'] + '/include',
+    ],
+  )
+  # Host-side front-end objects need no NvSci includes -> build with calibrationEnv.
+  cameraImuFrontend = [calibrationEnv.Object(s) for s in [
+    'calibration/cameraImuCalibration/FrameSequence.cpp',
+    'calibration/cameraImuCalibration/ResultWriter.cpp',
+  ]]
+  # OFA + in-tree interop need the NvSci/NvMedia includes -> build with ofaEnv.
+  cameraImuOfaSrc = [
+    'calibration/cameraImuCalibration/OfaFlowSource.cpp',
+    'calibration/cameraImuCalibration/OfaFlowUtil.cpp',
+    'calibration/cameraImuCalibration/main.cpp',
+    'rhi/cuda/RHICUDA.cpp',
+    'rhi/cuda/CudaUtil.cpp',
+    'common/tegra/NvSciCudaInterop.cpp',
+    'common/tegra/NvSciUtil.cpp',
+  ]
+  cameraImuOfaLibs = [
+    'nvmedia_iofa_sci', 'nvscibuf', 'nvscicommon', 'nvscievent', 'nvsciipc', 'nvscisync',
+    'cuda', 'cudart',
+  ]
+  ofaEnv.Program(
+    target = '../bin/cameraImuCalibration',
+    source = cameraImuCalibCore + cameraImuFrontend + cameraImuOfaSrc,
+    LIBS = cameraImuCalibLibs + cameraImuOfaLibs,
+  )
