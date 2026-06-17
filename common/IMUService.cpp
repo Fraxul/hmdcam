@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 const char* kCalibrationFilename = "imuCalibration.yml";
+const char* kConfigurationFilename = "imuConfiguration.yml";
 
 // IMUFrame ring size must be power-of-two for the ring buffer address logic to work,
 // so we enforce that by declaring log2(size).
@@ -19,7 +20,7 @@ constexpr size_t kIMUFrameRingSizeMask = ((1 << kIMUFrameRingSizeLog2) - 1);
 IMUService::IMUService() {
   m_imuFrameRing = new IMUFrame[kIMUFrameRingSize];
 
-  loadCalibrationData();
+  loadConfiguration();
 
   if (m_imuHIDEndpoint.empty()) {
     printf("IMUService(): IMU HID endpoint path is empty, can't start service thread.\n");
@@ -40,21 +41,37 @@ IMUService::~IMUService() {
 }
 
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
-bool IMUService::loadCalibrationData() {
-  cv::FileStorage fs(kCalibrationFilename, cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
-  if (!fs.isOpened()) {
-    printf("Unable to open calibration data file\n");
-    return false;
-  }
+bool IMUService::loadConfiguration() {
 
+  // Configuration
   try {
+    cv::FileStorage fs(kConfigurationFilename, cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+    if (!fs.isOpened()) {
+      printf("Unable to open IMU configuration file %s\n", kConfigurationFilename);
+      return false;
+    }
     readNode(fs, accelMicroGPerLSB);
     readNode(fs, gyroMicroDPSPerLSB);
     readNode(fs, imuTimestampTicksPerFrame);
     readNode(fs, imuHIDEndpoint);
 
   } catch (const std::exception& ex) {
-    printf("Unable to load calibration data: %s\n", ex.what());
+    printf("Unable to load IMU configuration data: %s\n", ex.what());
+    return false;
+  }
+
+  // Calibration data
+  try {
+    cv::FileStorage fs(kCalibrationFilename, cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+    if (!fs.isOpened()) {
+      printf("Unable to open IMU calibration file %s\n", kCalibrationFilename);
+      return false;
+    }
+
+    // TODO: Read per-camera IMU calibration.
+
+  } catch (const std::exception& ex) {
+    printf("Unable to load IMU calibration data: %s\n", ex.what());
     return false;
   }
   return true;
@@ -62,7 +79,7 @@ bool IMUService::loadCalibrationData() {
 #undef readNode
 
 #define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_##settingName)
-void IMUService::saveCalibrationData() {
+void IMUService::saveConfiguration() {
   cv::FileStorage fs(kCalibrationFilename, cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
 
   writeNode(fs, accelMicroGPerLSB);

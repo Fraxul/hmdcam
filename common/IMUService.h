@@ -48,8 +48,9 @@ public:
   // Can be NULL if there was no timestamp match or if the IMU is unavailable.
   IMUFrame* currentIMUFrame() const { return m_currentIMUFrame; }
 
-  bool loadCalibrationData();
-  void saveCalibrationData();
+  // Load configuration and calibration data.
+  bool loadConfiguration();
+  void saveConfiguration();
 
   void renderIMGUI();
 
@@ -73,7 +74,7 @@ protected:
   uint64_t m_averageFrameIntervalNs = 0;
   uint64_t m_previousCaptureTimestampNs = 0;
 
-  // Calibration data
+  // Configuration data
   int32_t m_accelMicroGPerLSB = 244; // Default: LSM6DS3 CTRL1_XL_SCALE = 0b11 / 8g full-scale
   int32_t m_gyroMicroDPSPerLSB = 35000; // Default: LSM6DS3 CTRL2_G_SCALE = 0b100 / 1000 DPS full-scale
   int32_t m_imuTimestampTicksPerFrame = 1250 * 256; // Default: IMX662 1250-line readout with 8-bit sub-line precision, as reported by our sync controller.
