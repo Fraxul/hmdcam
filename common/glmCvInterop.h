@@ -8,6 +8,7 @@
 #pragma clang diagnostic ignored "-Wunused-function"
 
 static glm::mat3 glmMat3FromCVMatrix(cv::Mat matin) {
+  assert(!matin.empty());
   glm::mat3 out(1.0f);
   switch (CV_MAT_DEPTH(matin.type())) {
     case CV_64F:
@@ -31,6 +32,7 @@ static glm::mat3 glmMat3FromCVMatrix(cv::Mat matin) {
 }
 
 static glm::mat4 glmMat4FromCVMatrix(cv::Mat matin) {
+  assert(!matin.empty());
   glm::mat4 out(1.0f);
   switch (CV_MAT_DEPTH(matin.type())) {
     case CV_64F:
@@ -82,6 +84,7 @@ static glm::vec3 glmVec3FromCV(const cv::Vec3f& v) {
 }
 
 static glm::vec3 glmVec3FromCV(const cv::Mat& m) {
+  assert(m.total() >= 3);
   glm::vec3 res;
   switch (CV_MAT_DEPTH(m.type())) {
     case CV_64F:

@@ -15,6 +15,7 @@
 class CameraSystem;
 class DepthMapGenerator;
 struct UndistortRectifyParams;
+struct IMUFrame;
 
 class CameraSystem {
 public:
@@ -22,6 +23,7 @@ public:
 
   bool loadCalibrationData();
   bool loadCalibrationData(cv::FileStorage&);
+  bool loadIMUCalibrationData(cv::FileStorage&);
 
   void saveCalibrationData();
   void saveCalibrationData(cv::FileStorage&);
@@ -33,19 +35,21 @@ public:
   void debugIncrementCalibrationDataRevision() { m_calibrationDataRevision += 1; }
 
   // Call processFrame() after the ICameraProvider captures a frame to update distortion.
-  void processFrame();
+  void processFrame(IMUFrame* imuFrame = nullptr);
 
   struct Camera {
-    Camera() :
-      fovX(0),
-      fovY(0) {}
-
     RHISurface::ptr intrinsicDistortionMap;
     RHISurface::ptr mask;
     cv::Mat intrinsicMatrix; // From calibration
     cv::Mat distCoeffs;
     cv::Mat optimizedMatrix; // Computed by cv::getOptimalNewCameraMatrix from cameraIntrinsicMatrix and distCoeffs
-    double fovX, fovY; // Values for the optimized camera matrix, in degrees
+    double fovX = 0, fovY = 0; // Values for the optimized camera matrix, in degrees
+    bool readoutBottomToTop = false; // Whether readout orientation is flipped (bottom line read first) in hardware; used for rolling-shutter correction.
+
+    // IMU calibration data
+    bool imuCalibrationValid = false;
+    glm::mat3 imuToCameraRotation = glm::mat3(1.0f);
+    glm::vec3 gyroBias = glm::vec3(0.0f);
 
     bool hasIntrinsicCalibration() const { return (!(intrinsicMatrix.empty() || distCoeffs.empty())); }
     bool hasIntrinsicDistortionMap() const { return (!(optimizedMatrix.empty() || intrinsicDistortionMap.get() == nullptr)); }

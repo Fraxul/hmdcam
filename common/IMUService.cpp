@@ -1,4 +1,5 @@
 #include "IMUService.h"
+#include "common/glmCvInterop.h"
 #include "common/Timing.h"
 #include "imgui/imgui.h"
 #include "implot/implot.h"
@@ -8,7 +9,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-const char* kCalibrationFilename = "imuCalibration.yml";
 const char* kConfigurationFilename = "imuConfiguration.yml";
 
 // IMUFrame ring size must be power-of-two for the ring buffer address logic to work,
@@ -42,8 +42,6 @@ IMUService::~IMUService() {
 
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
 bool IMUService::loadConfiguration() {
-
-  // Configuration
   try {
     cv::FileStorage fs(kConfigurationFilename, cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
     if (!fs.isOpened()) {
@@ -60,27 +58,13 @@ bool IMUService::loadConfiguration() {
     return false;
   }
 
-  // Calibration data
-  try {
-    cv::FileStorage fs(kCalibrationFilename, cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
-    if (!fs.isOpened()) {
-      printf("Unable to open IMU calibration file %s\n", kCalibrationFilename);
-      return false;
-    }
-
-    // TODO: Read per-camera IMU calibration.
-
-  } catch (const std::exception& ex) {
-    printf("Unable to load IMU calibration data: %s\n", ex.what());
-    return false;
-  }
   return true;
 }
 #undef readNode
 
 #define writeNode(fileStorage, settingName) fileStorage.write(#settingName, m_##settingName)
 void IMUService::saveConfiguration() {
-  cv::FileStorage fs(kCalibrationFilename, cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
+  cv::FileStorage fs(kConfigurationFilename, cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
 
   writeNode(fs, accelMicroGPerLSB);
   writeNode(fs, gyroMicroDPSPerLSB);

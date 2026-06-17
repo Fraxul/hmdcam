@@ -5,6 +5,7 @@
 #include <vector>
 #include <opencv2/core.hpp>
 #include <opencv2/core/persistence.hpp>
+#include <glm/glm.hpp>
 
 constexpr size_t kMaxIMUSamplesPerFrame = 64;
 
@@ -13,8 +14,8 @@ constexpr size_t kMaxIMUSamplesPerFrame = 64;
 struct IMUSample {
   uint64_t timestampNs; // Timestamp relative to the currentTimeNs() timebase. Computed from lineOffset and frameStartTimestamp.
   uint32_t lineOffset; // Line offset (with fractional component) since start-of-frame.
-  float gyroDPS[3]; // XYZ, degrees/sec
-  float accelG[3]; // XYZ, G
+  glm::vec3 gyroDPS; // degrees/sec
+  glm::vec3 accelG; // G
 };
 
 // Contains one set of IMU samples for a frame. validSampleCount is variable.
@@ -48,7 +49,7 @@ public:
   // Can be NULL if there was no timestamp match or if the IMU is unavailable.
   IMUFrame* currentIMUFrame() const { return m_currentIMUFrame; }
 
-  // Load configuration and calibration data.
+  // Load configuration data.
   bool loadConfiguration();
   void saveConfiguration();
 

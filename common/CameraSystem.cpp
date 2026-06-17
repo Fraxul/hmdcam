@@ -1,8 +1,8 @@
 #include "common/CameraSystem.h"
 #include "common/ICameraProvider.h"
+#include "common/IMUService.h"
 #include "common/glmCvInterop.h"
 #include "common/FxThreading.h"
-#include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICUDA.h"
 #include "common/UndistortRectifyKernel.h"
 #include "imgui.h"
@@ -23,6 +23,7 @@
 #include "stb/stb_image_write.h"
 
 static const cv::Mat zeroDistortion = cv::Mat::zeros(1, 14, CV_64F);
+const char* kImuCalibrationFilename = "imuCalibration.yml";
 
 CameraSystem::CameraSystem(ICameraProvider* cam) :
   calibrationFilename("calibration.yml"),
@@ -40,7 +41,7 @@ CameraSystem::CameraSystem(ICameraProvider* cam) :
 }
 
 
-void CameraSystem::processFrame() {
+void CameraSystem::processFrame(IMUFrame* imuFrame) {
   // Regenerate the stereoDistortionMap for each stereo view by refilling the
   // per-row R_y * iR buffer on the CPU and launching the kernel. R_y is identity
   // for now -- the IMU integration will populate non-trivial per-row rotations
@@ -85,7 +86,57 @@ bool CameraSystem::loadCalibrationData() {
     return false;
   }
 
-  return loadCalibrationData(fs);
+  if (!loadCalibrationData(fs))
+    return false;
+
+  cv::FileStorage imuFs(kImuCalibrationFilename, cv::FileStorage::READ | cv::FileStorage::FORMAT_YAML);
+  if (!imuFs.isOpened()) {
+    // Lack of IMU calibration isn't a fatal error.
+    printf("Unable to open IMU calibration file %s -- rolling-shutter correction will be disabled!\n", kImuCalibrationFilename);
+  } else {
+    return loadIMUCalibrationData(imuFs);
+  }
+
+  return true;
+}
+
+bool CameraSystem::loadIMUCalibrationData(cv::FileStorage& imuFs) {
+  try {
+    // Read per-camera IMU calibration.
+    cv::FileNode camerasFn = imuFs["cameras"];
+    if (!camerasFn.isSeq()) {
+      printf("CameraSystem::loadIMUCalibrationData(): Root `cameras` node is not a sequence.\n");
+      return false;
+    }
+    if (camerasFn.size() != m_cameras.size()) {
+      printf("CameraSystem::loadIMUCalibrationData(): WARNING: root `cameras` node sequence length (%zu) does not match lens calibration data sequence length (%zu).\n", camerasFn.size(), m_cameras.size());
+    }
+    size_t seqLen = std::min<size_t>(camerasFn.size(), m_cameras.size());
+
+    for (size_t cameraIdx = 0; cameraIdx < seqLen; ++cameraIdx) {
+      cv::FileNode cfn = camerasFn[cameraIdx];
+      assert(cfn.isMap());
+
+      Camera& camera = m_cameras[cameraIdx];
+      cfn["valid"] >> camera.imuCalibrationValid;
+
+      cv::Mat rMat;
+      cfn["R_imu_to_cam_matrix"] >> rMat;
+      camera.imuToCameraRotation = glmMat3FromCVMatrix(rMat);
+
+      cv::Mat biasMat;
+      cfn["gyro_bias_deg_s"] >> biasMat;
+      camera.gyroBias = glmVec3FromCV(biasMat);
+
+      if (!camera.imuCalibrationValid) {
+        printf("CameraSystem::loadIMUCalibrationData(): WARNING: Camera %zu IMU calibration is not valid!\n", cameraIdx);
+      }
+    }
+  } catch (const std::exception& ex) {
+    printf("Unable to load IMU calibration data: %s\n", ex.what());
+    return false;
+  }
+  return true;
 }
 
 bool CameraSystem::loadCalibrationData(cv::FileStorage& fs) {
@@ -99,6 +150,7 @@ bool CameraSystem::loadCalibrationData(cv::FileStorage& fs) {
 
           cfn["intrinsicMatrix"] >> c.intrinsicMatrix;
           cfn["distortionCoeffs"] >> c.distCoeffs;
+          cv::read(cfn["redaoutBottomToTop"], c.readoutBottomToTop, c.readoutBottomToTop);
         }
       }
     }
@@ -197,6 +249,7 @@ void CameraSystem::saveCalibrationData(cv::FileStorage& fs) {
       fs.write("intrinsicMatrix", c.intrinsicMatrix);
       fs.write("distortionCoeffs", c.distCoeffs);
     }
+    fs.write("readoutBottomToTop", c.readoutBottomToTop);
     fs.endWriteStruct();
   }
   fs.endWriteStruct();
