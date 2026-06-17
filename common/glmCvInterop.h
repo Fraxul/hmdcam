@@ -84,6 +84,9 @@ static glm::vec3 glmVec3FromCV(const cv::Vec3f& v) {
 }
 
 static glm::vec3 glmVec3FromCV(const cv::Mat& m) {
+  if (m.empty())
+    return glm::vec3(0.0f);
+
   assert(m.total() >= 3);
   glm::vec3 res;
   switch (CV_MAT_DEPTH(m.type())) {

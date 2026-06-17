@@ -93,3 +93,18 @@ if calibrationEnv['IS_TEGRA']:
     source = cameraImuCalibCore + cameraImuFrontend + cameraImuOfaSrc,
     LIBS = cameraImuCalibLibs + cameraImuOfaLibs,
   )
+
+
+# Standalone offline harness that replays a CalibrationWriter capture through the
+# rolling-shutter de-skew math for visualization. Header-only dependencies on
+# common/ (RollingShutterDeskew.h, glmCvInterop.h) plus OpenCV -- no CUDA/RHI.
+rsEnv = env.Clone()
+rsEnv.CompilationDatabase()
+
+rsEnv.Program(
+  target = '../bin/rollingShutterDeskewTest',
+  source = [
+    'calibration/rollingShutterDeskewTest.cpp',
+  ],
+  LIBS=['opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_imgcodecs'],
+)

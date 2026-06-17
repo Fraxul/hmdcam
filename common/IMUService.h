@@ -13,7 +13,7 @@ constexpr size_t kMaxIMUSamplesPerFrame = 64;
 // Contains one sample in an IMU frame
 struct IMUSample {
   uint64_t timestampNs; // Timestamp relative to the currentTimeNs() timebase. Computed from lineOffset and frameStartTimestamp.
-  uint32_t lineOffset; // Line offset (with fractional component) since start-of-frame.
+  uint32_t lineOffset; // Line offset (with 8-bit fractional component) since start-of-frame.
   glm::vec3 gyroDPS; // degrees/sec
   glm::vec3 accelG; // G
 };

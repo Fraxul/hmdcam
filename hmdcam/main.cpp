@@ -916,7 +916,8 @@ int main(int argc, char* argv[]) {
       }
 
       // Hook for CameraSystem to do its post-capture frame processing -- this updates dynamic distortion maps
-      cameraSystem->processFrame();
+      // (including IMU-driven rolling-shutter correction, which consumes the current IMU frame).
+      cameraSystem->processFrame(imuService ? imuService->currentIMUFrame() : nullptr);
 
       // TODO move this inside CameraSystem
       if (debugEnableDepthMapGenerator && depthMapGenerator) {
@@ -1066,6 +1067,7 @@ int main(int argc, char* argv[]) {
 #endif
 
           if (imuService && ImGui::CollapsingHeader("IMU")) {
+            ImGui::Checkbox("Rolling-shutter correction", &cameraSystem->debugEnableRollingShutterCorrection);
             imuService->renderIMGUI();
           }
 

@@ -5,10 +5,12 @@
 #include "common/FxThreading.h"
 #include "rhi/cuda/RHICUDA.h"
 #include "common/UndistortRectifyKernel.h"
+#include "common/RollingShutterDeskew.h"
 #include "imgui.h"
 #include <iostream>
 #include <set>
 #include <assert.h>
+#include <cmath>
 #include <cuda.h>
 #include <epoxy/gl.h> // epoxy_is_desktop_gl
 
@@ -40,12 +42,18 @@ CameraSystem::CameraSystem(ICameraProvider* cam) :
   m_distortionMapHeight = cameraProvider()->streamHeight() / 2;
 }
 
-
 void CameraSystem::processFrame(IMUFrame* imuFrame) {
   // Regenerate the stereoDistortionMap for each stereo view by refilling the
-  // per-row R_y * iR buffer on the CPU and launching the kernel. R_y is identity
-  // for now -- the IMU integration will populate non-trivial per-row rotations
-  // in a later change. See SYNCHRONIZATION ASSUMPTION in UndistortRectifyKernel.h.
+  // per-row R_y * iR buffer on the CPU and launching the kernel.
+  //
+  // R_y = exp(-(theta(row) - theta(reference))), where theta(line) is the
+  // camera-frame rotation accumulated (by integrating the IMU gyro) from the start
+  // of the frame to a given readout line, and the reference is the frame-center
+  // readout line. This rotates the reference-time ray that iR produces into the
+  // orientation the camera actually had when this output row's source line was
+  // exposed -- exactly what the kernel documents it wants. When there is no usable
+  // IMU data, R_y collapses to identity and we reproduce plain
+  // initUndistortRectifyMap. See SYNCHRONIZATION ASSUMPTION in UndistortRectifyKernel.h.
 
   for (size_t viewIdx = 0; viewIdx < m_views.size(); ++viewIdx) {
     View& v = m_views[viewIdx];
@@ -54,13 +62,111 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
 
     for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
       float* eyeBase = v.rsPerRowIRHost + (eyeIdx * m_distortionMapHeight * 9);
-      const cv::Mat& iR = v.rsIRBase[eyeIdx];
-      for (int y = 0; y < m_distortionMapHeight; ++y) {
-        // Identity R_y placeholder: every row gets the same iR. When IMU
-        // integration lands, replace this with R_y * iR per row.
+      const cv::Mat& iRMat = v.rsIRBase[eyeIdx];
+      const Camera& cam = m_cameras[v.cameraIndices[eyeIdx]];
+
+      // iR as a row-major float[9]; iR[r*3 + c] == iRMat.at<double>(r, c).
+      float iR[9];
+      for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+          iR[r * 3 + c] = static_cast<float>(iRMat.at<double>(r, c));
+        }
+      }
+
+      // Rolling-shutter correction needs valid IMU extrinsics and at least two
+      // samples to integrate between. Otherwise fall back to identity R_y.
+      const bool applyRollingShutter = debugEnableRollingShutterCorrection &&
+        cam.imuCalibrationValid && (imuFrame != nullptr) && (imuFrame->validSampleCount >= 2);
+
+      if (!applyRollingShutter) {
+        for (uint32_t y = 0; y < m_distortionMapHeight; ++y) {
+          for (int i = 0; i < 9; ++i)
+            eyeBase[(y * 9) + i] = iR[i];
+        }
+        continue;
+      }
+
+      // ---- Cumulative camera-frame rotation vector at each IMU sample knot ----
+      // cumulativeTheta[k] = integral of omega_cam dt from sample 0 to sample k,
+      // a rotation vector in radians (trapezoidal). The intra-frame rotation is a
+      // few degrees at most, so accumulating rotation vectors (rather than composing
+      // exp-map quaternions) is well within the calibration's ~1 degree budget.
+      //   omega_cam = R_imu_to_cam * (gyroDPS - gyroBias), converted deg/s -> rad/s.
+      const uint32_t sampleCount = imuFrame->validSampleCount; // <= kMaxIMUSamplesPerFrame
+      glm::vec3 cumulativeTheta[kMaxIMUSamplesPerFrame];
+      float sampleLine[kMaxIMUSamplesPerFrame]; // readout line (lineOffset has an 8-bit fraction)
+
+      constexpr float kDegToRad = static_cast<float>(M_PI / 180.0);
+
+      glm::vec3 previousOmega(0.0f);
+      uint64_t previousTimestampNs = 0;
+      for (uint32_t k = 0; k < sampleCount; ++k) {
+        const IMUSample& s = imuFrame->samples[k];
+        const glm::vec3 omegaCam =
+          RollingShutterDeskew::applyImuToCameraRotation(cam.imuToCameraRotation, s.gyroDPS - cam.gyroBias) * kDegToRad;
+        sampleLine[k] = static_cast<float>(s.lineOffset) * (1.0f / 256.0f);
+
+        if (k == 0) {
+          cumulativeTheta[0] = glm::vec3(0.0f);
+        } else {
+          // dt from the per-sample absolute timestamps that IMUService computed from
+          // the camera capture timestamp + line offsets. Guard against any non-monotonic
+          // timestamp so a bad sample can't inject a negative-time integration step.
+          const double dtSeconds = (s.timestampNs >= previousTimestampNs)
+            ? (static_cast<double>(s.timestampNs - previousTimestampNs) * 1.0e-9)
+            : 0.0;
+          cumulativeTheta[k] = cumulativeTheta[k - 1] +
+            ((0.5f * static_cast<float>(dtSeconds)) * (previousOmega + omegaCam));
+        }
+        previousOmega = omegaCam;
+        previousTimestampNs = s.timestampNs;
+      }
+
+      // Linearly interpolate cumulativeTheta as a function of readout line. Samples
+      // arrive in increasing-line order within a frame; clamp outside the sampled span.
+      auto interpolateTheta = [&](float line) -> glm::vec3 {
+        if (line <= sampleLine[0]) return cumulativeTheta[0];
+        if (line >= sampleLine[sampleCount - 1]) return cumulativeTheta[sampleCount - 1];
+        uint32_t k = 0;
+        while ((k + 1) < sampleCount && sampleLine[k + 1] < line) ++k;
+        const float span = sampleLine[k + 1] - sampleLine[k];
+        const float frac = (span > 0.0f) ? ((line - sampleLine[k]) / span) : 0.0f;
+        return glm::mix(cumulativeTheta[k], cumulativeTheta[k + 1], frac);
+      };
+
+      // Reference orientation = frame-center readout line. The center is flip-invariant,
+      // and this matches the frame-center convention the camera-IMU calibrator was fit
+      // under (RollingShutterTiming::frameCenterTime / handoff doc section 3).
+      const UndistortRectifyParams& p = v.rsParamsHost[eyeIdx];
+      const float maxStreamRow = static_cast<float>(p.streamHeight - 1);
+      const glm::vec3 thetaReference = interpolateTheta(maxStreamRow * 0.5f);
+
+      const float scaleY = p.distortionMapToStreamScale[1];
+      const float biasY = p.distortionMapToStreamBias[1];
+
+      for (uint32_t y = 0; y < m_distortionMapHeight; ++y) {
+        // Distortion-map row -> stream (sensor) row (line offsets are in stream space) ->
+        // hardware readout line, honoring the readout direction.
+        const float streamRow = (static_cast<float>(y) * scaleY) + biasY;
+        const float readoutLine = cam.readoutBottomToTop ? (maxStreamRow - streamRow) : streamRow;
+
+        // R_y = exp(-theta) rotates the reference-time ray into this row's exposure-time
+        // frame. The negative sign is the validated de-skew polarity: the
+        // rollingShutterDeskewTest harness, run on a synthetic capture with a known
+        // rolling-shutter shear, confirms exp(-theta) reconstructs the undistorted scene
+        // while exp(+theta) doubles the distortion.
+        const glm::vec3 thetaRow = interpolateTheta(readoutLine) - thetaReference;
+        float Ry[9];
+        RollingShutterDeskew::rotationVectorToMatrix(-thetaRow, Ry);
+
+        // eyeBase[y] = R_y * iR, a row-major 3x3 product.
+        float* dst = eyeBase + (y * 9);
         for (int r = 0; r < 3; ++r) {
-          for (int col = 0; col < 3; ++col) {
-            eyeBase[y * 9 + r * 3 + col] = static_cast<float>(iR.at<double>(r, col));
+          for (int c = 0; c < 3; ++c) {
+            dst[(r * 3) + c] =
+              (Ry[(r * 3) + 0] * iR[(0 * 3) + c]) +
+              (Ry[(r * 3) + 1] * iR[(1 * 3) + c]) +
+              (Ry[(r * 3) + 2] * iR[(2 * 3) + c]);
           }
         }
       }

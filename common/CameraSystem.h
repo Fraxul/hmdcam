@@ -37,6 +37,8 @@ public:
   // Call processFrame() after the ICameraProvider captures a frame to update distortion.
   void processFrame(IMUFrame* imuFrame = nullptr);
 
+  bool debugEnableRollingShutterCorrection = true;
+
   struct Camera {
     RHISurface::ptr intrinsicDistortionMap;
     RHISurface::ptr mask;
