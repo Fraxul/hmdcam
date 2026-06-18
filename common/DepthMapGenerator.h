@@ -209,6 +209,7 @@ protected:
   size_t m_geoDepthMapTristripIndexCount, m_geoDepthMapLineIndexCount, m_geoDepthMapPointTristripIndexCount;
 
   // Processing settings
+  bool m_debugEnableDepthTimewarp = true;
   bool m_useMedianFilter = true;
   bool m_useTemporalFilter = true;
   float m_temporalFilterStableThreshold = 8.0f;

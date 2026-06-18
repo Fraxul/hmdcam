@@ -1069,6 +1069,24 @@ int main(int argc, char* argv[]) {
           if (imuService && ImGui::CollapsingHeader("IMU")) {
             ImGui::Checkbox("Rolling-shutter correction", &cameraSystem->debugEnableRollingShutterCorrection);
             imuService->renderIMGUI();
+
+            // Per-camera inter-frame rotation (IMU depth-timewarp input), as axis-angle.
+            // Expect ~0 deg when still; angle grows with head-turn rate and the axis flips
+            // sign when the turn reverses.
+            ImGui::SeparatorText("Inter-frame rotation (depth timewarp)");
+            for (size_t cameraIdx = 0; cameraIdx < cameraSystem->cameras(); ++cameraIdx) {
+              if (!cameraSystem->hasCameraInterframeRotation(cameraIdx)) {
+                ImGui::Text("Cam %zu: (no IMU data)", cameraIdx);
+                continue;
+              }
+              glm::quat q = cameraSystem->cameraInterframeRotation(cameraIdx);
+              float angleDeg = glm::degrees(2.0f * std::acos(glm::clamp(q.w, -1.0f, 1.0f)));
+              glm::vec3 axis(q.x, q.y, q.z);
+              float axisLength = glm::length(axis);
+              if (axisLength > 1.0e-6f)
+                axis /= axisLength;
+              ImGui::Text("Cam %zu: %.2f deg @ (%+.2f, %+.2f, %+.2f)", cameraIdx, angleDeg, axis.x, axis.y, axis.z);
+            }
           }
 
           if (enableCANBus && ImGui::CollapsingHeader("PDU Control")) {

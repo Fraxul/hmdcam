@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 // Convention-critical primitives shared between the live rolling-shutter de-skew
 // (CameraSystem::processFrame) and the offline visualization harness
@@ -46,6 +47,28 @@ inline void rotationVectorToMatrix(const glm::vec3& rotationVector, float outRow
   outRowMajor[6] = 2.0f * (xz - wy);
   outRowMajor[7] = 2.0f * (yz + wx);
   outRowMajor[8] = 1.0f - (2.0f * (xx + yy));
+}
+
+// Exponential map: rotation vector (axis * angle, radians) -> unit quaternion. Same
+// construction as rotationVectorToMatrix (and expSO3 in the calibrator's Conventions.h);
+// provided for callers that compose/store rotations as quaternions (e.g. the per-camera
+// inter-frame rotation used by IMU depth timewarp) rather than as the kernel's row-major
+// matrix buffer.
+inline glm::quat rotationVectorToQuaternion(const glm::vec3& rotationVector) {
+  const float thetaSq = glm::dot(rotationVector, rotationVector);
+  const float theta = std::sqrt(thetaSq);
+  const float halfAngle = 0.5f * theta;
+
+  float vectorScale;
+  if (theta > 1.0e-8f)
+    vectorScale = std::sin(halfAngle) / theta;
+  else
+    vectorScale = 0.5f - (thetaSq * (1.0f / 48.0f));
+
+  return glm::quat(std::cos(halfAngle),
+    rotationVector.x * vectorScale,
+    rotationVector.y * vectorScale,
+    rotationVector.z * vectorScale);
 }
 
 // Apply R_imu_to_cam (as loaded into a glm::mat3 by glmMat3FromCVMatrix) to a

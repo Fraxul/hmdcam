@@ -1,6 +1,7 @@
 layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   mat4 modelViewProjection[2];
   mat4 R1;
+  mat4 colorReprojection; // IMU depth-timewarp homography on the rectified texcoord (identity when disabled).
   vec4 depthParameters;
   vec2 mogrify;
   float disparityPrescale;

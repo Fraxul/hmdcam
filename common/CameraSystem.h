@@ -9,6 +9,7 @@
 #include <opencv2/core/persistence.hpp>
 #include "glm/gtx/euler_angles.hpp"
 #include "glm/gtx/transform.hpp"
+#include <glm/gtc/quaternion.hpp>
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -38,6 +39,17 @@ public:
   void processFrame(IMUFrame* imuFrame = nullptr);
 
   bool debugEnableRollingShutterCorrection = true;
+
+  // ----- Per-camera inter-frame rotation (IMU depth timewarp support) -----
+  // Updated every processFrame() from the IMU gyro stream. cameraInterframeRotation()
+  // returns the rotation taking a direction expressed in the camera's coordinate frame at
+  // the PREVIOUS frame's center-exposure time to its coordinates at THIS frame's
+  // center-exposure time -- i.e. the rotation that maps one-frame-stale geometry forward
+  // onto the current frame. Consumed by DepthMapGenerator to reproject stale depth onto
+  // the fresh color feed. Identity, with hasCameraInterframeRotation() false, until two
+  // consecutive frames with valid IMU data have been processed.
+  glm::quat cameraInterframeRotation(size_t cameraIdx) const;
+  bool hasCameraInterframeRotation(size_t cameraIdx) const;
 
   struct Camera {
     RHISurface::ptr intrinsicDistortionMap;
@@ -178,6 +190,26 @@ protected:
 
   std::vector<Camera> m_cameras;
   std::vector<View> m_views;
+
+  // Per-camera dynamic (per-frame) state, kept out of the static-calibration Camera
+  // struct so it can't accidentally be serialized into calibration.yml. Index-parallel
+  // to m_cameras.
+  struct CameraRuntimeState {
+    // Camera-frame rotation mapping previous-frame-center coordinates -> this-frame-center
+    // coordinates (see cameraInterframeRotation()).
+    glm::quat interframeRotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    bool hasInterframeRotation = false;
+
+    // Carry from this frame to the next: camera-frame rotation vector (radians) integrated
+    // from this frame's center-exposure line to the end of its IMU samples. Added to next
+    // frame's start->center integral to span center(N-1) -> center(N).
+    glm::vec3 tailTheta = glm::vec3(0.0f);
+    bool hasTail = false;
+  };
+  std::vector<CameraRuntimeState> m_cameraRuntime;
+
+  // Update m_cameraRuntime[*].interframeRotation from the current IMU frame.
+  void updateInterframePose(IMUFrame* imuFrame);
 
   // Stereo distortion map dimensions -- typically half of the stream size.
   uint32_t m_distortionMapWidth = 0, m_distortionMapHeight = 0;

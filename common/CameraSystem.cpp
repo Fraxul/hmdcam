@@ -33,6 +33,7 @@ CameraSystem::CameraSystem(ICameraProvider* cam) :
   m_calibrationDataRevision(0) {
 
   m_cameras.resize(cameraProvider()->streamCount());
+  m_cameraRuntime.resize(cameraProvider()->streamCount());
 
   // Compute stereo distortion map size.
   // The stereoDistortionMap will be generated at half-resolution relative to the stream size.
@@ -54,6 +55,10 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
   // exposed -- exactly what the kernel documents it wants. When there is no usable
   // IMU data, R_y collapses to identity and we reproduce plain
   // initUndistortRectifyMap. See SYNCHRONIZATION ASSUMPTION in UndistortRectifyKernel.h.
+
+  // Update per-camera inter-frame rotation for IMU depth timewarp. Independent of the
+  // rolling-shutter view loop below (per-camera, not per-view), so run it first.
+  updateInterframePose(imuFrame);
 
   for (size_t viewIdx = 0; viewIdx < m_views.size(); ++viewIdx) {
     View& v = m_views[viewIdx];
@@ -182,6 +187,109 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
         RHICUDA::defaultAsyncStream);
     }
   }
+}
+
+void CameraSystem::updateInterframePose(IMUFrame* imuFrame) {
+  // Per-camera camera-frame rotation between consecutive frame-center exposure times, for
+  // IMU depth timewarp (DepthMapGenerator reprojects one-frame-stale depth onto the
+  // current color using it). The window center(N-1) -> center(N) straddles two IMUFrames
+  // -- this processFrame() only holds frame N -- so we carry each frame's center->end
+  // "tail" rotation and compose it with next frame's start->center "head".
+  //
+  // Conventions match the rolling-shutter pass exactly:
+  //   omega_cam = R_imu_to_cam * (gyroDPS - gyroBias), deg/s -> rad/s.
+  // The samples are re-walked per camera rather than sharing the RS pass's cumulative
+  // integral; that pass is per-view/eye and only covers cameras in stereo views, whereas
+  // this is per-camera, and the work (~40 samples) is negligible. A future shared
+  // OrientationTimeline could back both.
+
+  constexpr float kDegToRad = static_cast<float>(M_PI / 180.0);
+  const float centerLine = static_cast<float>(cameraProvider()->streamHeight() - 1) * 0.5f;
+
+  for (size_t cameraIdx = 0; cameraIdx < m_cameras.size(); ++cameraIdx) {
+    const Camera& cam = m_cameras[cameraIdx];
+    CameraRuntimeState& rt = m_cameraRuntime[cameraIdx];
+
+    const bool haveIMU =
+      cam.imuCalibrationValid && (imuFrame != nullptr) && (imuFrame->validSampleCount >= 2);
+    if (!haveIMU) {
+      // Can't bridge a gap with missing data; drop the running rotation and the carry.
+      rt.hasInterframeRotation = false;
+      rt.hasTail = false;
+      continue;
+    }
+
+    const uint32_t sampleCount = imuFrame->validSampleCount; // <= kMaxIMUSamplesPerFrame
+
+    // Cumulative camera-frame rotation vector vs readout line (trapezoidal in time),
+    // identical construction to the rolling-shutter pass.
+    glm::vec3 cumulativeTheta[kMaxIMUSamplesPerFrame];
+    float sampleLine[kMaxIMUSamplesPerFrame];
+    glm::vec3 previousOmega(0.0f);
+    uint64_t previousTimestampNs = 0;
+    for (uint32_t k = 0; k < sampleCount; ++k) {
+      const IMUSample& s = imuFrame->samples[k];
+      const glm::vec3 omegaCam =
+        RollingShutterDeskew::applyImuToCameraRotation(cam.imuToCameraRotation, s.gyroDPS - cam.gyroBias) * kDegToRad;
+      sampleLine[k] = static_cast<float>(s.lineOffset) * (1.0f / 256.0f);
+      if (k == 0) {
+        cumulativeTheta[0] = glm::vec3(0.0f);
+      } else {
+        const double dtSeconds = (s.timestampNs >= previousTimestampNs)
+          ? (static_cast<double>(s.timestampNs - previousTimestampNs) * 1.0e-9)
+          : 0.0;
+        cumulativeTheta[k] = cumulativeTheta[k - 1] +
+          ((0.5f * static_cast<float>(dtSeconds)) * (previousOmega + omegaCam));
+      }
+      previousOmega = omegaCam;
+      previousTimestampNs = s.timestampNs;
+    }
+
+    // head = integral start->center: cumulativeTheta interpolated at the center line.
+    glm::vec3 head;
+    if (centerLine <= sampleLine[0]) {
+      head = cumulativeTheta[0];
+    } else if (centerLine >= sampleLine[sampleCount - 1]) {
+      head = cumulativeTheta[sampleCount - 1];
+    } else {
+      uint32_t k = 0;
+      while ((k + 1) < sampleCount && sampleLine[k + 1] < centerLine) ++k;
+      const float span = sampleLine[k + 1] - sampleLine[k];
+      const float frac = (span > 0.0f) ? ((centerLine - sampleLine[k]) / span) : 0.0f;
+      head = glm::mix(cumulativeTheta[k], cumulativeTheta[k + 1], frac);
+    }
+    // tail = integral center->end for this frame; carried to the next frame.
+    const glm::vec3 tailThisFrame = cumulativeTheta[sampleCount - 1] - head;
+
+    if (rt.hasTail) {
+      // dQ = orientation change center(N-1) -> center(N) = tail(N-1) then head(N),
+      // composed as quaternions in time order (body-frame rates -> right-multiply). The
+      // returned rotation maps previous-frame camera coords to current-frame coords, which
+      // is dQ^-1 (a fixed world point's camera-frame coords transform by C(now)^-1 C(prev)
+      // = dQ^-1). Final orientation/sign is validated downstream against the depth swim,
+      // same as the RS sign.
+      const glm::quat dQ =
+        RollingShutterDeskew::rotationVectorToQuaternion(rt.tailTheta) *
+        RollingShutterDeskew::rotationVectorToQuaternion(head);
+      rt.interframeRotation = glm::normalize(glm::inverse(dQ));
+      rt.hasInterframeRotation = true;
+    } else {
+      rt.hasInterframeRotation = false; // first frame after (re)start: no previous center.
+    }
+
+    rt.tailTheta = tailThisFrame;
+    rt.hasTail = true;
+  }
+}
+
+glm::quat CameraSystem::cameraInterframeRotation(size_t cameraIdx) const {
+  if (cameraIdx >= m_cameraRuntime.size() || !m_cameraRuntime[cameraIdx].hasInterframeRotation)
+    return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+  return m_cameraRuntime[cameraIdx].interframeRotation;
+}
+
+bool CameraSystem::hasCameraInterframeRotation(size_t cameraIdx) const {
+  return (cameraIdx < m_cameraRuntime.size()) && m_cameraRuntime[cameraIdx].hasInterframeRotation;
 }
 
 bool CameraSystem::loadCalibrationData() {

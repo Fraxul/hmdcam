@@ -25,6 +25,7 @@
 #include <opencv2/imgproc.hpp>
 #include <epoxy/gl.h> // epoxy_is_desktop_gl
 #include <glm/gtc/packing.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <npp.h>
 
 FxAtomicString ksDistortionMap("distortionMap");
@@ -98,6 +99,7 @@ extern FxAtomicString ksDistortionMap;
 struct MeshDisparityDepthMapUniformBlock {
   glm::mat4 modelViewProjection[2];
   glm::mat4 R1;
+  glm::mat4 colorReprojection; // IMU depth-timewarp homography on the rectified texcoord (identity when disabled).
   glm::vec4 depthParameters;
 
   glm::vec2 mogrify;
@@ -383,6 +385,41 @@ DepthMapGenerator::~DepthMapGenerator() {
   cuEventDestroy(m_finalizeDisparityFinishedEvent);
 }
 
+// Image-space (normalized-UV) homography that reprojects a rectified-grid sample by the
+// per-camera inter-frame rotation, for IMU depth timewarp. Maps the rectified texcoord of
+// a world point as seen one frame ago to where it appears in the current color frame:
+//   H_uv = S^-1 * Krect * (R1 * M * R1^T) * Krect^-1 * S,   S = diag(W, H, 1)
+// M is the camera-frame rotation (previous-frame coords -> this-frame coords); R1 is the
+// rectification (camera -> rectified) and Krect the rectified projection. Returned as a
+// glm::mat4 (upper-left 3x3 used) laid out so GLSL `mat3(colorReprojection) * vec3(uv, 1)`
+// applies H_uv. Computed in OpenCV to keep the matrix conventions unambiguous.
+static glm::mat4 computeDepthTimewarpColorReprojection(
+  const glm::quat& interframeRotation, const cv::Mat& rectification,
+  const cv::Mat& rectifiedProjection, double imageWidth, double imageHeight) {
+
+  const glm::mat3 mGlm = glm::mat3_cast(interframeRotation);
+  cv::Matx33d m, r1, kRect;
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      m(r, c) = mGlm[c][r]; // glm is column-major: glm[col][row] == math(row, col)
+      r1(r, c) = rectification.at<double>(r, c);
+      kRect(r, c) = rectifiedProjection.at<double>(r, c); // upper-left 3x3 of the 3x4 projection
+    }
+  }
+
+  const cv::Matx33d mRect = r1 * m * r1.t(); // camera-frame rotation expressed in the rectified frame
+  const cv::Matx33d hPixels = kRect * mRect * kRect.inv();
+  const cv::Matx33d s(imageWidth, 0, 0, 0, imageHeight, 0, 0, 0, 1);
+  const cv::Matx33d sInv(1.0 / imageWidth, 0, 0, 0, 1.0 / imageHeight, 0, 0, 0, 1);
+  const cv::Matx33d hUV = sInv * hPixels * s;
+
+  glm::mat4 out(1.0f);
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c)
+      out[c][r] = static_cast<float>(hUV(r, c)); // GLSL math(r,c) reads column-major out[c][r]
+  return out;
+}
+
 bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1) {
   ViewData* vd = m_viewData[viewIdx];
 
@@ -401,9 +438,32 @@ bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   const glm::mat4 viewWorldTransform = m_cameraSystem->viewWorldTransform(viewIdx);
   // viewWorldTransform will give us a view whose depth is aligned along +Z. We need to rotate it 180 degrees for our -Z view aligment.
   const glm::mat4 rotationCorrection = glm::scale(glm::vec3(-1.0f, 1.0f, -1.0f)); // 180 degree rotation around Y
-  ub.modelViewProjection[0] = renderView0.viewProjectionMatrix * rotationCorrection * viewWorldTransform;
-  ub.modelViewProjection[1] = renderView1.viewProjectionMatrix * rotationCorrection * viewWorldTransform;
+
+  // IMU depth timewarp: reproject the one-frame-stale depth onto the current color frame
+  // using the left camera's inter-frame rotation (previous-frame -> this-frame camera
+  // coords). Two coordinated pieces, both identity when disabled or without IMU data:
+  //   - geometry: rotate the camera-frame mesh points by M (folded right of viewWorldTransform,
+  //     i.e. applied camera-local to the TransformToLocalSpace() output)
+  //   - color: reproject the rectified sample texcoord by the matching image homography
+  // The direction is validated in-headset against the depth swim (m_debugEnableDepthTimewarp);
+  // if it worsens the swim, M is inverted -- same validation path as the RS sign.
+  glm::mat4 timewarpGeometry(1.0f);
+  glm::mat4 colorReprojection(1.0f);
+  if (m_debugEnableDepthTimewarp && m_cameraSystem->hasCameraInterframeRotation(vd->m_leftCameraIndex)) {
+    const CameraSystem::View& view = m_cameraSystem->viewAtIndex(viewIdx);
+    if (!view.stereoRectification[0].empty() && !view.stereoProjection[0].empty()) {
+      const glm::quat interframeRotation = m_cameraSystem->cameraInterframeRotation(vd->m_leftCameraIndex);
+      timewarpGeometry = glm::mat4_cast(interframeRotation);
+      colorReprojection = computeDepthTimewarpColorReprojection(
+        interframeRotation, view.stereoRectification[0], view.stereoProjection[0],
+        m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight());
+    }
+  }
+
+  ub.modelViewProjection[0] = renderView0.viewProjectionMatrix * rotationCorrection * viewWorldTransform * timewarpGeometry;
+  ub.modelViewProjection[1] = renderView1.viewProjectionMatrix * rotationCorrection * viewWorldTransform * timewarpGeometry;
   ub.R1 = vd->m_R1;
+  ub.colorReprojection = colorReprojection;
 
   ub.depthParameters = vd->m_depthParameters;
 
@@ -474,6 +534,7 @@ void DepthMapGenerator::renderIMGUI() {
   this->internalRenderIMGUI();
 
   // Common processing settings
+  ImGui::Checkbox("IMU depth timewarp", &m_debugEnableDepthTimewarp);
   ImGui::Checkbox("Median filter", &m_useMedianFilter);
   ImGui::Checkbox("Occlusion mask", &m_useOcclusionMask);
   if (m_useOcclusionMask) {
