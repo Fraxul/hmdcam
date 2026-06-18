@@ -385,15 +385,15 @@ DepthMapGenerator::~DepthMapGenerator() {
   cuEventDestroy(m_finalizeDisparityFinishedEvent);
 }
 
-// Image-space (normalized-UV) homography that reprojects a rectified-grid sample by the
-// per-camera inter-frame rotation, for IMU depth timewarp. Maps the rectified texcoord of
-// a world point as seen one frame ago to where it appears in the current color frame:
+// Normalized-UV homography (math-convention cv::Matx33d) that reprojects a rectified-grid
+// sample by the per-camera inter-frame rotation, for IMU depth timewarp:
 //   H_uv = S^-1 * Krect * (R1 * M * R1^T) * Krect^-1 * S,   S = diag(W, H, 1)
 // M is the camera-frame rotation (previous-frame coords -> this-frame coords); R1 is the
-// rectification (camera -> rectified) and Krect the rectified projection. Returned as a
-// glm::mat4 (upper-left 3x3 used) laid out so GLSL `mat3(colorReprojection) * vec3(uv, 1)`
-// applies H_uv. Computed in OpenCV to keep the matrix conventions unambiguous.
-static glm::mat4 computeDepthTimewarpColorReprojection(
+// rectification (camera -> rectified) and Krect the rectified projection. Applied as
+// H_uv * (uv, 1), it maps the rectified UV of a world point seen one frame ago to where it
+// appears in the current frame; the temporal filter uses the inverse (current -> previous).
+// Computed in OpenCV to keep matrix conventions unambiguous.
+static cv::Matx33d computeInterframeRectifiedUVHomography(
   const glm::quat& interframeRotation, const cv::Mat& rectification,
   const cv::Mat& rectifiedProjection, double imageWidth, double imageHeight) {
 
@@ -411,8 +411,12 @@ static glm::mat4 computeDepthTimewarpColorReprojection(
   const cv::Matx33d hPixels = kRect * mRect * kRect.inv();
   const cv::Matx33d s(imageWidth, 0, 0, 0, imageHeight, 0, 0, 0, 1);
   const cv::Matx33d sInv(1.0 / imageWidth, 0, 0, 0, 1.0 / imageHeight, 0, 0, 0, 1);
-  const cv::Matx33d hUV = sInv * hPixels * s;
+  return sInv * hPixels * s;
+}
 
+// Pack a UV homography into a glm::mat4 (upper-left 3x3) laid out so GLSL
+// `mat3(out) * vec3(uv, 1)` applies it.
+static glm::mat4 uvHomographyToGLSLMat4(const cv::Matx33d& hUV) {
   glm::mat4 out(1.0f);
   for (int r = 0; r < 3; ++r)
     for (int c = 0; c < 3; ++c)
@@ -454,9 +458,9 @@ bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
     if (!view.stereoRectification[0].empty() && !view.stereoProjection[0].empty()) {
       const glm::quat interframeRotation = m_cameraSystem->cameraInterframeRotation(vd->m_leftCameraIndex);
       timewarpGeometry = glm::mat4_cast(interframeRotation);
-      colorReprojection = computeDepthTimewarpColorReprojection(
+      colorReprojection = uvHomographyToGLSLMat4(computeInterframeRectifiedUVHomography(
         interframeRotation, view.stereoRectification[0], view.stereoProjection[0],
-        m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight());
+        m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight()));
     }
   }
 
@@ -770,9 +774,53 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
       // (it's OK if workMat and currentDisparityMat are the same mat)
 
       uint16_t stableThresholdRaw = static_cast<uint16_t>(m_temporalFilterStableThreshold * static_cast<float>(1 << m_disparitySubpixelBits));
+
+      // The temporal filter blends two one-frame-stale disparity frames (current ==
+      // disparity(N-1), previous == disparity(N-2) on these one-frame-pipelined backends),
+      // so motion compensation needs the rotation between THEIR captures -- last frame's
+      // inter-frame rotation, not this frame's (which the render uses to align stale depth
+      // to fresh color). Read the latched value, then latch this frame's for next time.
+      const glm::quat temporalRotation = vd->m_previousInterframeRotation;
+      const bool haveTemporalRotation = vd->m_hasPreviousInterframeRotation;
+      vd->m_hasPreviousInterframeRotation = m_cameraSystem->hasCameraInterframeRotation(vd->m_leftCameraIndex);
+      vd->m_previousInterframeRotation = vd->m_hasPreviousInterframeRotation
+        ? m_cameraSystem->cameraInterframeRotation(vd->m_leftCameraIndex)
+        : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+
+      // IMU motion compensation: reproject the previous-frame disparity sample to where the
+      // current pixel's world point sat a frame ago, so the blend integrates the same point
+      // instead of smearing edges on head rotation. This is the inverse of the render-side
+      // color reprojection (current -> previous), built from the inter-frame rotation,
+      // expressed in this disparity map's pixel coordinates. Identity / disabled reproduces
+      // the legacy same-pixel blend.
+      DisparityReprojection previousReprojection;
+      bool usePreviousReprojection = false;
+      if (m_debugEnableDepthTimewarp && haveTemporalRotation) {
+        const CameraSystem::View& view = m_cameraSystem->viewAtIndex(viewIdx);
+        if (!view.stereoRectification[0].empty() && !view.stereoProjection[0].empty()) {
+          const cv::Matx33d hUV = computeInterframeRectifiedUVHomography(
+            temporalRotation,
+            view.stereoRectification[0], view.stereoProjection[0],
+            m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight());
+
+          // current disparity pixel -> previous disparity pixel = Tpix * H_uv^-1 * Tuv,
+          // where T converts between this map's pixel centers and normalized UV.
+          const double cols = static_cast<double>(workMat->cols);
+          const double rows = static_cast<double>(workMat->rows);
+          const cv::Matx33d tUV(1.0 / cols, 0, 0.5 / cols, 0, 1.0 / rows, 0.5 / rows, 0, 0, 1);
+          const cv::Matx33d tPix(cols, 0, -0.5, 0, rows, -0.5, 0, 0, 1);
+          const cv::Matx33d hPix = tPix * hUV.inv() * tUV;
+          for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c)
+              previousReprojection.m[(r * 3) + c] = static_cast<float>(hPix(r, c));
+          usePreviousReprojection = true;
+        }
+      }
+
       disparityTemporalFilter(maxDisparityRaw(), /*stableDepthThreshold=*/ stableThresholdRaw, /*defaultAlpha*/ m_temporalFilterAlpha,
         /*currentFrameInput=*/ *workMat, /*previousFrameInput=*/ vd->previousDisparityMat(),
         /*output=*/ vd->currentDisparityMat(), (CUstream) m_globalStream.cudaPtr(),
+        /*previousFrameReprojection=*/ usePreviousReprojection ? &previousReprojection : nullptr,
         /*debugMat=*/ nullptr); // &vd->m_disparityDebugResidual);
 
       // back to reading from currentDisparityMat, since the temporal filter always writes to that.

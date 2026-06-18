@@ -9,6 +9,7 @@
 #include "rhi/RHIBuffer.h"
 #include "rhi/cuda/CudaUtil.h"
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/core/affine.hpp>
@@ -149,6 +150,12 @@ protected:
 
     glm::mat3 m_R1;
     glm::vec4 m_depthParameters; // Parameters extracted from the view's stereoDisparityToDepth matrix
+
+    // Previous frame's left-camera inter-frame rotation, latched for the temporal filter.
+    // The filter blends two one-frame-stale disparity frames, so it needs the rotation
+    // between THEIR captures (last frame's), not this frame's (which the render uses).
+    glm::quat m_previousInterframeRotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    bool m_hasPreviousInterframeRotation = false;
 
 
     void updateDisparityTexture(DepthMapGenerator*, uint32_t w, uint32_t h, RHISurfaceFormat);
