@@ -20,5 +20,8 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   float pointScale;
 
   vec2 inputImageSize;
-  float pad3, pad4;
+  float viewZFightBiasMeters; // metric depth bias toward the camera for the DEPTH_BIAS variant
+  float pad4;
+
+  vec4 projectionColumn2[2]; // per-eye projection matrix 3rd column, for eye-space-Z depth biasing
 };

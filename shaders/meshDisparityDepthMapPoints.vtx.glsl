@@ -13,6 +13,9 @@ float sampleDisparity(ivec2 mipCoords) {
 
 out V2F {
   vec2 texCoord;
+#if DEPTH_BIAS
+  vec4 biasedClipPos; // clip-space position translated toward the camera in eye space
+#endif
 } v2f;
 
 void main()
@@ -45,6 +48,13 @@ void main()
     vec2 gridCoordinates = vec2(disparitySampleCoordinates) + (vec2(quadCoordOffset) * pointScale);
     gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(vec4(textureCoordinates.xy, gridCoordinates.xy), disparity);
   }
+
+#if DEPTH_BIAS
+  // Translate toward the camera by viewZFightBiasMeters of eye-space Z and re-project:
+  // clip' = clip + dZ * Proj[:,2]. Biases only the depth buffer (see fragment shader); the
+  // collapsed/invalid branches above set gl_Position = 0, so the degenerate bias is harmless.
+  v2f.biasedClipPos = gl_Position + viewZFightBiasMeters * projectionColumn2[viewport];
+#endif
 
   v2f.texCoord = textureCoordinates;
 }

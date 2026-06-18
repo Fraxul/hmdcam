@@ -15,6 +15,9 @@ const float kGridScaleInv = 1.0 / 16.0;
 
 out V2F {
   vec2 texCoord;
+#if DEPTH_BIAS
+  vec4 biasedClipPos; // clip-space position translated toward the camera in eye space
+#endif
 } v2f;
 
 void main() {
@@ -29,6 +32,13 @@ void main() {
   vec2 gridCoordinates = vec2(gridCoord) * kGridScaleInv;
   vec2 textureCoordinates = gridCoordinates * texCoordStep;
   gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(vec4(textureCoordinates.xy, gridCoordinates.xy), disparity);
+
+#if DEPTH_BIAS
+  // Translate this vertex toward the camera by viewZFightBiasMeters of eye-space Z and re-project:
+  // clip' = Proj * (eye + dZ) = clip + dZ * Proj[:,2]. Carried to the fragment shader to bias only
+  // the depth buffer; gl_Position itself is untouched so the rendered surface does not move.
+  v2f.biasedClipPos = gl_Position + viewZFightBiasMeters * projectionColumn2[viewport];
+#endif
 
   v2f.texCoord = textureCoordinates;
 }

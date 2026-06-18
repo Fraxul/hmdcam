@@ -96,6 +96,7 @@ static FxAtomicString ksDstMip2("dstMip2");
 static FxAtomicString ksDstMip3("dstMip3");
 
 extern FxAtomicString ksDistortionMap;
+// Must be kept in sync with shaders/MeshDisparityDepthMapUniformBlock.h
 struct MeshDisparityDepthMapUniformBlock {
   glm::mat4 modelViewProjection[2];
   glm::mat4 R1;
@@ -119,7 +120,10 @@ struct MeshDisparityDepthMapUniformBlock {
   float pointScale;
 
   glm::vec2 inputImageSize;
-  float pad3, pad4;
+  float viewZFightBiasMeters; // metric depth bias toward the camera for the DEPTH_BIAS variant
+  float pad4;
+
+  glm::vec4 projectionColumn2[2]; // per-eye projection matrix 3rd column, for eye-space-Z depth biasing
 };
 
 FxAtomicString ksDisparityMipUniformBlock("DisparityMipUniformBlock");
@@ -279,7 +283,10 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     if (cs->cameraProvider()->cameraTexCoordCropX() != 1.0f)
       desc.setFlag("CAM_TEX_CROP_X", cs->cameraProvider()->cameraTexCoordCropX());
 
+    desc.setFlag("DEPTH_BIAS", false);
     m_disparityDepthMapPointsPipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
+    desc.setFlag("DEPTH_BIAS", true);
+    m_disparityDepthMapPointsPipelineBiased = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
     // clang-format on
   }
 
@@ -302,7 +309,10 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     if (cs->cameraProvider()->cameraTexCoordCropX() != 1.0f)
       desc.setFlag("CAM_TEX_CROP_X", cs->cameraProvider()->cameraTexCoordCropX());
 
+    desc.setFlag("DEPTH_BIAS", false);
     m_disparityDepthMapAdaptivePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
+    desc.setFlag("DEPTH_BIAS", true);
+    m_disparityDepthMapAdaptivePipelineBiased = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
     // clang-format on
   }
 
@@ -331,6 +341,8 @@ bool DepthMapGenerator::loadSettings() {
       readNode(rsn, minDepthCutoff);
       readNode(rsn, usePointRendering);
       readNode(rsn, pointScale);
+      readNode(rsn, useViewZFightBias);
+      readNode(rsn, viewZFightBiasMeters);
       readNode(rsn, adaptiveFlatnessThreshold);
       readNode(rsn, adaptiveDepthDiscontinuityThreshold);
       readNode(rsn, adaptiveCellOverlapMultiplier);
@@ -364,6 +376,8 @@ void DepthMapGenerator::saveSettings() {
   writeNode(fs, minDepthCutoff);
   writeNode(fs, usePointRendering);
   writeNode(fs, pointScale);
+  writeNode(fs, useViewZFightBias);
+  writeNode(fs, viewZFightBiasMeters);
   writeNode(fs, adaptiveFlatnessThreshold);
   writeNode(fs, adaptiveDepthDiscontinuityThreshold);
   writeNode(fs, adaptiveCellOverlapMultiplier);
@@ -430,11 +444,18 @@ bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   if (vd->m_leftCameraStreamFailed && vd->m_rightCameraStreamFailed)
     return false; // Nothing to render for this view!
 
+  // The lowest-indexed view renders through the DEPTH_BIAS variant so it deterministically wins
+  // close Z-fights against other overlapping views (see m_useViewZFightBias). Only this view pays
+  // the cost of writing gl_FragDepth -- should be minimal, since it's the first thing rendered after
+  // a full color/depth clear.
+  // Subsequent views stay on the fixed-function depth path.
+  const bool useDepthBias = m_useViewZFightBias && (viewIdx == 0);
+
   if (m_usePointRendering) {
-    rhi()->bindRenderPipeline(m_disparityDepthMapPointsPipeline);
+    rhi()->bindRenderPipeline(useDepthBias ? m_disparityDepthMapPointsPipelineBiased : m_disparityDepthMapPointsPipeline);
     rhi()->bindStreamBuffer(0, m_geoDepthMapPointTexcoordBuffer);
   } else {
-    rhi()->bindRenderPipeline(m_disparityDepthMapAdaptivePipeline);
+    rhi()->bindRenderPipeline(useDepthBias ? m_disparityDepthMapAdaptivePipelineBiased : m_disparityDepthMapAdaptivePipeline);
     rhi()->bindStreamBuffer(0, vd->m_adaptiveVertexBuffer);
   }
 
@@ -495,6 +516,13 @@ bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.pointScale = m_pointScale;
 
   ub.inputImageSize = glm::vec2(m_cameraSystem->cameraProvider()->streamWidth(), m_cameraSystem->cameraProvider()->streamHeight());
+
+  // Depth-bias parameters for the DEPTH_BIAS shader variant. The 3rd column of the projection
+  // matrix lets the shader translate a point along eye-space Z (clip' = clip + dZ * Proj[:,2])
+  // and re-project it, so the bias is a true metric distance rather than a window-depth fudge.
+  ub.viewZFightBiasMeters = m_viewZFightBiasMeters;
+  ub.projectionColumn2[0] = renderView0.projectionMatrix[2];
+  ub.projectionColumn2[1] = renderView1.projectionMatrix[2];
 
   rhi()->loadUniformBlockImmediate(ksMeshDisparityDepthMapUniformBlock, &ub, sizeof(ub));
   rhi()->loadTexture(ksDisparityTex, vd->m_disparityTexture);
@@ -580,6 +608,12 @@ void DepthMapGenerator::renderIMGUI() {
   }
 
   ImGui::SliderFloat("Min Depth Cutoff", &m_minDepthCutoff, 0.01f, 0.30f);
+
+  ImGui::Checkbox("View 0 Z-fight bias", &m_useViewZFightBias);
+  if (m_useViewZFightBias) {
+    // Kept >= 0 so the layout(depth_greater) conservative-depth invariant in the fragment shaders holds.
+    ImGui::SliderFloat("Z-fight bias (m)", &m_viewZFightBiasMeters, 0.0f, 1.0f, "%.2fm");
+  }
 
   ImGui::Checkbox("Point rendering", &m_usePointRendering);
   if (m_usePointRendering) {

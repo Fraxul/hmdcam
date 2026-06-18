@@ -255,6 +255,13 @@ protected:
   bool m_usePointRendering = false;
   float m_pointScale = 1.0f;
 
+  // When multiple AR views overlap, their independently-reconstructed surfaces can sit at
+  // nearly the same depth and Z-fight. To break ties deterministically, View 0 (lowest index)
+  // is rendered through a shader variant that biases its depth toward the camera by
+  // m_viewZFightBiasMeters, so it wins any contest within that distance.
+  bool m_useViewZFightBias = true;
+  float m_viewZFightBiasMeters = 0.3f;
+
   // Adaptive-mesh path: maximum (max - min) raw disparity within a block that still
   // counts as flat. Smaller = more subdivision (more triangles); larger = coarser merges
   // and more visible cracks at level transitions.
@@ -278,6 +285,10 @@ protected:
   bool internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1);
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
   RHIRenderPipeline::ptr m_disparityDepthMapAdaptivePipeline;
+  // DEPTH_BIAS variants, used to render the lowest-indexed view so it deterministically wins
+  // close Z-fights against other overlapping views. See m_useViewZFightBias.
+  RHIRenderPipeline::ptr m_disparityDepthMapPointsPipelineBiased;
+  RHIRenderPipeline::ptr m_disparityDepthMapAdaptivePipelineBiased;
 
   // Profiling data
   CUevent m_finalizeDisparityStartEvent;
