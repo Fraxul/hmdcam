@@ -32,7 +32,7 @@
 	url = https://github.com/OpenCyphal/libcanard
 [submodule "nvsci_headers"]
 	path = nvsci_headers
-	url = https://nv-tegra.nvidia.com/r/tegra/nv-sci-src/nvsci_headers.git
+	url = https://gitlab.com/nvidia/nv-tegra/tegra/nv-sci-src/nvsci_headers.git
 	ignore = untracked
 [submodule "shaderc"]
 	path = shaderc
