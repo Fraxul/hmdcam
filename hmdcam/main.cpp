@@ -1774,8 +1774,10 @@ int main(int argc, char* argv[]) {
     rhi()->waitForGPUIdle();
   }
 
+#ifdef USE_EYETRACKING
   delete eyeTrackingService;
   delete faceTrackingService;
+#endif
   delete debugServer;
   delete cameraSystem;
   delete depthMapGenerator;

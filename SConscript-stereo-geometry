@@ -12,10 +12,10 @@ sgEnv.Program(
   source = Glob('stereo-geometry/*.cpp') +
     [
       'common/CameraSystem.cpp',
-      'common/CharucoMultiViewCalibration.cpp',
       'common/FxCamera.cpp',
       'common/FxRenderView.cpp',
       'common/FxThreading.cpp',
+      'common/UndistortRectifyKernel.cu',
       'common/stb_impl.cpp',
     ] +
     Glob('rhi/*.cpp') + Glob('rhi/gl/*.cpp') + Glob('rhi/cuda/*.cpp') + Glob('imgui/*.cpp'),
