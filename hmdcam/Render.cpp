@@ -50,6 +50,12 @@ RHIRenderPipeline::ptr hiddenAreaMeshPipeline;
 RHIBuffer::ptr apertureMaskVertexBuffer[2];
 uint32_t apertureMaskVertexCount[2] = {0, 0};
 
+// Per-eye aperture ellipse in per-eye [0,1] eye-target UV space, used by the
+// distortion pass to skip texture fetches outside the lens cone. Radii of 0
+// (the dummy HMD, or a degenerate FOV) disable the cull for that eye.
+glm::vec2 apertureCenterUV[2] = {glm::vec2(0.5f, 0.5f), glm::vec2(0.5f, 0.5f)};
+glm::vec2 apertureRadiiUV[2] = {glm::vec2(0.0f, 0.0f), glm::vec2(0.0f, 0.0f)};
+
 FxAtomicString ksOverlayTex("overlayTex");
 FxAtomicString ksMaskTex("maskTex");
 
@@ -65,6 +71,8 @@ RHIBuffer::ptr meshDistortionVertexBuffer, meshDistortionIndexBuffer;
 struct MeshDistortionUniformBlock {
   glm::vec2 uvOffset;
   glm::vec2 uvScale;
+  glm::vec2 apertureCenter; // lens aperture ellipse center, in combined-eyeTex UV space
+  glm::vec2 apertureInvRadii; // reciprocal half-axes; (0,0) disables culling (always inside)
 };
 static FxAtomicString ksMeshDistortionUniformBlock("MeshDistortionUniformBlock");
 
@@ -120,6 +128,11 @@ static void buildHiddenAreaMesh(struct xrt_hmd_parts* hmd) {
 
       const glm::vec2 center(-a31, -a32); // boresight in NDC
       const glm::vec2 radii(a11 * radiusTangent, a22 * radiusTangent); // ellipse half-axes in NDC
+
+      // Stash the same ellipse in per-eye [0,1] UV space (uv = ndc*0.5 + 0.5) for
+      // the distortion pass to cull sample fetches against.
+      apertureCenterUV[eyeIndex] = (center * 0.5f) + 0.5f;
+      apertureRadiiUV[eyeIndex] = radii * 0.5f;
 
       // Walk the eye-target rectangle ([-1,1] NDC) perimeter -- corners included,
       // so the masked corners are covered exactly. For each boundary point, cast a
@@ -513,6 +526,20 @@ void renderHMDFrame() {
     MeshDistortionUniformBlock ub;
     ub.uvOffset = glm::vec2(eyeIndex == 0 ? 0.0f : 0.5f, 0.0f);
     ub.uvScale = glm::vec2(0.5f, 1.0f);
+
+    // Lens aperture, mapped into combined-eyeTex UV (the space of the sample UVs
+    // the fragment shader fetches with). The fragment shader skips its texture
+    // fetches outside this ellipse -- those panel pixels are in the vignetted
+    // corners the eye never sees. A small margin keeps the cull just outside the
+    // eye-target aperture mask so no visible pixel is dropped.
+    constexpr float kApertureCullMargin = 1.02f;
+    const glm::vec2 apertureCenter = (apertureCenterUV[eyeIndex] * ub.uvScale) + ub.uvOffset;
+    const glm::vec2 apertureRadii = apertureRadiiUV[eyeIndex] * ub.uvScale * kApertureCullMargin;
+    ub.apertureCenter = apertureCenter;
+    ub.apertureInvRadii = glm::vec2(
+      apertureRadii.x > 0.0f ? (1.0f / apertureRadii.x) : 0.0f,
+      apertureRadii.y > 0.0f ? (1.0f / apertureRadii.y) : 0.0f);
+
     rhi()->loadUniformBlockImmediate(ksMeshDistortionUniformBlock, &ub, sizeof(ub));
 
     rhi()->drawIndexedPrimitives(meshDistortionIndexBuffer, kIndexBufferTypeUInt32, xrtHMDevice->hmd->distortion.mesh.index_counts[eyeIndex], xrtHMDevice->hmd->distortion.mesh.index_offsets[eyeIndex]);

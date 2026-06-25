@@ -1,4 +1,5 @@
 #version 310 es
+#include "MeshDistortionUniformBlock.h"
 in vec4 position_Ruv;
 out vec2 Ruv;
 
@@ -7,12 +8,6 @@ in vec4 Guv_Buv;
 out vec2 Guv;
 out vec2 Buv;
 #endif
-
-layout(std140) uniform MeshDistortionUniformBlock {
-  vec2 uvOffset;
-  vec2 uvScale;
-};
-
 
 void main() {
   gl_Position = vec4(position_Ruv.xy, 0.0f, 1.0f);
