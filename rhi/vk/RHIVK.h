@@ -70,6 +70,7 @@ public:
   virtual void bindDepthStencilState(RHIDepthStencilState::ptr) override;
   virtual void bindBlendState(RHIBlendState::ptr) override;
   virtual void setCullState(RHICullState) override;
+  virtual void setColorWriteEnabled(bool) override;
   virtual void setScissorRect(const RHIRect&) override;
   virtual void clearScissorRect() override;
 

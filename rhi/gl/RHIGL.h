@@ -53,6 +53,7 @@ public:
   virtual void bindDepthStencilState(RHIDepthStencilState::ptr);
   virtual void bindBlendState(RHIBlendState::ptr);
   virtual void setCullState(RHICullState);
+  virtual void setColorWriteEnabled(bool);
   virtual void setScissorRect(const RHIRect&);
   virtual void clearScissorRect();
 

@@ -136,6 +136,9 @@ public:
   virtual void bindDepthStencilState(RHIDepthStencilState::ptr) = 0;
   virtual void bindBlendState(RHIBlendState::ptr) = 0;
   virtual void setCullState(RHICullState) = 0;
+  // Enables or disables writes to all color attachments (depth/stencil writes are
+  // unaffected). Used for depth-only passes. Resets to enabled at render-pass begin.
+  virtual void setColorWriteEnabled(bool) = 0;
   virtual void setScissorRect(const RHIRect&) = 0;
   virtual void clearScissorRect() = 0;
 

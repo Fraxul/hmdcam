@@ -19,8 +19,12 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
+#include <algorithm>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <utility>
+#include <vector>
 #include <sys/time.h>
 
 // extern bool vive_watchman_enable; // hacky; symbol added in xrt/drivers/vive/vive_device.c to disable watchman thread (since we don't use lighthouse tracking)
@@ -37,6 +41,14 @@ RHISurface::ptr disabledMaskTex;
 
 RHIRenderPipeline::ptr mesh1chDistortionPipeline;
 RHIRenderPipeline::ptr mesh3chDistortionPipeline;
+
+// Lens aperture mask: the distortion mesh fills the whole display rectangle, but
+// the lens only sees a circular region, so the eye-target corners are hidden even
+// where the distortion footprint covers them. This annulus (rect minus the FOV-
+// derived aperture ellipse) masks them.
+RHIRenderPipeline::ptr hiddenAreaMeshPipeline;
+RHIBuffer::ptr apertureMaskVertexBuffer[2];
+uint32_t apertureMaskVertexCount[2] = {0, 0};
 
 FxAtomicString ksOverlayTex("overlayTex");
 FxAtomicString ksMaskTex("maskTex");
@@ -78,6 +90,78 @@ UserPresenceState RenderGetUserPresenceState() {
     return xrtHeadDetectInput->value.boolean ? kUserPresenceState_Present : kUserPresenceState_NotPresent;
   }
   return kUserPresenceState_Unknown;
+}
+
+// Build the lens aperture mask per eye. The aperture is a circle in tangent
+// space centered on the optical axis (boresight, tangent 0,0) and inscribed in
+// the FOV (radius = nearest half-FOV tangent). Under the eye projection (see
+// recomputeHMDParameters: tangent (tx,ty) -> NDC (a11*tx - a31, -a22*ty - a32))
+// it becomes an ellipse centered at (-a31, -a32) with half-axes (a11*r, a22*r).
+// We mask the annulus between that ellipse and the eye-target rectangle edge.
+// Skipped on the dummy/desktop HMD, which has no real lens.
+static void buildHiddenAreaMesh(struct xrt_hmd_parts* hmd) {
+  if (!isDummyHMD) {
+    for (uint32_t eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+      const struct xrt_fov& fov = hmd->distortion.fov[eyeIndex];
+      const float tanLeft = tanf(fov.angle_left), tanRight = tanf(fov.angle_right);
+      const float tanDown = tanf(fov.angle_down), tanUp = tanf(fov.angle_up);
+      const float tanWidth = tanRight - tanLeft;
+      const float tanHeight = tanUp - tanDown;
+      const float radiusTangent = std::min(std::min(-tanLeft, tanRight), std::min(-tanDown, tanUp));
+      if (!(tanWidth > 0.0f) || !(tanHeight > 0.0f) || !(radiusTangent > 0.0f)) {
+        printf("buildHiddenAreaMesh: degenerate FOV for eye %u; skipping aperture mask.\n", eyeIndex);
+        continue;
+      }
+
+      const float a11 = 2.0f / tanWidth;
+      const float a22 = 2.0f / tanHeight;
+      const float a31 = (tanRight + tanLeft) / tanWidth;
+      const float a32 = (tanUp + tanDown) / tanHeight;
+
+      const glm::vec2 center(-a31, -a32); // boresight in NDC
+      const glm::vec2 radii(a11 * radiusTangent, a22 * radiusTangent); // ellipse half-axes in NDC
+
+      // Walk the eye-target rectangle ([-1,1] NDC) perimeter -- corners included,
+      // so the masked corners are covered exactly. For each boundary point, cast a
+      // ray inward to the ellipse center and clip it to the ellipse to get the
+      // matching inner-ring point.
+      const uint32_t edgeSubdivisions = 64;
+      const glm::vec2 corners[4] = {glm::vec2(-1.0f, -1.0f), glm::vec2(1.0f, -1.0f), glm::vec2(1.0f, 1.0f), glm::vec2(-1.0f, 1.0f)};
+      std::vector<glm::vec2> rectRing;
+      rectRing.reserve(4 * edgeSubdivisions);
+      for (uint32_t edge = 0; edge < 4; ++edge) {
+        const glm::vec2& a = corners[edge];
+        const glm::vec2& b = corners[(edge + 1) & 3];
+        for (uint32_t j = 0; j < edgeSubdivisions; ++j)
+          rectRing.push_back(a + ((b - a) * (static_cast<float>(j) / static_cast<float>(edgeSubdivisions))));
+      }
+
+      std::vector<glm::vec2> strip;
+      strip.reserve((rectRing.size() + 1) * 2);
+      for (size_t k = 0; k <= rectRing.size(); ++k) {
+        const glm::vec2& outer = rectRing[k % rectRing.size()];
+        const glm::vec2 d = outer - center;
+        // Scale d down onto the ellipse boundary: q is how many ellipse-radii out
+        // the rectangle point sits, so center + d/q lands on the ellipse.
+        const float q = sqrtf(((d.x / radii.x) * (d.x / radii.x)) + ((d.y / radii.y) * (d.y / radii.y)));
+        const glm::vec2 inner = (q > 1.0f) ? (center + (d / q)) : outer; // q >= 1 since the ellipse is inside the rectangle
+        strip.push_back(inner);
+        strip.push_back(outer);
+      }
+
+      apertureMaskVertexBuffer[eyeIndex] = rhi()->newBufferWithContents(strip.data(), strip.size() * sizeof(glm::vec2));
+      apertureMaskVertexCount[eyeIndex] = static_cast<uint32_t>(strip.size());
+    }
+    printf("Aperture mask: %u strip verts/eye.\n", apertureMaskVertexCount[0]);
+  }
+
+  // clang-format off
+  hiddenAreaMeshPipeline = rhi()->compileRenderPipeline(
+    "shaders/hiddenAreaMesh.vtx.glsl",
+    "shaders/hiddenAreaMesh.frag.glsl",
+    RHIVertexLayout({ RHIVertexLayoutElement(0, kVertexElementTypeFloat2, "ndcPosition", 0, sizeof(glm::vec2)) }),
+    kPrimitiveTopologyTriangleStrip);
+  // clang-format on
 }
 
 bool RenderInit(ERenderBackend backendType) {
@@ -281,6 +365,9 @@ bool RenderInit(ERenderBackend backendType) {
   eyeViewports[1] = RHIRect::xywh(eye_width, 0, eye_width, eye_height);
   // clang-format on
 
+  // Precompute the hidden-area mesh from the distortion grid.
+  buildHiddenAreaMesh(xrtHMDevice->hmd);
+
   return true;
 }
 
@@ -369,6 +456,35 @@ void recomputeHMDParameters() {
       eyeProjection[i][2][0], eyeProjection[i][2][1], eyeProjection[i][2][2], eyeProjection[i][2][3],
       eyeProjection[i][3][0], eyeProjection[i][3][1], eyeProjection[i][3][2], eyeProjection[i][3][3]);
     // clang-format on
+  }
+}
+
+void RenderBeginHMDEyeTargetRenderPass() {
+  rhi()->setClearDepth(0.0f);
+  rhi()->beginRenderPass(eyeRT, kLoadClear);
+  rhi()->setViewports(eyeViewports, 2);
+
+  // Apply the hidden-area mesh: write near-plane depth (1.0, reverse-Z) into the
+  // border region the distortion pass never samples. The scene then renders with
+  // standardGreaterDepthStencilState, so its fragments are rejected there (depth >
+  // 1.0 is unsatisfiable), saving shading and bandwidth. standardGreaterDepthStencilState
+  // here lets the mesh's 1.0 beat the 0.0 depth clear while writing depth.
+  if (apertureMaskVertexCount[0] || apertureMaskVertexCount[1]) {
+    rhi()->bindRenderPipeline(hiddenAreaMeshPipeline);
+    rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
+    rhi()->bindBlendState(disabledBlendState);
+    rhi()->setCullState(kCullDisabled); // strip winding alternates around the annulus
+    // Depth-only: only the near-plane depth write matters; the fragment shader's
+    // red output is debug visualization. Disabling color writes skips that color
+    // traffic. Flip to true to see the masked region painted red again.
+    rhi()->setColorWriteEnabled(false);
+    for (uint32_t eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+      rhi()->setViewport(eyeViewports[eyeIndex]);
+      rhi()->bindStreamBuffer(0, apertureMaskVertexBuffer[eyeIndex]);
+      rhi()->drawPrimitives(0, apertureMaskVertexCount[eyeIndex]);
+    }
+    // Restore color writes for the scene geometry that renders into eyeRT next.
+    rhi()->setColorWriteEnabled(true);
   }
 }
 

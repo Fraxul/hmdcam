@@ -853,6 +853,11 @@ void RHIGL::setCullState(RHICullState cullState) {
   }
 }
 
+void RHIGL::setColorWriteEnabled(bool enabled) {
+  GLboolean flag = enabled ? GL_TRUE : GL_FALSE;
+  glColorMask(flag, flag, flag, flag);
+}
+
 void RHIGL::setScissorRect(const RHIRect& scissorRect) {
   glScissor(scissorRect.x, scissorRect.y, scissorRect.width, scissorRect.height);
   glEnable(GL_SCISSOR_TEST);

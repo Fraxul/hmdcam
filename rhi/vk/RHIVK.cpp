@@ -917,6 +917,18 @@ void RHIVK::setCullState(RHICullState s) {
   m_currentFrame.commandBuffer.setCullModeEXT(mode);
 }
 
+void RHIVK::setColorWriteEnabled(bool enabled) {
+  assert(m_currentFrame.passActive && "setColorWriteEnabled: can only be called during a render pass.");
+  uint32_t colorCount = uint32_t(m_currentFrame.passColorAttachments.size());
+  if (!colorCount)
+    return;
+  const vk::ColorComponentFlags mask = enabled
+    ? (vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA)
+    : vk::ColorComponentFlags{};
+  std::vector<vk::ColorComponentFlags> writeMasks(colorCount, mask);
+  m_currentFrame.commandBuffer.setColorWriteMaskEXT(0, colorCount, writeMasks.data());
+}
+
 void RHIVK::setScissorRect(const RHIRect& r) {
   assert(m_currentFrame.passActive && "setScissorRect: can only be called during a render pass.");
   vk::Rect2D scissor{

@@ -26,6 +26,13 @@ enum UserPresenceState {
 };
 
 UserPresenceState RenderGetUserPresenceState();
+
+// Starts a render pass targeting eyeRT and sets up the per-eye viewports.
+// May also apply a hidden-area mesh if possible.
+// Color will be cleared to the current clear color. Depth will be cleared to 0.0f
+// for areas not covered by the hidden-area mesh (follows reversed-infinite-Z convention).
+void RenderBeginHMDEyeTargetRenderPass();
+
 void renderHMDFrame();
 
 void recomputeHMDParameters();

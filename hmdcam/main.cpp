@@ -718,10 +718,8 @@ int main(int argc, char* argv[]) {
         rhi()->endRenderPass(guiRT);
 
         // Setup for rendering to eye rendertargets
-        rhi()->setClearDepth(0.0f);
-        rhi()->beginRenderPass(eyeRT, kLoadClear);
+        RenderBeginHMDEyeTargetRenderPass();
         rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
-        rhi()->setViewports(eyeViewports, 2);
 
         FxRenderView renderViews[2];
         for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
@@ -1383,10 +1381,9 @@ int main(int argc, char* argv[]) {
       if (debugRenderTiming)
         rhi()->beginTimerQuery(viewRenderQuery);
 
-      rhi()->setClearDepth(0.0f);
-      rhi()->beginRenderPass(eyeRT, kLoadClear);
+      RenderBeginHMDEyeTargetRenderPass();
+
       rhi()->bindDepthStencilState(standardGreaterDepthStencilState);
-      rhi()->setViewports(eyeViewports, 2);
 
       FxRenderView renderViews[2];
       // TODO actual camera setup here. renderDisparityDepthMap only uses the viewProjection matrix.
