@@ -134,13 +134,25 @@ RHIRenderPipelineVK::RHIRenderPipelineVK(RHIShaderVK::ptr shader, const RHIRende
       }
     }
     for (const auto& [unit, refl] : m_shader->stagesReflection) {
+      const bool isVertex = (unit == RHIShaderDescriptor::kVertexShader);
       fprintf(stderr, "  stage %s:\n", RHIShaderDescriptor::nameForShadingUnit(unit));
       for (const auto& b : refl.bindings) {
         fprintf(stderr, "    set=%u binding=%u type=%s name=\"%s\"\n",
           b.set, b.binding, vk::to_string(b.descriptorType).c_str(), b.name.c_str());
       }
+      // StorageClass Input: real vertex attributes on the vertex stage,
+      // inter-stage varyings (fed by the previous stage) everywhere else.
       for (const auto& vi : refl.vertexInputs) {
-        fprintf(stderr, "    vtx-input loc=%u name=\"%s\"\n", vi.location, vi.name.c_str());
+        fprintf(stderr, "    %s   loc=%u name=\"%s\"%s\n",
+          isVertex ? "vtx-input" : "stage-in ", vi.location, vi.name.c_str(),
+          vi.isFlat ? " flat" : "");
+      }
+      // StorageClass Output: inter-stage varyings handed to the next stage
+      // (the fragment stage's outputs are color attachments, shown for
+      // completeness). These are what the *next* stage matches by location.
+      for (const auto& vo : refl.stageOutputs) {
+        fprintf(stderr, "    stage-out loc=%u name=\"%s\"%s\n",
+          vo.location, vo.name.c_str(), vo.isFlat ? " flat" : "");
       }
     }
   }
@@ -396,6 +408,72 @@ RHIRenderPipelineVK::RHIRenderPipelineVK(RHIShaderVK::ptr shader, const RHIRende
     for (const auto& a : m_vertexAttributes) {
       fprintf(stderr, "    vtx-attr loc=%u binding=%u format=%s offset=%u\n",
         a.location, a.binding, vk::to_string(a.format).c_str(), a.offset);
+    }
+  }
+
+  // ---- 7. Cross-stage inter-stage I/O consistency check. ----
+  // Linked VK_EXT_shader_object stages match their inter-stage varyings by
+  // LOCATION, never by name. But each stage's SPIR-V was compiled in isolation
+  // with glslang's per-stage SetAutoMapLocations, which assigns locations in
+  // source-declaration order with no knowledge of the adjacent stage. When two
+  // stages declare the same varyings in a different order, a varying lands on
+  // different locations on each side and the consumer silently reads whatever
+  // the producer wrote at that location (frequently zero). Names survive in the
+  // SPIR-V (SetGenerateDebugInfo), so we can pair producer outputs with consumer
+  // inputs by name and flag any whose location or interpolation disagrees.
+  //
+  // Emits detected mismatches irrespective of RHI_VK_DUMP_BINDINGS to avoid
+  // silent miscompilation.
+  //
+  const bool dumpInterStage = dumpEnv && atoi(dumpEnv);
+  for (size_t i = 0; i + 1 < presentStages.size(); ++i) {
+    auto producerIt = m_shader->stagesReflection.find(presentStages[i]);
+    auto consumerIt = m_shader->stagesReflection.find(presentStages[i + 1]);
+    if (producerIt == m_shader->stagesReflection.end() || consumerIt == m_shader->stagesReflection.end())
+      continue;
+    const std::vector<SpirvInterfaceVar>& producerOut = producerIt->second.stageOutputs;
+    const std::vector<SpirvInterfaceVar>& consumerIn = consumerIt->second.vertexInputs;
+    const char* producerName = RHIShaderDescriptor::nameForShadingUnit(presentStages[i]);
+    const char* consumerName = RHIShaderDescriptor::nameForShadingUnit(presentStages[i + 1]);
+
+    std::map<std::string, const SpirvInterfaceVar*> outByName, inByName;
+    for (const auto& vo : producerOut) outByName[vo.name] = &vo;
+    for (const auto& vi : consumerIn) inByName[vi.name] = &vi;
+
+    if (dumpInterStage)
+      fprintf(stderr, "  inter-stage %s -> %s (matched by location):\n", producerName, consumerName);
+
+    for (const auto& vo : producerOut) {
+      auto it = inByName.find(vo.name);
+      if (it == inByName.end()) {
+        // A varying the next stage doesn't consume is legal (dead on read).
+        if (dumpInterStage)
+          fprintf(stderr, "    \"%s\" out loc=%u%s -- not consumed by %s\n",
+            vo.name.c_str(), vo.location, vo.isFlat ? " flat" : "", consumerName);
+        continue;
+      }
+      const SpirvInterfaceVar* vi = it->second;
+      const bool locationMismatch = vi->location != vo.location;
+      const bool flatMismatch = vi->isFlat != vo.isFlat;
+      if (locationMismatch || flatMismatch) {
+        fprintf(stderr, "RHIRenderPipelineVK: WARNING inter-stage mismatch %s->%s for \"%s\": "
+                        "%s writes loc=%u%s but %s reads loc=%u%s -- consumer reads the wrong location (likely zero)\n",
+          producerName, consumerName, vo.name.c_str(),
+          producerName, vo.location, vo.isFlat ? " flat" : "",
+          consumerName, vi->location, vi->isFlat ? " flat" : "");
+      } else if (dumpInterStage) {
+        fprintf(stderr, "    \"%s\" loc=%u%s OK\n", vo.name.c_str(), vo.location, vo.isFlat ? " flat" : "");
+      }
+    }
+
+    // Consumer inputs with no like-named producer output read undefined data:
+    // some *other* producer varying (or nothing) occupies that location.
+    for (const auto& vi : consumerIn) {
+      if (!outByName.count(vi.name)) {
+        fprintf(stderr, "RHIRenderPipelineVK: WARNING inter-stage %s->%s consumes \"%s\" (reads loc=%u%s) "
+                        "with no matching output in %s -- reads whatever occupies that location\n",
+          producerName, consumerName, vi.name.c_str(), vi.location, vi.isFlat ? " flat" : "", producerName);
+      }
     }
   }
 }

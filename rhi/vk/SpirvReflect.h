@@ -25,14 +25,26 @@ struct SpirvDescriptorBinding {
   uint32_t arraySize = 1; // 1 == not declared as an array
 };
 
-struct SpirvVertexInput {
+// A location-qualified shader interface variable (StorageClass Input or
+// Output). Used for two distinct purposes depending on the stage:
+//   - the vertex stage's Inputs are the actual vertex attributes (matched
+//     against the host-side RHIVertexLayout by name);
+//   - every other Input/Output is an inter-stage varying, matched against
+//     the adjacent stage by LOCATION (never by name) when the linked
+//     VK_EXT_shader_object pipeline runs. isFlat records the interpolation
+//     qualifier so a flat/smooth mismatch across the boundary can be caught.
+struct SpirvInterfaceVar {
   std::string name;
   uint32_t location = 0;
+  bool isFlat = false;
 };
+// Retained name for the vertex-attribute consumers in RHIRenderPipelineVK.
+using SpirvVertexInput = SpirvInterfaceVar;
 
 struct SpirvReflection {
   std::vector<SpirvDescriptorBinding> bindings;
-  std::vector<SpirvVertexInput> vertexInputs;
+  std::vector<SpirvInterfaceVar> vertexInputs; // StorageClass Input
+  std::vector<SpirvInterfaceVar> stageOutputs; // StorageClass Output (inter-stage)
   uint32_t pushConstantSize = 0; // 0 if no PushConstant variable
 };
 

@@ -34,6 +34,7 @@ constexpr uint32_t kOpVariable = 59;
 // Decoration enum values
 constexpr uint32_t kDecorationBlock = 2;
 constexpr uint32_t kDecorationBufferBlock = 3;
+constexpr uint32_t kDecorationFlat = 14;
 constexpr uint32_t kDecorationLocation = 30;
 constexpr uint32_t kDecorationBinding = 33;
 constexpr uint32_t kDecorationDescriptorSet = 34;
@@ -43,6 +44,7 @@ constexpr uint32_t kDecorationOffset = 35;
 constexpr uint32_t kStorageClassUniformConstant = 0;
 constexpr uint32_t kStorageClassInput = 1;
 constexpr uint32_t kStorageClassUniform = 2;
+constexpr uint32_t kStorageClassOutput = 3;
 constexpr uint32_t kStorageClassPushConstant = 9;
 constexpr uint32_t kStorageClassStorageBuffer = 12;
 
@@ -200,8 +202,14 @@ SpirvReflection reflectSpirv(const std::vector<uint32_t>& spirv) {
   std::map<uint32_t, uint32_t> decoSet;
   std::map<uint32_t, uint32_t> decoBinding;
   std::map<uint32_t, uint32_t> decoLocation;
+  std::map<uint32_t, bool> decoFlat;
   std::map<uint32_t, bool> decoBlock;
   std::map<uint32_t, bool> decoBufferBlock;
+  // For interface blocks the Location often lands on member 0 via
+  // OpMemberDecorate rather than on the block variable itself; track the
+  // lowest member Location per struct type so we can recover the block's
+  // base location when the variable carries none.
+  std::map<uint32_t, uint32_t> memberLocationByStruct;
   // For push constants we need the *last* member's offset to compute size.
   std::map<uint32_t, std::map<uint32_t, uint32_t>> memberOffsetByTarget;
 
@@ -245,6 +253,9 @@ SpirvReflection reflectSpirv(const std::vector<uint32_t>& spirv) {
           case kDecorationLocation:
             if (length >= 4) decoLocation[target] = operands[2];
             break;
+          case kDecorationFlat:
+            decoFlat[target] = true;
+            break;
           case kDecorationBlock:
             decoBlock[target] = true;
             break;
@@ -263,6 +274,11 @@ SpirvReflection reflectSpirv(const std::vector<uint32_t>& spirv) {
         uint32_t decoration = operands[2];
         if (decoration == kDecorationOffset && length >= 5) {
           memberOffsetByTarget[target][member] = operands[3];
+        } else if (decoration == kDecorationLocation && length >= 5) {
+          // Lowest member Location is the block's base inter-stage location.
+          auto it = memberLocationByStruct.find(target);
+          if (it == memberLocationByStruct.end() || operands[3] < it->second)
+            memberLocationByStruct[target] = operands[3];
         }
         break;
       }
@@ -519,14 +535,29 @@ SpirvReflection reflectSpirv(const std::vector<uint32_t>& spirv) {
         break;
       }
 
-      case kStorageClassInput: {
-        // Vertex inputs — only the vertex stage produces these usefully.
+      case kStorageClassInput:
+      case kStorageClassOutput: {
+        // Vertex-stage Inputs are real attributes; every other Input/Output is
+        // an inter-stage varying. Resolve the location from the variable's own
+        // decoration, falling back to the block's base member location for
+        // interface blocks (whose Location rides OpMemberDecorate on member 0).
+        SpirvInterfaceVar vi;
         auto lit = decoLocation.find(varId);
-        if (lit == decoLocation.end()) break;
-        SpirvVertexInput vi;
+        if (lit != decoLocation.end()) {
+          vi.location = lit->second;
+        } else {
+          auto mit = memberLocationByStruct.find(ptr.inner);
+          if (mit == memberLocationByStruct.end())
+            break; // builtin (gl_Position / gl_FragDepth / ...) — no location
+          vi.location = mit->second;
+        }
         vi.name = getName(varId);
-        vi.location = lit->second;
-        out.vertexInputs.push_back(vi);
+        if (vi.name.empty()) vi.name = getName(ptr.inner); // bare block: use block-type name
+        vi.isFlat = decoFlat.count(varId) != 0;
+        if (var.storageClass == kStorageClassInput)
+          out.vertexInputs.push_back(vi);
+        else
+          out.stageOutputs.push_back(vi);
         break;
       }
 
