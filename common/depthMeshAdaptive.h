@@ -20,6 +20,15 @@ struct DrawElementsIndirectCommand {
 constexpr int kAdaptiveMeshGridFracBits = 4;
 constexpr int kAdaptiveMeshGridScale = 1 << kAdaptiveMeshGridFracBits;
 
+// Set to 1 to compile the per-cell level-color debug visualization. This widens every
+// vertex by 4 bytes (an extra level/snap-flags word) and enables the LEVEL_DEBUG shader
+// path, gated at runtime by the "Debug: Adaptive level color" checkbox. Off in production:
+// zero vertex-size and shader cost. The macro lives here (the one header shared by the CUDA
+// builder and the C++ vertex-layout setup) so both translation units agree on the struct.
+#ifndef ADAPTIVE_MESH_DEBUG
+#define ADAPTIVE_MESH_DEBUG 0
+#endif
+
 // Per-vertex format emitted by the adaptive mesh builder. Matches the GL vertex layout
 // declared for the m_disparityDepthMapAdaptivePipeline (see DepthMapGenerator.cpp).
 // gridX/gridY are q12.4 fixed-point pixel coordinates (pixel * kAdaptiveMeshGridScale).
@@ -27,8 +36,23 @@ struct AdaptiveMeshVertex {
   uint16_t gridX;
   uint16_t gridY;
   float disparityRaw;
+#if ADAPTIVE_MESH_DEBUG
+  // Flat per-cell diagnostic word: bits 0-3 = chosen pyramid level L, bit 4 = right edge
+  // snapped to dRep, bit 5 = bottom edge snapped to dRep. All four corners of a cell carry
+  // the same value. Only present (and only read by the shader) when ADAPTIVE_MESH_DEBUG.
+  uint16_t debugLevelFlags;
+#endif
 };
+#if ADAPTIVE_MESH_DEBUG
+static_assert(sizeof(AdaptiveMeshVertex) == 12, "AdaptiveMeshVertex must be 12 bytes in debug");
+#else
 static_assert(sizeof(AdaptiveMeshVertex) == 8, "AdaptiveMeshVertex must be 8 bytes");
+#endif
+
+// Bit layout of AdaptiveMeshVertex::debugLevelFlags.
+constexpr uint16_t kAdaptiveDebugLevelMask = 0x000F;
+constexpr uint16_t kAdaptiveDebugRightSnap = 0x0010;
+constexpr uint16_t kAdaptiveDebugBottomSnap = 0x0020;
 
 // Number of pyramid levels. Level 0 = 1x1 cells, level kAdaptiveMeshLevels-1 = the largest merge size.
 constexpr int kAdaptiveMeshLevels = 5;

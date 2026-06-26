@@ -13,7 +13,7 @@ layout(std140) uniform MeshDisparityDepthMapUniformBlock {
   int renderStereo;
   float maxValidDisparityPixels;
   uint maxValidDisparityRaw;
-  float unused1;
+  float debugLevelColorMode; // LEVEL_DEBUG: >0.5 renders per-cell level false-color instead of the camera image
 
   vec2 texCoordStep; // (1/internalWidth, 1/internalHeight)
   float minDepthCutoff;

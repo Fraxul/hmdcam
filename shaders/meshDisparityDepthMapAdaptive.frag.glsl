@@ -15,7 +15,28 @@ in V2F {
 uniform sampler2D imageTex;
 uniform sampler2D distortionMap;
 
+#if LEVEL_DEBUG
+flat in uint v_debugLevelFlags;
+#endif
+
 layout(location = 0) out vec4 outColor;
+
+#if LEVEL_DEBUG
+// Per-cell diagnostic color: hue = chosen pyramid level, dimmed when this cell snapped an
+// edge back to its representative disparity. Cracks show through as background-colored gaps.
+vec3 debugLevelColor(uint flags) {
+  const vec3 palette[5] = vec3[5](
+    vec3(0.90, 0.12, 0.12),  // L0 red
+    vec3(0.95, 0.60, 0.12),  // L1 orange
+    vec3(0.20, 0.80, 0.25),  // L2 green
+    vec3(0.20, 0.55, 0.95),  // L3 blue
+    vec3(0.85, 0.30, 0.92)); // L4 magenta
+  uint level = flags & 0xFu;
+  vec3 c = palette[min(level, 4u)];
+  bool snapped = (flags & 0x30u) != 0u; // either right- or bottom-edge snap
+  return snapped ? c * 0.4 : c;
+}
+#endif
 
 #if DEPTH_BIAS
 // Conservative depth: the bias only ever pulls a fragment toward the camera, which under reverse-Z
@@ -34,6 +55,11 @@ void main() {
   // Remap through OpenCV-generated distortion map
   vec2 distortionCoord = texture(distortionMap, reprojectedTexCoord).rg; // RG32F texture
   outColor = SAMPLE_CAMERA(distortionCoord);
+
+#if LEVEL_DEBUG
+  if (debugLevelColorMode > 0.5)
+    outColor = vec4(debugLevelColor(v_debugLevelFlags), 1.0);
+#endif
 
 #if DEPTH_BIAS
   // Vulkan reverse-Z: window depth = clip.z / clip.w (NDC z already in [0,1]). Dividing the

@@ -113,7 +113,7 @@ struct MeshDisparityDepthMapUniformBlock {
   uint32_t renderStereo;
   float maxValidDisparityPixels;
   uint32_t maxValidDisparityRaw;
-  float unused1;
+  float debugLevelColorMode; // LEVEL_DEBUG: >0.5 renders per-cell level false-color instead of the camera image
 
   glm::vec2 texCoordStep;
   float minDepthCutoff;
@@ -302,12 +302,18 @@ void DepthMapGenerator::initWithCameraSystem(CameraSystem* cs) {
     RHIShaderDescriptor desc("shaders/meshDisparityDepthMapAdaptive.vtx.glsl", "shaders/meshDisparityDepthMapAdaptive.frag.glsl", RHIVertexLayout({
         RHIVertexLayoutElement(0, kVertexElementTypeUShort2, "gridCoord",      offsetof(AdaptiveMeshVertex, gridX),        sizeof(AdaptiveMeshVertex)),
         RHIVertexLayoutElement(0, kVertexElementTypeFloat1,  "disparityRawIn", offsetof(AdaptiveMeshVertex, disparityRaw), sizeof(AdaptiveMeshVertex))
+#if ADAPTIVE_MESH_DEBUG
+      , RHIVertexLayoutElement(0, kVertexElementTypeUShort1, "debugLevelFlags", offsetof(AdaptiveMeshVertex, debugLevelFlags), sizeof(AdaptiveMeshVertex))
+#endif
       }));
 
     if (auto camYcbcrSampler = cs->cameraProvider()->cameraSampler())
       desc.setImmutableSamplerBinding("imageTex", camYcbcrSampler);
     if (cs->cameraProvider()->cameraTexCoordCropX() != 1.0f)
       desc.setFlag("CAM_TEX_CROP_X", cs->cameraProvider()->cameraTexCoordCropX());
+#if ADAPTIVE_MESH_DEBUG
+    desc.setFlag("LEVEL_DEBUG", true);
+#endif
 
     desc.setFlag("DEPTH_BIAS", false);
     m_disparityDepthMapAdaptivePipeline = rhi()->compileRenderPipeline(rhi()->compileShader(desc), rpd);
@@ -507,6 +513,11 @@ bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   ub.renderStereo = (stereo ? 1 : 0);
   ub.maxValidDisparityPixels = maxDisparityPixels() - 1;
   ub.maxValidDisparityRaw = maxDisparityRaw();
+#if ADAPTIVE_MESH_DEBUG
+  ub.debugLevelColorMode = m_debugAdaptiveLevelColor ? 1.0f : 0.0f;
+#else
+  ub.debugLevelColorMode = 0.0f;
+#endif
 
   ub.texCoordStep = glm::vec2(
     1.0f / static_cast<float>(internalWidth()),
@@ -622,6 +633,11 @@ void DepthMapGenerator::renderIMGUI() {
     ImGui::DragInt("Adaptive flatness threshold (raw)", &m_adaptiveFlatnessThreshold, /*v_speed=*/ 8, 0, 128);
     ImGui::DragInt("Adaptive discontinuity threshold (raw)", &m_adaptiveDepthDiscontinuityThreshold, /*v_speed=*/ 8, 0, 1024);
     ImGui::SliderFloat("Adaptive cell overlap multiplier", &m_adaptiveCellOverlapMultiplier, 1.0f, 3.0f, "%.2f");
+#if ADAPTIVE_MESH_DEBUG
+    ImGui::Checkbox("Debug: Adaptive level color", &m_debugAdaptiveLevelColor);
+    if (m_debugAdaptiveLevelColor)
+      ImGui::TextWrapped("Per-cell level: L0 red, L1 orange, L2 green, L3 blue, L4 magenta. Dimmed = edge snapped to dRep. Gaps = cracks.");
+#endif
 
     // Per-view emission histogram for the most-recent build. The host-side mirror is
     // populated by an async DtoH copy at the end of the build.

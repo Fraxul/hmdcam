@@ -279,10 +279,18 @@ __global__ void emitGeometryKernel(
   uint32_t iBase = atomicAdd(&counters->indexCounter, 6u);
   atomicAdd(&counters->levelHistograms[L], 1u);
 
+#if ADAPTIVE_MESH_DEBUG
+  uint16_t dbg = uint16_t(L) | (rightCrack ? kAdaptiveDebugRightSnap : uint16_t(0)) | (bottomCrack ? kAdaptiveDebugBottomSnap : uint16_t(0));
+  outVerts[vBase + 0] = {vxL, vyT, d00, dbg};
+  outVerts[vBase + 1] = {vxR, vyT, d10, dbg};
+  outVerts[vBase + 2] = {vxL, vyB, d01, dbg};
+  outVerts[vBase + 3] = {vxR, vyB, d11, dbg};
+#else
   outVerts[vBase + 0] = {vxL, vyT, d00};
   outVerts[vBase + 1] = {vxR, vyT, d10};
   outVerts[vBase + 2] = {vxL, vyB, d01};
   outVerts[vBase + 3] = {vxR, vyB, d11};
+#endif
 
   outIndices[iBase + 0] = vBase + 0;
   outIndices[iBase + 1] = vBase + 1;

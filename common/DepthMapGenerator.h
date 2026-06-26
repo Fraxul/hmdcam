@@ -282,6 +282,10 @@ protected:
   bool m_debugUseFixedDisparity = false;
   int m_debugFixedDisparityValue = 1;
 
+#if ADAPTIVE_MESH_DEBUG
+  bool m_debugAdaptiveLevelColor = false;
+#endif
+
   bool internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1);
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
   RHIRenderPipeline::ptr m_disparityDepthMapAdaptivePipeline;

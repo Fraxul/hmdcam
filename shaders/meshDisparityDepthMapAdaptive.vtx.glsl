@@ -9,6 +9,10 @@
 // expected and intentionally not stitched.
 layout(location = 0) in uvec2 gridCoord;       // q12.4 grid coords (pixel * 16, W x H disparity grid)
 layout(location = 1) in float disparityRawIn;  // raw disparity sampled at this corner
+#if LEVEL_DEBUG
+layout(location = 2) in uint debugLevelFlags;  // bits 0-3 level, bit 4 right-snap, bit 5 bottom-snap
+flat out uint v_debugLevelFlags;
+#endif
 
 // Matches kAdaptiveMeshGridFracBits / kAdaptiveMeshGridScale in depthMeshAdaptive.h.
 const float kGridScaleInv = 1.0 / 16.0;
@@ -41,4 +45,8 @@ void main() {
 #endif
 
   v2f.texCoord = textureCoordinates;
+
+#if LEVEL_DEBUG
+  v_debugLevelFlags = debugLevelFlags;
+#endif
 }
