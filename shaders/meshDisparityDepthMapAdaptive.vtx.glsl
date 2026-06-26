@@ -10,14 +10,19 @@
 layout(location = 0) in uvec2 gridCoord;       // q12.4 grid coords (pixel * 16, W x H disparity grid)
 layout(location = 1) in float disparityRawIn;  // raw disparity sampled at this corner
 #if LEVEL_DEBUG
-layout(location = 2) in uint debugLevelFlags;  // bits 0-3 level, bit 4 right-snap, bit 5 bottom-snap
-flat out uint v_debugLevelFlags;
+layout(location = 2) in uint debugLevelFlags;  // bits 0-3 level, 4-7 edge snaps, 8-9 corner index
+// Inter-stage varyings MUST carry explicit, matching locations: each stage is
+// compiled in isolation and the linker pairs them by location, not name. The
+// V2F block below takes location 0 (and 1 under DEPTH_BIAS), so the loose
+// varyings start at 2. Keep these in sync with the fragment shader.
+layout(location = 2) flat out uint v_debugLevelFlags;
+layout(location = 3) out vec2 v_cellUV;  // (0,0)=TL .. (1,1)=BR, interpolated across the quad
 #endif
 
 // Matches kAdaptiveMeshGridFracBits / kAdaptiveMeshGridScale in depthMeshAdaptive.h.
 const float kGridScaleInv = 1.0 / 16.0;
 
-out V2F {
+layout(location = 0) out V2F {
   vec2 texCoord;
 #if DEPTH_BIAS
   vec4 biasedClipPos; // clip-space position translated toward the camera in eye space
@@ -48,5 +53,7 @@ void main() {
 
 #if LEVEL_DEBUG
   v_debugLevelFlags = debugLevelFlags;
+  uint cornerId = (debugLevelFlags >> 8u) & 3u;
+  v_cellUV = vec2(float(cornerId & 1u), float((cornerId >> 1u) & 1u));
 #endif
 }

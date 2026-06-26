@@ -288,10 +288,12 @@ __global__ void emitGeometryKernel(
 
 #if ADAPTIVE_MESH_DEBUG
   uint16_t dbg = uint16_t(L) | (rightCrack ? kAdaptiveDebugRightSnap : uint16_t(0)) | (bottomCrack ? kAdaptiveDebugBottomSnap : uint16_t(0)) | (topCrack ? kAdaptiveDebugTopSnap : uint16_t(0)) | (leftCrack ? kAdaptiveDebugLeftSnap : uint16_t(0));
-  outVerts[vBase + 0] = {vxL, vyT, d00, dbg};
-  outVerts[vBase + 1] = {vxR, vyT, d10, dbg};
-  outVerts[vBase + 2] = {vxL, vyB, d01, dbg};
-  outVerts[vBase + 3] = {vxR, vyB, d11, dbg};
+  // High bits carry the corner index (0=TL,1=TR,2=BL,3=BR) so the fragment shader can rebuild
+  // a per-cell UV; the snap flags are identical across all four corners.
+  outVerts[vBase + 0] = {vxL, vyT, d00, uint16_t(dbg | (uint16_t(0) << kAdaptiveDebugCornerShift))};
+  outVerts[vBase + 1] = {vxR, vyT, d10, uint16_t(dbg | (uint16_t(1) << kAdaptiveDebugCornerShift))};
+  outVerts[vBase + 2] = {vxL, vyB, d01, uint16_t(dbg | (uint16_t(2) << kAdaptiveDebugCornerShift))};
+  outVerts[vBase + 3] = {vxR, vyB, d11, uint16_t(dbg | (uint16_t(3) << kAdaptiveDebugCornerShift))};
 #else
   outVerts[vBase + 0] = {vxL, vyT, d00};
   outVerts[vBase + 1] = {vxR, vyT, d10};

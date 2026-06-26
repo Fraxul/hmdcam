@@ -56,6 +56,9 @@ constexpr uint16_t kAdaptiveDebugBottomSnap = 0x0020;
 constexpr uint16_t kAdaptiveDebugTopSnap = 0x0040;
 constexpr uint16_t kAdaptiveDebugLeftSnap = 0x0080;
 constexpr uint16_t kAdaptiveDebugSnapMask = 0x00F0; // any edge snapped
+// Bits 8-9: which quad corner this vertex is (0=TL, 1=TR, 2=BL, 3=BR). The fragment shader
+// reconstructs a per-cell UV from it to draw crack lines on snapped edges. Debug viz only.
+constexpr uint16_t kAdaptiveDebugCornerShift = 8;
 
 // Number of pyramid levels. Level 0 = 1x1 cells, level kAdaptiveMeshLevels-1 = the largest merge size.
 constexpr int kAdaptiveMeshLevels = 5;

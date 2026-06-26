@@ -6,7 +6,7 @@
 
 #include "MeshDisparityDepthMapUniformBlock.h"
 
-in V2F {
+layout(location = 0) in V2F {
   vec2 texCoord;
 #if DEPTH_BIAS
   vec4 biasedClipPos;
@@ -16,7 +16,10 @@ uniform sampler2D imageTex;
 uniform sampler2D distortionMap;
 
 #if LEVEL_DEBUG
-flat in uint v_debugLevelFlags;
+// Locations must match meshDisparityDepthMapAdaptive.vtx.glsl exactly: the
+// linker pairs inter-stage varyings by location, not by name.
+layout(location = 2) flat in uint v_debugLevelFlags;
+layout(location = 3) in vec2 v_cellUV;
 #endif
 
 layout(location = 0) out vec4 outColor;
@@ -35,6 +38,24 @@ vec3 debugLevelColor(uint flags) {
   vec3 c = palette[min(level, 4u)];
   bool snapped = (flags & 0xF0u) != 0u; // any of the four edges snapped to dRep
   return snapped ? c * 0.4 : c;
+}
+
+// Draw a constant-width bright line along any cell edge that was snapped to dRep -- i.e. an
+// intentional depth-discontinuity split -- so it can be told apart from an unintended crack
+// (which shows as a background-colored gap with no line). Returns coverage in [0,1].
+float debugCrackLineCoverage(uint flags, vec2 cellUV) {
+  const float kHalfWidthPx = 1.25;
+  vec2 perPx = max(fwidth(cellUV), vec2(1e-6)); // cell-UV units per screen pixel
+  float dLeft = cellUV.x / perPx.x;
+  float dRight = (1.0 - cellUV.x) / perPx.x;
+  float dTop = cellUV.y / perPx.y;
+  float dBottom = (1.0 - cellUV.y) / perPx.y;
+  float d = 1e9;
+  if ((flags & 0x80u) != 0u) d = min(d, dLeft);   // kAdaptiveDebugLeftSnap
+  if ((flags & 0x10u) != 0u) d = min(d, dRight);  // kAdaptiveDebugRightSnap
+  if ((flags & 0x40u) != 0u) d = min(d, dTop);    // kAdaptiveDebugTopSnap
+  if ((flags & 0x20u) != 0u) d = min(d, dBottom); // kAdaptiveDebugBottomSnap
+  return 1.0 - smoothstep(kHalfWidthPx, kHalfWidthPx + 1.0, d);
 }
 #endif
 
@@ -57,8 +78,12 @@ void main() {
   outColor = SAMPLE_CAMERA(distortionCoord);
 
 #if LEVEL_DEBUG
-  if (debugLevelColorMode > 0.5)
-    outColor = vec4(debugLevelColor(v_debugLevelFlags), 1.0);
+  if (debugLevelColorMode > 0.5) {
+    vec3 levelColor = debugLevelColor(v_debugLevelFlags);
+    // Overlay a bright cyan line on intentionally-snapped (split) edges.
+    float crack = debugCrackLineCoverage(v_debugLevelFlags, v_cellUV);
+    outColor = vec4(mix(levelColor, vec3(0.0, 1.0, 1.0), crack), 1.0);
+  }
 #endif
 
 #if DEPTH_BIAS
