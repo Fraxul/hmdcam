@@ -213,15 +213,19 @@ __global__ void emitGeometryKernel(
   // Anchor: top-left corner of the chosen block at level L
   if ((x & (sz - 1)) | (y & (sz - 1))) return;
 
-  // The cell's representative disparity is the TL texel. It's also the welded value at
-  // the TL corner by construction (the corner texel IS the cell's anchor texel), so the
-  // TL corner is always welded; we only test the other three.
+  // dRep is this cell's representative disparity (its TL anchor texel); it's the value a
+  // cracked (cliff-crossing) edge collapses to. All four corners -- TL included -- are
+  // welded through the same pure position function, so any two cells meeting at a shared
+  // corner compute the identical value and agree on it. (Previously TL was hardcoded to
+  // dRep, which left a fine cell's TL un-welded wherever it lands mid-edge of a coarser
+  // neighbor -- the source of the same-level T-junction cracks. In a flat region the TL
+  // weld is a no-op: with no coarser neighbor it returns the anchor texel, i.e. dRep.)
   float dRep = float(disparity.ptr(y)[x]);
   float threshold = float(discontinuityThresholdRaw);
 
   int xRight = x + sz;
   int yBottom = y + sz;
-  float d00 = dRep;
+  float d00 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, x, y, L);
   float d10 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, xRight, y, L);
   float d01 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, x, yBottom, L);
   float d11 = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, xRight, yBottom, L);
@@ -235,25 +239,28 @@ __global__ void emitGeometryKernel(
   bool hasB = sampleNeighborDisparity(disparity, maxFlatLevel, W, H, x, yBottom, dN_B);
   bool hasBR = sampleNeighborDisparity(disparity, maxFlatLevel, W, H, xRight, yBottom, dN_BR);
 
-  // Per-corner crack test: each non-TL corner's *welded* disparity is compared against
-  // dRep. Testing the welded value (rather than the direct neighbor texel) catches
-  // T-junction-lerp discontinuities the direct-texel test would miss -- e.g. when a
-  // coarser neighbor Q matches dRep but Q's vertex-space edge lerp samples a texel
-  // outside Q, producing a welded value mid-way between dRep and a totally unrelated
-  // disparity. A missing/invalid neighbor (OOB, trim, or disparity over the valid
-  // ceiling) also counts as a crack -- the welded value would be reading from
-  // unfiltered raw disparity otherwise.
-  bool d10Crack = !hasR || fabsf(d10 - dRep) > threshold;
-  bool d01Crack = !hasB || fabsf(d01 - dRep) > threshold;
-  bool d11Crack = !hasBR || fabsf(d11 - dRep) > threshold;
+  // Per-corner "bad" test: the welded value is unusable if it bridges a depth cliff (more
+  // than threshold from dRep) or the neighbor cell anchoring that corner's texel is missing
+  // (OOB/trim/over-ceiling), in which case the welded value is just unfiltered raw. d00 is
+  // anchored by our own (valid) texel, so only the cliff test applies to it; the other three
+  // keep the same missing-neighbor checks as before (R, B, and the BR diagonal).
+  bool c00Bad = fabsf(d00 - dRep) > threshold;
+  bool c10Bad = !hasR || fabsf(d10 - dRep) > threshold;
+  bool c01Bad = !hasB || fabsf(d01 - dRep) > threshold;
+  bool c11Bad = !hasBR || fabsf(d11 - dRep) > threshold;
 
-  // Propagate per-edge so corners on the same edge always crack together. Without this
-  // step, e.g. d11 cracking alone (diagonal outlier) would leave the right and bottom
-  // edges welded with one corner snapped to dRep -- the asymmetric tilt artifact.
-  bool rightCrack = d10Crack || d11Crack;
-  bool bottomCrack = d01Crack || d11Crack;
-  if (rightCrack) d10 = dRep;
-  if (bottomCrack) d01 = dRep;
+  // An edge cracks if either endpoint is bad. Snapping *both* endpoints of every cracking
+  // edge to dRep keeps that edge a flat segment at the cell's own depth (no quad stretched
+  // across the cliff) and avoids the asymmetric-tilt artifact of snapping only one end. The
+  // right/bottom decisions are byte-identical to the previous code; top/left are handled the
+  // same way now that TL is welded and can itself bridge a cliff.
+  bool topCrack = c00Bad || c10Bad;
+  bool leftCrack = c00Bad || c01Bad;
+  bool rightCrack = c10Bad || c11Bad;
+  bool bottomCrack = c01Bad || c11Bad;
+  if (topCrack || leftCrack) d00 = dRep;
+  if (topCrack || rightCrack) d10 = dRep;
+  if (leftCrack || bottomCrack) d01 = dRep;
   if (rightCrack || bottomCrack) d11 = dRep;
 
   // Per-edge overlap: extend C outward when the direct neighbor across an edge has
@@ -280,7 +287,7 @@ __global__ void emitGeometryKernel(
   atomicAdd(&counters->levelHistograms[L], 1u);
 
 #if ADAPTIVE_MESH_DEBUG
-  uint16_t dbg = uint16_t(L) | (rightCrack ? kAdaptiveDebugRightSnap : uint16_t(0)) | (bottomCrack ? kAdaptiveDebugBottomSnap : uint16_t(0));
+  uint16_t dbg = uint16_t(L) | (rightCrack ? kAdaptiveDebugRightSnap : uint16_t(0)) | (bottomCrack ? kAdaptiveDebugBottomSnap : uint16_t(0)) | (topCrack ? kAdaptiveDebugTopSnap : uint16_t(0)) | (leftCrack ? kAdaptiveDebugLeftSnap : uint16_t(0));
   outVerts[vBase + 0] = {vxL, vyT, d00, dbg};
   outVerts[vBase + 1] = {vxR, vyT, d10, dbg};
   outVerts[vBase + 2] = {vxL, vyB, d01, dbg};

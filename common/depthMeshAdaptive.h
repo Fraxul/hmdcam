@@ -53,6 +53,9 @@ static_assert(sizeof(AdaptiveMeshVertex) == 8, "AdaptiveMeshVertex must be 8 byt
 constexpr uint16_t kAdaptiveDebugLevelMask = 0x000F;
 constexpr uint16_t kAdaptiveDebugRightSnap = 0x0010;
 constexpr uint16_t kAdaptiveDebugBottomSnap = 0x0020;
+constexpr uint16_t kAdaptiveDebugTopSnap = 0x0040;
+constexpr uint16_t kAdaptiveDebugLeftSnap = 0x0080;
+constexpr uint16_t kAdaptiveDebugSnapMask = 0x00F0; // any edge snapped
 
 // Number of pyramid levels. Level 0 = 1x1 cells, level kAdaptiveMeshLevels-1 = the largest merge size.
 constexpr int kAdaptiveMeshLevels = 5;

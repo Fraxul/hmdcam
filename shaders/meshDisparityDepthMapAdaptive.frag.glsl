@@ -33,7 +33,7 @@ vec3 debugLevelColor(uint flags) {
     vec3(0.85, 0.30, 0.92)); // L4 magenta
   uint level = flags & 0xFu;
   vec3 c = palette[min(level, 4u)];
-  bool snapped = (flags & 0x30u) != 0u; // either right- or bottom-edge snap
+  bool snapped = (flags & 0xF0u) != 0u; // any of the four edges snapped to dRep
   return snapped ? c * 0.4 : c;
 }
 #endif
