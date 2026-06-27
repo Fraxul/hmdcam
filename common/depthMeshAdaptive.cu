@@ -155,21 +155,26 @@ __device__ inline float computeWeldedCornerDisparity(
 
   if (maxL == Lp) return disp_raw; // no coarser neighbor -> raw sample
 
-  // V is on Q's boundary. Pick the appropriate edge and lerp between its endpoints.
+  // V is on Q's boundary. Lerp between Q's two corner values along the shared edge -- but the
+  // corner values are computed RECURSIVELY at Q's level, not read raw. At a 3-level junction Q's
+  // own corner is itself welded onto an even-coarser cell's edge, so Q renders that corner at its
+  // welded value, not the raw texel; interpolating raw texels here would track a different line
+  // than Q actually draws and crack the finer cell off Q's edge. Recursion terminates because
+  // each call welds to a strictly coarser level (maxL > Lp), bounded by kAdaptiveMeshLevels.
   float disp_a, disp_b, t;
   if (vx == qx || vx == qx + szq) {
     int ex = min(vx, W - 1);
     int ey0 = qy;
     int ey1 = min(qy + szq, H - 1);
-    disp_a = float(disparity.ptr(ey0)[ex]);
-    disp_b = float(disparity.ptr(ey1)[ex]);
+    disp_a = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, ex, ey0, maxL);
+    disp_b = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, ex, ey1, maxL);
     t = float(vy - qy) / float(szq);
   } else {
     int ey = min(vy, H - 1);
     int ex0 = qx;
     int ex1 = min(qx + szq, W - 1);
-    disp_a = float(disparity.ptr(ey)[ex0]);
-    disp_b = float(disparity.ptr(ey)[ex1]);
+    disp_a = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, ex0, ey, maxL);
+    disp_b = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, ex1, ey, maxL);
     t = float(vx - qx) / float(szq);
   }
   return (1.0f - t) * disp_a + t * disp_b;
