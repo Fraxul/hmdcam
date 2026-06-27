@@ -61,7 +61,7 @@ constexpr uint16_t kAdaptiveDebugSnapMask = 0x00F0; // any edge snapped
 constexpr uint16_t kAdaptiveDebugCornerShift = 8;
 
 // Number of pyramid levels. Level 0 = 1x1 cells, level kAdaptiveMeshLevels-1 = the largest merge size.
-constexpr int kAdaptiveMeshLevels = 5;
+constexpr int kAdaptiveMeshLevels = 4;
 constexpr int kAdaptiveMeshMaxBlockSize = 1 << (kAdaptiveMeshLevels - 1);
 
 // Structure shared between host and device.
