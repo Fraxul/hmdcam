@@ -582,7 +582,8 @@ bool ArgusCamera::readFrame() {
     // so we try to guess based on the number of Capture Complete events received since the
     // previous frame.
     for (uint32_t evIdx = 1; evIdx < captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)]; ++evIdx) {
-      printf("ArgusCamera::readFrame(): will try acquiring extra buffer %u/%u from stream %zu\n", evIdx, captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)], cameraIdx);
+      // Log disabled for being too spammy.
+      // printf("ArgusCamera::readFrame(): will try acquiring extra buffer %u/%u from stream %zu\n", evIdx, captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)], cameraIdx);
       Argus::Buffer* ffBuffer = iBufferOutputStream->acquireBuffer(/*timeout=*/ 0, &status);
       if (ffBuffer) {
         // Got another buffer immediatey. Use this one and release the previous.
