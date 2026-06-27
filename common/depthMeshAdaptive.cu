@@ -249,7 +249,13 @@ __device__ inline bool sampleNeighborDisparity(
 
 // ----- Emit verts + indices for each anchor cell -----
 
-__global__ void emitGeometryKernel(
+// Emit launch block size. Also feeds __launch_bounds__ below: full inlining of the welded-
+// corner template leaves the kernel one register over the sm_87 occupancy cliff (65 regs ->
+// 3 resident 256-thread blocks; 64 regs -> 4 blocks), so we ask ptxas to cap at 4 blocks/SM.
+constexpr int kEmitBlockSize = 256;
+constexpr int kEmitMinBlocksPerSM = 4;
+
+__global__ void __launch_bounds__(kEmitBlockSize, kEmitMinBlocksPerSM) emitGeometryKernel(
   const uint32_t* workList,
   PtrStepSz<const uint8_t> maxFlatLevel,
   PtrStep<const uint16_t> disparity,
@@ -479,7 +485,7 @@ void buildAdaptiveDepthMesh(
   // Pass 4: emit verts + indices for each anchor cell. Launched over the worst-case anchor
   // count (W*H); threads beyond the actual count (read from counters->anchorCount) early-out.
   {
-    dim3 block(256);
+    dim3 block(kEmitBlockSize);
     dim3 grid(divUp(uint32_t(W) * uint32_t(H), block.x));
     emitGeometryKernel<<<grid, block, 0, stream>>>(
       reinterpret_cast<const uint32_t*>(scratch.d_workList),
