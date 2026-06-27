@@ -149,7 +149,18 @@ __global__ void computeMaxFlatLevelKernel(
 //
 // The discontinuity threshold is applied separately in emitGeometryKernel, which
 // compares this welded value to the cell's own representative disparity.
-__device__ inline float computeWeldedCornerDisparity(
+//
+// De-recursed via a compile-time depth bound so the compiler can fully inline it (a
+// self-recursive __device__ function is an inlining barrier -- nvcc emits a real call with a
+// local-memory stack frame and heavy spills, which then shows up as long-scoreboard stalls).
+// Each step welds to a STRICTLY coarser level (maxL > Lp) and levels cap at
+// kAdaptiveMeshLevels-1, so the true recursion can descend at most kAdaptiveMeshLevels-1
+// times. computeWeldedCornerDisparityD<Depth> calls <Depth-1>; the <0> base returns the raw
+// sample. That base is only ever reached once the level has already saturated (where the
+// original recursion also bottoms out and returns the raw sample), so the expression tree --
+// and therefore the floating-point result -- is bit-identical to the recursive version.
+template <int Depth>
+__device__ inline float computeWeldedCornerDisparityD(
   PtrStep<const uint16_t> disparity,
   PtrStep<const uint8_t> maxFlatLevel,
   int W, int H,
@@ -159,53 +170,66 @@ __device__ inline float computeWeldedCornerDisparity(
   int vy_c = min(vy, H - 1);
   float disp_raw = float(disparity.ptr(vy_c)[vx_c]);
 
-  int maxL = Lp;
-  int qx = 0, qy = 0, szq = 0;
+  if constexpr (Depth == 0) {
+    return disp_raw; // depth cap: level has saturated, so this is always a leaf in valid data
+  } else {
+    int maxL = Lp;
+    int qx = 0, qy = 0, szq = 0;
 
 #pragma unroll
-  for (int q = 0; q < 4; ++q) {
-    int dx = (q & 1) - 1; // -1, 0, -1, 0
-    int dy = ((q >> 1) & 1) - 1; // -1, -1, 0, 0
-    int cx = vx + dx;
-    int cy = vy + dy;
-    if (cx < 0 || cy < 0 || cx >= W || cy >= H) continue;
-    int Ln_enc = maxFlatLevel.ptr(cy)[cx];
-    if (Ln_enc == 0) continue;
-    int Ln = Ln_enc - 1;
-    if (Ln > maxL) {
-      maxL = Ln;
-      int sz_n = 1 << Ln;
-      qx = cx & ~(sz_n - 1);
-      qy = cy & ~(sz_n - 1);
-      szq = sz_n;
+    for (int q = 0; q < 4; ++q) {
+      int dx = (q & 1) - 1; // -1, 0, -1, 0
+      int dy = ((q >> 1) & 1) - 1; // -1, -1, 0, 0
+      int cx = vx + dx;
+      int cy = vy + dy;
+      if (cx < 0 || cy < 0 || cx >= W || cy >= H) continue;
+      int Ln_enc = maxFlatLevel.ptr(cy)[cx];
+      if (Ln_enc == 0) continue;
+      int Ln = Ln_enc - 1;
+      if (Ln > maxL) {
+        maxL = Ln;
+        int sz_n = 1 << Ln;
+        qx = cx & ~(sz_n - 1);
+        qy = cy & ~(sz_n - 1);
+        szq = sz_n;
+      }
     }
-  }
 
-  if (maxL == Lp) return disp_raw; // no coarser neighbor -> raw sample
+    if (maxL == Lp) return disp_raw; // no coarser neighbor -> raw sample
 
-  // V is on Q's boundary. Lerp between Q's two corner values along the shared edge -- but the
-  // corner values are computed RECURSIVELY at Q's level, not read raw. At a 3-level junction Q's
-  // own corner is itself welded onto an even-coarser cell's edge, so Q renders that corner at its
-  // welded value, not the raw texel; interpolating raw texels here would track a different line
-  // than Q actually draws and crack the finer cell off Q's edge. Recursion terminates because
-  // each call welds to a strictly coarser level (maxL > Lp), bounded by kAdaptiveMeshLevels.
-  float disp_a, disp_b, t;
-  if (vx == qx || vx == qx + szq) {
-    int ex = min(vx, W - 1);
-    int ey0 = qy;
-    int ey1 = min(qy + szq, H - 1);
-    disp_a = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, ex, ey0, maxL);
-    disp_b = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, ex, ey1, maxL);
-    t = float(vy - qy) / float(szq);
-  } else {
-    int ey = min(vy, H - 1);
-    int ex0 = qx;
-    int ex1 = min(qx + szq, W - 1);
-    disp_a = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, ex0, ey, maxL);
-    disp_b = computeWeldedCornerDisparity(disparity, maxFlatLevel, W, H, ex1, ey, maxL);
-    t = float(vx - qx) / float(szq);
+    // V is on Q's boundary. Lerp between Q's two corner values along the shared edge -- but the
+    // corner values are computed RECURSIVELY at Q's level, not read raw. At a 3-level junction Q's
+    // own corner is itself welded onto an even-coarser cell's edge, so Q renders that corner at its
+    // welded value, not the raw texel; interpolating raw texels here would track a different line
+    // than Q actually draws and crack the finer cell off Q's edge.
+    float disp_a, disp_b, t;
+    if (vx == qx || vx == qx + szq) {
+      int ex = min(vx, W - 1);
+      int ey0 = qy;
+      int ey1 = min(qy + szq, H - 1);
+      disp_a = computeWeldedCornerDisparityD<Depth - 1>(disparity, maxFlatLevel, W, H, ex, ey0, maxL);
+      disp_b = computeWeldedCornerDisparityD<Depth - 1>(disparity, maxFlatLevel, W, H, ex, ey1, maxL);
+      t = float(vy - qy) / float(szq);
+    } else {
+      int ey = min(vy, H - 1);
+      int ex0 = qx;
+      int ex1 = min(qx + szq, W - 1);
+      disp_a = computeWeldedCornerDisparityD<Depth - 1>(disparity, maxFlatLevel, W, H, ex0, ey, maxL);
+      disp_b = computeWeldedCornerDisparityD<Depth - 1>(disparity, maxFlatLevel, W, H, ex1, ey, maxL);
+      t = float(vx - qx) / float(szq);
+    }
+    return (1.0f - t) * disp_a + t * disp_b;
   }
-  return (1.0f - t) * disp_a + t * disp_b;
+}
+
+// Top-level entry: the worst-case descent from a level-0 cell is kAdaptiveMeshLevels-1 steps.
+__device__ inline float computeWeldedCornerDisparity(
+  PtrStep<const uint16_t> disparity,
+  PtrStep<const uint8_t> maxFlatLevel,
+  int W, int H,
+  int vx, int vy,
+  int Lp) {
+  return computeWeldedCornerDisparityD<kAdaptiveMeshLevels - 1>(disparity, maxFlatLevel, W, H, vx, vy, Lp);
 }
 
 // Sample the raw disparity at the neighbor texel (nx, ny), returning false (and
