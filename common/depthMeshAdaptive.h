@@ -71,6 +71,10 @@ struct DepthMeshAdaptiveCounters {
   uint32_t vertexCounter; // total verts emitted; quad count = this / 4
   uint32_t indexCounter;
   uint32_t levelHistograms[kAdaptiveMeshLevels];
+  // Number of anchor cells compacted into the work list by computeMaxFlatLevelKernel,
+  // before emission. Equals the final quad count (vertexCounter / 4) -- emit produces one
+  // quad per work-list entry -- so it doubles as a consistency check. Bounds the emit launch.
+  uint32_t anchorCount;
 };
 
 struct DepthMeshAdaptiveScratch {
@@ -80,6 +84,11 @@ struct DepthMeshAdaptiveScratch {
 
   // Per-leaf-cell decision: 0 = skip emission, otherwise the chosen level + 1.
   cv::cuda::GpuMat maxFlatLevel; // CV_8U, WxH
+
+  // Compacted anchor work list: up to W*H packed (x, y, level) entries, one per cell that
+  // will be emitted. computeMaxFlatLevelKernel appends; emitGeometryKernel consumes one
+  // entry per thread, so emission runs fully-active warps instead of one thread per texel.
+  CUdeviceptr d_workList = 0; // uint32_t[W*H]
 
   // Device-side counters and per-level histogram
   CUdeviceptr d_counters = 0; // struct DepthMeshAdaptiveCounters

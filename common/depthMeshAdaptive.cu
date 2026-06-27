@@ -21,6 +21,18 @@ __device__ inline bool cellValid(uint32_t c) { return c != kInvalidCell; }
 
 inline uint32_t divUp(uint32_t x, uint32_t y) { return (x + y - 1) / y; }
 
+// Packed anchor work-list entry: x in bits [0,12), y in bits [12,24), level in bits [24,28).
+// 12 bits each comfortably covers the disparity grid (<4096 px per axis); 4 bits covers
+// kAdaptiveMeshLevels. Keeps each work item a single 32-bit word for a coalesced read.
+__device__ inline uint32_t packAnchor(int x, int y, int level) {
+  return uint32_t(x) | (uint32_t(y) << 12) | (uint32_t(level) << 24);
+}
+__device__ inline void unpackAnchor(uint32_t a, int& x, int& y, int& level) {
+  x = int(a & 0xFFFu);
+  y = int((a >> 12) & 0xFFFu);
+  level = int((a >> 24) & 0xFu);
+}
+
 // ----- Pyramid level 0: read disparity, mark trim region as invalid -----
 
 __global__ void initLevel0Kernel(
@@ -86,6 +98,8 @@ struct PyramidLevels {
 __global__ void computeMaxFlatLevelKernel(
   PyramidLevels py,
   PtrStepSz<uint8_t> outMaxFlatLevel,
+  uint32_t* outWorkList,
+  DepthMeshAdaptiveCounters* counters,
   uint16_t flatThreshold) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -103,6 +117,20 @@ __global__ void computeMaxFlatLevelKernel(
     chosen = L;
   }
   outMaxFlatLevel.ptr(y)[x] = uint8_t(chosen + 1); // 0 = skip
+
+  // Compact emittable cells into the work list. A texel is the anchor for its chosen-level
+  // block iff it's that block's top-left corner -- exactly the cells emitGeometryKernel emits
+  // (it self-skips non-anchor texels via the same mask). Because flatness is monotonic across
+  // levels, every texel in an L-flat region shares the same chosen level, so precisely one
+  // (the top-left) appends here -- no double-counting. Emitting from this compacted list lets
+  // the emit launch run one fully-active thread per cell instead of one per texel.
+  if (chosen >= 0) {
+    int sz = 1 << chosen;
+    if (((x & (sz - 1)) | (y & (sz - 1))) == 0) {
+      uint32_t slot = atomicAdd(&counters->anchorCount, 1u);
+      outWorkList[slot] = packAnchor(x, y, chosen);
+    }
+  }
 }
 
 // ----- Per-corner welded disparity (T-junction snap) -----
@@ -198,6 +226,7 @@ __device__ inline bool sampleNeighborDisparity(
 // ----- Emit verts + indices for each anchor cell -----
 
 __global__ void emitGeometryKernel(
+  const uint32_t* workList,
   PtrStepSz<const uint8_t> maxFlatLevel,
   PtrStep<const uint16_t> disparity,
   AdaptiveMeshVertex* outVerts,
@@ -206,17 +235,17 @@ __global__ void emitGeometryKernel(
   int W, int H,
   uint16_t discontinuityThresholdRaw,
   float cellOverlapMultiplier) {
-  int x = blockIdx.x * blockDim.x + threadIdx.x;
-  int y = blockIdx.y * blockDim.y + threadIdx.y;
-  if (x >= W || y >= H) return;
+  uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
+  // The launch is sized to the worst case (one anchor per texel); threads past the actual
+  // anchor count form a contiguous tail and return immediately, so active warps stay full.
+  if (item >= counters->anchorCount) return;
 
-  int enc = maxFlatLevel.ptr(y)[x];
-  if (enc == 0) return;
-  int L = enc - 1;
+  // One thread per compacted anchor cell. The work list only holds true anchors, so the
+  // per-texel validity (enc) and top-left-corner masks the old per-texel launch needed are
+  // already guaranteed -- they're folded into computeMaxFlatLevelKernel's append.
+  int x, y, L;
+  unpackAnchor(workList[item], x, y, L);
   int sz = 1 << L;
-
-  // Anchor: top-left corner of the chosen block at level L
-  if ((x & (sz - 1)) | (y & (sz - 1))) return;
 
   // dRep is this cell's representative disparity (its TL anchor texel); it's the value a
   // cracked (cliff-crossing) edge collapses to. All four corners -- TL included -- are
@@ -343,6 +372,8 @@ void DepthMeshAdaptiveScratch::allocate(uint32_t W, uint32_t H) {
   }
   maxFlatLevel.create(/*rows=*/ H, /*cols=*/ W, /*type=*/ CV_8U);
 
+  if (!d_workList)
+    CUDA_CHECK(cuMemAlloc(&d_workList, size_t(W) * size_t(H) * sizeof(uint32_t)));
   if (!d_counters)
     CUDA_CHECK(cuMemAlloc(&d_counters, sizeof(DepthMeshAdaptiveCounters)));
   if (!h_counters) {
@@ -355,6 +386,7 @@ void DepthMeshAdaptiveScratch::destroy() {
   for (int L = 0; L < kAdaptiveMeshLevels; ++L)
     mip[L].release();
   maxFlatLevel.release();
+  CUDA_SAFE_FREE(d_workList);
   CUDA_SAFE_FREE(d_counters);
   CUDA_SAFE_FREE_HOST(h_counters);
   h_counters_devicePtr = 0;
@@ -415,14 +447,18 @@ void buildAdaptiveDepthMesh(
     computeMaxFlatLevelKernel<<<grid, block, 0, stream>>>(
       py,
       PtrStepSz<uint8_t>(H, W, (uint8_t*) scratch.maxFlatLevel.cudaPtr(), scratch.maxFlatLevel.step),
+      reinterpret_cast<uint32_t*>(scratch.d_workList),
+      reinterpret_cast<DepthMeshAdaptiveCounters*>(scratch.d_counters),
       flatThresholdRaw);
   }
 
-  // Pass 4: emit verts + indices for each anchor cell.
+  // Pass 4: emit verts + indices for each anchor cell. Launched over the worst-case anchor
+  // count (W*H); threads beyond the actual count (read from counters->anchorCount) early-out.
   {
-    dim3 block(32, 4);
-    dim3 grid(divUp(W, block.x), divUp(H, block.y));
+    dim3 block(256);
+    dim3 grid(divUp(uint32_t(W) * uint32_t(H), block.x));
     emitGeometryKernel<<<grid, block, 0, stream>>>(
+      reinterpret_cast<const uint32_t*>(scratch.d_workList),
       PtrStepSz<const uint8_t>(H, W, (const uint8_t*) scratch.maxFlatLevel.cudaPtr(), scratch.maxFlatLevel.step),
       PtrStep<const uint16_t>((const uint16_t*) disparityIn.cudaPtr(), disparityIn.step),
       reinterpret_cast<AdaptiveMeshVertex*>(d_vbo),
