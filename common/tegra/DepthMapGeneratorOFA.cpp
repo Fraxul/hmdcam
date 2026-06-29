@@ -1,6 +1,7 @@
 #include "common/tegra/DepthMapGeneratorOFA.h"
 #include "imgui.h"
 #include "common/CameraSystem.h"
+#include "common/DisparityTrainingWriter.h"
 #include "common/ICameraProvider.h"
 #include "common/Timing.h"
 #include "common/tegra/NvSciUtil.h"
@@ -263,6 +264,15 @@ void DepthMapGeneratorOFA::internalPostInitWithCameraSystem() {
   }
 }
 
+void DepthMapGeneratorOFA::internalWriteTrainingAnnotationsForView(size_t viewIdx, cv::FileStorage& fs) {
+  fs.write("disparitySubpixelBits", static_cast<int>(m_disparitySubpixelBits));
+  fs.write("maxDisparity", static_cast<int>(kOFAMaxDisparity >> kOFAGridSizeShift));
+  fs.write("ofaInputWidth", static_cast<int>(m_algoInputWidth));
+  fs.write("ofaInputHeight", static_cast<int>(m_algoInputHeight));
+  fs.write("ofaGridSizeShift", static_cast<int>(kOFAGridSizeShift));
+  fs.write("ofaPreset", "hq");
+}
+
 DepthMapGeneratorOFA::~DepthMapGeneratorOFA() {
   // Cleanup submission ring
   for (size_t ringIdx = 0; ringIdx < m_ring.size(); ++ringIdx) {
@@ -428,6 +438,26 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     // Process cost map into confidence
     ofaCostToConfidence(ringEntry->m_ofaOutputCostBuffer->m_cuTex, vd->m_disparityConfidence, m_lowCostThreshold, m_highCostThreshold, m_costCurve, (CUstream) m_globalStream.cudaPtr());
 
+    // Training-data capture: this frame's disparity (raw, pre-filter) and cost are now available,
+    // and the matching rectified RGB was rendered into this ring entry at submit time. Pair them.
+    if (ringEntry->m_trainingPending) {
+      ringEntry->m_trainingPending = false;
+      DisparityTrainingWriter* tw = trainingWriter();
+      AsyncGpuDumpRing::Slot* slot = (tw && tw->isActive()) ? tw->acquireSlot() : nullptr;
+      if (slot) {
+        CUstream cudaStream = (CUstream) m_globalStream.cudaPtr();
+
+        // Copy the raw cost out of the NvSci buffer into a scratch mat so it can be DtoH'd packed.
+        ringEntry->m_trainingCostScratch.create(internalHeight(), internalWidth(), CV_8U);
+        copyNvSciBufToGpuMat(ringEntry->m_ofaOutputCostBuffer, ringEntry->m_trainingCostScratch, cudaStream);
+
+        tw->copyColor(slot, ringEntry->m_trainingRGB[0], ringEntry->m_trainingRGB[1], cudaStream);
+        tw->copyDisparity(slot, vd->currentDisparityMat(), cudaStream);
+        tw->copyCost(slot, ringEntry->m_trainingCostScratch, cudaStream);
+        tw->submit(slot, ringEntry->m_trainingViewIdx, ringEntry->m_trainingFrameIndex, ringEntry->m_trainingFrameTimestamp, ringEntry->m_trainingRotation, cudaStream);
+      }
+    }
+
     if (m_populateDebugTextures) {
       CUstream cudaStream = (CUstream) m_globalStream.cudaPtr();
 
@@ -502,6 +532,31 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
     // Grid size shift of 0 (1x1) will have quarter-res output. 2x2 oversampling is probably sufficient for this case as well.
     unsigned int remapOversampleFactor = (kOFAGridSizeShift == 2) ? 1 : 2;
     PER_EYE remapArray(m_cameraSystem->cameraProvider()->cudaLumaTexObject(m_cameraSystem->viewAtIndex(viewIdx).cameraIndices[eyeIdx]), view.stereoDistortionCudaTexture[eyeIdx], vd->m_rectifiedLuma[eyeIdx], (CUstream) m_globalStream.cudaPtr(), /*oversampleFactor=*/ remapOversampleFactor);
+
+    // Training-data capture: render this frame's rectified RGB (luma + chroma) into the ring entry
+    // and latch the per-sample metadata. The matching disparity/cost are paired when this entry's
+    // results return (readback loop above), keeping color aligned with the disparity it produced.
+    DisparityTrainingWriter* tw = trainingWriter();
+    if (tw && tw->isActive()) {
+      ICameraProvider* cameraProvider = m_cameraSystem->cameraProvider();
+      PER_EYE {
+        ringEntry->m_trainingRGB[eyeIdx].create(algoInputHeight(), algoInputWidth(), CV_8UC3);
+        remapArrayRGB(
+          cameraProvider->cudaLumaTexObject(view.cameraIndices[eyeIdx]),
+          cameraProvider->cudaChromaTexObject(view.cameraIndices[eyeIdx]),
+          view.stereoDistortionCudaTexture[eyeIdx],
+          ringEntry->m_trainingRGB[eyeIdx], (CUstream) m_globalStream.cudaPtr(), /*oversampleFactor=*/ remapOversampleFactor);
+      }
+      ringEntry->m_trainingViewIdx = viewIdx;
+      ringEntry->m_trainingFrameIndex = tw->currentFrameIndex();
+      ringEntry->m_trainingFrameTimestamp = m_cameraSystem->cameraProvider()->frameTimestamp();
+      ringEntry->m_trainingRotation = m_cameraSystem->hasCameraInterframeRotation(vd->m_leftCameraIndex)
+        ? m_cameraSystem->cameraInterframeRotation(vd->m_leftCameraIndex)
+        : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+      ringEntry->m_trainingPending = true;
+    } else {
+      ringEntry->m_trainingPending = false;
+    }
 
     // Populate NvSci input buffer
     // TODO: This really should be merged in with the remap above -- write straight to the CUarray, skip a copy.

@@ -21,6 +21,7 @@
 class CameraSystem;
 class DepthMapGenerator;
 class DebugServer;
+class DisparityTrainingWriter;
 
 enum DepthMapGeneratorBackend {
   kDepthBackendNone,
@@ -87,6 +88,18 @@ public:
   bool debugUseFixedDisparity() const { return m_debugUseFixedDisparity; }
   void setDebugUseFixedDisparity(bool v) { m_debugUseFixedDisparity = v; }
 
+
+  CameraSystem* cameraSystem() const { return m_cameraSystem; }
+
+  // Input size of the L/R camera surfaces for the depth algorithm. Usually the same as internalWidth/internalHeight.
+  // The debug L/R views will be this size.
+  uint32_t algoInputWidth() const { return m_algoInputWidth; }
+  uint32_t algoInputHeight() const { return m_algoInputHeight; }
+
+  // Algorithm internal width/height. Processing happens at this resolution, disparity output is at this size.
+  uint32_t internalWidth() const { return m_internalWidth; }
+  uint32_t internalHeight() const { return m_internalHeight; }
+
 protected:
   DepthMapGeneratorBackend m_backend;
 
@@ -101,6 +114,16 @@ protected:
   virtual void internalProcessFrame() = 0;
   virtual void internalPostInitWithCameraSystem(); // optional override, called after initWithCameraSystem()
 
+  // Optional training-data capture for neural disparity refinement. Created lazily the first time
+  // the user starts a capture (see renderIMGUI). Backends that can produce aligned RGB + disparity
+  // + cost drive it from internalProcessFrame(); backends that don't simply leave it idle.
+  DisparityTrainingWriter* trainingWriter() const { return m_trainingWriter; }
+  DisparityTrainingWriter* m_trainingWriter = nullptr;
+  // Annotate the per-view disparity training data with any information the training system should know
+  // (backend-specific configuration). Default impl does nothing.
+  friend class DisparityTrainingWriter;
+  virtual void internalWriteTrainingAnnotationsForView(size_t viewIdx, cv::FileStorage&);
+
   // Data format controls that should be set in the backend
   uint32_t m_algoInputWidth, m_algoInputHeight; // Defaults to m_internalWidth / m_internalHeight
   uint32_t m_algoDownsampleX = 1;
@@ -114,16 +137,6 @@ protected:
   // Convenience accessors for the size of the input camera stream.
   uint32_t cameraStreamWidth() const { return m_cameraSystem->cameraProvider()->streamWidth(); }
   uint32_t cameraStreamHeight() const { return m_cameraSystem->cameraProvider()->streamHeight(); }
-
-  // Input size of the L/R camera surfaces for the depth algorithm. Usually the same as internalWidth/internalHeight.
-  // The debug L/R views will be this size.
-  uint32_t algoInputWidth() const { return m_algoInputWidth; }
-  uint32_t algoInputHeight() const { return m_algoInputHeight; }
-
-  // Algorithm internal width/height. Processing happens at this resolution, disparity output is at this size.
-  uint32_t internalWidth() const { return m_internalWidth; }
-  uint32_t internalHeight() const { return m_internalHeight; }
-
   void internalFinalizeDisparityTexture();
 
   CameraSystem* m_cameraSystem = NULL;

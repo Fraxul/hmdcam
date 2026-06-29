@@ -23,6 +23,7 @@ protected:
   virtual void internalProcessFrame();
   virtual void internalRenderIMGUI();
   virtual void internalRenderIMGUIPerformanceGraphs();
+  virtual void internalWriteTrainingAnnotationsForView(size_t viewIdx, cv::FileStorage&);
 
   void cleanup(NvSciCudaInteropBuffer*& buf) {
     if (!buf)
@@ -60,6 +61,17 @@ protected:
     // Hold on to the NvMediaIofaBufArray to save a little CPU during frame processing,
     // since it doesn't change.
     NvMediaIofaBufArray m_ofaSurfArray;
+
+    // Training-data capture (optional; only populated while the training writer is active).
+    // At submit time we render frame-N's rectified RGB into m_trainingRGB and latch the metadata;
+    // when frame N's disparity/cost return, we pair them with this RGB so the sample is aligned.
+    cv::cuda::GpuMat m_trainingRGB[2]; // rectified left/right, CV_8UC3, algoInput size
+    cv::cuda::GpuMat m_trainingCostScratch; // raw cost copied out of the NvSci buffer, CV_8U
+    bool m_trainingPending = false;
+    size_t m_trainingViewIdx = 0;
+    uint64_t m_trainingFrameIndex = 0;
+    uint64_t m_trainingFrameTimestamp = 0;
+    glm::quat m_trainingRotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
 
     // True if this buffer-set is part of an active OFA submission.
     bool m_submissionActive = false;

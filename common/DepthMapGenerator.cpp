@@ -1,6 +1,7 @@
 #include "imgui.h"
 #include "common/DepthMapGenerator.h"
 #include "common/DepthMapGeneratorMock.h"
+#include "common/DisparityTrainingWriter.h"
 #ifdef HAVE_OPENCV_CUDA
 #include "common/DepthMapGeneratorSHM.h"
 #endif
@@ -330,6 +331,9 @@ void DepthMapGenerator::internalPostInitWithCameraSystem() {
   // Empty default implementation
 }
 
+void DepthMapGenerator::internalWriteTrainingAnnotationsForView(size_t viewIdx, cv::FileStorage&) {
+}
+
 #define readNode(node, settingName) cv::read(node[#settingName], m_##settingName, m_##settingName)
 
 bool DepthMapGenerator::loadSettings() {
@@ -396,6 +400,10 @@ void DepthMapGenerator::saveSettings() {
 #undef writeNode
 
 DepthMapGenerator::~DepthMapGenerator() {
+  // Destroy the training writer first: its destructor drains in-flight writes, and those writes do
+  // not touch ViewData -- they read only from the dump ring's own pinned buffers.
+  delete m_trainingWriter;
+
   for (ViewData* vd : m_viewData) {
     delete vd; // ensure resources are released
   }
@@ -665,6 +673,19 @@ void DepthMapGenerator::renderIMGUI() {
   if (m_debugUseFixedDisparity)
     ImGui::SliderInt("Fixed Disparity", &m_debugFixedDisparityValue, 0, 256);
 
+  if (ImGui::CollapsingHeader("Training data capture")) {
+    if (!m_viewData.empty()) {
+      // Create the writer lazily on first use: dimensions and view count are stable by now, and we
+      // avoid allocating the pinned dump-ring buffers unless the user actually captures.
+      if (!m_trainingWriter) {
+        m_trainingWriter = new DisparityTrainingWriter(this);
+      }
+      m_trainingWriter->renderIMGUI();
+    } else {
+      ImGui::TextUnformatted("No stereo views configured.");
+    }
+  }
+
   ImGui::PopID();
 }
 
@@ -743,6 +764,11 @@ void DepthMapGenerator::processFrame() {
     // Swap double-buffered mats
     vd->swapCurrentAndPreviousDisparity();
   }
+
+  // Advance the shared training-capture frame index once per frame, before the backend submits.
+  // Backends read currentFrameIndex() when they stash a sample so all views of one frame share it.
+  if (m_trainingWriter && m_trainingWriter->isActive())
+    m_trainingWriter->beginFrame();
 
   this->internalProcessFrame();
 
