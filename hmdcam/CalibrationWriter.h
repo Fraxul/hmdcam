@@ -1,9 +1,8 @@
 #pragma once
+#include "common/AsyncGpuDumpRing.h"
 #include "common/IMUService.h"
 #include "IArgusCamera.h"
 #include <cstdint>
-#include <queue>
-#include <mutex>
 #include <vector>
 
 class CalibrationWriter {
@@ -15,30 +14,15 @@ public:
 
   void renderIMGUI();
 
-  struct FrameData {
-    FrameData() = default;
-    ~FrameData() {
-      cuMemFreeHost(cudaHostPtr);
-      cuEventDestroy(copyDoneEvent);
-    }
-
-    FrameData(const FrameData&) = delete;
-    FrameData& operator=(const FrameData&) = delete;
-
-    void* cudaHostPtr = nullptr;
-    CUevent copyDoneEvent = 0;
-    uint32_t width, height;
-    uint64_t timestamp;
-    int dirFd;
-  };
-
 protected:
   struct StreamData {
     bool enabled = true; // Whether this stream is enabled for capture. Don't change this flag while capture is running.
     int dirFd = -1; // dirFd for the output directory for this stream.
   };
 
-  void asyncWriteFrameData(FrameData*);
+  // Serializes one captured greyscale plane to a binary PGM under dirFd, named by timestamp.
+  // Runs on an AsyncGpuDumpRing worker thread once the device->host copy has completed.
+  void writePGMFrame(AsyncGpuDumpRing::Slot*, int dirFd, uint64_t timestamp);
 
   void setActive(bool);
 
@@ -54,7 +38,7 @@ protected:
 
   // State.
   bool m_active = false;
-  bool m_inShutdown = false; // Transition state when we're deactivating -- drains work from FrameData queue, then calls closeOutputDescriptors(). Will only be true when m_active is true.
+  bool m_inShutdown = false; // Transition state when we're deactivating -- drains the dump ring, then calls closeOutputDescriptors(). Will only be true when m_active is true.
   uint32_t m_frameIndexCounter = 0;
 
   int m_dirFd = -1; // Output directory fd
@@ -64,11 +48,13 @@ protected:
   uint32_t m_droppedFrames = 0;
   uint64_t m_baseTimestampOffset = 0;
 
-  FrameData* m_frameData = nullptr;
-  uint32_t m_frameDataCount = 0;
+  // Dimensions of the tightly-packed greyscale plane each slot holds. Constant for the lifetime
+  // of the writer; captured by the write callback to emit the PGM header.
+  uint32_t m_streamWidth;
+  uint32_t m_streamHeight;
 
-  std::queue<FrameData*> m_frameDataFreeList;
-  std::mutex m_frameDataFreeListLock;
+  // Pinned-buffer pool + worker dispatch for streaming captured planes to disk.
+  AsyncGpuDumpRing m_dumpRing;
 
   IArgusCamera* cameraProvider() const { return m_cameraProvider; }
   IArgusCamera* m_cameraProvider;

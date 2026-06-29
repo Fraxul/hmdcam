@@ -1,6 +1,5 @@
 #include "CalibrationWriter.h"
-#include "common/FxThreading.h"
-#include "common/Timing.h"
+#include "common/PosixFileUtil.h"
 #include "imgui/imgui.h"
 #include "rhi/cuda/RHICUDA.h"
 #include <ctime>
@@ -9,68 +8,29 @@
 #include <sys/stat.h>
 
 CalibrationWriter::CalibrationWriter(IArgusCamera* _cameraProvider) :
+  m_streamWidth(_cameraProvider->streamWidth()),
+  m_streamHeight(_cameraProvider->streamHeight()),
+  // Each slot holds a tightly-packed 8-bit greyscale plane. The device->host copy in
+  // processFrame() repacks the (pitch-padded) source into this contiguous layout, so we can write
+  // it straight to disk as a raw PGM with no per-row handling. Size the pool for a few frames'
+  // worth of in-flight work across all streams.
+  m_dumpRing(_cameraProvider->streamCount() * 4, static_cast<size_t>(_cameraProvider->streamWidth()) * _cameraProvider->streamHeight()),
   m_cameraProvider(_cameraProvider) {
-  uint32_t width = cameraProvider()->streamWidth();
-  uint32_t height = cameraProvider()->streamHeight();
 
   m_streamData.resize(m_cameraProvider->streamCount());
-
-  // Preallocate buffers and add to free list
-  std::scoped_lock l(m_frameDataFreeListLock);
-
-  m_frameDataCount = m_cameraProvider->streamCount() * 4;
-  m_frameData = new FrameData[m_frameDataCount];
-  for (size_t i = 0; i < m_frameDataCount; ++i) {
-    FrameData& frameData = m_frameData[i];
-
-    frameData.width = width;
-    frameData.height = height;
-    // Host buffer holds a tightly-packed 8-bit greyscale plane. The device->host copy
-    // in processFrame() repacks the (pitch-padded) source into this contiguous layout,
-    // so we can write it straight to disk as a raw PGM with no per-row handling.
-    CUDA_CHECK(cuMemAllocHost(&frameData.cudaHostPtr, static_cast<size_t>(width) * height));
-    CUDA_CHECK(cuEventCreate(&frameData.copyDoneEvent, CU_EVENT_BLOCKING_SYNC | CU_EVENT_DISABLE_TIMING));
-
-    m_frameDataFreeList.push(&m_frameData[i]);
-  }
 }
 
 CalibrationWriter::~CalibrationWriter() {
   if (m_active) {
-    // Shutdown and drain queue immediately. We have to block until all buffers are returned before destruction.
+    // Shutdown and drain immediately. We must block until all in-flight writes finish before
+    // closing the output fds they reference (and before the ring frees its buffers).
     setActive(false);
-
-    while (true) {
-      {
-        std::scoped_lock l(m_frameDataFreeListLock);
-        if (m_frameDataFreeList.size() == m_frameDataCount)
-          break; // All buffers returned.
-      }
-      delayMs(1); // Yield the CPU while we wait.
-    }
+    m_dumpRing.drainBlocking();
 
     closeOutputDescriptors();
     m_active = false;
     m_inShutdown = false;
   }
-
-  delete[] m_frameData;
-}
-
-// Writes the entire buffer to fd, retrying short writes and EINTR. Returns true on success.
-static bool writeFully(int fd, const void* data, size_t length) {
-  const unsigned char* p = reinterpret_cast<const unsigned char*>(data);
-  while (length) {
-    ssize_t res = write(fd, p, length);
-    if (res < 0) {
-      if (errno == EINTR)
-        continue; // Interrupted before any bytes were written; retry.
-      return false;
-    }
-    p += res;
-    length -= res;
-  }
-  return true;
 }
 
 void CalibrationWriter::processFrame(IMUFrame* imuFrame) {
@@ -80,10 +40,8 @@ void CalibrationWriter::processFrame(IMUFrame* imuFrame) {
 
   if (m_inShutdown) {
     // We're trying to shut down the output right now.
-    // Wait until all FrameData have been returned to the free list,
-    // then complete the shutdown.
-    std::scoped_lock l(m_frameDataFreeListLock);
-    if (m_frameDataFreeList.size() != m_frameDataCount)
+    // Wait until all in-flight writes have finished, then complete the shutdown.
+    if (m_dumpRing.outstanding() != 0)
       return; // Work is still pending.
 
     printf("CalibrationWriter::processFrame(): Work queue drained -- shutdown complete.\n");
@@ -154,26 +112,17 @@ void CalibrationWriter::processFrame(IMUFrame* imuFrame) {
   // Capture and write frame.
   if (!m_writeImuOnly) {
 
-    // Grab free-list lock while we handle FrameData work
-    std::scoped_lock l(m_frameDataFreeListLock);
     for (size_t streamIdx = 0; streamIdx < cameraProvider()->streamCount(); ++streamIdx) {
       if (!m_streamData[streamIdx].enabled)
         continue; // Capture not enabled on this stream.
 
-      // Grab a FrameData element
-
-      if (m_frameDataFreeList.empty()) {
-        // We're not draining the queue fast enough -- can't capture this frame.
+      // Grab a slot from the dump ring.
+      AsyncGpuDumpRing::Slot* slot = m_dumpRing.acquire();
+      if (!slot) {
+        // We're not draining the ring fast enough -- can't capture this frame.
         didDropFrame = true;
         break;
       }
-
-      FrameData* frameData = m_frameDataFreeList.front();
-      m_frameDataFreeList.pop();
-
-      // Setup FrameData state
-      frameData->dirFd = m_streamData[streamIdx].dirFd; // per-camera output dirFd
-      frameData->timestamp = ts; // timestamp is used to generate the filename
 
       // Issue CUDA copy
       CUDA_MEMCPY2D copyDescriptor;
@@ -181,15 +130,19 @@ void CalibrationWriter::processFrame(IMUFrame* imuFrame) {
       cameraProvider()->fillCudaMemcpy2DForStreamSource(copyDescriptor, streamIdx, /*fromChromaPlane=*/ false);
 
       copyDescriptor.dstMemoryType = CU_MEMORYTYPE_HOST;
-      copyDescriptor.dstHost = frameData->cudaHostPtr;
-      copyDescriptor.dstPitch = frameData->width; // tightly-packed host destination (no pitch padding)
+      copyDescriptor.dstHost = slot->hostPtr;
+      copyDescriptor.dstPitch = m_streamWidth; // tightly-packed host destination (no pitch padding)
       CUDA_CHECK(cuMemcpy2DAsync(&copyDescriptor, RHICUDA::defaultAsyncStream));
 
       // Record copy completion event
-      CUDA_CHECK(cuEventRecord(frameData->copyDoneEvent, RHICUDA::defaultAsyncStream));
+      CUDA_CHECK(cuEventRecord(slot->copyDoneEvent, RHICUDA::defaultAsyncStream));
 
-      // Queue async work to write the frame to disk and return the FrameData to the pool
-      FxThreading::runTaskAsync(boost::bind(&CalibrationWriter::asyncWriteFrameData, this, frameData));
+      // Queue async work to write the frame to disk. The destination dir and the filename timestamp
+      // are per-capture policy, so we bind them into the write callback.
+      int dirFd = m_streamData[streamIdx].dirFd; // per-camera output dirFd
+      m_dumpRing.dispatch(slot, [this, dirFd, ts](AsyncGpuDumpRing::Slot* writeSlot) {
+        writePGMFrame(writeSlot, dirFd, ts);
+      });
     }
   }
 
@@ -199,35 +152,29 @@ void CalibrationWriter::processFrame(IMUFrame* imuFrame) {
     m_writtenFrames += 1;
 }
 
-void CalibrationWriter::asyncWriteFrameData(FrameData* frameData) {
-  // Wait on copy-completion event
-  CUDA_CHECK(cuEventSynchronize(frameData->copyDoneEvent));
+void CalibrationWriter::writePGMFrame(AsyncGpuDumpRing::Slot* slot, int dirFd, uint64_t timestamp) {
+  // The dump ring has already waited on the copy-completion event before invoking us, and will
+  // recycle the slot once we return.
 
   // Generate filename with nanosecond timestamp, zero-padded so it sorts nicely
   char filename[128];
-  snprintf(filename, 128, "%016lu.pgm", frameData->timestamp);
+  snprintf(filename, 128, "%016lu.pgm", timestamp);
 
-  // Write to disk using filename and frameData->dirFd.
+  // Write to disk using filename and dirFd.
   // We emit a binary PGM (P5): a short ASCII header followed by the tightly-packed 8-bit greyscale plane.
   // PNG compression is too CPU-intensive on this platform to keep up with the "all cameras, every frame" data rate.
-  int fd = openat(frameData->dirFd, filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  int fd = openat(dirFd, filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
   if (fd >= 0) {
     char header[64];
-    int headerLength = snprintf(header, sizeof(header), "P5\n%u %u\n255\n", frameData->width, frameData->height);
-    size_t pixelBytes = static_cast<size_t>(frameData->width) * frameData->height;
+    int headerLength = snprintf(header, sizeof(header), "P5\n%u %u\n255\n", m_streamWidth, m_streamHeight);
+    size_t pixelBytes = static_cast<size_t>(m_streamWidth) * m_streamHeight;
 
-    if (!writeFully(fd, header, headerLength) || !writeFully(fd, frameData->cudaHostPtr, pixelBytes))
-      printf("CalibrationWriter::asyncWriteFrameData(): write() error: %s\n", strerror(errno));
+    if (!writeFully(fd, header, headerLength) || !writeFully(fd, slot->hostPtr, pixelBytes))
+      printf("CalibrationWriter::writePGMFrame(): write() error: %s\n", strerror(errno));
 
     close(fd);
   } else {
-    printf("CalibrationWriter::asyncWriteFrameData(): openat() error: %s\n", strerror(errno));
-  }
-
-  // Return frameData to the queue after we're done writing.
-  {
-    std::scoped_lock l(m_frameDataFreeListLock);
-    m_frameDataFreeList.push(frameData);
+    printf("CalibrationWriter::writePGMFrame(): openat() error: %s\n", strerror(errno));
   }
 }
 
