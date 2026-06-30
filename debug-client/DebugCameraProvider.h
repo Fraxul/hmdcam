@@ -22,6 +22,7 @@ public:
   virtual cv::cuda::GpuMat gpuMatGreyscale(size_t streamIdx);
   virtual bool fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescriptor, size_t sensorIndex, bool fromChromaPlane) const;
   virtual bool isStreamFailed(size_t sensorIndex) const { return false; }
+  virtual uint64_t frameTimestamp() const { return 0; }
 
   // -- DepthMapGenerator
 

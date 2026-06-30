@@ -15,6 +15,7 @@ public:
   // === ICameraProvider (partial impl) ===
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
+  virtual uint64_t frameTimestamp() const { return m_oldestSensorTimestamp; }
 
   // === IArgusCamera ===
   virtual size_t sessionCount() const = 0;
@@ -58,7 +59,6 @@ public:
   // Start timestamp for the sensor capture, in nanoseconds. TSC timestamp, referenced to currentTimeNs()
   uint64_t frameSensorTimestamp(size_t sensorIndex) const { return m_frameMetadata[sensorIndex].sensorTimestamp; }
   const FrameMetadata_t& frameMetadata(size_t sensorIndex) const { return m_frameMetadata[sensorIndex]; }
-  uint64_t oldestSensorTimestamp() const { return m_oldestSensorTimestamp; }
 
 protected:
   uint64_t m_targetCaptureIntervalNs;

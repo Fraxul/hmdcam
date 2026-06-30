@@ -895,7 +895,7 @@ int main(int argc, char* argv[]) {
       {
         uint64_t presentationTimestamp = renderBackend->lastPresentationTimestamp();
         if (presentationTimestamp != 0) {
-          timingData.presentToCaptureOffsetMs = deltaTimeMs(presentationTimestamp, argusCamera->oldestSensorTimestamp());
+          timingData.presentToCaptureOffsetMs = deltaTimeMs(presentationTimestamp, argusCamera->frameTimestamp());
         } else {
           // Presentation timestamp is not supported by the backend
           timingData.presentToCaptureOffsetMs = 0;
@@ -903,14 +903,14 @@ int main(int argc, char* argv[]) {
       }
 
       if (previousCaptureTimestamp) {
-        currentCaptureIntervalMs = static_cast<double>(argusCamera->oldestSensorTimestamp() - previousCaptureTimestamp) / 1000000.0;
+        currentCaptureIntervalMs = static_cast<double>(argusCamera->frameTimestamp() - previousCaptureTimestamp) / 1000000.0;
         captureInterval(currentCaptureIntervalMs);
       }
-      previousCaptureTimestamp = argusCamera->oldestSensorTimestamp();
+      previousCaptureTimestamp = argusCamera->frameTimestamp();
 
       // IMU service frame processing relies on camera capture timestamp
       if (imuService) {
-        imuService->processFrame(argusCamera->oldestSensorTimestamp());
+        imuService->processFrame(argusCamera->frameTimestamp());
       }
 
       // Hook for CameraSystem to do its post-capture frame processing -- this updates dynamic distortion maps
@@ -1733,7 +1733,7 @@ int main(int argc, char* argv[]) {
           io.DeltaTime = static_cast<double>(interval / 1000000000.0);
         }
 
-        currentCaptureLatencyMs = static_cast<double>(thisFrameTimestamp - argusCamera->oldestSensorTimestamp()) / 1000000.0;
+        currentCaptureLatencyMs = static_cast<double>(thisFrameTimestamp - argusCamera->frameTimestamp()) / 1000000.0;
         captureLatency(currentCaptureLatencyMs);
         presentToCaptureLatency(timingData.presentToCaptureOffsetMs);
 

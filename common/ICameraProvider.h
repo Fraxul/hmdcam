@@ -34,6 +34,9 @@ public:
   // Tegra). Default 1.0 means no crop. The same factor applies to every
   // camera stream in the provider (they all share resolution).
   virtual float cameraTexCoordCropX() const { return 1.0f; }
+
+  // Nanosecond timestamp for the current frame (relative to currentTimeNs())
+  virtual uint64_t frameTimestamp() const = 0;
 };
 
 class NullCameraProvider : public ICameraProvider {
@@ -53,6 +56,7 @@ public:
   virtual unsigned int streamWidth() const { return m_streamWidth; }
   virtual unsigned int streamHeight() const { return m_streamHeight; }
   virtual bool isStreamFailed(size_t sensorIndex) const { return false; }
+  virtual uint64_t frameTimestamp() const { return 0; }
 
 protected:
   size_t m_streamCount;

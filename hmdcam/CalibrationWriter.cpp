@@ -52,7 +52,7 @@ void CalibrationWriter::processFrame(IMUFrame* imuFrame) {
   }
 
   // Compute timestamp for this capture
-  uint64_t ts = cameraProvider()->oldestSensorTimestamp();
+  uint64_t ts = cameraProvider()->frameTimestamp();
   if (m_baseTimestampOffset == 0) {
     // First-captured frame -- timestamp base starts at zero.
     m_baseTimestampOffset = ts;
