@@ -454,7 +454,9 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
         tw->copyColor(slot, ringEntry->m_trainingRGB[0], ringEntry->m_trainingRGB[1], cudaStream);
         tw->copyDisparity(slot, vd->currentDisparityMat(), cudaStream);
         tw->copyCost(slot, ringEntry->m_trainingCostScratch, cudaStream);
-        tw->submit(slot, ringEntry->m_trainingViewIdx, ringEntry->m_trainingFrameIndex, ringEntry->m_trainingFrameTimestamp, ringEntry->m_trainingRotation, cudaStream);
+        tw->submit(slot, ringEntry->m_trainingViewIdx, ringEntry->m_trainingFrameIndex, ringEntry->m_trainingFrameTimestamp,
+          ringEntry->m_trainingFrameMetadata[0], ringEntry->m_trainingFrameMetadata[1],
+          ringEntry->m_trainingRotation, cudaStream);
       }
     }
 
@@ -550,6 +552,9 @@ void DepthMapGeneratorOFA::internalProcessFrame() {
       ringEntry->m_trainingViewIdx = viewIdx;
       ringEntry->m_trainingFrameIndex = tw->currentFrameIndex();
       ringEntry->m_trainingFrameTimestamp = m_cameraSystem->cameraProvider()->frameTimestamp();
+      PER_EYE {
+        ringEntry->m_trainingFrameMetadata[eyeIdx] = m_cameraSystem->cameraProvider()->frameMetadata(view.cameraIndices[eyeIdx]);
+      }
       ringEntry->m_trainingRotation = m_cameraSystem->hasCameraInterframeRotation(vd->m_leftCameraIndex)
         ? m_cameraSystem->cameraInterframeRotation(vd->m_leftCameraIndex)
         : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);

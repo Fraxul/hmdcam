@@ -1,5 +1,6 @@
 #pragma once
 #include "common/DepthMapGenerator.h"
+#include "common/ICameraProvider.h"
 #include "common/tegra/NvSciCudaInterop.h"
 #include "common/tegra/NvSciUtil.h"
 #include "nvscibuf.h"
@@ -71,6 +72,7 @@ protected:
     size_t m_trainingViewIdx = 0;
     uint64_t m_trainingFrameIndex = 0;
     uint64_t m_trainingFrameTimestamp = 0;
+    ICameraProvider::FrameMetadata m_trainingFrameMetadata[2];
     glm::quat m_trainingRotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
 
     // True if this buffer-set is part of an active OFA submission.

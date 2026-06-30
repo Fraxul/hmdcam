@@ -632,6 +632,8 @@ bool ArgusCamera::readFrame() {
     m_frameMetadata[cameraIdx].sensorSensitivityISO = iMetadata->getSensorSensitivity();
     m_frameMetadata[cameraIdx].ispDigitalGain = iMetadata->getIspDigitalGain();
     m_frameMetadata[cameraIdx].sensorAnalogGain = iMetadata->getSensorAnalogGain();
+    m_frameMetadata[cameraIdx].sceneLux = iMetadata->getSceneLux();
+    m_frameMetadata[cameraIdx].awbCct = iMetadata->getAwbCct();
 
     timingData.frameAge[cameraIdx] = deltaTimeMs(m_frameMetadata[cameraIdx].sensorTimestamp, timingRefPoint);
     m_oldestSensorTimestamp = std::min<uint64_t>(m_oldestSensorTimestamp, m_frameMetadata[cameraIdx].sensorTimestamp);

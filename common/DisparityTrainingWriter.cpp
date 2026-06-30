@@ -84,7 +84,7 @@ void DisparityTrainingWriter::setActive(bool active) {
 
       // frame_index keys the per-sample image files.
       // the quaternion is the camera's inter-frame rotation (current frame relative to the previous one), in (w, x, y, z) order.
-      const char* csvHeader = "frame_index,timestamp,qw,qx,qy,qz\n";
+      const char* csvHeader = "frame_index,timestamp,qw,qx,qy,qz,leftExposureTimeNs,rightExposureTimeNs,leftISO,rightISO,leftDigitalGain,rightDigitalGain,leftAnalogGain,rightAnalogGain,leftSceneLux,rightSceneLux,leftAwbCct,rightAwbCct,\n";
       write(m_viewOutput[viewIdx].metadataFd, csvHeader, strlen(csvHeader));
 
       int viewDataFd = openat(m_viewOutput[viewIdx].dirFd, "viewData.yml", O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -225,7 +225,11 @@ void DisparityTrainingWriter::copyCost(AsyncGpuDumpRing::Slot* slot, const cv::c
   copyDeviceMatToHost(base + m_costOffset, costU8, m_internalWidth, m_internalHeight, stream);
 }
 
-void DisparityTrainingWriter::submit(AsyncGpuDumpRing::Slot* slot, size_t viewIndex, uint64_t frameIndex, uint64_t timestampNs, const glm::quat& interframeRotation, CUstream stream) {
+void DisparityTrainingWriter::submit(AsyncGpuDumpRing::Slot* slot, size_t viewIndex, uint64_t frameIndex, uint64_t timestampNs,
+  const ICameraProvider::FrameMetadata& leftFrameMetadata,
+  const ICameraProvider::FrameMetadata& rightFrameMetadata,
+  const glm::quat& interframeRotation, CUstream stream) {
+
   // Record completion of the DtoH copies the caller just issued on this stream.
   CUDA_CHECK(cuEventRecord(slot->copyDoneEvent, stream));
 
@@ -233,11 +237,18 @@ void DisparityTrainingWriter::submit(AsyncGpuDumpRing::Slot* slot, size_t viewIn
   // on the CSV fd. It references frameIndex, which keys the image filenames written asynchronously.
   int metadataFd = m_viewOutput[viewIndex].metadataFd;
   if (metadataFd >= 0) {
-    char row[256];
-    int rowLength = snprintf(row, sizeof(row), "%016lu,%016lu,%.12f,%.12f,%.12f,%.12f\n",
+    char row[512];
+    int rowLength = snprintf(row, sizeof(row), "%016lu,%016lu,%.12f,%.12f,%.12f,%.12f,%lu,%lu,%u,%u,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%u,%u,\n",
       static_cast<unsigned long>(frameIndex),
       timestampNs,
-      interframeRotation.w, interframeRotation.x, interframeRotation.y, interframeRotation.z);
+      interframeRotation.w, interframeRotation.x, interframeRotation.y, interframeRotation.z,
+      leftFrameMetadata.sensorExposureTimeNs, rightFrameMetadata.sensorExposureTimeNs,
+      leftFrameMetadata.sensorSensitivityISO, rightFrameMetadata.sensorSensitivityISO,
+      leftFrameMetadata.ispDigitalGain, rightFrameMetadata.ispDigitalGain,
+      leftFrameMetadata.sensorAnalogGain, rightFrameMetadata.sensorAnalogGain,
+      leftFrameMetadata.sceneLux, rightFrameMetadata.sceneLux,
+      leftFrameMetadata.awbCct, rightFrameMetadata.awbCct);
+
     writeFully(metadataFd, row, rowLength);
   }
 

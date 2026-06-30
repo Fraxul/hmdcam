@@ -1,5 +1,6 @@
 #pragma once
 #include "common/AsyncGpuDumpRing.h"
+#include "common/ICameraProvider.h"
 #include <cstdint>
 #include <cuda.h>
 #include <glm/gtc/quaternion.hpp>
@@ -61,7 +62,10 @@ public:
 
   // Records the slot's copy-completion event on `stream`, writes the metadata CSV row for this
   // sample (synchronously), and dispatches the async image write. Consumes the slot.
-  void submit(AsyncGpuDumpRing::Slot*, size_t viewIndex, uint64_t frameIndex, uint64_t timestampNs, const glm::quat& interframeRotation, CUstream stream);
+  void submit(AsyncGpuDumpRing::Slot*, size_t viewIndex, uint64_t frameIndex, uint64_t timestampNs,
+    const ICameraProvider::FrameMetadata& leftFrameMetadata,
+    const ICameraProvider::FrameMetadata& rightFrameMetadata,
+    const glm::quat& interframeRotation, CUstream stream);
 
   void renderIMGUI();
 

@@ -37,6 +37,26 @@ public:
 
   // Nanosecond timestamp for the current frame (relative to currentTimeNs())
   virtual uint64_t frameTimestamp() const = 0;
+
+  struct FrameMetadata {
+    uint64_t sensorTimestamp = 0;
+    uint64_t frameDurationNs = 0;
+    uint64_t sensorExposureTimeNs = 0;
+    uint32_t sensorSensitivityISO = 0;
+    float ispDigitalGain = 0.0f;
+    float sensorAnalogGain = 0.0f;
+    float sceneLux = 0.0f;
+    uint32_t awbCct = 0;
+  };
+
+  // Metadata accessors for the current frame
+  // Start timestamp for the sensor capture, in nanoseconds. TSC timestamp, referenced to currentTimeNs()
+  uint64_t frameSensorTimestamp(size_t sensorIndex) const { return m_frameMetadata[sensorIndex].sensorTimestamp; }
+  const FrameMetadata& frameMetadata(size_t sensorIndex) const { return m_frameMetadata[sensorIndex]; }
+
+protected:
+  // Per-stream per-frame metadata, populated for each frame in readFrame()
+  std::vector<FrameMetadata> m_frameMetadata;
 };
 
 class NullCameraProvider : public ICameraProvider {
@@ -44,7 +64,10 @@ public:
   NullCameraProvider(size_t streamCount_, unsigned int w_ = 1920, unsigned int h_ = 1080) :
     m_streamCount(streamCount_),
     m_streamWidth(w_),
-    m_streamHeight(h_) {}
+    m_streamHeight(h_) {
+
+    m_frameMetadata.resize(m_streamCount);
+  }
   virtual ~NullCameraProvider() {}
 
   virtual size_t streamCount() const { return m_streamCount; }

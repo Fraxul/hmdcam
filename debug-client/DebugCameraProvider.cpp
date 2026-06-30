@@ -266,6 +266,9 @@ bool DebugCameraProvider::connect(const char* debugHost) {
     }
   }
 
+  // Metadata
+  m_frameMetadata.resize(streamCount());
+
   // Start the frame reader thread
   pthread_create(&m_streamThread, NULL, &streamThreadEntryPoint, (void*) this);
   return true;

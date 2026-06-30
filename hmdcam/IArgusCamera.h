@@ -46,20 +46,6 @@ public:
 
   float exposureCompensation() const { return m_exposureCompensation; }
 
-  struct FrameMetadata_t {
-    uint64_t sensorTimestamp;
-    uint64_t frameDurationNs;
-    uint64_t sensorExposureTimeNs;
-    uint32_t sensorSensitivityISO;
-    float ispDigitalGain;
-    float sensorAnalogGain;
-  };
-
-  // Metadata accessors for the current frame
-  // Start timestamp for the sensor capture, in nanoseconds. TSC timestamp, referenced to currentTimeNs()
-  uint64_t frameSensorTimestamp(size_t sensorIndex) const { return m_frameMetadata[sensorIndex].sensorTimestamp; }
-  const FrameMetadata_t& frameMetadata(size_t sensorIndex) const { return m_frameMetadata[sensorIndex]; }
-
 protected:
   uint64_t m_targetCaptureIntervalNs;
   unsigned int m_streamWidth = 0, m_streamHeight = 0;
@@ -67,8 +53,6 @@ protected:
   glm::vec2 m_acRegionCenter = glm::vec2(0.5f, 0.5f);
   glm::vec2 m_acRegionSize = glm::vec2(1.0f, 1.0f);
 
-  // Per-stream per-frame metadata, populated for each frame in readFrame()
-  std::vector<FrameMetadata_t> m_frameMetadata;
   uint64_t m_oldestSensorTimestamp; // Oldest timestamp across all sensors for the most recently acquired frame. Updated in readFrame().
 
   // Set in derived class
