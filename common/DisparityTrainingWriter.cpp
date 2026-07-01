@@ -10,6 +10,7 @@
 #include <ctime>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 
 DisparityTrainingWriter::DisparityTrainingWriter(DepthMapGenerator* _depthMapGenerator) :
@@ -322,5 +323,13 @@ void DisparityTrainingWriter::renderIMGUI() {
       m_frameLimit = 0;
       setActive(true);
     }
+  }
+
+  struct statvfs statBuf;
+  memset(&statBuf, 0, sizeof(statBuf));
+  if (statvfs(".", &statBuf) == 0) {
+    ImGui::Text("Free space: %lu MB", (statBuf.f_bavail * statBuf.f_frsize) >> 20);
+  } else {
+    ImGui::Text("statvfs() error: %s", strerror(errno));
   }
 }
