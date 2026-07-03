@@ -347,6 +347,11 @@ bool DepthMapGenerator::loadSettings() {
     // Load common render settings
     cv::FileNode rsn = fs["renderSettings"];
     if (rsn.isMap()) {
+      readNode(rsn, useMedianFilter);
+      readNode(rsn, useTemporalFilter);
+      readNode(rsn, temporalFilterStableThreshold);
+      readNode(rsn, temporalFilterAlpha);
+      readNode(rsn, useOcclusionMask);
       readNode(rsn, useFGSFilter);
       readNode(rsn, minDepthCutoff);
       readNode(rsn, usePointRendering);
@@ -382,6 +387,11 @@ void DepthMapGenerator::saveSettings() {
 
   // Write common render settings
   fs.startWriteStruct(cv::String("renderSettings"), cv::FileNode::MAP, cv::String());
+  writeNode(fs, useMedianFilter);
+  writeNode(fs, useTemporalFilter);
+  writeNode(fs, temporalFilterStableThreshold);
+  writeNode(fs, temporalFilterAlpha);
+  writeNode(fs, useOcclusionMask);
   writeNode(fs, useFGSFilter);
   writeNode(fs, minDepthCutoff);
   writeNode(fs, usePointRendering);
