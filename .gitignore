@@ -12,4 +12,6 @@ build
 imgui.ini
 eyetracking-captures
 eyetracking-bad-fit-captures
+calibration-data*
+training-data*
 
