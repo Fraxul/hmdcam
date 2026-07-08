@@ -917,7 +917,7 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
     RHICUDA::copyGpuMatToSurface(*workMat, vd->m_disparityTexture, (CUstream) m_globalStream.cudaPtr());
 
     // Build the adaptive triangle mesh from the post-processed disparity.
-    {
+    if (!m_usePointRendering) {
       // Disable trim/validity masking when running with a fixed disparity, so the resulting
       // mesh covers the full grid (matches the legacy fixed-disparity rendering behavior).
       const bool useFixedDisparity = vd->anyCameraStreamFailed() || m_debugUseFixedDisparity;

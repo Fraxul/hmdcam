@@ -4,14 +4,13 @@
 #extension GL_EXT_conservative_depth : require // enables layout(depth_greater) on gl_FragDepth
 #endif
 
-in V2F {
+layout(location = 0) in V2F {
   vec2 texCoord;
 #if DEPTH_BIAS
-  vec4 biasedClipPos;
+  vec2 biasedClipPosZW;
 #endif
 } v2f;
 uniform sampler2D imageTex;
-uniform sampler2D distortionMap;
 
 layout(location = 0) out vec4 outColor;
 
@@ -23,9 +22,9 @@ layout(depth_greater) out highp float gl_FragDepth;
 
 void main()
 {
-  // Remap through OpenCV-generated distortion map
-  vec2 distortionCoord = texture(distortionMap, v2f.texCoord).rg; // RG32F texture
-  outColor = SAMPLE_CAMERA(distortionCoord);
+  // Texture coordinates have already been distortion-corrected in the vertex shader.
+  // This is just a straightforward texture application.
+  outColor = SAMPLE_CAMERA(v2f.texCoord);
 
 #if DEPTH_BIAS
   // Vulkan reverse-Z: window depth = clip.z / clip.w. Dividing the perspective-correctly-
@@ -36,8 +35,8 @@ void main()
   // sign and, naively clamped, lands on the FAR plane (0.0) so the fragment fails the depth test
   // and vanishes. Pin to the near plane (1.0) whenever the biased point reaches or crosses it.
   // Both branches yield >= gl_FragCoord.z, so the depth_greater promise above still holds.
-  gl_FragDepth = (v2f.biasedClipPos.w > 0.0)
-      ? min(v2f.biasedClipPos.z / v2f.biasedClipPos.w, 1.0)
+  gl_FragDepth = (v2f.biasedClipPosZW.y > 0.0)
+      ? min(v2f.biasedClipPosZW.x / v2f.biasedClipPosZW.y, 1.0)
       : 1.0;
 #endif
 }

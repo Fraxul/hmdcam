@@ -7,14 +7,15 @@ layout(location = 0) in uvec2 disparitySampleCoordinates; // integer texels, fix
 layout(location = 1) in uvec2 quadCoordOffset; // 0...1, varies over the quad
 
 uniform highp usampler2D disparityTex;
+uniform sampler2D distortionMap;
 float sampleDisparity(ivec2 mipCoords) {
   return float(texelFetch(disparityTex, mipCoords, 0).r);
 }
 
-out V2F {
+layout(location = 0) out V2F {
   vec2 texCoord;
 #if DEPTH_BIAS
-  vec4 biasedClipPos; // clip-space position translated toward the camera in eye space
+  vec2 biasedClipPosZW; // clip-space position translated toward the camera in eye space
 #endif
 } v2f;
 
@@ -40,6 +41,11 @@ void main()
 
   vec2 textureCoordinates = vec2(disparitySampleCoordinates) * texCoordStep + (vec2(quadCoordOffset) * texCoordStep * pointScale);
 
+  // IMU depth timewarp + distortion correction: reproject the rectified texcoord by the inter-frame homography, then remap through the distortion map.
+  // The distortion map is smooth enough with our lens system that the error from sampling it at vertex rate vs. fragment rate is <0.1px.
+  vec3 reproj = mat3(colorReprojection) * vec3(textureCoordinates, 1.0);
+  vec2 cameraSampleCoordinates = textureLod(distortionMap, reproj.xy / reproj.z, 0.0).rg;
+
   if (disparityRaw > float(maxValidDisparityRaw)) {
     // Invalid disparity, so we discard this point.
     gl_Position = vec4(0.0f);
@@ -53,9 +59,9 @@ void main()
   // Translate toward the camera by viewZFightBiasMeters of eye-space Z and re-project:
   // clip' = clip + dZ * Proj[:,2]. Biases only the depth buffer (see fragment shader); the
   // collapsed/invalid branches above set gl_Position = 0, so the degenerate bias is harmless.
-  v2f.biasedClipPos = gl_Position + viewZFightBiasMeters * projectionColumn2[viewport];
+  v2f.biasedClipPosZW = (gl_Position + viewZFightBiasMeters * projectionColumn2[viewport]).zw;
 #endif
 
-  v2f.texCoord = textureCoordinates;
+  v2f.texCoord = cameraSampleCoordinates;
 }
 
