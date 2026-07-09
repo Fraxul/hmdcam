@@ -200,12 +200,19 @@ public:
   void updateCameraIntrinsicDistortionParameters(size_t cameraIdx); // Generate camera-specific derived data after calibration
   void updateViewStereoDistortionParameters(size_t viewIdx); // Generate view-specific derived data after calibration
 
+  const glm::vec3& averageGyroBias() const { return m_averageGyroBias; }
+
 protected:
   ICameraProvider* m_cameraProvider;
   unsigned int m_calibrationDataRevision;
 
   std::vector<Camera> m_cameras;
   std::vector<View> m_views;
+
+  // Computed average of the per-camera gyroscope biases loaded from calibration.
+  // We don't tend to let the IMU calibration solver optimize the bias, so they should
+  // all be identical anyway.
+  glm::vec3 m_averageGyroBias = glm::vec3(0.0f);
 
   // Per-camera dynamic (per-frame) state, kept out of the static-calibration Camera
   // struct so it can't accidentally be serialized into calibration.yml. Index-parallel

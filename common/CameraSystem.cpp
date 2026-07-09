@@ -376,6 +376,9 @@ bool CameraSystem::loadIMUCalibrationData(cv::FileStorage& imuFs) {
     }
     size_t seqLen = std::min<size_t>(camerasFn.size(), m_cameras.size());
 
+    m_averageGyroBias = glm::vec3(0.0f);
+    float gyroBiasSampleCount = 0.0f;
+
     for (size_t cameraIdx = 0; cameraIdx < seqLen; ++cameraIdx) {
       cv::FileNode cfn = camerasFn[cameraIdx];
       assert(cfn.isMap());
@@ -391,10 +394,17 @@ bool CameraSystem::loadIMUCalibrationData(cv::FileStorage& imuFs) {
       cfn["gyro_bias_deg_s"] >> biasMat;
       camera.gyroBias = glmVec3FromCV(biasMat);
 
+      if (camera.imuCalibrationValid) {
+        m_averageGyroBias += camera.gyroBias;
+        gyroBiasSampleCount += 1.0f;
+      }
+
       if (!camera.imuCalibrationValid) {
         printf("CameraSystem::loadIMUCalibrationData(): WARNING: Camera %zu IMU calibration is not valid!\n", cameraIdx);
       }
     }
+
+    m_averageGyroBias /= gyroBiasSampleCount;
   } catch (const std::exception& ex) {
     printf("Unable to load IMU calibration data: %s\n", ex.what());
     return false;

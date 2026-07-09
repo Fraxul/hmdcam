@@ -96,7 +96,7 @@ bool StereoSelfCalibration::isIMUStable(IMUFrame* imuFrame) const {
   if (imuFrame == nullptr || imuFrame->validSampleCount == 0)
     return true; // No IMU data: don't block automatic calibration on it.
   for (uint32_t sampleIdx = 0; sampleIdx < imuFrame->validSampleCount; ++sampleIdx) {
-    if (glm::length(imuFrame->samples[sampleIdx].gyroDPS) > m_gyroStabilityThresholdDPS)
+    if (glm::length(imuFrame->samples[sampleIdx].gyroDPS - m_cameraSystem->averageGyroBias()) > m_gyroStabilityThresholdDPS)
       return false;
   }
   return true;
