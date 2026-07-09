@@ -526,6 +526,16 @@ bool ArgusCamera::readFrame() {
   uint64_t timingRefPoint = currentTimeNs(); // ref for the timingData
   m_oldestSensorTimestamp = timingRefPoint;
 
+  // Rate-limiter for timing-advance logic below.
+  // We allow all streams to fire it on the same frame.
+  static int32_t timingAdvanceCooldown = 0;
+  bool timingAdvanceOKThisFrame = false;
+  if (timingAdvanceCooldown <= 0) {
+    timingAdvanceOKThisFrame = true;
+  } else {
+    --timingAdvanceCooldown;
+  }
+
   bool captureOK = true;
   for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
     SensorData& sensorData = m_perSensorData[cameraIdx];
@@ -535,6 +545,7 @@ bool ArgusCamera::readFrame() {
       continue;
     }
 
+    const size_t sessionIdx = sessionIndexForStream(cameraIdx);
 
     Argus::IBufferOutputStream* iBufferOutputStream = Argus::interface_cast<Argus::IBufferOutputStream>(sensorData.m_outputStream);
     Argus::Status status = Argus::STATUS_OK;
@@ -544,8 +555,6 @@ bool ArgusCamera::readFrame() {
       ++sensorData.m_captureFailureCount;
       if (sensorData.hasCaptureFailed()) {
         printf("ArgusCamera::readFrame(): Sensor %zu hit capture-failure limit, disabling capture for this session.\n", cameraIdx);
-
-        size_t sessionIdx = sessionIndexForStream(cameraIdx);
 
         Argus::ICaptureSession* iCaptureSession = Argus::interface_cast<Argus::ICaptureSession>(m_perSessionData[sessionIdx].m_captureSession);
         iCaptureSession->stopRepeat();
@@ -579,9 +588,31 @@ bool ArgusCamera::readFrame() {
     // We might be able to fast-forward a bit and reduce latency.
     // Unfortunately, calling iBufferOutputStream->acquireBuffer() will generate log spam
     // if there is not actually another buffer available (instead of just returning TIMEOUT)
-    // so we try to guess based on the number of Capture Complete events received since the
-    // previous frame.
-    for (uint32_t evIdx = 1; evIdx < captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)]; ++evIdx) {
+    // so we try to guess based on a combination of the number of Capture Complete events received
+    // since the previous frame and the age of the most recently-returned frame.
+
+    if (timingAdvanceOKThisFrame && captureCompletedEventsPerSession[sessionIdx] <= 1) {
+      Argus::IBuffer* iBuffer = Argus::interface_cast<Argus::IBuffer>(buffer);
+      const Argus::Ext::ISensorTimestampTsc* iTscTimestamp = Argus::interface_cast<const Argus::Ext::ISensorTimestampTsc>(iBuffer->getMetadata());
+      if (iTscTimestamp) {
+        int64_t frameAgeNs = static_cast<int64_t>(timingRefPoint) - static_cast<int64_t>(iTscTimestamp->getSensorSofTimestampTsc());
+
+        // If the frame is older than 2x the capture interval, then we will try fast-forwarding through an extra buffer.
+        if (frameAgeNs > static_cast<int64_t>(m_targetCaptureIntervalNs * 2)) {
+#if 0
+          printf("ArgusCamera::readFrame(): will try acquiring extra buffer from stream %zu due to frame-age %ldns out-of-range vs. capture interval %luns\n",
+            cameraIdx, frameAgeNs, m_targetCaptureIntervalNs);
+#endif
+          // Mark this session as having multiple capture-completion events to make the fast-forward logic below fire.
+          captureCompletedEventsPerSession[sessionIdx] = 2;
+
+          // Reset the cooldown frame counter.
+          timingAdvanceCooldown = 100;
+        }
+      }
+    }
+
+    for (uint32_t evIdx = 1; evIdx < captureCompletedEventsPerSession[sessionIdx]; ++evIdx) {
       // Log disabled for being too spammy.
       // printf("ArgusCamera::readFrame(): will try acquiring extra buffer %u/%u from stream %zu\n", evIdx, captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)], cameraIdx);
       Argus::Buffer* ffBuffer = iBufferOutputStream->acquireBuffer(/*timeout=*/ 0, &status);
