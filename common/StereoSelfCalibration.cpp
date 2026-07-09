@@ -2,6 +2,7 @@
 #include "common/AsyncGpuDumpRing.h"
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
+#include "common/FxThreading.h"
 #include "common/ICameraProvider.h"
 #include "common/IMUService.h"
 #include "rhi/cuda/CudaUtil.h"
@@ -19,6 +20,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
+#include <nvtx3/nvToolsExt.h>
 
 // Snapshots are sporadic (periodic solves, or manual debug captures), so the
 // ring only needs enough slots to cover every stereo view being captured in
@@ -285,8 +287,11 @@ bool StereoSelfCalibration::captureView(size_t viewIdx) {
 
   const bool dumpPNGs = m_debugDumpPNGs;
   m_dumpRing->dispatch(slot, [this, metadata, dumpPNGs](AsyncGpuDumpRing::Slot* writeSlot) {
+    ScopedSchedIdle schedIdle; // Demote to SCHED_IDLE while running
+    nvtxRangePushA("StereoSelfCalibration::processSnapshot");
     processSnapshot(metadata, static_cast<const uint8_t*>(writeSlot->hostPtr), dumpPNGs);
     m_debugCompletedSnapshots += 1;
+    nvtxRangePop();
   });
   return true;
 }

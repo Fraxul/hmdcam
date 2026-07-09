@@ -20,6 +20,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 
+#include <opencv2/core/utility.hpp>
+
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
 #include "rhi/cuda/RHICUDA.h"
@@ -268,6 +270,10 @@ struct DisparityScaleUniformBlock {
 int main(int argc, char* argv[]) {
 
   nvtxInitialize(nullptr);
+
+  // Limit OpenCV to single-threaded mode.
+  // We don't want CPU-expensive background tasks to starve the main thread.
+  cv::setNumThreads(1);
 
 // Ignore warning diagnostics for flags that may go unused due to compile-time options
 #pragma clang diagnostic push

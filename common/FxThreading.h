@@ -2,6 +2,31 @@
 #include <boost/function.hpp>
 #include <boost/move/move.hpp>
 #include <boost/thread/future.hpp> // packaged_task
+#include <pthread.h>
+
+// RAII utility for demoting the current thread to SCHED_IDLE.
+class ScopedSchedIdle {
+public:
+  ScopedSchedIdle() :
+    m_thread(pthread_self()) {
+
+    pthread_getschedparam(m_thread, &m_prevPolicy, &m_prevParam);
+    sched_param idle{};
+    idle.sched_priority = 0;
+    m_active = pthread_setschedparam(m_thread, SCHED_IDLE, &idle) == 0;
+  }
+
+  ~ScopedSchedIdle() {
+    if (m_active)
+      pthread_setschedparam(m_thread, m_prevPolicy, &m_prevParam);
+  }
+
+private:
+  pthread_t m_thread;
+  sched_param m_prevParam{};
+  int m_prevPolicy = SCHED_OTHER;
+  bool m_active = false;
+};
 
 namespace FxThreading {
 namespace detail {
