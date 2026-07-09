@@ -130,6 +130,22 @@ public:
     // against this to produce the per-row buffer contents.
     cv::Mat rsIRBase[2];
 
+    // ----- Online stereo self-calibration correction -----
+    //
+    // Small rotation deltaR correcting drift of the pair's relative camera
+    // rotation, expressed in the right camera's frame. Rectification row
+    // alignment is restored -- with R1/P1/P2/Q all unchanged -- by folding it
+    // into the right eye's ray matrix only: iR2' = deltaR * iR2, composed by
+    // processFrame() as R_y * deltaR * iR2. The left eye is the rectification
+    // reference and is never corrected.
+    //
+    // stereoCorrectionActive is what processFrame() folds into the maps this
+    // frame; it is slerped toward stereoCorrectionTarget with a per-frame
+    // angular step capped so the induced right-eye image motion stays
+    // sub-visible. Runtime state, not serialized.
+    glm::quat stereoCorrectionActive = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    glm::quat stereoCorrectionTarget = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+
     bool hasStereoCalibration() const { return (!(stereoRotation.empty() || stereoTranslation.empty())); }
     bool hasStereoRectificationParameters() const {
       return (!(

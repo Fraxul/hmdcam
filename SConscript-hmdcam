@@ -40,6 +40,7 @@ tegraEnv.Append(
     'cuda', 'cudart',
     'nppc', 'nppidei', 'nppitc', 'nppif',
     'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_objdetect',
+    'opencv_video',  # calcOpticalFlowPyrLK for online self-calibration feature matching
     'socketcan',
     'shaderc_combined',  # GLSL → SPIR-V for the Vulkan RHI backend; bundles glslang + SPIRV-Tools
   ]

@@ -65,6 +65,40 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
     if (!v.isStereo) continue;
     if (v.rsParamsHost == nullptr) continue; // No calibration yet.
 
+    // ----- Online-calibration correction blend -----
+    // Advance stereoCorrectionActive toward stereoCorrectionTarget, capping the
+    // per-frame angular step so the induced right-eye image motion stays below
+    // kMaxCorrectionStepPixels (pixel shift ~= angle * focalLength for small angles).
+    {
+      constexpr float kMaxCorrectionStepPixels = 0.05f;
+
+      glm::quat delta = glm::inverse(v.stereoCorrectionActive) * v.stereoCorrectionTarget;
+      if (delta.w < 0.0f) delta = -delta; // shortest arc
+      const float deltaAngle = 2.0f * std::atan2(glm::length(glm::vec3(delta.x, delta.y, delta.z)), delta.w);
+      if (deltaAngle > 0.0f) {
+        const float focalLengthPixels = std::max(static_cast<float>(v.stereoProjection[1].at<double>(0, 0)), 1.0f);
+        const float maxStepRadians = kMaxCorrectionStepPixels / focalLengthPixels;
+        if (deltaAngle <= maxStepRadians)
+          v.stereoCorrectionActive = v.stereoCorrectionTarget;
+        else
+          v.stereoCorrectionActive = glm::normalize(glm::slerp(v.stereoCorrectionActive, v.stereoCorrectionTarget, maxStepRadians / deltaAngle));
+      }
+    }
+
+    // Row-major 3x3 of the active correction, premultiplied against the right
+    // eye's iR below. glm::mat3 is column-major, so transpose on extraction.
+    const float correctionAngle = 2.0f * std::atan2(glm::length(glm::vec3(v.stereoCorrectionActive.x, v.stereoCorrectionActive.y, v.stereoCorrectionActive.z)), std::abs(v.stereoCorrectionActive.w));
+    const bool hasCorrection = (correctionAngle > 1.0e-6f); // ~0.2 arcsec; well below visible or SGM-relevant
+    float correction[9];
+    if (hasCorrection) {
+      const glm::mat3 correctionMat = glm::mat3_cast(v.stereoCorrectionActive);
+      for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+          correction[r * 3 + c] = correctionMat[c][r];
+        }
+      }
+    }
+
     for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
       float* eyeBase = v.rsPerRowIRHost + (eyeIdx * m_distortionMapHeight * 9);
       const cv::Mat& iRMat = v.rsIRBase[eyeIdx];
@@ -76,6 +110,21 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
         for (int c = 0; c < 3; ++c) {
           iR[r * 3 + c] = static_cast<float>(iRMat.at<double>(r, c));
         }
+      }
+
+      // Fold the online-calibration correction into the right eye's ray matrix:
+      // iR2' = deltaR * iR2 (see stereoCorrection* in CameraSystem.h).
+      if (hasCorrection && eyeIdx == 1) {
+        float corrected[9];
+        for (int r = 0; r < 3; ++r) {
+          for (int c = 0; c < 3; ++c) {
+            corrected[r * 3 + c] =
+              (correction[(r * 3) + 0] * iR[(0 * 3) + c]) +
+              (correction[(r * 3) + 1] * iR[(1 * 3) + c]) +
+              (correction[(r * 3) + 2] * iR[(2 * 3) + c]);
+          }
+        }
+        memcpy(iR, corrected, sizeof(iR));
       }
 
       // Rolling-shutter correction needs valid IMU extrinsics and at least two

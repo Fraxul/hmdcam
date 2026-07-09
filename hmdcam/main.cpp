@@ -31,6 +31,7 @@
 #endif
 #include "common/CameraSystem.h"
 #include "common/DepthMapGenerator.h"
+#include "common/StereoSelfCalibration.h"
 #include "common/FxThreading.h"
 #include "common/IMUService.h"
 #include "common/ScrollingBuffer.h"
@@ -85,6 +86,7 @@ IArgusCamera* argusCamera;
 CameraSystem* cameraSystem;
 DebugServer* debugServer = nullptr;
 DepthMapGenerator* depthMapGenerator = nullptr;
+StereoSelfCalibration* stereoSelfCalibration = nullptr;
 IMUService* imuService = nullptr;
 CalibrationWriter* calibrationWriter = nullptr;
 #ifdef USE_EYETRACKING
@@ -520,6 +522,7 @@ int main(int argc, char* argv[]) {
   if (depthMapGenerator) {
     depthMapGenerator->initWithCameraSystem(cameraSystem);
     depthMapGenerator->loadSettings();
+    stereoSelfCalibration = new StereoSelfCalibration(cameraSystem, depthMapGenerator);
   }
 
 #ifdef USE_EYETRACKING
@@ -921,6 +924,12 @@ int main(int argc, char* argv[]) {
       if (debugEnableDepthMapGenerator && depthMapGenerator) {
         nvtxMarkA("DepthMapGenerator::processFrame()");
         depthMapGenerator->processFrame();
+
+        // Self-calibration reads the rectified luma and disparity the depth backend produces,
+        // so needs to run after DepthMapGenerator::processFrame().
+        // IMU frame is an optional quality signal for camera stability.
+        if (stereoSelfCalibration)
+          stereoSelfCalibration->processFrame(imuService ? imuService->currentIMUFrame() : nullptr);
       }
 
       // Calibration writer uses CUDA, so needs to happen after cameraSystem/depthMapGenerator but before the CUDA-RHI handoff
@@ -995,8 +1004,13 @@ int main(int argc, char* argv[]) {
           }
 
           if (ImGui::CollapsingHeader("Calibration")) {
-            if (calibrationWriter) {
+            if (calibrationWriter && ImGui::CollapsingHeader("Data Capture")) {
               calibrationWriter->renderIMGUI();
+              ImGui::Separator();
+            }
+
+            if (stereoSelfCalibration) {
+              stereoSelfCalibration->renderIMGUI();
               ImGui::Separator();
             }
 
@@ -1030,6 +1044,25 @@ int main(int argc, char* argv[]) {
                   v.viewTranslation = txMM / 1000.0f;
                 }
                 ImGui::DragFloat3("Rx", &v.viewRotation[0], /*speed=*/ fSpeed, /*min=*/ -180.0f, /*max=*/ 180.0f, speed == 1 ? "%.2fdeg" : "%.1fdeg");
+
+                if (v.isStereo) {
+                  // Online-calibration correction debug controls. Editing the target
+                  // blends the correction in at the rate-limited speed; Snap applies
+                  // it instantly for A/B comparison; Reset blends back to identity.
+                  glm::vec3 targetEuler = glm::degrees(glm::eulerAngles(v.stereoCorrectionTarget));
+                  if (ImGui::DragFloat3("Stereo Correction", &targetEuler[0], /*speed=*/ 0.1f * fSpeed, /*min=*/ -2.0f, /*max=*/ 2.0f, "%.3fdeg")) {
+                    v.stereoCorrectionTarget = glm::quat(glm::radians(targetEuler));
+                  }
+                  glm::vec3 activeEuler = glm::degrees(glm::eulerAngles(v.stereoCorrectionActive));
+                  ImGui::Text("Active correction: %.4f / %.4f / %.4f deg", activeEuler.x, activeEuler.y, activeEuler.z);
+                  if (ImGui::Button("Snap Correction")) {
+                    v.stereoCorrectionActive = v.stereoCorrectionTarget;
+                  }
+                  ImGui::SameLine();
+                  if (ImGui::Button("Reset Correction")) {
+                    v.stereoCorrectionTarget = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                  }
+                }
               }
 
               ImGui::PopID(); // viewIdx

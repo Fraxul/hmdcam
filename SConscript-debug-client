@@ -4,7 +4,11 @@ Import('librhi', 'libimgui')
 debugClientEnv = env.Clone()
 
 debugClientEnv.Append(
-  CPPPATH=['debug-client', '/usr/include/SDL2'],
+  CPPPATH=[
+    'debug-client',
+    '/usr/include/SDL2',
+    '/usr/include/eigen3',
+  ],
   LIBS=[
     'z',
     'dl',
@@ -14,9 +18,10 @@ debugClientEnv.Append(
     'epoxy',  # transitive: librhi still bundles the GL backend (gone in migration Phase 7)
     'cuda', 'cudart',
     'nppc', 'nppidei', 'nppicc', 'nppif',
-    'opencv_core', 'opencv_imgproc', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect', 'opencv_cudastereo',
+    'opencv_core', 'opencv_imgproc', 'opencv_imgcodecs', 'opencv_calib3d', 'opencv_aruco', 'opencv_objdetect', 'opencv_cudastereo',
+    'opencv_video',  # calcOpticalFlowPyrLK for online self-calibration feature matching
     'shaderc_combined',  # GLSL -> SPIR-V for the Vulkan RHI backend; bundles glslang + SPIRV-Tools
-  ]
+  ] + env['CERES_LIBS']
 )
 
 # ImGui's platform backend for SDL2 isn't part of libimgui (which has no SDL

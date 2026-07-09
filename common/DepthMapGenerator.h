@@ -57,6 +57,16 @@ public:
   RHISurface::ptr confidenceSurface(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_confidenceTexture : RHISurface::ptr(); }
   RHISurface::ptr debugResidualSurface(size_t viewIdx) const { return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_debugResidual : RHISurface::ptr(); }
 
+  // GpuMat access for online self-calibration snapshots (StereoSelfCalibration).
+  // Returned headers share the backend's device memory; empty until the backend
+  // has processed a frame for the view.
+  cv::cuda::GpuMat rectifiedLumaGpuMat(size_t viewIdx, size_t eyeIdx) const {
+    return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->m_rectifiedLuma[eyeIdx] : cv::cuda::GpuMat();
+  }
+  cv::cuda::GpuMat currentDisparityGpuMat(size_t viewIdx) const {
+    return (viewIdx < m_viewData.size()) ? m_viewData[viewIdx]->currentDisparityMat() : cv::cuda::GpuMat();
+  }
+
   // controls availability of leftGrayscale and rightGrayscale
   void setPopulateDebugTextures(bool value) { m_populateDebugTextures = value; }
 
