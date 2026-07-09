@@ -16,6 +16,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtx/euler_angles.hpp>
+#include <nvtx3/nvToolsExt.h>
 
 #include <cstdio>
 #include <cstring>
@@ -202,6 +203,7 @@ void FaceTrackingService::ProcessingState::internalUpdateStateOnCaptureOpen() {
 }
 
 void FaceTrackingService::ProcessingState::internalProcessOneCapture() {
+  nvtxRangePushA("Facetracking capture processing");
   PerfTimer perfTimer;
 
   // Extract crop region from the luma plane
@@ -276,6 +278,7 @@ void FaceTrackingService::ProcessingState::internalProcessOneCapture() {
   }
 
   m_lastFrameTotalProcessingTimeMs = perfTimer.totalElapsedTime();
+  nvtxRangePop();
 }
 
 const char* FaceTrackingService::ProcessingState::getDebugPerfStats() {

@@ -17,6 +17,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtx/euler_angles.hpp>
+#include <nvtx3/nvToolsExt.h>
 
 #include <cstdio>
 #include <cstring>
@@ -723,6 +724,7 @@ void EyeTrackingService::ProcessingState::internalUpdateStateOnCaptureOpen() {
 
 
 void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
+  nvtxRangePushA("Eyetracking capture processing");
   PerfTimer perfTimer;
 
   // Extract crop region from the luma plane
@@ -1105,6 +1107,7 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
   m_lastFrameDebugViewTimeMs = perfTimer.checkpoint();
 
   m_lastFrameTotalProcessingTimeMs = perfTimer.totalElapsedTime();
+  nvtxRangePop();
 }
 
 bool EyeTrackingService::processFrame() {
