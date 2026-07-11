@@ -3,6 +3,7 @@
 #include "common/FxRenderView.h"
 #include "common/DepthMapSHM.h"
 #include "common/SHMSegment.h"
+#include "common/adaptiveStripMesh.h"
 #include "common/depthMeshAdaptive.h"
 #include "common/fgsFilter.h"
 #include "rhi/RHISurface.h"
@@ -29,6 +30,13 @@ enum DepthMapGeneratorBackend {
   kDepthBackendDGPU,
   kDepthBackendDepthAI,
   kDepthBackendOFA,
+};
+
+// How the disparity surface is turned into renderable geometry each frame.
+enum DepthMapRenderMode : int32_t {
+  kDepthMapRenderModePoints, // static quad-per-texel mesh; vertex shader samples the disparity texture
+  kDepthMapRenderModeAdaptiveMesh, // variable-size quads from flatness pyramid (depthMeshAdaptive.cu)
+  kDepthMapRenderModeAdaptiveStrips, // point-path quads merged along rows (adaptiveStripMesh.cu)
 };
 
 // Returns the default backend for the current platform, if it can be determined.
@@ -219,6 +227,15 @@ protected:
     RHIBuffer::ptr m_adaptiveIndirectArgsBuffer; // 2x DrawElementsIndirectCommand: [stereo, mono]
     DepthMeshAdaptiveScratch m_adaptiveScratch;
 
+    // Adaptive-strip path: same shape as the adaptive-mesh path, but with prebaked
+    // local-space vertices (StripMeshVertex, 16 bytes) so the buffers are allocated lazily
+    // on first use -- see ensureStripMeshBuffers().
+    RHIBuffer::ptr m_stripVertexBuffer;
+    RHIBuffer::ptr m_stripIndexBuffer;
+    RHIBuffer::ptr m_stripIndirectArgsBuffer; // 2x RHIDrawIndexedIndirectCommand: [stereo, mono]
+    StripMeshScratch m_stripScratch;
+    void ensureStripMeshBuffers(uint32_t w, uint32_t h);
+
   private:
     ViewData(const ViewData&);
     ViewData& operator=(const ViewData&);
@@ -275,7 +292,7 @@ protected:
   int m_trimLeft = 8, m_trimTop = 8;
   int m_trimRight = 8, m_trimBottom = 8;
   float m_minDepthCutoff = 0.050f;
-  bool m_usePointRendering = false;
+  DepthMapRenderMode m_renderMode = kDepthMapRenderModeAdaptiveStrips;
   float m_pointScale = 1.0f;
 
   // When multiple AR views overlap, their independently-reconstructed surfaces can sit at
@@ -300,6 +317,20 @@ protected:
   // gap, hiding the crack from off-axis viewpoints. 1.0 disables overlap.
   float m_adaptiveCellOverlapMultiplier = 1.5f;
 
+  // Adaptive-strip path: max angular deviation between a merged quad's direction and the
+  // candidate extension before the quad is ended. One raw LSB of disparity noise projects
+  // to roughly 10-15 degrees of deviation at arm's length with our geometry, so useful
+  // values are much larger than the "small angle" intuition suggests.
+  float m_stripMergeAngleDegrees = 15.0f;
+
+  // Adaptive-strip path: max raw-disparity step between adjacent cells that still welds
+  // into the same strip; larger steps crack the strip like the point path would.
+  int m_stripDepthDiscontinuityThreshold = 40;
+
+  // Adaptive-strip path: internal-edge skip limit per merged quad (a quad spans at most
+  // this many + 1 cells).
+  int m_stripMaxSkippedEdges = 4;
+
   bool m_populateDebugTextures = false;
 
   bool m_debugUseFixedDisparity = false;
@@ -310,12 +341,17 @@ protected:
 #endif
 
   bool internalRenderSetup(size_t viewIdx, bool stereo, const FxRenderView& renderView0, const FxRenderView& renderView1);
+  // The strip path's buffers are allocated lazily by processFrame(), so a view that hasn't
+  // been built for strips yet renders through the (always-available) point path.
+  DepthMapRenderMode effectiveRenderMode(const ViewData*) const;
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipeline;
   RHIRenderPipeline::ptr m_disparityDepthMapAdaptivePipeline;
+  RHIRenderPipeline::ptr m_disparityDepthMapStripsPipeline;
   // DEPTH_BIAS variants, used to render the lowest-indexed view so it deterministically wins
   // close Z-fights against other overlapping views. See m_useViewZFightBias.
   RHIRenderPipeline::ptr m_disparityDepthMapPointsPipelineBiased;
   RHIRenderPipeline::ptr m_disparityDepthMapAdaptivePipelineBiased;
+  RHIRenderPipeline::ptr m_disparityDepthMapStripsPipelineBiased;
 
   // Profiling data
   CUevent m_finalizeDisparityStartEvent;
