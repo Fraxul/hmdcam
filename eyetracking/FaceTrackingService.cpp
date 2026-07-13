@@ -206,6 +206,7 @@ void FaceTrackingService::ProcessingState::internalProcessOneCapture() {
   nvtxRangePushA("Facetracking capture processing");
   PerfTimer perfTimer;
 
+  nvtxRangePushA("FT preprocess");
   // Extract crop region from the luma plane
   cv::Mat captureMat = cv::Mat(m_capture.lumaPlane(), m_captureCropRect);
   // cv::Mat captureMat = m_capture.lumaPlane();
@@ -225,8 +226,10 @@ void FaceTrackingService::ProcessingState::internalProcessOneCapture() {
       convertUnorm8ToSnormFp16(m_inputScaleMat.ptr<uint8_t>(row), inputTensor + (m_inputRowStrideElements * row), m_inputWidth);
     }
   }
+  nvtxRangePop();
 
   // Launch classification network.
+  nvtxRangePushA("FT inference");
   m_trackingModel->asyncStartInference();
 
   // Cache this flag since it may be written async on the main thread.
@@ -240,6 +243,7 @@ void FaceTrackingService::ProcessingState::internalProcessOneCapture() {
 
   // Wait for classification network to finish
   m_trackingModel->asyncFinishInference();
+  nvtxRangePop();
 
 
   if (m_ioIsInt8) {

@@ -727,6 +727,7 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
   nvtxRangePushA("Eyetracking capture processing");
   PerfTimer perfTimer;
 
+  nvtxRangePushA("ROI input");
   // Extract crop region from the luma plane
   cv::Mat captureMat = cv::Mat(m_capture.lumaPlane(), m_captureCropRect);
 
@@ -760,14 +761,18 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
     }
   }
 
+  nvtxRangePop();
   m_lastFramePreProcessingTimeMs = perfTimer.checkpoint();
 
   // Run ROI network
+  nvtxRangePushA("ET ROI");
   m_roiExec->runInference();
+  nvtxRangePop();
 
   m_lastFrameROITimeMs = perfTimer.checkpoint();
 
   // Process ROI network output into binary mask
+  nvtxRangePushA("ET ROI postprocessing");
   float roiOutput[2]; // 0...1 coordinate range
   float roiSampleThreshold;
 
@@ -879,9 +884,11 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
     convertUnorm8ToSnormFp16(segROIMat.ptr<uint8_t>(y, 0), m_segmentationExec->inputTensorPtr<_Float16>(0) + (y * m_service->m_segInputRowStrideElements), m_service->m_segInputWidth);
   }
 
+  nvtxRangePop();
   m_lastFrameROIToSegmentationTimeMs = perfTimer.checkpoint();
 
   // Launch segmentation network.
+  nvtxRangePushA("ET Segmentation");
   m_segmentationExec->asyncStartInference();
 
 
@@ -898,10 +905,11 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
 
   // Wait for segmentation network to finish
   m_segmentationExec->asyncFinishInference();
-
+  nvtxRangePop();
   m_lastFrameSegmentationTimeMs = perfTimer.checkpoint();
 
   // Postprocess network results: run threshold operation to create binary mask
+  nvtxRangePushA("ET postprocess");
   for (size_t y = 0; y < m_service->m_segInputHeight; ++y) {
     fp16ThresholdToU8Mask(m_segmentationExec->outputTensorPtr<_Float16>(0) + (y * m_service->m_segOutputRowPitchElements), 0.5f16, m_pupilMask.ptr<uint8_t>(y), m_service->m_segInputWidth);
   }
@@ -912,6 +920,7 @@ void EyeTrackingService::ProcessingState::internalProcessOneCapture() {
   // Eye-fitter postprocessing
 
   postprocessOneEye();
+  nvtxRangePop();
 
   m_lastFramePostProcessingTimeMs = perfTimer.checkpoint();
   if (m_lastFramePostProcessingTimeMs > 0.25f) {
