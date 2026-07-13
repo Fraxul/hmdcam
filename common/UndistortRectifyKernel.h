@@ -4,8 +4,8 @@
 #include <cuda_runtime.h>
 
 // Static per-camera params for the undistort/rectify map generator. Mirrors the
-// fixed inputs of cv::initUndistortRectifyMap. Designed to live in pinned host
-// memory; in production these only need updating when calibration changes.
+// fixed inputs of cv::initUndistortRectifyMap. Passed by value to land in the
+// constant bank, since access is globally uniform.
 struct UndistortRectifyParams {
   // Source camera intrinsics (the camera that captured the input image), 3x3
   // row-major. The kernel reads only fx=[0,0], fy=[1,1], cx=[0,2], cy=[1,2];
@@ -52,7 +52,7 @@ extern "C"
 #endif
   void
   launchUndistortRectifyKernel(
-    const UndistortRectifyParams* paramsDevicePtr,
+    const UndistortRectifyParams& params,
     const float* invRectifiedProjectionPerRowDevicePtr,
     cudaSurfaceObject_t outDistortionMap,
     int distortionMapWidth, int distortionMapHeight,

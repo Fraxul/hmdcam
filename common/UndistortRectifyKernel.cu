@@ -6,24 +6,29 @@ namespace {
 inline int divUp(int n, int d) { return (n + d - 1) / d; }
 
 __global__ void undistortRectifyKernel(
-  const UndistortRectifyParams* __restrict__ params,
+  const UndistortRectifyParams params,
   const float* __restrict__ invRectifiedProjectionPerRow,
   cudaSurfaceObject_t outMap) {
 
+  // params is passed by value: kernel value-arguments live in the constant bank
+  // (c[0][...]), read via the uniform datapath, so these accesses do NOT consume
+  // L1TEX load-issue slots the way a device-pointer dereference (LDG) would. All
+  // threads read identical values, which is exactly what the constant broadcast
+  // path is built for.
   const uint32_t x = static_cast<uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
   const uint32_t y = static_cast<uint32_t>(blockIdx.y * blockDim.y + threadIdx.y);
-  if (x >= params->distortionMapWidth || y >= params->distortionMapHeight) return;
+  if (x >= params.distortionMapWidth || y >= params.distortionMapHeight) return;
 
-  const float fx = params->cameraMatrix[0];
-  const float fy = params->cameraMatrix[4];
-  const float cx = params->cameraMatrix[2];
-  const float cy = params->cameraMatrix[5];
+  const float fx = params.cameraMatrix[0];
+  const float fy = params.cameraMatrix[4];
+  const float cx = params.cameraMatrix[2];
+  const float cy = params.cameraMatrix[5];
 
-  const float k1 = params->distCoeffs[0];
-  const float k2 = params->distCoeffs[1];
-  const float p1 = params->distCoeffs[2];
-  const float p2 = params->distCoeffs[3];
-  const float k3 = params->distCoeffs[4];
+  const float k1 = params.distCoeffs[0];
+  const float k2 = params.distCoeffs[1];
+  const float p1 = params.distCoeffs[2];
+  const float p2 = params.distCoeffs[3];
+  const float k3 = params.distCoeffs[4];
 
   // Per-row iR: all threads in a warp share y (block is 32x8, warp packs along
   // threadIdx.x first), so the 9 loads broadcast through L1 as a single read.
@@ -33,8 +38,8 @@ __global__ void undistortRectifyKernel(
   // exposure time, via inv(P * R) pre-folded with the per-row rolling-shutter
   // correction.
   // First requires a scale-bias coordinate-system conversion from distortion map pixels to stream pixels.
-  const float u = (static_cast<float>(x) * params->distortionMapToStreamScale[0]) + params->distortionMapToStreamBias[0];
-  const float v = (static_cast<float>(y) * params->distortionMapToStreamScale[1]) + params->distortionMapToStreamBias[1];
+  const float u = (static_cast<float>(x) * params.distortionMapToStreamScale[0]) + params.distortionMapToStreamBias[0];
+  const float v = (static_cast<float>(y) * params.distortionMapToStreamScale[1]) + params.distortionMapToStreamBias[1];
   const float xR = u * iR[0] + v * iR[1] + iR[2];
   const float yR = u * iR[3] + v * iR[4] + iR[5];
   const float wR = u * iR[6] + v * iR[7] + iR[8];
@@ -56,8 +61,8 @@ __global__ void undistortRectifyKernel(
   const float uSrc = fx * xd + cx;
   const float vSrc = fy * yd + cy;
 
-  const float fwidth = static_cast<float>(params->streamWidth);
-  const float fheight = static_cast<float>(params->streamHeight);
+  const float fwidth = static_cast<float>(params.streamWidth);
+  const float fheight = static_cast<float>(params.streamHeight);
   constexpr float texelBias = 0.5f; // Half-texel bias to align sampling; matches cv::remap.
   const float nx = __saturatef(__fdividef(uSrc + texelBias, fwidth));
   const float ny = __saturatef(__fdividef(vSrc + texelBias, fheight));
@@ -75,7 +80,7 @@ __global__ void undistortRectifyKernel(
 } // anonymous namespace
 
 extern "C" void launchUndistortRectifyKernel(
-  const UndistortRectifyParams* paramsDevicePtr,
+  const UndistortRectifyParams& params,
   const float* invRectifiedProjectionPerRowDevicePtr,
   cudaSurfaceObject_t outDistortionMap,
   int distortionMapWidth, int distortionMapHeight,
@@ -83,7 +88,7 @@ extern "C" void launchUndistortRectifyKernel(
   const dim3 block(32, 8);
   const dim3 grid(divUp(distortionMapWidth, block.x), divUp(distortionMapHeight, block.y));
   undistortRectifyKernel<<<grid, block, 0, stream>>>(
-    paramsDevicePtr,
+    params,
     invRectifiedProjectionPerRowDevicePtr,
     outDistortionMap);
 }

@@ -63,7 +63,7 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
   for (size_t viewIdx = 0; viewIdx < m_views.size(); ++viewIdx) {
     View& v = m_views[viewIdx];
     if (!v.isStereo) continue;
-    if (v.rsParamsHost == nullptr) continue; // No calibration yet.
+    if (v.rsPerRowIRHost == nullptr) continue; // No calibration yet.
 
     // ----- Online-calibration correction blend -----
     // Advance stereoCorrectionActive toward stereoCorrectionTarget, capping the
@@ -191,7 +191,7 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
       // Reference orientation = frame-center readout line. The center is flip-invariant,
       // and this matches the frame-center convention the camera-IMU calibrator was fit
       // under (RollingShutterTiming::frameCenterTime / handoff doc section 3).
-      const UndistortRectifyParams& p = v.rsParamsHost[eyeIdx];
+      const UndistortRectifyParams& p = v.rsParams[eyeIdx];
       const float maxStreamRow = static_cast<float>(p.streamHeight - 1);
       const glm::vec3 thetaReference = interpolateTheta(maxStreamRow * 0.5f);
 
@@ -227,10 +227,9 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
     }
 
     for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-      const UndistortRectifyParams* paramsDev = reinterpret_cast<const UndistortRectifyParams*>(v.rsParamsDevice) + eyeIdx;
       const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * m_distortionMapHeight * 9);
       launchUndistortRectifyKernel(
-        paramsDev, perRowDev,
+        v.rsParams[eyeIdx], perRowDev,
         v.stereoDistortionCudaSurface[eyeIdx],
         m_distortionMapWidth, m_distortionMapHeight,
         RHICUDA::defaultAsyncStream);
@@ -689,14 +688,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   // time this View has been configured. (updateViewStereoDistortionParameters
   // can be called multiple times across recalibration; we don't re-alloc since
   // image dimensions don't change.)
-  if (v.rsParamsHost == nullptr) {
-    CUdeviceptr paramsDev = 0;
-    CUDA_CHECK(cuMemHostAlloc(reinterpret_cast<void**>(&v.rsParamsHost),
-      2 * sizeof(UndistortRectifyParams),
-      CU_MEMHOSTALLOC_DEVICEMAP));
-    CUDA_CHECK(cuMemHostGetDevicePointer(&paramsDev, v.rsParamsHost, 0));
-    v.rsParamsDevice = static_cast<unsigned long long>(paramsDev);
-
+  if (v.rsPerRowIRHost == nullptr) {
     const size_t perRowBytes = 2 * static_cast<size_t>(m_distortionMapHeight) * 9 * sizeof(float);
     CUdeviceptr perRowDev = 0;
     CUDA_CHECK(cuMemHostAlloc(reinterpret_cast<void**>(&v.rsPerRowIRHost),
@@ -709,7 +701,7 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
   // Populate static per-eye params and stash iR for per-frame refold.
   for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
     Camera& c = cameraAtIndex(v.cameraIndices[eyeIdx]);
-    UndistortRectifyParams& p = v.rsParamsHost[eyeIdx];
+    UndistortRectifyParams& p = v.rsParams[eyeIdx];
 
     for (int r = 0; r < 3; ++r) {
       for (int col = 0; col < 3; ++col) {
@@ -749,10 +741,9 @@ void CameraSystem::updateViewStereoDistortionParameters(size_t viewIdx) {
     }
   }
   for (size_t eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
-    const UndistortRectifyParams* paramsDev = reinterpret_cast<const UndistortRectifyParams*>(v.rsParamsDevice) + eyeIdx;
     const float* perRowDev = reinterpret_cast<const float*>(v.rsPerRowIRDevice) + (eyeIdx * m_distortionMapHeight * 9);
     launchUndistortRectifyKernel(
-      paramsDev, perRowDev,
+      v.rsParams[eyeIdx], perRowDev,
       v.stereoDistortionCudaSurface[eyeIdx],
       m_distortionMapWidth, m_distortionMapHeight,
       RHICUDA::defaultAsyncStream);

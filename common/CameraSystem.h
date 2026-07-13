@@ -5,6 +5,7 @@
 #include "rhi/cuda/CudaUtil.h"
 #include "common/ICameraProvider.h"
 #include "common/glmCvInterop.h"
+#include "common/UndistortRectifyKernel.h"
 #include <opencv2/core.hpp>
 #include <opencv2/core/persistence.hpp>
 #include "glm/gtx/euler_angles.hpp"
@@ -15,7 +16,6 @@
 
 class CameraSystem;
 class DepthMapGenerator;
-struct UndistortRectifyParams;
 struct IMUFrame;
 
 class CameraSystem {
@@ -111,18 +111,14 @@ public:
     double fovX = 0, fovY = 0; // Values for the stereo projection, in degrees
 
     // ----- Per-frame distortion-map regeneration (rolling-shutter correction) -----
-    //
-    // Pinned, device-mapped buffers populated by updateViewStereoDistortionParameters
-    // and consumed every frame by processFrame to regenerate stereoDistortionMap[].
-    // Process-lifetime allocations; not freed on View destruction.
 
-    // UndistortRectifyParams[2] in pinned host memory (one entry per eye).
-    // Static after calibration; the kernel reads it zero-copy on Tegra.
-    UndistortRectifyParams* rsParamsHost = nullptr;
-    CUdeviceptr rsParamsDevice = 0;
+    // Static per-camera parameters generated from calibration data.
+    UndistortRectifyParams rsParams[2];
 
     // Per-row 3x3 rolling-shutter-folded iR matrices: float[2 * height * 9],
     // indexed as [eyeIdx * height * 9 + y * 9 + r * 3 + c]. Refilled each frame.
+    // Pinned buffer populated in updateViewStereoDistortionParameters.
+    // Process-lifetime allocations; not freed on View destruction.
     float* rsPerRowIRHost = nullptr;
     CUdeviceptr rsPerRowIRDevice = 0;
 

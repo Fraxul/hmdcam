@@ -115,10 +115,6 @@ int main(int argc, char** argv) {
     hostParams.distortionMapToStreamBias[0] = 0.5f * scale;
     hostParams.distortionMapToStreamBias[1] = 0.5f * scale;
 
-    UndistortRectifyParams* d_params = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_params, sizeof(UndistortRectifyParams)));
-    CUDA_CHECK(cudaMemcpy(d_params, &hostParams, sizeof(UndistortRectifyParams), cudaMemcpyHostToDevice));
-
     // ----- Per-row iR: identity 3x3 for every output row (== plain initUndistortRectifyMap). -----
     std::vector<float> hostPerRow(static_cast<size_t>(s.height) * 9, 0.0f);
     for (int y = 0; y < s.height; ++y) {
@@ -142,7 +138,7 @@ int main(int argc, char** argv) {
     CUDA_CHECK(cudaCreateSurfaceObject(&outSurface, &resDesc));
 
     auto launch = [&]() {
-      launchUndistortRectifyKernel(d_params, d_perRow, outSurface, s.width, s.height, stream);
+      launchUndistortRectifyKernel(hostParams, d_perRow, outSurface, s.width, s.height, stream);
     };
 
     // ----- Warm-up (excluded). -----
@@ -176,7 +172,6 @@ int main(int argc, char** argv) {
     CUDA_CHECK(cudaEventDestroy(stopEvent));
     CUDA_CHECK(cudaDestroySurfaceObject(outSurface));
     CUDA_CHECK(cudaFreeArray(outArray));
-    CUDA_CHECK(cudaFree(d_params));
     CUDA_CHECK(cudaFree(d_perRow));
   }
 
