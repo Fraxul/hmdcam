@@ -1,0 +1,81 @@
+# Standalone SConstruct for CUDA micro-benchmarks.
+# Kept separate from the main repository build system for faster iteration.
+
+import os
+
+repo = os.path.abspath('..')
+
+# Reuse the repo's nvcc tool wrapper so .cu sources build with the project conventions.
+env = Environment(
+  tools=['clang', 'clangxx', 'link', 'cuda', 'ar'],
+  toolpath=[os.path.join(repo, 'scons-tools')],
+  CPPPATH=[
+    repo,
+    os.path.join(repo, 'glm'),
+    '/usr/local/cuda/include',
+    '/usr/local/include/opencv4',
+  ],
+  NVCCPATH=[
+    repo,
+    os.path.join(repo, 'glm'),
+    '/usr/local/include/opencv4',
+  ],
+  # -lineinfo (not -G) keeps device code optimized while giving NSight Compute source
+  # correlation. compute_87/sm_87 == Jetson Orin.
+  NVCCFLAGS=[
+    '--generate-code', 'arch=compute_87,code=sm_87',
+    '--expt-relaxed-constexpr',
+    '-std=c++17',
+    '-O3',
+    '-lineinfo',
+  ],
+  CPPDEFINES=['GLM_ENABLE_EXPERIMENTAL'],
+  CPPFLAGS=['-O2', '-g', '-Wall'],
+  CXXFLAGS=['-std=c++17'],
+  LINKFLAGS=['-g', '-fuse-ld=lld'],
+  LIBPATH=[
+    '/usr/lib/aarch64-linux-gnu/tegra',  # libcuda (driver)
+    '/usr/local/lib',                    # OpenCV
+    '/usr/local/cuda/lib64',             # cudart
+  ],
+  CUDA_SDK_PATH='/usr/local/cuda',
+)
+env['ENV']['TERM'] = os.environ.get('TERM', 'xterm')
+
+# Driver API (cuda) + OpenCV-CUDA. cudart is added by the cuda tool.
+# opencv_calib3d/imgproc are pulled in for cv::initUndistortRectifyMap.
+env.Append(LIBS=['cuda', 'opencv_core', 'opencv_cudev', 'opencv_calib3d', 'opencv_imgproc'])
+
+# Explicit object targets keep build products inside this tree even though two sources live
+# above it (SCons dislikes auto-placing objects for sources outside the top dir).
+
+# Common objects for all targets.
+commonObjects = [
+  env.Object('build/CudaUtil.o', os.path.join(repo, 'rhi/cuda/CudaUtil.cpp'))
+]
+
+# Build individual benchmark/validation apps.
+
+env.Program('build/benchAdaptiveDepthMesh', [
+  env.Object('build/benchAdaptiveDepthMesh.o', 'benchAdaptiveDepthMesh.cpp'),
+  env.Object('build/depthMeshAdaptive.o', os.path.join(repo, 'common/depthMeshAdaptive.cu')),
+] + commonObjects)
+
+
+env.Program('build/validateAdaptiveStripMesh', [
+  env.Object('build/validateAdaptiveStripMesh.o', 'validateAdaptiveStripMesh.cpp'),
+  env.Object('build/adaptiveStripMesh.o', os.path.join(repo, 'common/adaptiveStripMesh.cu')),
+] + commonObjects)
+
+
+env.Program('build/benchRemapArray', [
+  env.Object('build/benchRemapArray.o', 'benchRemapArray.cpp'),
+  env.Object('build/remapArray.o', os.path.join(repo, 'common/remapArray.cu')),
+] + commonObjects)
+
+
+env.Program('build/benchUndistortRectifyKernel', [
+  env.Object('build/benchUndistortRectifyKernel.o', 'benchUndistortRectifyKernel.cpp'),
+  env.Object('build/UndistortRectifyKernel.o', os.path.join(repo, 'common/UndistortRectifyKernel.cu')),
+] + commonObjects)
+
