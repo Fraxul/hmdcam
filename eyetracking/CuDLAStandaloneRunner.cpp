@@ -208,27 +208,22 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
     NVSCI_CHECK(NvSciBufObjGetCpuPtr(m_outputBufObj, &m_outputBufObjBuffer));
   }
 
-  // Create NvSci Sync objects
+  // Create NvSci Sync objects.
+  // NvSciSyncAttrKey_RequireDeterministicFences must NOT be requested here: it forces the
+  // reconciled primitive to a sysmem semaphore, which NvSciSyncFenceWait can only busy-poll
+  // from userspace (pegging a CPU core for the whole DLA task duration). Without it, a
+  // DLA-signaler/CPU-waiter list reconciles to a host1x syncpoint, whose CPU wait blocks in
+  // the kernel.
   {
     NvSciSyncAttrList signalerAttrList = nullptr;
     NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &signalerAttrList));
     CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t*>(signalerAttrList), CUDLA_NVSCISYNC_ATTR_SIGNAL));
-
-    // Require deterministic fence
-    bool rdfValue = true;
-    NvSciSyncAttrKeyValuePair kvp = {NvSciSyncAttrKey_RequireDeterministicFences, &rdfValue, sizeof(rdfValue)};
-    NVSCI_CHECK(NvSciSyncAttrListSetAttrs(signalerAttrList, &kvp, 1));
 
     NvSciSyncAttrList cudlaSignalerSyncAttrList = ReconcileNvSciSyncAttrLists(signalerAttrList, CreateNvSciSyncCpuWaiterAttrList(m_syncModule));
 
     NVSCI_CHECK(NvSciSyncObjAlloc(cudlaSignalerSyncAttrList, &m_syncSignalObj));
 
     NvSciSyncAttrListFree(cudlaSignalerSyncAttrList);
-
-    // Bind fence with syncobj with expected fence value after task completion
-    NVSCI_CHECK(NvSciSyncFenceUpdateFence(m_syncSignalObj, m_signalerID, m_signalerValue, &m_eofFence));
-    NVSCI_CHECK(NvSciSyncFenceExtractFence(&m_eofFence, &m_signalerID, &m_signalerValue));
-    NVSCI_CHECK(NvSciSyncFenceUpdateFence(m_syncSignalObj, m_signalerID, ++m_signalerValue, &m_eofFence));
   }
 
   {
@@ -236,22 +231,12 @@ void CuDLAStandaloneRunner::initWithModuleData(uint64_t deviceIdx, const uint8_t
     NVSCI_CHECK(NvSciSyncAttrListCreate(m_syncModule, &waiterAttrList));
     CUDLA_CHECK(cudlaGetNvSciSyncAttributes(reinterpret_cast<uint64_t*>(waiterAttrList), CUDLA_NVSCISYNC_ATTR_WAIT));
 
-    // Require deterministic fence
-    bool rdfValue = true;
-    NvSciSyncAttrKeyValuePair kvp = {NvSciSyncAttrKey_RequireDeterministicFences, &rdfValue, sizeof(rdfValue)};
-    NVSCI_CHECK(NvSciSyncAttrListSetAttrs(waiterAttrList, &kvp, 1));
-
     NvSciSyncAttrList cudlaWaiterSyncAttrList = ReconcileNvSciSyncAttrLists(waiterAttrList, CreateNvSciSyncCpuSignalerAttrList(m_syncModule));
 
     NVSCI_CHECK(NvSciSyncObjAlloc(cudlaWaiterSyncAttrList, &m_syncWaitObj));
     NVSCI_CHECK(NvSciSyncCpuWaitContextAlloc(m_syncModule, &m_cpuWaitCtx));
 
     NvSciSyncAttrListFree(cudlaWaiterSyncAttrList);
-
-    // Bind fence with syncobj with expected fence value after task completion
-    NVSCI_CHECK(NvSciSyncFenceUpdateFence(m_syncWaitObj, m_waiterID, m_waiterValue, &m_preFence));
-    NVSCI_CHECK(NvSciSyncFenceExtractFence(&m_preFence, &m_waiterID, &m_waiterValue));
-    NVSCI_CHECK(NvSciSyncFenceUpdateFence(m_syncWaitObj, m_waiterID, ++m_waiterValue, &m_preFence));
   }
 
   // Import NvSci Sync objects as external semaphores
@@ -309,10 +294,11 @@ void CuDLAStandaloneRunner::asyncStartInference() {
   // Flush input buffer
   NVSCI_CHECK(NvSciBufObjFlushCpuCacheRange(m_inputBufObj, 0, m_inputTensorDesc[0].size));
 
-  // Signal wait events
-  NvSciSyncObjSignal(m_syncWaitObj);
+  // Arm the prefence and satisfy it immediately -- the input data is already in place.
+  NVSCI_CHECK(NvSciSyncObjGenerateFence(m_syncWaitObj, &m_preFence));
+  NVSCI_CHECK(NvSciSyncObjSignal(m_syncWaitObj));
 
-  // Enqueue a cuDLA task.
+  // Enqueue a cuDLA task. cudlaSubmitTask fills in m_eofFence (via m_signalEvents).
   CUDLA_CHECK(cudlaSubmitTask(m_devHandle, &m_task, 1, NULL, 0));
 }
 
@@ -324,13 +310,9 @@ void CuDLAStandaloneRunner::asyncFinishInference() {
   // Flush output buffer
   NVSCI_CHECK(NvSciBufObjFlushCpuCacheRange(m_outputBufObj, 0, m_outputTensorDesc[0].size));
 
-  // Update prefence for next submission
-  NVSCI_CHECK(NvSciSyncFenceExtractFence(&m_preFence, &m_waiterID, &m_waiterValue));
-  NVSCI_CHECK(NvSciSyncFenceUpdateFence(m_syncWaitObj, m_waiterID, ++m_waiterValue, &m_preFence));
-
-  // Update eoffence for next submission
-  NVSCI_CHECK(NvSciSyncFenceExtractFence(&m_eofFence, &m_signalerID, &m_signalerValue));
-  NVSCI_CHECK(NvSciSyncFenceUpdateFence(m_syncSignalObj, m_signalerID, ++m_signalerValue, &m_eofFence));
+  // Fences are regenerated on each submission.
+  NvSciSyncFenceClear(&m_preFence);
+  NvSciSyncFenceClear(&m_eofFence);
 
   // Output is available in outputBufObjBuffer.
 }

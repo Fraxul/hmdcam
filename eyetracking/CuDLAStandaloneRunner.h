@@ -78,12 +78,6 @@ protected:
   CudlaFence m_preFences[1];
   CudlaFence m_eofFences[1];
 
-  // Deterministic fence support
-  uint64_t m_signalerID = 0;
-  uint64_t m_signalerValue = 0;
-  uint64_t m_waiterID = 0;
-  uint64_t m_waiterValue = 0;
-
   uint64_t* m_signalEventDevPtrs[1];
   uint64_t* m_inputBufObjRegPtr = nullptr;
   uint64_t* m_outputBufObjRegPtr = nullptr;
