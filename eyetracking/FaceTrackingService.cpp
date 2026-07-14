@@ -50,7 +50,7 @@ FaceTrackingService::~FaceTrackingService() {
 void FaceTrackingService::ProcessingState::loadTrackingEngine() {
   // Load engine
   {
-    mmfile fp("eyetracking/models/facetracking-dla-standalone.engine");
+    mmfile fp("models/facetracking-dla-standalone.engine");
     m_trackingModel.reset(new CuDLAStandaloneRunner(0, reinterpret_cast<const uint8_t*>(fp.data()), fp.size()));
   }
 
