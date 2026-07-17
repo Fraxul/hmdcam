@@ -116,15 +116,18 @@ static_assert(kWalkGroupWidth >= 6 && (32 % kWalkGroupWidth) == 0);
 // warp diverge in their decisions, so the FSM is branchless (predicated selects) to keep
 // the warp converged for the width-segmented shuffles.
 //
-// Quads go directly into the caller's index buffer: the group reserves slots from a
-// global cursor in kStripMeshEmitChunkQuads chunks (one atomic per chunk, prefetched a
-// chunk ahead so the atomic's latency stays off the serial chain) and pads its unfilled
-// reservations with degenerate quads, trading a few percent of dead indices for the scan
-// + compaction passes (and their staging buffer) that a dense, row-ordered buffer needed.
+// Quads go directly into the caller's index buffer. Each row owns a deterministic,
+// contiguous, x-ordered block [rowQuadBase, rowQuadBase + perRowStride): its used prefix
+// holds the merged quads in x order and the unused tail is padded with degenerate quads
+// (all six indices equal -> zero-area, culled). Welded neighbors land adjacent so the
+// rasterizer's post-transform vertex-reuse window hits them; placement needs no atomic and
+// no prefix sum -- rowQuadBase is a pure function of the row index.
 // History: a thread-per-row serial walk was 1.5 ms on 480x270 (8 warps total,
 // latency-bound); one warp per row with vec3 math from the VBO was ~430 us (issue-bound,
-// ~120 instructions/cell); this shape is ~250 us solo / ~200 us overlapped with pass 1,
-// and retired the ~100 us scan + compaction tail.
+// ~120 instructions/cell); this shape is ~240 us solo / ~200 us overlapped with pass 1. An
+// earlier variant packed quads through a shared atomic cursor to keep the buffer dense; the
+// per-row layout draws a few degenerate pad quads but restored vertex reuse for a net ~8%
+// faster render, and dropping the cursor bookkeeping sped the emit itself ~22%.
 template <int kGroupWidth>
 __device__ RowWalkResult walkRow(
   const uint16_t* disparityRow,
@@ -141,50 +144,24 @@ __device__ RowWalkResult walkRow(
   uint16_t discontinuityThresholdRaw,
   float cosSquaredThreshold,
   uint32_t maxSkippedEdges,
-  uint32_t* ibo,
-  uint32_t* reservedQuadCursor) {
+  uint32_t rowQuadBase, // first quad slot owned by this row (rowIndex * perRowStride)
+  uint32_t perRowStride, // quad slots reserved per row (== cellCount >= max quads/row)
+  uint32_t* ibo) {
 
   const uint32_t subLane = threadIdx.x & static_cast<uint32_t>(kGroupWidth - 1);
-  const uint32_t groupMask = (kGroupWidth == 32)
-    ? kFullWarpMask
-    : (((1u << kGroupWidth) - 1u) << ((threadIdx.x & 31u) & ~static_cast<uint32_t>(kGroupWidth - 1)));
 
   // Emit-lane constants: on emit, lane j of the group writes index slot j. The slot
   // pattern {lead, lead+1, trail, trail, lead+1, trail+1} (two triangles, same winding as
   // the point path's tristrip) is encoded as two bitmasks over j.
-  const bool laneWritesIndex = rowActive && (subLane < 6u);
   const uint32_t laneUsesLead = (0x13u >> subLane) & 1u; // slots 0, 1, 4
   const uint32_t laneAddsOne = (0x32u >> subLane) & 1u; // slots 1, 4, 5
 
   RowWalkResult result;
 
-  uint32_t quadSlot = 0; // next reserved slot in the ibo, valid while chunkRemaining > 0
-  uint32_t chunkRemaining = 0;
-
-  // Chunk prefetch: the group leader always holds one reserved-but-unconsumed chunk, so
-  // consuming a chunk never waits on the atomic's round trip (the refill atomic issued
-  // here isn't needed until this new chunk drains, a full chunk of emits later). The
-  // outstanding chunk is padded with degenerate quads at row end.
-  uint32_t nextChunkBaseLeader = 0;
-  if (rowActive && (subLane == 0))
-    nextChunkBaseLeader = atomicAdd(reservedQuadCursor, kStripMeshEmitChunkQuads);
-
-  // Consume the prefetched chunk and refill it, then write one quad's six indices. Used
-  // on the rare non-loop path (row close-out). All emit inputs are group-uniform, so the
-  // whole group enters together and the group-masked broadcast is safe even though other
-  // groups in the warp may not be emitting.
-  auto emitQuadIndices = [&](uint32_t emitIndex) {
-    if (chunkRemaining == 0) {
-      quadSlot = __shfl_sync(groupMask, nextChunkBaseLeader, 0, kGroupWidth);
-      chunkRemaining = kStripMeshEmitChunkQuads;
-      if (subLane == 0)
-        nextChunkBaseLeader = atomicAdd(reservedQuadCursor, kStripMeshEmitChunkQuads);
-    }
-    if (subLane < 6u)
-      ibo[(quadSlot * 6) + subLane] = emitIndex;
-    ++quadSlot;
-    --chunkRemaining;
-  };
+  // quadSlot is the next ibo slot this group writes. It is group-uniform (all lanes start
+  // from rowQuadBase and apply the same group-uniform increments), so the six emitting
+  // lanes stay in lockstep without a shuffle.
+  uint32_t quadSlot = rowQuadBase;
 
   int leadVertex = 0; // row-local index of the leading edge's top vert (its bottom pair is +1)
   float leadP = 0.0f, leadQ = 0.0f;
@@ -244,24 +221,13 @@ __device__ RowWalkResult walkRow(
       const uint32_t trailVertex = static_cast<uint32_t>(trailCell * 4 + 2);
       const uint32_t emitIndex = rowVertexBase + (laneUsesLead ? static_cast<uint32_t>(leadVertex) : trailVertex) + laneAddsOne;
 
-      // Chunk consumption is hoisted to a warp-collective block (entered when ANY group
-      // needs a chunk) so the hot emit path stays a predicated store: a per-group branch
-      // here would serialize the groups' emit bookkeeping nearly every iteration. The
-      // broadcast reads the prefetched chunk, so it never waits on an atomic; the refill
-      // atomic's result isn't needed until the new chunk drains.
+      // quadSlot walks straight through the row's own block, so the emit is a plain
+      // predicated store with no cursor bookkeeping on the serial chain. quadSlot stays
+      // group-uniform because doEmit is group-uniform (FSM state is replicated per group).
       const bool doEmit = emitNow && rowActive;
-      const bool needsChunk = doEmit && (chunkRemaining == 0);
-      if (__ballot_sync(kFullWarpMask, needsChunk)) {
-        const uint32_t chunkBase = __shfl_sync(kFullWarpMask, nextChunkBaseLeader, 0, kGroupWidth);
-        quadSlot = needsChunk ? chunkBase : quadSlot;
-        chunkRemaining = needsChunk ? kStripMeshEmitChunkQuads : chunkRemaining;
-        if (needsChunk && (subLane == 0))
-          nextChunkBaseLeader = atomicAdd(reservedQuadCursor, kStripMeshEmitChunkQuads);
-      }
       if (doEmit && (subLane < 6u))
         ibo[(quadSlot * 6) + subLane] = emitIndex;
       quadSlot += doEmit ? 1u : 0u;
-      chunkRemaining -= doEmit ? 1u : 0u;
       result.quadCount += emitNow;
 
       // A valid cell always reopens: crack re-leads at this cell's left verts (intentional
@@ -284,36 +250,32 @@ __device__ RowWalkResult walkRow(
   if (trailCell >= 0) {
     const uint32_t trailVertex = static_cast<uint32_t>(trailCell * 4 + 2);
     const uint32_t emitIndex = rowVertexBase + (laneUsesLead ? static_cast<uint32_t>(leadVertex) : trailVertex) + laneAddsOne;
-    if (rowActive)
-      emitQuadIndices(emitIndex);
+    if (rowActive) {
+      if (subLane < 6u)
+        ibo[(quadSlot * 6) + subLane] = emitIndex;
+      ++quadSlot;
+    }
     ++result.quadCount;
   }
 
-  // Pad the final partial chunk and the always-outstanding prefetched chunk with
-  // degenerate quads (all six indices equal -> zero-area triangles, culled) so the whole
-  // reserved index range is populated. Divergent across groups, but the only shuffle is
-  // group-collective.
-  while (chunkRemaining > 0) {
-    if (laneWritesIndex)
-      ibo[(quadSlot * 6) + subLane] = 0;
-    ++quadSlot;
-    --chunkRemaining;
-  }
+  // Pad the unwritten tail of this row's reserved block with degenerate quads (all six
+  // indices equal -> zero-area triangles, culled) so the whole drawn range is populated.
+  // quadSlot is group-uniform; divergent across groups but no shuffle is involved.
   if (rowActive) {
-    const uint32_t prefetchedBase = __shfl_sync(groupMask, nextChunkBaseLeader, 0, kGroupWidth);
-    if (subLane < 6u) {
-      for (uint32_t i = 0; i < kStripMeshEmitChunkQuads; ++i)
-        ibo[((prefetchedBase + i) * 6) + subLane] = 0;
+    const uint32_t rowQuadEnd = rowQuadBase + perRowStride;
+    while (quadSlot < rowQuadEnd) {
+      if (subLane < 6u)
+        ibo[(quadSlot * 6) + subLane] = 0;
+      ++quadSlot;
     }
   }
 
   return result;
 }
 
-// One row per kGroupWidth-lane group, 32/kGroupWidth rows per warp. Rows emit straight
-// into the caller's index buffer through the counters' reservation cursor; the whole mesh
-// renders as a single indirect draw whose index count the tail kernel stamps from that
-// cursor.
+// One row per kGroupWidth-lane group, 32/kGroupWidth rows per warp. Each row emits straight
+// into its own deterministic block of the caller's index buffer; the whole mesh renders as
+// a single indirect draw whose (deterministic) index count the tail kernel stamps.
 template <int kGroupWidth>
 __global__ void emitStripsKernel(
   PtrStepSz<const uint16_t> disparity,
@@ -345,6 +307,12 @@ __global__ void emitStripsKernel(
   const float rowMetric = fmaf(K, K, depthParameters.z * depthParameters.z);
   const float uRightBase = fmaf(static_cast<float>(xOffset) + pointScale, mogrify.x, depthParameters.x);
 
+  // Row-contiguous placement: each row owns [rowIndex * cellCount, +cellCount). A row emits
+  // at most cellCount quads (>= 1 cell per quad), so cellCount is a safe stride. Uses the
+  // real rowIndex (not the clamped y) so inactive tail groups never alias a valid row.
+  const uint32_t rowQuadBase = static_cast<uint32_t>(rowIndex) * static_cast<uint32_t>(cellCount);
+  const uint32_t perRowStride = static_cast<uint32_t>(cellCount);
+
   RowWalkResult walked = walkRow<kGroupWidth>(
     disparity.ptr(y), cellCount,
     static_cast<uint32_t>(y * cellCount * 4),
@@ -354,8 +322,8 @@ __global__ void emitStripsKernel(
     depthParameters.w * mogrify.x,
     disparityPrescale,
     maxValidRaw, discontinuityThresholdRaw, cosSquaredThreshold, maxSkippedEdges,
-    outIndices,
-    &counters->reservedQuadCount);
+    rowQuadBase, perRowStride,
+    outIndices);
 
   if (rowActive && (threadIdx.x & static_cast<uint32_t>(kGroupWidth - 1)) == 0) {
     if (walked.validCellCount) {
@@ -371,13 +339,16 @@ __global__ void emitStripsKernel(
 __global__ void stampIndirectArgsKernel(
   const StripMeshCounters* counters,
   RHIDrawIndexedIndirectCommand* outArgs,
-  StripMeshCounters* outHostCounters) {
-  const uint32_t indexCount = counters->reservedQuadCount * 6u;
+  StripMeshCounters* outHostCounters,
+  uint32_t reservedQuads) { // deterministic row-contiguous count == trimmedH * trimmedW (0 on empty trim)
+  const uint32_t indexCount = reservedQuads * 6u;
   // Slot 0: stereo (2 instances). Slot 1: mono (1 instance).
   outArgs[0] = {indexCount, 2u, 0u, 0, 0u};
   outArgs[1] = {indexCount, 1u, 0u, 0, 0u};
-  // Copy counters to host pinned memory for the stats view.
+  // Copy counters to host pinned memory for the stats view; the emit path never writes
+  // reservedQuadCount (placement is deterministic), so fill it here for the stats mirror.
   *outHostCounters = *counters;
+  outHostCounters->reservedQuadCount = reservedQuads;
 }
 
 } // namespace
@@ -452,9 +423,15 @@ void buildAdaptiveStripMesh(
     stampIndirectArgsKernel<<<1, 1, 0, stream>>>(
       reinterpret_cast<const StripMeshCounters*>(scratch.d_counters),
       reinterpret_cast<RHIDrawIndexedIndirectCommand*>(d_indirectArgs),
-      reinterpret_cast<StripMeshCounters*>(scratch.h_counters_devicePtr));
+      reinterpret_cast<StripMeshCounters*>(scratch.h_counters_devicePtr),
+      /*reservedQuads=*/ 0u);
     return;
   }
+
+  // Each row reserves a fixed cellCount-quad block, so the drawn index count is
+  // deterministic: trimmedH rows * trimmedW quad slots (each row's used prefix + its
+  // degenerate-padded tail).
+  const uint32_t reservedQuads = static_cast<uint32_t>(trimmedH) * static_cast<uint32_t>(trimmedW);
 
   // Trimmed view of the disparity mat. step is in bytes (rows may be padded), so the row
   // offset has to go through a byte pointer.
@@ -488,15 +465,9 @@ void buildAdaptiveStripMesh(
       trimmedDisparity,
       reinterpret_cast<uint32_t*>(d_ibo),
       reinterpret_cast<StripMeshCounters*>(scratch.d_counters),
-      disparityPrescale,
-      depthParameters,
-      mogrify,
-      pointScale,
+      disparityPrescale, depthParameters, mogrify, pointScale,
       /*xOffset=*/ trimLeft, /*yOffset=*/ trimTop,
-      maxValidRaw,
-      discontinuityThresholdRaw,
-      cosThreshold * cosThreshold,
-      maxSkippedEdges);
+      maxValidRaw, discontinuityThresholdRaw, cosThreshold * cosThreshold, maxSkippedEdges);
   }
 
   // Pass 1: populate the vertex buffer, one thread per output vertex (4 per post-trim cell).
@@ -517,12 +488,13 @@ void buildAdaptiveStripMesh(
   }
   CUDA_CHECK(cuEventRecord(scratch.vertexJoinEvent, scratch.vertexStream));
 
-  // Pass 3: stamp the indirect draw commands from the reservation cursor and mirror the
-  // counters back to the host.
+  // Pass 3: stamp the indirect draw commands with the deterministic index count and mirror
+  // the counters back to the host.
   stampIndirectArgsKernel<<<1, 1, 0, stream>>>(
     reinterpret_cast<const StripMeshCounters*>(scratch.d_counters),
     reinterpret_cast<RHIDrawIndexedIndirectCommand*>(d_indirectArgs),
-    reinterpret_cast<StripMeshCounters*>(scratch.h_counters_devicePtr));
+    reinterpret_cast<StripMeshCounters*>(scratch.h_counters_devicePtr),
+    reservedQuads);
 
   // Join: the caller's stream owns the completed VBO again from here on.
   CUDA_CHECK(cuStreamWaitEvent(stream, scratch.vertexJoinEvent, 0));

@@ -94,9 +94,11 @@ struct StripMeshScratch {
 // Outputs (caller-owned device pointers):
 //   d_vbo            - StripMeshVertex[W * H * 4], written densely over the trimmed grid.
 //   d_ibo            - uint32_t[stripMeshWorstCaseQuads(W, H) * 6]; indices reference
-//                      d_vbo with vertexOffset 0. Quads land in cursor-allocation order
-//                      (not row order), interspersed with degenerate row-padding quads;
-//                      rendering is order-independent so only the stats care.
+//                      d_vbo with vertexOffset 0. Each row emits into its own contiguous,
+//                      x-ordered block (rowIndex * trimmedW quads), used prefix first and
+//                      the unused tail padded with degenerate quads -- welded neighbors stay
+//                      adjacent for the rasterizer's post-transform vertex-reuse window. The
+//                      draw covers trimmedW * trimmedH quads (the padding is culled).
 //   d_indirectArgs   - RHIDrawIndexedIndirectCommand[2]; slot 0 has instanceCount=2
 //                      (stereo), slot 1 has instanceCount=1 (mono). Matches the
 //                      adaptive-mesh path so the draw code is shared.
