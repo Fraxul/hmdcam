@@ -500,12 +500,13 @@ bool DepthMapGenerator::internalRenderSetup(size_t viewIdx, bool stereo, const F
   if (vd->m_leftCameraStreamFailed && vd->m_rightCameraStreamFailed)
     return false; // Nothing to render for this view!
 
-  // The lowest-indexed view renders through the DEPTH_BIAS variant so it deterministically wins
-  // close Z-fights against other overlapping views (see m_useViewZFightBias). Only this view pays
-  // the cost of writing gl_FragDepth -- should be minimal, since it's the first thing rendered after
-  // a full color/depth clear.
-  // Subsequent views stay on the fixed-function depth path.
-  const bool useDepthBias = m_useViewZFightBias && (viewIdx == 0);
+  // View 0 must deterministically win close Z-fights against other overlapping views (see
+  // m_useViewZFightBias). We bias every OTHER view *away* from the camera so View 0 wins within
+  // the bias zone. The biased vertex-shader variant applies it as a gl_Position.z offset (w left
+  // untouched, so the surface doesn't move) instead of writing gl_FragDepth: on this driver a
+  // gl_FragDepth write disables early-Z/Hi-Z regardless of conservative-depth hints, whereas
+  // rasterizer-computed depth keeps it. View 0 stays on the plain (non-biased) path.
+  const bool useDepthBias = m_useViewZFightBias && (viewIdx != 0);
 
   switch (effectiveRenderMode(vd)) {
     case kDepthMapRenderModePoints:

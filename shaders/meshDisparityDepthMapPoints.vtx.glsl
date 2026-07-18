@@ -14,9 +14,6 @@ float sampleDisparity(ivec2 mipCoords) {
 
 layout(location = 0) out V2F {
   vec2 texCoord;
-#if DEPTH_BIAS
-  vec2 biasedClipPosZW; // clip-space position translated toward the camera in eye space
-#endif
 } v2f;
 
 void main()
@@ -56,10 +53,14 @@ void main()
   }
 
 #if DEPTH_BIAS
-  // Translate toward the camera by viewZFightBiasMeters of eye-space Z and re-project:
-  // clip' = clip + dZ * Proj[:,2]. Biases only the depth buffer (see fragment shader); the
-  // collapsed/invalid branches above set gl_Position = 0, so the degenerate bias is harmless.
-  v2f.biasedClipPosZW = (gl_Position + viewZFightBiasMeters * projectionColumn2[viewport]).zw;
+  // Z-fight bias: push this vertex away from the camera by viewZFightBiasMeters of eye-space Z,
+  // then fold the resulting depth change into gl_Position.z ALONE -- rescaled so gl_Position.z /
+  // gl_Position.w equals the biased surface's NDC depth while w (hence screen x/y) is untouched.
+  // No gl_FragDepth write, so early-Z/Hi-Z stays enabled. The collapsed/invalid branches above
+  // set gl_Position = 0; biasedClip.w = viewZFightBiasMeters there, so the degenerate vertex stays
+  // finite (and is culled anyway).
+  vec4 biasedClip = gl_Position - viewZFightBiasMeters * projectionColumn2[viewport];
+  gl_Position.z = biasedClip.z * gl_Position.w / biasedClip.w;
 #endif
 
   v2f.texCoord = cameraSampleCoordinates;

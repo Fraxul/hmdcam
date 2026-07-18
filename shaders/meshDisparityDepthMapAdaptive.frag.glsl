@@ -1,16 +1,9 @@
 #version 310 es
 
-#if DEPTH_BIAS
-#extension GL_EXT_conservative_depth : require // enables layout(depth_greater) on gl_FragDepth
-#endif
-
 #include "MeshDisparityDepthMapUniformBlock.h"
 
 layout(location = 0) in V2F {
   vec2 texCoord;
-#if DEPTH_BIAS
-  vec4 biasedClipPos;
-#endif
 } v2f;
 uniform sampler2D imageTex;
 uniform sampler2D distortionMap;
@@ -59,13 +52,6 @@ float debugCrackLineCoverage(uint flags, vec2 cellUV) {
 }
 #endif
 
-#if DEPTH_BIAS
-// Conservative depth: the bias only ever pulls a fragment toward the camera, which under reverse-Z
-// can only *increase* the written depth above gl_FragCoord.z. Declaring depth_greater lets the GPU
-// keep hierarchical-Z rejection despite the gl_FragDepth write.
-layout(depth_greater) out highp float gl_FragDepth;
-#endif
-
 void main() {
   // IMU depth timewarp: reproject the rectified sample coordinate by the inter-frame
   // homography before the distortion lookup, so the stale geometry samples the fresh color
@@ -84,20 +70,5 @@ void main() {
     float crack = debugCrackLineCoverage(v_debugLevelFlags, v_cellUV);
     outColor = vec4(mix(levelColor, vec3(0.0, 1.0, 1.0), crack), 1.0);
   }
-#endif
-
-#if DEPTH_BIAS
-  // Vulkan reverse-Z: window depth = clip.z / clip.w (NDC z already in [0,1]). Dividing the
-  // perspective-correctly-interpolated clip z and w reproduces the exact screen-linear depth of
-  // the biased (still planar) surface, which is what the rasterizer would emit for it.
-  //
-  // Guard the divide: once the eye-space bias pushes this surface to within viewZFightBiasMeters
-  // of the camera, biasedClipPos.w crosses zero and z/w stops being a depth in [0,1] -- it flips
-  // sign and, naively clamped, lands on the FAR plane (0.0) so the fragment fails the depth test
-  // and vanishes. Pin to the near plane (1.0) whenever the biased point reaches or crosses it.
-  // Both branches yield >= gl_FragCoord.z, so the depth_greater promise above still holds.
-  gl_FragDepth = (v2f.biasedClipPos.w > 0.0)
-      ? min(v2f.biasedClipPos.z / v2f.biasedClipPos.w, 1.0)
-      : 1.0;
 #endif
 }

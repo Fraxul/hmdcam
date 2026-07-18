@@ -13,8 +13,8 @@ layout(location = 1) in float disparityRawIn;  // raw disparity sampled at this 
 layout(location = 2) in uint debugLevelFlags;  // bits 0-3 level, 4-7 edge snaps, 8-9 corner index
 // Inter-stage varyings MUST carry explicit, matching locations: each stage is
 // compiled in isolation and the linker pairs them by location, not name. The
-// V2F block below takes location 0 (and 1 under DEPTH_BIAS), so the loose
-// varyings start at 2. Keep these in sync with the fragment shader.
+// V2F block below takes location 0, so the loose varyings start at 2 (location 1
+// is left free). Keep these in sync with the fragment shader.
 layout(location = 2) flat out uint v_debugLevelFlags;
 layout(location = 3) out vec2 v_cellUV;  // (0,0)=TL .. (1,1)=BR, interpolated across the quad
 #endif
@@ -24,9 +24,6 @@ const float kGridScaleInv = 1.0 / 16.0;
 
 layout(location = 0) out V2F {
   vec2 texCoord;
-#if DEPTH_BIAS
-  vec4 biasedClipPos; // clip-space position translated toward the camera in eye space
-#endif
 } v2f;
 
 void main() {
@@ -43,10 +40,13 @@ void main() {
   gl_Position = modelViewProjection[viewport] * TransformToLocalSpace(vec4(textureCoordinates.xy, gridCoordinates.xy), disparity);
 
 #if DEPTH_BIAS
-  // Translate this vertex toward the camera by viewZFightBiasMeters of eye-space Z and re-project:
-  // clip' = Proj * (eye + dZ) = clip + dZ * Proj[:,2]. Carried to the fragment shader to bias only
-  // the depth buffer; gl_Position itself is untouched so the rendered surface does not move.
-  v2f.biasedClipPos = gl_Position + viewZFightBiasMeters * projectionColumn2[viewport];
+  // Z-fight bias: push this vertex away from the camera by viewZFightBiasMeters of eye-space Z,
+  // then fold the resulting depth change into gl_Position.z ALONE -- rescaled so gl_Position.z /
+  // gl_Position.w equals the biased surface's NDC depth while w (hence screen x/y) is untouched.
+  // The surface doesn't move, and depth still comes from the rasterizer (no gl_FragDepth write),
+  // so early-Z/Hi-Z stays enabled. Reproduces the exact metric bias the old fragment path did.
+  vec4 biasedClip = gl_Position - viewZFightBiasMeters * projectionColumn2[viewport];
+  gl_Position.z = biasedClip.z * gl_Position.w / biasedClip.w;
 #endif
 
   v2f.texCoord = textureCoordinates;

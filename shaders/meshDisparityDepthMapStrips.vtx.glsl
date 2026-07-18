@@ -14,9 +14,6 @@ uniform sampler2D distortionMap;
 
 layout(location = 0) out V2F {
   vec2 texCoord;
-#if DEPTH_BIAS
-  vec2 biasedClipPosZW; // clip-space position translated toward the camera in eye space
-#endif
 } v2f;
 
 void main()
@@ -42,8 +39,12 @@ void main()
   v2f.texCoord = textureLod(distortionMap, reproj.xy / reproj.z, 0.0).rg;
 
 #if DEPTH_BIAS
-  // Translate toward the camera by viewZFightBiasMeters of eye-space Z and re-project:
-  // clip' = clip + dZ * Proj[:,2]. Biases only the depth buffer (see fragment shader).
-  v2f.biasedClipPosZW = (gl_Position + viewZFightBiasMeters * projectionColumn2[viewport]).zw;
+  // Z-fight bias: push this vertex away from the camera by viewZFightBiasMeters of eye-space Z,
+  // then fold the resulting depth change into gl_Position.z ALONE -- rescaled so gl_Position.z /
+  // gl_Position.w equals the biased surface's NDC depth while w (hence screen x/y) is untouched.
+  // The surface doesn't move, and depth still comes from the rasterizer (no gl_FragDepth write),
+  // so early-Z/Hi-Z stays enabled. Reproduces the exact metric bias the old fragment path did.
+  vec4 biasedClip = gl_Position - viewZFightBiasMeters * projectionColumn2[viewport];
+  gl_Position.z = biasedClip.z * gl_Position.w / biasedClip.w;
 #endif
 }
