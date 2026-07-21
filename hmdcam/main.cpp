@@ -829,7 +829,7 @@ int main(int argc, char* argv[]) {
 
     // Main display loop
     while (!want_quit) {
-      nvtxMarkA("Display loop");
+      nvtxRangePushA("Display loop");
       FrameTimingData timingData;
 
       if (debugRenderTiming) {
@@ -893,8 +893,9 @@ int main(int argc, char* argv[]) {
       if (restartSkipFrameCounter <= 0) {
         argusCamera->setRepeatCapture(!debugNoRepeatingCapture);
 
-        nvtxMarkA("ArgusCamera::readFrame()");
+        nvtxRangePushA("ArgusCamera::readFrame()");
         argusCamera->readFrame();
+        nvtxRangePop();
       } else {
         restartSkipFrameCounter -= 1;
       }
@@ -928,8 +929,9 @@ int main(int argc, char* argv[]) {
 
       // TODO move this inside CameraSystem
       if (debugEnableDepthMapGenerator && depthMapGenerator) {
-        nvtxMarkA("DepthMapGenerator::processFrame()");
+        nvtxRangePushA("DepthMapGenerator::processFrame()");
         depthMapGenerator->processFrame();
+        nvtxRangePop();
 
         // Self-calibration reads the rectified luma and disparity the depth backend produces,
         // so needs to run after DepthMapGenerator::processFrame().
@@ -970,7 +972,7 @@ int main(int argc, char* argv[]) {
 
 
       if (drawUI) {
-        nvtxMarkA("ImGUI (full)");
+        nvtxRangePushA("ImGUI (full)");
         // GUI support
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y), 0, /*pivot=*/ ImVec2(0.5f, 1.0f)); // bottom-center aligned
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents, since we don't provide a way to resize the UI
@@ -1312,9 +1314,9 @@ int main(int argc, char* argv[]) {
         } else if ((settingsDirtyFrame != 0) && (frameCounter >= (settingsDirtyFrame + settingsAutosaveIntervalFrames))) {
           saveSettings();
         }
-
+        nvtxRangePop();
       } else if (drawStatusBar) {
-        nvtxMarkA("ImGUI (statusbar)");
+        nvtxRangePushA("ImGUI (statusbar)");
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, 0), 0, /*pivot=*/ ImVec2(0.5f, 0.0f)); // top-center aligned
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // always auto-size to contents
         ImGui::Begin("StatusBar", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
@@ -1365,13 +1367,14 @@ int main(int argc, char* argv[]) {
 
 
         ImGui::End();
+        nvtxRangePop();
       }
 
       // Handle gesture menus
       GestureMenuTick();
 
 
-      nvtxMarkA("ImGUI::Render()");
+      nvtxRangePushA("ImGUI::Render()");
       rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
       rhi()->beginRenderPass(guiRT, kLoadClear);
       ImGui::Render();
@@ -1412,11 +1415,12 @@ int main(int argc, char* argv[]) {
         frameInterval = {};
         presentToCaptureLatency = {};
       }
+      nvtxRangePop(); // ImGui::Render()
 
       rhi()->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
 
       // Note that our camera uses reversed depth projection -- we clear to 0 and use a "greater" depth-test.
-      nvtxMarkA("Camera rendering");
+      nvtxRangePushA("Eye RT rendering");
       if (debugRenderTiming)
         rhi()->beginTimerQuery(viewRenderQuery);
 
@@ -1439,12 +1443,6 @@ int main(int argc, char* argv[]) {
           continue;
 
         if (debugEnableDepthMapGenerator && depthMapGenerator && v.isStereo) {
-          {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "SPS view %zu", viewIdx);
-            nvtxMarkA(buf);
-          }
-
           // Single-pass stereo
           rhi()->setViewports(eyeViewports, 2);
           depthMapGenerator->renderDisparityDepthMapStereo(viewIdx, renderViews[0], renderViews[1]);
@@ -1455,12 +1453,6 @@ int main(int argc, char* argv[]) {
             for (int viewEyeIdx = 0; viewEyeIdx < (v.isStereo ? 2 : 1); ++viewEyeIdx) {
               if (argusCamera->isStreamFailed(v.cameraIndices[viewEyeIdx]))
                 continue; // Skip view rendering due to failed stream.
-
-              {
-                char buf[64];
-                snprintf(buf, sizeof(buf), "View %zu eye %u view-eye %u", viewIdx, eyeIdx, viewEyeIdx);
-                nvtxMarkA(buf);
-              }
 
               // coordsys right now: -X = left, -Z = into screen
               // (camera is at the origin)
@@ -1579,7 +1571,7 @@ int main(int argc, char* argv[]) {
 
       // UI overlay for stereo HMD view.
       {
-        nvtxMarkA("UI overlay");
+        nvtxRangePushA("UI overlay");
         rhi()->bindBlendState(standardAlphaOverBlendState);
         rhi()->bindDepthStencilState(disabledDepthStencilState);
         rhi()->bindRenderPipeline(uiLayerStereoPipeline);
@@ -1593,6 +1585,7 @@ int main(int argc, char* argv[]) {
 
         rhi()->loadUniformBlockImmediate(ksUILayerStereoUniformBlock, &ub, sizeof(ub));
         rhi()->drawModelSpaceUnitQuad();
+        nvtxRangePop();
       }
 
 #ifdef USE_EYETRACKING
@@ -1607,6 +1600,7 @@ int main(int argc, char* argv[]) {
 
 
       rhi()->endRenderPass(eyeRT);
+      nvtxRangePop(); // Eye RT rendering
 
       // Debug feedback rendering
       if (RenderDebugSubsystemEnabled()) {
@@ -1616,7 +1610,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (debugSurface) {
-          nvtxMarkA("Debug feedback");
+          nvtxRangePushA("Debug feedback");
           if (debugOverlay)
             debugOverlay->update();
 
@@ -1728,6 +1722,7 @@ int main(int argc, char* argv[]) {
 
           rhi()->endRenderPass(rt);
           renderSubmitDebugSurface(debugSurface);
+          nvtxRangePop(); // Debug feedback
         }
       }
 
@@ -1738,7 +1733,7 @@ int main(int argc, char* argv[]) {
       }
 
       timingData.submitTimeMs = deltaTimeMs(frameStartTimeNs, currentTimeNs());
-      nvtxMarkA("HMD frame");
+      nvtxRangePushA("HMD frame");
       if (debugRenderTiming)
         rhi()->beginTimerQuery(distortionRenderQuery);
 
@@ -1750,6 +1745,7 @@ int main(int argc, char* argv[]) {
       // "results requested while CB still open" assert.
       if (debugRenderTiming)
         rhi()->endTimerQuery(distortionRenderQuery);
+      nvtxRangePop(); // HMD frame
 
       rhi()->swapBuffers(windowRenderTarget);
 
@@ -1784,6 +1780,7 @@ int main(int argc, char* argv[]) {
       timingData.captureTimingAdjustmentMarker = argusCamera->didAdjustCaptureTimingThisFrame() ? 10.0f : 0.0;
 
       s_timingDataBuffer.push_back(timingData);
+      nvtxRangePop(); // Display loop
     } // Camera rendering loop
   }
 

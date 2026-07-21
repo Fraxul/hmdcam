@@ -1,4 +1,6 @@
 #include "rhi/cuda/RHICUDA.h"
+#include <nvtx3/nvToolsExt.h>
+#include <nvtx3/nvToolsExtCuda.h>
 #include <cstdio>
 
 namespace RHICUDA {
@@ -11,6 +13,8 @@ bool initialized = false;
 void initRHICUDA() {
   if (initialized)
     return; // Already done.
+
+  nvtxInitialize(/*reserved=*/ nullptr);
 
   cuInit(0);
 
@@ -28,6 +32,7 @@ void initRHICUDA() {
 
   // Create a default non-blocking stream.
   CUDA_CHECK(cuStreamCreate(&defaultAsyncStream, CU_STREAM_NON_BLOCKING));
+  nvtxNameCuStreamA(defaultAsyncStream, "RHICUDA::defaultAsyncStream");
 
   // Mark initialization done.
   initialized = true;

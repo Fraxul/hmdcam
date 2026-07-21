@@ -28,6 +28,7 @@
 #include <glm/gtc/packing.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <npp.h>
+#include <nvtx3/nvToolsExt.h>
 
 FxAtomicString ksDistortionMap("distortionMap");
 
@@ -880,6 +881,7 @@ void DepthMapGenerator::processFrame() {
 }
 
 void DepthMapGenerator::internalFinalizeDisparityTexture() {
+  nvtxRangePushA("DepthMapGenerator::internalFinalizeDisparityTexture");
 
   // Collect profiling data from previous frame
   cuEventElapsedTime(&m_finalizeDisparityTimeMs, m_finalizeDisparityStartEvent, m_finalizeDisparityFinishedEvent);
@@ -1082,6 +1084,7 @@ void DepthMapGenerator::internalFinalizeDisparityTexture() {
   }
 
   CUDA_CHECK(cuEventRecord(m_finalizeDisparityFinishedEvent, (CUstream) m_globalStream.cudaPtr()));
+  nvtxRangePop();
 }
 
 

@@ -14,6 +14,7 @@
 #include <EGLStream/EGLStream.h>
 #include <cudaEGL.h>
 #include <opencv2/cvconfig.h>
+#include <nvtx3/nvToolsExt.h>
 
 #ifdef USE_NVBUF_UTILS
 #include <nvbuf_utils.h>
@@ -466,12 +467,14 @@ bool ArgusCamera::readFrame() {
 
   // Service CaptureSession event queue and wait for capture completed event here
   // that should be able to smooth out some of the jitter without missing frames
+  nvtxRangePushA("CaptureSession waitForEvents");
   for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
     if (m_perSessionData[sessionIdx].m_sessionCaptureFailed)
       continue;
 
     Argus::interface_cast<Argus::IEventProvider>(m_perSessionData[sessionIdx].m_captureSession)->waitForEvents(m_perSessionData[sessionIdx].m_completionEventQueue, m_targetCaptureIntervalNs / 2);
   }
+  nvtxRangePop();
 
 #ifdef FRAME_WAIT_TIME_STATS
   uint64_t eventWaitEnd = currentTimeNs();
@@ -517,6 +520,14 @@ bool ArgusCamera::readFrame() {
         //if (iev->getEventType() == Argus::EVENT_TYPE_CAPTURE_STARTED)
       }
     }
+
+    for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
+      if (captureCompletedEventsPerSession[sessionIdx] > 1) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Stream %zu: captureCompleted ev count %u", sessionIdx, captureCompletedEventsPerSession[sessionIdx]);
+        nvtxMarkA(buf);
+      }
+    }
   } else {
     // Don't track timestamp deltas for single shot captures
     previousCaptureCompletionTimestamp = 0;
@@ -536,6 +547,7 @@ bool ArgusCamera::readFrame() {
     --timingAdvanceCooldown;
   }
 
+  nvtxRangePushA("Session acquireBuffer loop");
   bool captureOK = true;
   for (size_t cameraIdx = 0; cameraIdx < m_perSensorData.size(); ++cameraIdx) {
     SensorData& sensorData = m_perSensorData[cameraIdx];
@@ -599,6 +611,11 @@ bool ArgusCamera::readFrame() {
 
         // If the frame is older than 2x the capture interval, then we will try fast-forwarding through an extra buffer.
         if (frameAgeNs > static_cast<int64_t>(m_targetCaptureIntervalNs * 2)) {
+          {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "Stream %zu: buffer too old %ldus", cameraIdx, (frameAgeNs / 1000));
+            nvtxMarkA(buf);
+          }
 #if 0
           printf("ArgusCamera::readFrame(): will try acquiring extra buffer from stream %zu due to frame-age %ldns out-of-range vs. capture interval %luns\n",
             cameraIdx, frameAgeNs, m_targetCaptureIntervalNs);
@@ -617,6 +634,12 @@ bool ArgusCamera::readFrame() {
       // printf("ArgusCamera::readFrame(): will try acquiring extra buffer %u/%u from stream %zu\n", evIdx, captureCompletedEventsPerSession[sessionIndexForStream(cameraIdx)], cameraIdx);
       Argus::Buffer* ffBuffer = iBufferOutputStream->acquireBuffer(/*timeout=*/ 0, &status);
       if (ffBuffer) {
+        {
+          char buf[64];
+          snprintf(buf, sizeof(buf), "Stream %zu: extra buffer", cameraIdx);
+          nvtxMarkA(buf);
+        }
+
         // Got another buffer immediatey. Use this one and release the previous.
         iBufferOutputStream->releaseBuffer(buffer);
         buffer = ffBuffer;
@@ -669,6 +692,7 @@ bool ArgusCamera::readFrame() {
     timingData.frameAge[cameraIdx] = deltaTimeMs(m_frameMetadata[cameraIdx].sensorTimestamp, timingRefPoint);
     m_oldestSensorTimestamp = std::min<uint64_t>(m_oldestSensorTimestamp, m_frameMetadata[cameraIdx].sensorTimestamp);
   }
+  nvtxRangePop();
   m_sensorTimingData.push_back(timingData);
 
   // Compute session timestamp deltas vs. the oldest one encoutered this time.
