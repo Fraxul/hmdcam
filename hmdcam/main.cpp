@@ -291,6 +291,7 @@ int main(int argc, char* argv[]) {
   bool debugNoRepeatingCapture = false;
   bool debugPrintLatency = false;
   bool debugRenderTiming = false;
+  uint32_t debugTerminateAfterFrames = 0;
   std::string calibrationFilename;
   std::string tempSensorFilename = "/sys/devices/virtual/thermal/thermal_zone8/temp";
 
@@ -329,6 +330,17 @@ int main(int argc, char* argv[]) {
       debugPrintLatency = true;
     } else if (!strcmp(argv[i], "--debug-render-timing")) {
       debugRenderTiming = true;
+    } else if (!strcmp(argv[i], "--debug-terminate-after-frames")) {
+      if (i == (argc - 1)) {
+        printf("--debug-terminate-after-frames: requires argument\n");
+        return 1;
+      }
+      debugTerminateAfterFrames = atoi(argv[++i]);
+      if (debugTerminateAfterFrames == 0) {
+        printf("--debug-terminate-after-frames: invalid argument (uint32_t frameCount, non-zero)\n");
+        return 1;
+      }
+      printf("--debug-terminate-after-frames: Will terminate application after rendering %u frames\n", debugTerminateAfterFrames);
     } else if (!strcmp(argv[i], "--calibration-file")) {
       if (i == (argc - 1)) {
         printf("--calibration-file: requires argument\n");
@@ -1781,6 +1793,11 @@ int main(int argc, char* argv[]) {
 
       s_timingDataBuffer.push_back(timingData);
       nvtxRangePop(); // Display loop
+
+      if (debugTerminateAfterFrames && (frameCounter > debugTerminateAfterFrames)) {
+        printf("Terminating as requested after rendering %lu frames\n", frameCounter);
+        break;
+      }
     } // Camera rendering loop
   }
 
