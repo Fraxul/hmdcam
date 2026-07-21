@@ -1,8 +1,9 @@
 #pragma once
 #include "V4L2Camera.h"
+#include "common/FxThread.h"
+#include <atomic>
 #include <stdint.h>
 #include <unistd.h>
-#include <boost/thread.hpp>
 
 class TrackingThreadBase {
 public:
@@ -46,7 +47,8 @@ public:
 
   // Internal state
 private:
-  boost::thread m_processingThread;
+  FxThread m_processingThread;
+  std::atomic<bool> m_shutdownRequested{false}; // set to ask processingThreadFn to exit its loop
   bool m_processingThreadAlive = false;
 
   // Ratelimiting for capture-open attempts

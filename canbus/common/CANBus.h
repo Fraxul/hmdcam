@@ -1,7 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include "common/SerializationBuffer.h"
+#include "common/FxThread.h"
 #include "canard.h"
+#include <atomic>
 #include <boost/noncopyable.hpp>
 #include <boost/thread.hpp>
 #include <boost/thread/mutex.hpp>
@@ -47,15 +49,18 @@ protected:
   // Socket
   int m_fd = -1;
 
+  // Set to ask the Rx/Tx worker threads to exit their loops
+  std::atomic<bool> m_shutdownRequested{false};
+
   // Rx data
   CanardInstance m_canard;
-  boost::thread m_rxThread;
+  FxThread m_rxThread;
   boost::mutex m_subscriptionLock;
   std::list<SubscriptionData*> m_subscriptions;
 
 
   // Tx data
-  boost::thread m_txThread;
+  FxThread m_txThread;
   CanardTxQueue m_txQueue;
   boost::mutex m_txQueueLock; // Protects m_txQueue and m_txQueueFilled
   boost::condition_variable m_txQueueFilled;

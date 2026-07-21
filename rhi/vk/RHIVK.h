@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 #include <mutex>
 #include <thread>
+#include "common/FxThread.h"
 
 class VKFrameSource;
 class RHIWindowRenderTargetVK;
@@ -409,7 +410,7 @@ protected:
     vk::UniqueFence fence; // signaled by an empty queue.submit after the frame CB
     std::vector<CurrentFrame::PendingDump> dumps;
   };
-  std::thread m_dumpWorker;
+  FxThread m_dumpWorker;
   std::mutex m_dumpMutex;
   std::condition_variable m_dumpCv;
   std::deque<DumpJob> m_dumpQueue;

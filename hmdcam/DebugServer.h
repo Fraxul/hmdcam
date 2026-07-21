@@ -5,6 +5,7 @@
 #include <cuda.h>
 #include <boost/noncopyable.hpp>
 #include "common/SerializationBuffer.h"
+#include "common/FxThread.h"
 #include <opencv2/core.hpp>
 #include <opencv2/core/cvstd.hpp>
 
@@ -35,7 +36,7 @@ protected:
     return NULL;
   }
   void streamThreadFn();
-  pthread_t m_streamThread = 0;
+  FxThread m_streamThread;
   pthread_mutex_t m_streamReadyMutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t m_streamReadyCond = PTHREAD_COND_INITIALIZER;
 

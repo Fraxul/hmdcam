@@ -103,7 +103,7 @@ NvEncSession::~NvEncSession() {
     m_gpuSubmissionQueue.push(std::make_pair(static_cast<ssize_t>(-1), RHIFence::ptr()));
     pthread_cond_broadcast(&m_gpuSubmissionQueueCond);
     pthread_mutex_unlock(&m_gpuSubmissionQueueLock);
-    pthread_join(m_submitWorkerThread, NULL);
+    m_submitWorkerThread.join();
     printf("NvEncSession: submit worker stopped\n");
     m_submitWorkerThreadRunning = false;
   }
@@ -477,7 +477,7 @@ void NvEncSession::start() {
     m_gpuSubmissionQueue.pop();
 
   if (!m_submitWorkerThreadRunning) {
-    pthread_create(&m_submitWorkerThread, NULL, submitWorker_thunk, this);
+    m_submitWorkerThread = FxThread(&NvEncSession::submitWorker, this);
     m_submitWorkerThreadRunning = true;
   }
 
@@ -585,9 +585,4 @@ bool NvEncSession::encoder_capture_plane_dq_callback(struct v4l2_buffer* v4l2_bu
 
 /*static*/ bool NvEncSession::encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void* arg) {
   return reinterpret_cast<NvEncSession*>(arg)->encoder_capture_plane_dq_callback(v4l2_buf, buffer, shared_buffer);
-}
-
-/*static*/ void* NvEncSession::submitWorker_thunk(void* arg) {
-  reinterpret_cast<NvEncSession*>(arg)->submitWorker();
-  return NULL;
 }

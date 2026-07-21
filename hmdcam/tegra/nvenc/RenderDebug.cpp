@@ -1,4 +1,5 @@
 #include "Render.h"
+#include "common/FxThread.h"
 #include "common/Timing.h"
 #include "rhi/RHI.h"
 #include "rhi/RHIResources.h"
@@ -92,13 +93,13 @@ MpegTSMuxer s_tsMuxer([](const uint8_t* data, size_t length) {
     writeAll(fd, data, length);
 });
 
-void* debugStreamServerThreadEntryPoint(void*) {
+void debugStreamServerThreadEntryPoint() {
   pthread_setname_np(pthread_self(), "DebugStream");
 
   int listenFd = socket(AF_INET, SOCK_STREAM, 0);
   if (listenFd < 0) {
     fprintf(stderr, "DebugStream: socket() failed: %s\n", strerror(errno));
-    return nullptr;
+    return;
   }
 
   int one = 1;
@@ -113,7 +114,7 @@ void* debugStreamServerThreadEntryPoint(void*) {
   if (bind(listenFd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
     fprintf(stderr, "DebugStream: bind to port %u failed: %s\n", kDebugStreamPort, strerror(errno));
     close(listenFd);
-    return nullptr;
+    return;
   }
 
   // Backlog of 1: this is a single-client debug stream. A second connection
@@ -122,7 +123,7 @@ void* debugStreamServerThreadEntryPoint(void*) {
   if (listen(listenFd, 1) < 0) {
     fprintf(stderr, "DebugStream: listen() failed: %s\n", strerror(errno));
     close(listenFd);
-    return nullptr;
+    return;
   }
 
   printf("DebugStream: H.264/MPEG-TS stream listening on tcp/%u\n", kDebugStreamPort);
@@ -195,7 +196,6 @@ void* debugStreamServerThreadEntryPoint(void*) {
   }
 
   close(listenFd);
-  return nullptr;
 }
 
 } // namespace
@@ -217,8 +217,7 @@ void RenderInitDebugSurface(uint32_t width, uint32_t height) {
 
   // Run the stream server asynchronously; it owns the encoder lifecycle, starting
   // and stopping it as a client connects and disconnects.
-  pthread_t serverThread;
-  pthread_create(&serverThread, nullptr, &debugStreamServerThreadEntryPoint, nullptr);
+  FxThread(&debugStreamServerThreadEntryPoint).detach();
 }
 
 bool RenderDebugSubsystemEnabled() {

@@ -3,14 +3,16 @@
 #include "stb/stb_image_write.h"
 
 TrackingThreadBase::~TrackingThreadBase() {
+  // Safety net: derived dtors are expected to call shutdownThread() before destroying
+  // state the thread touches, but we check again anyway to avoid std::terminate() from
+  // destroying a joinable thread.
+  shutdownThread();
 }
 
 void TrackingThreadBase::shutdownThread() {
-  if (m_processingThreadAlive) {
-    // Shut down processing thread
-    m_processingThread.interrupt();
+  m_shutdownRequested = true;
+  if (m_processingThread.joinable())
     m_processingThread.join();
-  }
 }
 
 void TrackingThreadBase::processFrameHook() {
@@ -21,8 +23,13 @@ void TrackingThreadBase::processFrameHook() {
         m_lastCaptureOpenAttemptTimeNs = currentTimeNs();
 
         if (m_capture.tryOpenSensor(getCameraDeviceName())) {
-          // Capture is open, restart the processing thread
-          m_processingThread = boost::thread(boost::bind(&TrackingThreadBase::processingThreadFn, this));
+          // Capture is open, restart the processing thread.
+          // Join any prior thread that has already exited on its own (readFrame failure) before reassigning.
+          // (Move-assigning over a still-joinable FxThread would call std::terminate).
+          if (m_processingThread.joinable())
+            m_processingThread.join();
+          m_shutdownRequested = false;
+          m_processingThread = FxThread(&TrackingThreadBase::processingThreadFn, this);
           printf("TrackingThreadBase: Successfully opened capture of \"%s\"\n", getCameraDeviceName());
         }
       }
@@ -35,7 +42,7 @@ void TrackingThreadBase::processingThreadFn() {
   this->internalUpdateStateOnCaptureOpen();
 
   while (true) {
-    if (boost::this_thread::interruption_requested())
+    if (m_shutdownRequested)
       break;
 
     // Capture frame

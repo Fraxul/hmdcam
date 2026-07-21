@@ -18,7 +18,8 @@ localEnv.Program(
     Glob('canbus/*.cpp') +
     Glob('canbus/common/*.cpp') +
     Glob('canbus/socketcan/*.c') +
-    Glob('canbus/libcanard/libcanard/*.c'),
+    Glob('canbus/libcanard/libcanard/*.c') +
+    ['common/FxThread.cpp'],
 
   
   LIBS = ['socketcan', 'boost_thread']

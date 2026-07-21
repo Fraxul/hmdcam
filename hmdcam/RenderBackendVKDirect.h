@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <thread>
+#include "common/FxThread.h"
 #include <vector>
 
 class RenderBackendVKDirect;
@@ -87,7 +88,7 @@ protected:
 
   // Presentation timestamp tracking
   std::atomic<uint64_t> m_lastPresentationTimestamp{0};
-  std::thread m_scanoutThread;
+  FxThread m_scanoutThread;
 
 #ifdef IS_TEGRA
   // NvRmHost1x syncpoint path. The worker waits on the nvkms-fence vblank syncpoint, captures the

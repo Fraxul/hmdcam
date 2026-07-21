@@ -68,16 +68,20 @@ CANBus::CANBus() {
   m_txQueue = canardTxInit(/*capacity (packets)=*/ 128, /*mtu_bytes=*/ CANARD_MTU_CAN_CLASSIC);
 
   // Worker threads
-  m_rxThread = boost::thread(boost::bind(&CANBus::canRxThread, this));
-  m_txThread = boost::thread(boost::bind(&CANBus::canTxThread, this));
+  m_rxThread = FxThread(&CANBus::canRxThread, this);
+  m_txThread = FxThread(&CANBus::canTxThread, this);
 }
 
 CANBus::~CANBus() {
-  m_rxThread.interrupt();
-  m_rxThread.join();
+  m_shutdownRequested = true;
+  // canTxThread blocks in m_txQueueFilled.wait() with no timeout; wake it so it can observe
+  // the shutdown flag and exit. canRxThread self-times-out from its 1s socketcanPop.
+  m_txQueueFilled.notify_all();
 
-  m_txThread.interrupt();
-  m_txThread.join();
+  if (m_rxThread.joinable())
+    m_rxThread.join();
+  if (m_txThread.joinable())
+    m_txThread.join();
 
   if (m_fd >= 0) {
     ::close(m_fd);
@@ -115,13 +119,16 @@ void CANBus::canTxThread() {
   pthread_setname_np(pthread_self(), "canTxThread");
 
   while (true) {
-    if (boost::this_thread::interruption_requested())
+    if (m_shutdownRequested)
       break;
 
     boost::unique_lock<boost::mutex> l(m_txQueueLock);
 
     const CanardTxQueueItem* peek = nullptr;
     while (peek == nullptr) {
+      if (m_shutdownRequested)
+        return; // woken by the dtor's notify_all(); exit
+
       peek = canardTxPeek(&m_txQueue);
       if (peek)
         break;
@@ -166,7 +173,7 @@ void CANBus::canRxThread() {
   pthread_setname_np(pthread_self(), "canRxThread");
 
   while (true) {
-    if (boost::this_thread::interruption_requested())
+    if (m_shutdownRequested)
       break;
 
     CanardFrame rxFrame{};

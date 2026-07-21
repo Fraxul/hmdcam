@@ -39,9 +39,9 @@ DebugServer::DebugServer() {
 }
 
 DebugServer::~DebugServer() {
-  if (m_streamThread) {
-    pthread_cancel(m_streamThread);
-    pthread_join(m_streamThread, NULL);
+  if (m_streamThread.joinable()) {
+    pthread_cancel(m_streamThread.nativeHandle());
+    m_streamThread.join();
   }
   delete[] m_streamResources;
 }
@@ -176,7 +176,7 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
   }
 
   // Start the listener thread
-  pthread_create(&m_streamThread, NULL, &streamThreadEntryPoint, (void*) this);
+  m_streamThread = FxThread(streamThreadEntryPoint, this);
   return true;
 }
 

@@ -496,7 +496,7 @@ void RenderBackendVKDirect::createPresentation() {
     }
 
     if (initScanoutSyncpt()) {
-      m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+      m_scanoutThread = FxThread(&RenderBackendVKDirect::scanoutThreadFunc, this);
     } else {
       fprintf(stderr, "RenderBackendVKDirect: host1x syncpt init failed; lastPresentationTimestamp will remain 0\n");
     }
@@ -504,7 +504,7 @@ void RenderBackendVKDirect::createPresentation() {
     // Non-Tegra: Vulkan display-event fence path.
     m_scanoutEventFd = eventfd(0, 0);
     CHECK(m_scanoutEventFd >= 0);
-    m_scanoutThread = std::thread(&RenderBackendVKDirect::scanoutThreadFunc, this);
+    m_scanoutThread = FxThread(&RenderBackendVKDirect::scanoutThreadFunc, this);
 #endif
 
   } catch (const std::exception& ex) {

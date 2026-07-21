@@ -1884,7 +1884,7 @@ void RHIVK::processPendingDumps() {
   // Lazy worker startup: off-frames pay nothing, no thread spawns unless
   // and until the first dump batch arrives.
   if (!m_dumpWorker.joinable()) {
-    m_dumpWorker = std::thread(&RHIVK::dumpWorkerThread, this);
+    m_dumpWorker = FxThread(&RHIVK::dumpWorkerThread, this);
   }
 
   {

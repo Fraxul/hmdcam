@@ -1,4 +1,5 @@
 #include "InputListener.h"
+#include "common/FxThread.h"
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -119,7 +120,7 @@ cleanup:
 }
 
 
-void* inputListenerThread(void*) {
+void* inputListenerThread() {
   pthread_setname_np(pthread_self(), "InputListener");
 
   {
@@ -314,8 +315,8 @@ void* inputListenerThread(void*) {
 }
 
 void startInputListenerThread() {
-  pthread_t thread;
-  pthread_create(&thread, NULL, inputListenerThread, NULL);
+  // Fire-and-forget: runs for the life of the process.
+  FxThread(inputListenerThread).detach();
 }
 
 // Ignore non-use of the enum-to-string functions below here

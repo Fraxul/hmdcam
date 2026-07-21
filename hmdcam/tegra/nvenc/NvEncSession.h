@@ -8,6 +8,7 @@
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include "rhi/RHISurface.h"
 #include "rhi/RHIFence.h"
+#include "common/FxThread.h"
 #include "nvbufsurface.h"
 
 class NvBuffer;
@@ -85,14 +86,13 @@ protected:
   std::queue<std::pair<ssize_t, RHIFence::ptr>> m_gpuSubmissionQueue;
   pthread_mutex_t m_gpuSubmissionQueueLock;
   pthread_cond_t m_gpuSubmissionQueueCond;
-  pthread_t m_submitWorkerThread;
+  FxThread m_submitWorkerThread;
   pthread_mutex_t m_submitWorkerActiveLock;
   bool m_submitWorkerThreadRunning = false;
 
   std::queue<NvBuffer*> m_encoderOutputPlaneBufferQueue;
 
   static bool encoder_capture_plane_dq_callback_thunk(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer, void* arg);
-  static void* submitWorker_thunk(void*);
 
   bool encoder_capture_plane_dq_callback(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* shared_buffer);
 
