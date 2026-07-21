@@ -361,25 +361,6 @@ int main(int argc, char* argv[]) {
 
   depthMapGenerator = createDepthMapGenerator(depthBackend);
 
-  if (depthBackend == kDepthBackendDepthAI) {
-    // Set thread affinity.
-    // On Tegra, we get a small but noticeable performance improvement by pinning the DepthAI backend to its own dedicated CPUs
-    // This must be done early in initialization so that all of the library worker threads spawned later inherit these settings.
-
-    cpu_set_t cpuset;
-    // Create affinity mask for all CPUs besides CPU6-7
-    CPU_ZERO(&cpuset);
-    for (size_t i = 0; i < CPU_SETSIZE; ++i) {
-      if (i == 6 || i == 7)
-        continue;
-      CPU_SET(i, &cpuset);
-    }
-
-    if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
-      perror("pthread_setaffinity");
-    }
-  }
-
   startInputListenerThread();
 
   if (!RenderInit(renderBackendType)) {
@@ -838,6 +819,10 @@ int main(int argc, char* argv[]) {
     // Perf queries
     RHITimerQuery::ptr viewRenderQuery = rhi()->newTimerQuery();
     RHITimerQuery::ptr distortionRenderQuery = rhi()->newTimerQuery();
+
+    // Promote the main thread to SCHED_FIFO so it preempts onto its core the instant it is runnable.
+    constexpr int kMainThreadRTPriority = 40; // above camera pipeline (30), below kernel (>=50)
+    promoteCurrentThreadToRealtime(kMainThreadRTPriority);
 
     // Main display loop
     while (!want_quit) {

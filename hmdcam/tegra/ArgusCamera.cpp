@@ -15,6 +15,8 @@
 #include <cudaEGL.h>
 #include <opencv2/cvconfig.h>
 #include <nvtx3/nvToolsExt.h>
+#include <dirent.h>
+#include <sched.h>
 
 #ifdef USE_NVBUF_UTILS
 #include <nvbuf_utils.h>
@@ -64,6 +66,10 @@ int64_t u64_diff(uint64_t lhs, uint64_t rhs) {
 
 constexpr int kAdjustCaptureCooldownFrames = 96;
 constexpr int kAdjustCaptureEvalWindowFrames = 64;
+
+// SCHED_FIFO realtime priority for Argus's internal threads
+constexpr int kCameraPipelineRTPriority = 30;
+int boostCameraPipelinePriority(int rtPriority, bool verbose);
 
 ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framerate) :
   m_display(display_),
@@ -214,6 +220,10 @@ ArgusCamera::ArgusCamera(EGLDisplay display_, EGLContext context_, double framer
 
 
   buildCaptureSessions();
+
+  // Once capture sessions are built, all Argus internal threads should be alive.
+  // Run thread priority-boost pass to reduce acquire latency jitter.
+  boostCameraPipelinePriority(kCameraPipelineRTPriority, /*verbose=*/ true);
 }
 
 void ArgusCamera::buildCaptureSessions() {
@@ -1055,4 +1065,108 @@ bool ArgusCamera::fillCudaMemcpy2DForStreamSource(CUDA_MEMCPY2D& outCopyDescript
   if (sensorIndex >= m_perSensorData.size())
     return false;
   return m_perSensorData[sensorIndex].m_bufferPool.activeBuffer().rhiSurface->fillCudaMemcpy2D(outCopyDescriptor, fromChromaPlane);
+}
+
+// Comm prefixes of the in-process Argus/libnvscf pipeline threads that carry a captured
+// frame from the VI/ISP hardware completion up to the BufferOutputStream acquire queue.
+// Kernel comm is truncated to 15 chars (TASK_COMM_LEN-1), so match on a prefix, never an
+// exact name (e.g. "IspHw frameComplete" appears as "IspHw frameComp").
+static const char* const kArgusThreadPrefixes[] = {
+  "SCF Execution", // libnvscf pipeline execution / buffer delivery
+  "IspHw", // "IspHw frameComp" -- ISP frame completion (the D-state link)
+  "ViCsiHw", // "ViCsiHw frameCo" / "frameSt" -- CSI capture
+  "CaptureSchedule", // "CaptureScheduler"
+  "CaptureDispatch",
+  "V4L2CaptureSche", // "V4L2CaptureScheduler"
+  "GpuBlitStage",
+  "TempBufferAcqui", // "TempBufferAcquireStage"
+  "PS handleReques", // "PS handleRequests"
+};
+
+static bool commMatchesCameraPipeline(const char* comm) {
+  for (const char* prefix : kArgusThreadPrefixes)
+    if (strncmp(comm, prefix, strlen(prefix)) == 0) return true;
+  return false;
+}
+
+// Read /proc/self/task/<tid>/comm, trimmed of its trailing newline.
+// Returns false if the thread has already exited.
+static bool readThreadComm(int tid, char* out, size_t outSize) {
+  char path[64];
+  snprintf(path, sizeof path, "/proc/self/task/%d/comm", tid);
+  FILE* f = fopen(path, "r");
+  if (!f) return false;
+  if (!fgets(out, (int) outSize, f)) {
+    fclose(f);
+    out[0] = '\0';
+    return false;
+  }
+  fclose(f);
+  out[strcspn(out, "\n")] = '\0';
+  return true;
+}
+
+int boostCameraPipelinePriority(int rtPriority, bool verbose) {
+  // Clamp the requested priority into the kernel's valid SCHED_FIFO range.
+  const int prioMin = sched_get_priority_min(SCHED_FIFO);
+  const int prioMax = sched_get_priority_max(SCHED_FIFO);
+  if (rtPriority < prioMin) rtPriority = prioMin;
+  if (rtPriority > prioMax) rtPriority = prioMax;
+
+  DIR* d = opendir("/proc/self/task");
+  if (!d) {
+    fprintf(stderr, "[perf] boostCameraPipelinePriority: cannot open /proc/self/task: %s\n",
+      strerror(errno));
+    return -1;
+  }
+  int matched = 0, changed = 0, permDenied = 0;
+  for (struct dirent* e; (e = readdir(d));) {
+    if (e->d_name[0] < '0' || e->d_name[0] > '9') continue; // skip "." ".."
+    int tid = atoi(e->d_name);
+
+    char comm[32] = "?";
+    if (!readThreadComm(tid, comm, sizeof comm)) continue; // thread exited mid-sweep
+    if (!commMatchesCameraPipeline(comm)) continue;
+    ++matched;
+
+    // Skip if already SCHED_FIFO at the target priority (idempotent re-runs).
+    struct sched_param curParam;
+    if (sched_getscheduler(tid) == SCHED_FIFO &&
+      sched_getparam(tid, &curParam) == 0 &&
+      curParam.sched_priority == rtPriority)
+      continue;
+
+    if (verbose) {
+      fprintf(stderr, "[perf]   boost tid %-6d (%-15s) -> SCHED_FIFO prio %d\n",
+        tid, comm, rtPriority);
+    }
+
+    struct sched_param param;
+    memset(&param, 0, sizeof param);
+    param.sched_priority = rtPriority;
+    if (sched_setscheduler(tid, SCHED_FIFO, &param) == 0) {
+      ++changed;
+    } else if (errno == EPERM) {
+      ++permDenied;
+    } else if (verbose) {
+      fprintf(stderr, "[perf]     setscheduler(tid %d) failed: %s\n", tid, strerror(errno));
+    }
+  }
+  closedir(d);
+
+  if (matched == 0)
+    fprintf(stderr, "[perf] WARNING: no Argus camera-pipeline threads matched. Their comm names "
+                    "may differ on this L4T release; check /proc/self/task/*/comm and update "
+                    "kArgusThreadPrefixes in ArgusCamera.cpp.\n");
+  if (permDenied > 0)
+    fprintf(stderr,
+      "[perf] WARNING: SCHED_FIFO denied on %d camera thread(s) (EPERM) -- the binary lacks "
+      "CAP_SYS_NICE.\n"
+      "       Grant it once with:  sudo setcap cap_sys_nice+ep <path-to-hmdcam>\n",
+      permDenied);
+  if (verbose) {
+    fprintf(stderr, "[perf] camera-priority pass: %d matched, %d boosted (SCHED_FIFO prio %d).\n",
+      matched, changed, rtPriority);
+  }
+  return changed;
 }

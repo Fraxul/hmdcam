@@ -7,6 +7,10 @@
 #include <boost/smart_ptr/shared_ptr.hpp>
 #include <boost/smart_ptr/shared_array.hpp>
 #include <deque>
+#include <sched.h>
+#include <unistd.h>
+#include <cstdio>
+#include <cerrno>
 
 using namespace boost;
 
@@ -138,3 +142,33 @@ void runFunction(const boost::function<void()>& fn) {
 }
 
 } // namespace FxThreading
+
+// ----- Other utility functions -----
+
+bool promoteCurrentThreadToRealtime(int rtPriority) {
+  // Clamp the requested priority into the kernel's valid SCHED_FIFO range.
+  const int prioMin = sched_get_priority_min(SCHED_FIFO);
+  const int prioMax = sched_get_priority_max(SCHED_FIFO);
+  if (rtPriority < prioMin) rtPriority = prioMin;
+  if (rtPriority > prioMax) rtPriority = prioMax;
+
+  // SCHED_RESET_ON_FORK: threads (and processes) this thread subsequently clones are reset to
+  // SCHED_OTHER instead of inheriting SCHED_FIFO. The reset lives in the kernel's sched_fork(),
+  // which is on the common copy_process() path for both fork() and pthread_create()'s
+  // clone(CLONE_THREAD), so it covers raw std::thread/pthread_create spawns as well.
+  struct sched_param param;
+  memset(&param, 0, sizeof param);
+  param.sched_priority = rtPriority;
+  if (sched_setscheduler(0, SCHED_FIFO | SCHED_RESET_ON_FORK, &param) != 0) { // 0 == calling thread
+    if (errno == EPERM)
+      fprintf(stderr,
+        "[perf] promoteCallingThreadRealtime: SCHED_FIFO denied (EPERM).\n"
+        "       Ensure the current user has a nonzero `rtprio` rlimit.\n");
+    else
+      fprintf(stderr, "[perf] promoteCallingThreadRealtime: setscheduler failed: %s\n",
+        strerror(errno));
+    return false;
+  }
+
+  return true;
+}

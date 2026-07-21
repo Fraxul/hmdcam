@@ -22,6 +22,9 @@ echo -e "Assuming the user that will be running the app is \"${APP_USER}\""
 usermod -aG plugdev ${APP_USER}
 usermod -aG input ${APP_USER}
 
+# Add ulimit override
+cp assets/video-rtprio.conf /etc/security/limits.d/
+
 # Disable graphical environment at boot
 if [ "$(systemctl get-default)" != "multi-user.target" ]; then
   echo "Setting systemd default target to multi-user.target"

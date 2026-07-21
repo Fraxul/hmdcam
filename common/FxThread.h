@@ -114,6 +114,17 @@ private:
     using State = std::tuple<std::decay_t<Fn>, std::decay_t<Args>...>;
     auto state = std::make_unique<State>(std::forward<Fn>(fn), std::forward<Args>(args)...);
 
+    // Force SCHED_OTHER regardless of the creating thread's policy. pthread_create defaults to
+    // PTHREAD_INHERIT_SCHED, so a worker spawned from a SCHED_FIFO thread (e.g. the main thread
+    // under the --realtime-main-thread strategy) would otherwise inherit that real-time policy
+    // and priority -- outranking the camera pipeline and starving the system. inheritsched only
+    // governs policy/param, not affinity, so the setaffinity_np above still applies.
+    pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+    pthread_attr_setschedpolicy(&attr, SCHED_OTHER);
+    sched_param schedParam;
+    schedParam.sched_priority = 0; // required value for SCHED_OTHER
+    pthread_attr_setschedparam(&attr, &schedParam);
+
     int rc = pthread_create(&m_handle, &attr, &FxThread::trampoline<State>, state.get());
     pthread_attr_destroy(&attr);
     if (rc != 0)

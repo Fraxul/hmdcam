@@ -28,6 +28,11 @@ private:
   bool m_active = false;
 };
 
+// Promote the current thread to SCHED_FIFO and realtime priority.
+// Uses SCHED_RESET_ON_FORK so that threads and processes launched from the promoted thread
+// do not inherit the priority boost.
+bool promoteCurrentThreadToRealtime(int rtPriority = 30);
+
 namespace FxThreading {
 namespace detail {
   void init();
