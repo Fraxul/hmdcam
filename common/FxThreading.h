@@ -33,6 +33,10 @@ private:
 // do not inherit the priority boost.
 bool promoteCurrentThreadToRealtime(int rtPriority = 30);
 
+// Detect an isolcpus-isolated core and pin the current thread to it.
+// Returns the chosen CPU index, or -1 if none was available.
+int pinCallingThreadToIsolatedCore();
+
 namespace FxThreading {
 namespace detail {
   void init();

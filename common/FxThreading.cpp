@@ -172,3 +172,99 @@ bool promoteCurrentThreadToRealtime(int rtPriority) {
 
   return true;
 }
+
+// Parse a Linux cpulist ("0-3,5,7") into a cpu_set_t. Returns the number of CPUs set.
+static int parseCpuList(const char* text, cpu_set_t* out) {
+  CPU_ZERO(out);
+  int count = 0;
+  for (const char* p = text; *p;) {
+    while (*p == ',' || *p == ' ' || *p == '\n') ++p;
+    if (!*p) break;
+    char* end = nullptr;
+    long lo = strtol(p, &end, 10);
+    if (end == p) break; // malformed; stop
+    p = end;
+    long hi = lo;
+    if (*p == '-') {
+      hi = strtol(++p, &end, 10);
+      if (end == p) break;
+      p = end;
+    }
+    for (long c = lo; c <= hi && c < CPU_SETSIZE; ++c)
+      if (c >= 0 && !CPU_ISSET((int) c, out)) {
+        CPU_SET((int) c, out);
+        ++count;
+      }
+  }
+  return count;
+}
+
+// Read a cpulist sysfs file into a cpu_set_t. Returns count, or -1 if unreadable.
+static int readCpuListFile(const char* path, cpu_set_t* out) {
+  CPU_ZERO(out);
+  FILE* f = fopen(path, "r");
+  if (!f) return -1;
+  char buf[512] = {0};
+  size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+  fclose(f);
+  buf[n] = '\0';
+  return parseCpuList(buf, out);
+}
+
+int pinCallingThreadToIsolatedCore() {
+  cpu_set_t isolated, online;
+  int nIsolated = readCpuListFile("/sys/devices/system/cpu/isolated", &isolated);
+  readCpuListFile("/sys/devices/system/cpu/online", &online);
+
+  if (nIsolated <= 0) {
+    fprintf(stderr,
+      "[perf] WARNING: no isolated CPU core (/sys/devices/system/cpu/isolated is empty).\n"
+      "       Add to the kernel cmdline (highest core index N):\n"
+      "         isolcpus=domain,managed_irq,N irqaffinity=0-(N-1)\n");
+    // We skip recommending nohz_full=N rcu_nocbs=N because the Tegra kernel build doesn't support those flags.
+    return -1;
+  }
+
+  // Pick the highest-numbered isolated core that is online
+  int target = -1;
+  for (int c = CPU_SETSIZE - 1; c >= 0; --c)
+    if (CPU_ISSET(c, &isolated) && CPU_ISSET(c, &online)) {
+      target = c;
+      break;
+    }
+  if (target < 0) {
+    fprintf(stderr, "[perf] WARNING: isolated core(s) present but none online; not pinning.\n");
+    return -1;
+  }
+
+#if 0
+  // nohz_full isn't supported on the Tegra kernel build as of L4T r36.4 (5.15.148-tegra)
+  {
+    cpu_set_t nohz;
+    int nNohz = readCpuListFile("/sys/devices/system/cpu/nohz_full", &nohz);
+    if (nNohz <= 0 || !CPU_ISSET(target, &nohz))
+      fprintf(stderr, "[perf] NOTE: CPU %d is isolated but not nohz_full; add nohz_full=%d "
+                      "to also drop the scheduler-tick jitter.\n",
+        target, target);
+  }
+#endif
+
+  cpu_set_t one;
+  CPU_ZERO(&one);
+  CPU_SET(target, &one);
+  if (sched_setaffinity(0, sizeof(one), &one) != 0) { // 0 == calling thread
+    fprintf(stderr, "[perf] ERROR: pin to CPU %d failed: %s\n", target, strerror(errno));
+    return -1;
+  }
+  // Verify — a cpuset or an offline race can silently clamp the request.
+  cpu_set_t got;
+  CPU_ZERO(&got);
+  if (sched_getaffinity(0, sizeof(got), &got) == 0 &&
+    (CPU_COUNT(&got) != 1 || !CPU_ISSET(target, &got))) {
+    fprintf(stderr, "[perf] WARNING: affinity to CPU %d didn't stick (cpuset override?).\n", target);
+    return -1;
+  }
+
+  // fprintf(stderr, "[perf] Thread %u pinned to isolated CPU %d.\n", currentTid(), target);
+  return target;
+}

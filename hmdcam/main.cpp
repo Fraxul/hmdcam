@@ -824,6 +824,11 @@ int main(int argc, char* argv[]) {
     constexpr int kMainThreadRTPriority = 40; // above camera pipeline (30), below kernel (>=50)
     promoteCurrentThreadToRealtime(kMainThreadRTPriority);
 
+    // Attempt to pin the main thread to an isolated core, if present / possible.
+    // This is currently disabled -- currently doesn't buy us anything, the main thread doesn't
+    // use enough CPU for it to make sense to dedicate an entire core to it.
+    // pinCallingThreadToIsolatedCore();
+
     // Main display loop
     while (!want_quit) {
       nvtxRangePushA("Display loop");
