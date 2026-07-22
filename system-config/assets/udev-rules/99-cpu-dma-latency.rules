@@ -1,0 +1,2 @@
+# Allow video group to hold PM QoS CPU latency bounds (hmdcam frame pacing)
+KERNEL=="cpu_dma_latency", GROUP="video", MODE="0660"

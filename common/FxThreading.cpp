@@ -7,6 +7,7 @@
 #include <boost/smart_ptr/shared_ptr.hpp>
 #include <boost/smart_ptr/shared_array.hpp>
 #include <deque>
+#include <fcntl.h>
 #include <sched.h>
 #include <unistd.h>
 #include <cstdio>
@@ -170,6 +171,29 @@ bool promoteCurrentThreadToRealtime(int rtPriority) {
     return false;
   }
 
+  return true;
+}
+
+bool holdCpuWakeupLatencyBound(int32_t microseconds) {
+  // The constraint is active for as long as the fd stays open; we intentionally leak it so the
+  // bound lives until process exit.
+  static int s_cpuDmaLatencyFd = -1;
+  if (s_cpuDmaLatencyFd >= 0)
+    return true; // already held
+
+  s_cpuDmaLatencyFd = open("/dev/cpu_dma_latency", O_WRONLY);
+  if (s_cpuDmaLatencyFd < 0) {
+    fprintf(stderr, "[perf] holdCpuWakeupLatencyBound: open(/dev/cpu_dma_latency): %s\n",
+      strerror(errno));
+    return false;
+  }
+  if (write(s_cpuDmaLatencyFd, &microseconds, sizeof(microseconds)) != sizeof(microseconds)) {
+    fprintf(stderr, "[perf] holdCpuWakeupLatencyBound: write: %s\n", strerror(errno));
+    close(s_cpuDmaLatencyFd);
+    s_cpuDmaLatencyFd = -1;
+    return false;
+  }
+  fprintf(stderr, "[perf] Holding CPU wakeup-latency bound of %dus (PM QoS).\n", microseconds);
   return true;
 }
 

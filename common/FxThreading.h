@@ -37,6 +37,13 @@ bool promoteCurrentThreadToRealtime(int rtPriority = 30);
 // Returns the chosen CPU index, or -1 if none was available.
 int pinCallingThreadToIsolatedCore();
 
+// Hold a PM QoS CPU wakeup-latency bound (in microseconds) for the lifetime of the process.
+// Keeps every CPU out of cpuidle states whose exit latency exceeds the bound -- on Orin,
+// bounds below 5000us exclude the c7 core-powerdown state (5ms exit latency), which otherwise
+// adds milliseconds of jitter to cross-core RT wakeup chains. The kernel releases the
+// constraint automatically when the process exits (the /dev/cpu_dma_latency fd closes).
+bool holdCpuWakeupLatencyBound(int32_t microseconds);
+
 namespace FxThreading {
 namespace detail {
   void init();

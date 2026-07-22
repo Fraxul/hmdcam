@@ -829,6 +829,11 @@ int main(int argc, char* argv[]) {
     // use enough CPU for it to make sense to dedicate an entire core to it.
     // pinCallingThreadToIsolatedCore();
 
+    // Keep all CPUs out of deep idle states while we're running. The camera frame-delivery
+    // chain is a series of cross-core RT wakeups; a wakeup targeting a core sleeping in c7
+    // (5ms exit latency on Orin) adds milliseconds of delivery jitter.
+    holdCpuWakeupLatencyBound(/*microseconds=*/ 100);
+
     // Main display loop
     while (!want_quit) {
       nvtxRangePushA("Display loop");

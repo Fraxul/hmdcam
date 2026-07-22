@@ -36,6 +36,20 @@
   } while (0)
 // #define WAKEUP_INTERVAL_STATS 1
 
+#ifdef WAKEUP_INTERVAL_STATS
+#include <fcntl.h>
+#include <unistd.h>
+// Emit a marker into the kernel ftrace timeline so userspace frame-loop events can be
+// correlated exactly against sched tracepoints. No-op if tracefs isn't writable.
+static void writeTraceMarker(const char* msg) {
+  static int s_traceMarkerFd = ::open("/sys/kernel/tracing/trace_marker", O_WRONLY);
+  if (s_traceMarkerFd >= 0) {
+    ssize_t n = ::write(s_traceMarkerFd, msg, strlen(msg));
+    (void) n;
+  }
+}
+#endif
+
 static const size_t kBufferCount = 8;
 static const uint64_t kCaptureTimeoutNs = 500 /*milliseconds*/ * 1'000'000ULL;
 static const uint64_t kWaitForIdleTimeoutNs = 500 /*milliseconds*/ * 1'000'000ULL;
@@ -474,12 +488,22 @@ bool ArgusCamera::readFrame() {
   // Service CaptureSession event queue and wait for capture completed event here
   // that should be able to smooth out some of the jitter without missing frames
   nvtxRangePushA("CaptureSession waitForEvents");
+#ifdef WAKEUP_INTERVAL_STATS
+  writeTraceMarker("waitForEvents enter");
+#endif
   for (size_t sessionIdx = 0; sessionIdx < sessionCount(); ++sessionIdx) {
     if (m_perSessionData[sessionIdx].m_sessionCaptureFailed)
       continue;
 
     Argus::interface_cast<Argus::IEventProvider>(m_perSessionData[sessionIdx].m_captureSession)->waitForEvents(m_perSessionData[sessionIdx].m_completionEventQueue, m_targetCaptureIntervalNs / 2);
+#ifdef WAKEUP_INTERVAL_STATS
+    if (sessionIdx == 0)
+      writeTraceMarker("waitForEvents s0 done");
+#endif
   }
+#ifdef WAKEUP_INTERVAL_STATS
+  writeTraceMarker("waitForEvents exit");
+#endif
   nvtxRangePop();
 
 #ifdef WAKEUP_INTERVAL_STATS
