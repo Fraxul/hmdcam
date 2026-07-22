@@ -34,7 +34,7 @@
     fprintf(stderr, msg "\n", ##__VA_ARGS__); \
     abort();                                  \
   } while (0)
-//#define FRAME_WAIT_TIME_STATS 1
+// #define WAKEUP_INTERVAL_STATS 1
 
 static const size_t kBufferCount = 8;
 static const uint64_t kCaptureTimeoutNs = 500 /*milliseconds*/ * 1'000'000ULL;
@@ -445,14 +445,14 @@ bool ArgusCamera::readFrame() {
   static uint32_t s_frameCounter = 0;
   ++s_frameCounter;
 
-#ifdef FRAME_WAIT_TIME_STATS
+#ifdef WAKEUP_INTERVAL_STATS
   // clang-format off
   static boost::accumulators::accumulator_set<double, boost::accumulators::stats<
         boost::accumulators::tag::min,
         boost::accumulators::tag::max,
         boost::accumulators::tag::mean,
         boost::accumulators::tag::median
-    > > s_frameWaitTimeStats;
+    > > s_wakeupIntervalStats;
   // clang-format on
 #endif
 
@@ -471,10 +471,6 @@ bool ArgusCamera::readFrame() {
   }
 
 
-#ifdef FRAME_WAIT_TIME_STATS
-  uint64_t eventWaitStart = currentTimeNs();
-#endif
-
   // Service CaptureSession event queue and wait for capture completed event here
   // that should be able to smooth out some of the jitter without missing frames
   nvtxRangePushA("CaptureSession waitForEvents");
@@ -486,18 +482,24 @@ bool ArgusCamera::readFrame() {
   }
   nvtxRangePop();
 
-#ifdef FRAME_WAIT_TIME_STATS
-  uint64_t eventWaitEnd = currentTimeNs();
-  if (m_captureIsRepeating) {
-    s_frameWaitTimeStats(static_cast<double>(eventWaitEnd - eventWaitStart) / 1000000.0);
+#ifdef WAKEUP_INTERVAL_STATS
+  {
+    static uint64_t previousWakeupTime = 0;
+    uint64_t wakeupTime = currentTimeNs();
+    if (m_captureIsRepeating) {
+      if (previousWakeupTime != 0) {
+        s_wakeupIntervalStats(static_cast<double>(wakeupTime - previousWakeupTime) / 1000000.0);
+      }
+      previousWakeupTime = wakeupTime;
 
-    if ((s_frameCounter & 0x7f) == 0x7f) {
-      printf("Frame wait-time: min=%.3g max=%.3g mean=%.3g median=%.3g\n",
-        boost::accumulators::min(s_frameWaitTimeStats),
-        boost::accumulators::max(s_frameWaitTimeStats),
-        boost::accumulators::mean(s_frameWaitTimeStats),
-        boost::accumulators::median(s_frameWaitTimeStats));
-      s_frameWaitTimeStats = {};
+      if ((s_frameCounter & 0xff) == 0xff) {
+        printf("Wakeup interval: min=%.3gms max=%.3gms mean=%.3gms median=%.3gms\n",
+          boost::accumulators::min(s_wakeupIntervalStats),
+          boost::accumulators::max(s_wakeupIntervalStats),
+          boost::accumulators::mean(s_wakeupIntervalStats),
+          boost::accumulators::median(s_wakeupIntervalStats));
+        s_wakeupIntervalStats = {};
+      }
     }
   }
 #endif
