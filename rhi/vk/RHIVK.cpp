@@ -61,6 +61,10 @@ RHIVK::~RHIVK() {
     cudaDestroyExternalSemaphore(m_rhiToCudaTimelineCU);
     m_rhiToCudaTimelineCU = nullptr;
   }
+  if (m_cudaToRHIEvent) {
+    cudaEventDestroy(m_cudaToRHIEvent);
+    m_cudaToRHIEvent = nullptr;
+  }
 }
 
 void RHIVK::setFrameSource(VKFrameSource* source) {
@@ -173,6 +177,8 @@ void RHIVK::setFrameSource(VKFrameSource* source) {
 
   m_rhiToCudaTimeline = rhi()->vk()->createExternalSemaphore(vk::SemaphoreType::eTimeline);
   importToCuda(m_rhiToCudaTimeline, &m_rhiToCudaTimelineCU);
+
+  CUDA_CHECK(cudaEventCreateWithFlags(&m_cudaToRHIEvent, cudaEventBlockingSync | cudaEventDisableTiming));
 }
 
 void RHIVK::invalidateSwapchainResources() {
@@ -1518,22 +1524,12 @@ void RHIVK::swapBuffers(RHIRenderTarget::ptr /*target*/) {
   // can't progress (blocked on a semaphore that will be signaled in the CUDA context),
   // the GPU scheduler can't discover that until after the context switch.
   //
-  // Holding the submit here until CUDA has signaled the interop timeline eliminates
+  // Holding the submit here until CUDA has signaled its completion event eliminates
   // the extra mid-CUDA-stream context switch and improves frame pacing, at the cost
   // of a 100-200us window of downtime between contexts. This is less than the stall
   // duration introduced by the context switch, so we still come out ahead.
   {
-    vk::Semaphore interopSemaphore = m_interopTimeline.semaphore.get();
-    uint64_t waitValue = m_interopTimelineCudaSignaledValue;
-    vk::SemaphoreWaitInfo waitInfo{vk::SemaphoreWaitFlags(), 1, &interopSemaphore, &waitValue};
-    // Finite timeout: if CUDA wedges we would rather log and proceed (the
-    // submit's GPU-side renderFinished wait still preserves correctness)
-    // than hang the render thread. One second is far beyond any sane frame.
-    constexpr uint64_t kSubmitGateTimeoutNs = 1'000'000'000ull;
-    if (rhi()->vk()->device().waitSemaphores(waitInfo, kSubmitGateTimeoutNs) == vk::Result::eTimeout) {
-      fprintf(stderr, "RHIVK::swapBuffers: submit gate timed out waiting on CUDA->VK timeline value %llu\n",
-        (unsigned long long) waitValue);
-    }
+    CUDA_CHECK(cudaEventSynchronize(m_cudaToRHIEvent));
   }
 
   // Continue with command buffer submission.
@@ -1705,6 +1701,7 @@ void RHIVK::signalCUDAToRHI(CUstream stream) {
   cudaExternalSemaphoreSignalParams params = {};
   params.params.fence.value = m_interopTimelineCudaSignaledValue;
   CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&m_interopTimelineCU, &params, 1, stream));
+  CUDA_CHECK(cudaEventRecord(m_cudaToRHIEvent, stream));
 }
 
 void RHIVK::signalRHIToCUDA(CUstream stream) {

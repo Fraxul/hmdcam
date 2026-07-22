@@ -344,6 +344,10 @@ protected:
   cudaExternalSemaphore_t m_interopTimelineCU = nullptr;
   uint64_t m_interopTimelineNextValue = 0; // CUDA-only monotonic counter
   uint64_t m_interopTimelineCudaSignaledValue = 0; // last value CUDA signaled; VK waits on this
+  // We also signal a cudaEvent_t at the same time as the interop timeline semaphore.
+  // The cudaEvent supports putting the thread to sleep while waiting. If we were to wait on the
+  // CPU for the VK semaphore, it would require spinning.
+  cudaEvent_t m_cudaToRHIEvent = nullptr;
 
   // -------- VK -> CUDA interop (VK signals, CUDA waits) ----------
   // The mirror image, on its OWN dedicated timeline (never shared with the
