@@ -188,6 +188,7 @@ float interpolateChannels(size_t channelCount, const float* weights, const float
 }
 
 void FaceTrackingService::ProcessingState::internalUpdateStateOnCaptureOpen() {
+  pthread_setname_np(pthread_self(), "Facetracking");
   // Compute capture mat crop rect.
   {
     uint32_t targetStreamWidth = 960;

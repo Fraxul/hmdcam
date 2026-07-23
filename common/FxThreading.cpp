@@ -24,6 +24,7 @@ mutex sWorkQueueLock;
 condition_variable sWorkAddedSignal;
 
 void workerThread() {
+  pthread_setname_np(pthread_self(), "FxThreadingPool");
   while (true) {
     unique_lock<mutex> lock(sWorkQueueLock);
     while (sWorkQueue.empty()) {

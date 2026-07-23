@@ -176,7 +176,7 @@ bool DebugServer::initWithCameraSystem(CameraSystem* cs, IArgusCamera* cp, Depth
   }
 
   // Start the listener thread
-  m_streamThread = FxThread(streamThreadEntryPoint, this);
+  m_streamThread = FxThread(&DebugServer::streamThreadFn, this);
   return true;
 }
 

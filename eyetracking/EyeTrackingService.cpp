@@ -693,6 +693,8 @@ EyeTrackingService::ProcessingState::~ProcessingState() {
 }
 
 void EyeTrackingService::ProcessingState::internalUpdateStateOnCaptureOpen() {
+  pthread_setname_np(pthread_self(), m_eyeIdx ? "ET Right" : "ET Left");
+
   // Compute capture mat crop rect based on the ROI network input size
   {
     uint32_t targetStreamWidth = (m_capture.streamWidth() / m_service->m_roiInputWidth) * m_service->m_roiInputWidth;

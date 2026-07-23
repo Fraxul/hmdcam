@@ -140,6 +140,7 @@ void IMUService::processFrame(uint64_t captureTimestampNs) {
 }
 
 void IMUService::imuReaderThreadFn() {
+  pthread_setname_np(pthread_self(), "IMUService read");
 
   // Raw sample payload received over USB.
   struct IMUHIDSample {

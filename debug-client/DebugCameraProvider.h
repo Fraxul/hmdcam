@@ -47,10 +47,6 @@ public:
 protected:
   int m_fd = -1;
 
-  static void* streamThreadEntryPoint(void* x) {
-    reinterpret_cast<DebugCameraProvider*>(x)->streamThreadFn();
-    return NULL;
-  }
   void streamThreadFn();
   pthread_t m_streamThread = 0;
   pthread_mutex_t m_frameConsumedMutex = PTHREAD_MUTEX_INITIALIZER;

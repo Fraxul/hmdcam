@@ -603,6 +603,7 @@ bool RenderBackendVKDirect::initScanoutSyncpt() {
 }
 
 void RenderBackendVKDirect::scanoutThreadFunc() {
+  pthread_setname_np(pthread_self(), "VKDirectScanout");
   // The waiter is reusable, so we just allocate it once at thread startup.
   void* waiter = nullptr;
   if (NvRmHost1xWaiterAllocate(&waiter, m_nvrmHost1x) != 0 || !waiter) {
@@ -669,6 +670,7 @@ void RenderBackendVKDirect::scanoutThreadFunc() {
 constexpr uint64_t kScanoutSpinMarginNs = 500000; // 500 µs
 
 void RenderBackendVKDirect::scanoutThreadFunc() {
+  pthread_setname_np(pthread_self(), "VKDirectScanout");
   vk::Device device = rhi()->vk()->device();
   const uint64_t refreshPeriodNs = static_cast<uint64_t>(1000000000.0 / m_refreshRateHz);
   bool useAdaptiveBlock = false;
