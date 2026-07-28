@@ -41,6 +41,12 @@ if [ ! -f /etc/systemd/system/hmdcam.service ]; then
   cp assets/hmdcam.service /etc/systemd/system/hmdcam.service
 fi
 
+# Ensure that `logrotate` is installed, so /var/log/syslog can't grow unbounded.
+# (Omitted by default on the Nvidia L4T image, at least as of r36.4)
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y logrotate
+
 # Disable some unwanted services
 systemctl disable nvzramconfig.service
 systemctl disable nvmemwarning.service
