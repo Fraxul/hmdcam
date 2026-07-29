@@ -25,7 +25,7 @@ namespace {
 } // namespace
 
 bool writeResults(const std::string& yamlPath, const std::string& plotCsvPath,
-  const EstimatorResult& result, int cameraIndex) {
+  const EstimatorResult& result, int cameraIndex, double lineDelaySeconds) {
   cv::FileStorage fs(yamlPath, cv::FileStorage::WRITE | cv::FileStorage::FORMAT_YAML);
   if (!fs.isOpened()) {
     fprintf(stderr, "writeResults: cannot open '%s' for writing\n", yamlPath.c_str());
@@ -38,6 +38,9 @@ bool writeResults(const std::string& yamlPath, const std::string& plotCsvPath,
     "  Camera frame: x right, y down, z forward (optical axis).\n"
     "  R_imu_to_cam rotates an IMU-frame vector into the camera frame: v_cam = R_imu_to_cam * v_imu.\n"
     "  Time offset: t_imu = t_cam + time_offset_delta_s.\n"
+    "  Line offset: image row r maps to IMU line offset (r + line_offset_delta_lines) --\n"
+    "    the sync-to-readout latency in sensor readout lines. This is the form the base\n"
+    "    system consumes; it equals time_offset_delta_s / line duration.\n"
     "  Gyro bias is in deg/s; omega_cam = R_imu_to_cam * (omega_imu - gyro_bias_deg_s).\n",
     0);
 
@@ -59,6 +62,8 @@ bool writeResults(const std::string& yamlPath, const std::string& plotCsvPath,
   fs << "time_offset_delta_s" << result.deltaSeconds;
   fs << "delta_coarse_s" << result.deltaCoarseSeconds;
   fs << "delta_refined_s" << result.deltaSeconds;
+  if (lineDelaySeconds > 0.0)
+    fs << "line_offset_delta_lines" << (result.deltaSeconds / lineDelaySeconds);
 
   fs << "gyro_bias_deg_s"
      << "[:" << result.biasDeg.x() << result.biasDeg.y() << result.biasDeg.z() << "]";
@@ -138,7 +143,9 @@ bool writeImuCalibrationFile(const std::string& path, const std::vector<CameraCa
     "\nCamera-IMU calibration for the base system. One entry per camera, indexed to match\n"
     "calibration.yml's 'cameras' sequence. Conventions:\n"
     "  v_cam = R_imu_to_cam_matrix * v_imu        (camera frame: x right, y down, z forward)\n"
-    "  t_imu = t_cam + time_offset_delta_s\n"
+    "  line_offset_delta_lines: sync-to-readout latency in sensor readout lines; image row r\n"
+    "    maps to IMU line offset (r + line_offset_delta_lines). Preferred by the base system.\n"
+    "  t_imu = t_cam + time_offset_delta_s        (legacy time-domain equivalent)\n"
     "  omega_cam = R_imu_to_cam_matrix * (omega_imu - gyro_bias_deg_s)   [gyro_bias in deg/s]\n",
     0);
 
@@ -164,12 +171,15 @@ bool writeImuCalibrationFile(const std::string& path, const std::vector<CameraCa
       fs << "valid" << 1;
       fs << "R_imu_to_cam_matrix" << rotationMatrix3x3(entry->result.rImuToCam);
       fs << "time_offset_delta_s" << entry->result.deltaSeconds;
+      fs << "line_offset_delta_lines"
+         << ((entry->lineDelaySeconds > 0.0) ? (entry->result.deltaSeconds / entry->lineDelaySeconds) : 0.0);
       fs << "gyro_bias_deg_s" << columnVector3(entry->result.biasDeg);
     } else {
       // Placeholder: identity / zero so the file is still well-formed and index-aligned.
       fs << "valid" << 0;
       fs << "R_imu_to_cam_matrix" << cv::Mat::eye(3, 3, CV_64F);
       fs << "time_offset_delta_s" << 0.0;
+      fs << "line_offset_delta_lines" << 0.0;
       fs << "gyro_bias_deg_s" << cv::Mat::zeros(3, 1, CV_64F);
     }
     fs << "}";

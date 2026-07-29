@@ -152,8 +152,13 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
 
       constexpr float kDegToRad = static_cast<float>(M_PI / 180.0);
 
+      // Line-offset ticks -> seconds, for integrating the gyro rates. Line offsets are
+      // stamped by the sync controller from the camera line clock, so this sensor-mode
+      // constant is the only time conversion in the pipeline.
+      const double secondsPerTick = imuFrame->tickDurationNs * 1.0e-9;
+
       glm::vec3 previousOmega(0.0f);
-      uint64_t previousTimestampNs = 0;
+      uint32_t previousLineOffset = 0;
       for (uint32_t k = 0; k < sampleCount; ++k) {
         const IMUSample& s = imuFrame->samples[k];
         const glm::vec3 omegaCam =
@@ -163,17 +168,17 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
         if (k == 0) {
           cumulativeTheta[0] = glm::vec3(0.0f);
         } else {
-          // dt from the per-sample absolute timestamps that IMUService computed from
-          // the camera capture timestamp + line offsets. Guard against any non-monotonic
-          // timestamp so a bad sample can't inject a negative-time integration step.
-          const double dtSeconds = (s.timestampNs >= previousTimestampNs)
-            ? (static_cast<double>(s.timestampNs - previousTimestampNs) * 1.0e-9)
+          // dt directly from the line-offset delta. Corrupt offsets are gated at the HID
+          // reader, which also bounds the largest possible step; a non-monotonic offset
+          // still integrates as a zero-length step rather than a negative one.
+          const double dtSeconds = (s.lineOffset > previousLineOffset)
+            ? (static_cast<double>(s.lineOffset - previousLineOffset) * secondsPerTick)
             : 0.0;
           cumulativeTheta[k] = cumulativeTheta[k - 1] +
             ((0.5f * static_cast<float>(dtSeconds)) * (previousOmega + omegaCam));
         }
         previousOmega = omegaCam;
-        previousTimestampNs = s.timestampNs;
+        previousLineOffset = s.lineOffset;
       }
 
       // Linearly interpolate cumulativeTheta as a function of readout line. Samples
@@ -188,12 +193,18 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
         return glm::mix(cumulativeTheta[k], cumulativeTheta[k + 1], frac);
       };
 
+      // Sync-to-readout latency: image rows map to IMU line offsets shifted by the
+      // calibrated per-camera latency (see Camera::imuLineOffsetDeltaLines; the seconds
+      // form comes from legacy time_offset_delta_s calibrations, converted here).
+      const float lineOffsetDeltaLines = cam.imuLineOffsetDeltaLines +
+        ((cam.imuTimeOffsetSeconds * 1.0e9f) / (static_cast<float>(imuFrame->tickDurationNs) * 256.0f));
+
       // Reference orientation = frame-center readout line. The center is flip-invariant,
       // and this matches the frame-center convention the camera-IMU calibrator was fit
       // under (RollingShutterTiming::frameCenterTime / handoff doc section 3).
       const UndistortRectifyParams& p = v.rsParams[eyeIdx];
       const float maxStreamRow = static_cast<float>(p.streamHeight - 1);
-      const glm::vec3 thetaReference = interpolateTheta(maxStreamRow * 0.5f);
+      const glm::vec3 thetaReference = interpolateTheta((maxStreamRow * 0.5f) + lineOffsetDeltaLines);
 
       const float scaleY = p.distortionMapToStreamScale[1];
       const float biasY = p.distortionMapToStreamBias[1];
@@ -209,7 +220,7 @@ void CameraSystem::processFrame(IMUFrame* imuFrame) {
         // rollingShutterDeskewTest harness, run on a synthetic capture with a known
         // rolling-shutter shear, confirms exp(-theta) reconstructs the undistorted scene
         // while exp(+theta) doubles the distortion.
-        const glm::vec3 thetaRow = interpolateTheta(readoutLine) - thetaReference;
+        const glm::vec3 thetaRow = interpolateTheta(readoutLine + lineOffsetDeltaLines) - thetaReference;
         float Ry[9];
         RollingShutterDeskew::rotationVectorToMatrix(-thetaRow, Ry);
 
@@ -269,12 +280,15 @@ void CameraSystem::updateInterframePose(IMUFrame* imuFrame) {
 
     const uint32_t sampleCount = imuFrame->validSampleCount; // <= kMaxIMUSamplesPerFrame
 
+    // Line-offset ticks -> seconds; see the rolling-shutter pass.
+    const double secondsPerTick = imuFrame->tickDurationNs * 1.0e-9;
+
     // Cumulative camera-frame rotation vector vs readout line (trapezoidal in time),
     // identical construction to the rolling-shutter pass.
     glm::vec3 cumulativeTheta[kMaxIMUSamplesPerFrame];
     float sampleLine[kMaxIMUSamplesPerFrame];
     glm::vec3 previousOmega(0.0f);
-    uint64_t previousTimestampNs = 0;
+    uint32_t previousLineOffset = 0;
     for (uint32_t k = 0; k < sampleCount; ++k) {
       const IMUSample& s = imuFrame->samples[k];
       const glm::vec3 omegaCam =
@@ -283,27 +297,32 @@ void CameraSystem::updateInterframePose(IMUFrame* imuFrame) {
       if (k == 0) {
         cumulativeTheta[0] = glm::vec3(0.0f);
       } else {
-        const double dtSeconds = (s.timestampNs >= previousTimestampNs)
-          ? (static_cast<double>(s.timestampNs - previousTimestampNs) * 1.0e-9)
+        const double dtSeconds = (s.lineOffset > previousLineOffset)
+          ? (static_cast<double>(s.lineOffset - previousLineOffset) * secondsPerTick)
           : 0.0;
         cumulativeTheta[k] = cumulativeTheta[k - 1] +
           ((0.5f * static_cast<float>(dtSeconds)) * (previousOmega + omegaCam));
       }
       previousOmega = omegaCam;
-      previousTimestampNs = s.timestampNs;
+      previousLineOffset = s.lineOffset;
     }
+
+    // Center-exposure query line, shifted by the calibrated sync-to-readout latency
+    // (see Camera::imuLineOffsetDeltaLines) -- same convention as the rolling-shutter pass.
+    const float queryCenterLine = centerLine + cam.imuLineOffsetDeltaLines +
+      ((cam.imuTimeOffsetSeconds * 1.0e9f) / (static_cast<float>(imuFrame->tickDurationNs) * 256.0f));
 
     // head = integral start->center: cumulativeTheta interpolated at the center line.
     glm::vec3 head;
-    if (centerLine <= sampleLine[0]) {
+    if (queryCenterLine <= sampleLine[0]) {
       head = cumulativeTheta[0];
-    } else if (centerLine >= sampleLine[sampleCount - 1]) {
+    } else if (queryCenterLine >= sampleLine[sampleCount - 1]) {
       head = cumulativeTheta[sampleCount - 1];
     } else {
       uint32_t k = 0;
-      while ((k + 1) < sampleCount && sampleLine[k + 1] < centerLine) ++k;
+      while ((k + 1) < sampleCount && sampleLine[k + 1] < queryCenterLine) ++k;
       const float span = sampleLine[k + 1] - sampleLine[k];
-      const float frac = (span > 0.0f) ? ((centerLine - sampleLine[k]) / span) : 0.0f;
+      const float frac = (span > 0.0f) ? ((queryCenterLine - sampleLine[k]) / span) : 0.0f;
       head = glm::mix(cumulativeTheta[k], cumulativeTheta[k + 1], frac);
     }
     // tail = integral center->end for this frame; carried to the next frame.
@@ -392,6 +411,15 @@ bool CameraSystem::loadIMUCalibrationData(cv::FileStorage& imuFs) {
       cv::Mat biasMat;
       cfn["gyro_bias_deg_s"] >> biasMat;
       camera.gyroBias = glmVec3FromCV(biasMat);
+
+      // Sync-to-readout latency. Prefer the line-domain form; fall back to converting the
+      // legacy seconds form (t_imu = t_cam + delta) at point of use.
+      camera.imuLineOffsetDeltaLines = 0.0f;
+      camera.imuTimeOffsetSeconds = 0.0f;
+      cv::read(cfn["line_offset_delta_lines"], camera.imuLineOffsetDeltaLines, 0.0f);
+      if (camera.imuLineOffsetDeltaLines == 0.0f) {
+        cv::read(cfn["time_offset_delta_s"], camera.imuTimeOffsetSeconds, 0.0f);
+      }
 
       if (camera.imuCalibrationValid) {
         m_averageGyroBias += camera.gyroBias;

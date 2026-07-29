@@ -51,6 +51,7 @@ bool IMUService::loadConfiguration() {
     readNode(fs, accelMicroGPerLSB);
     readNode(fs, gyroMicroDPSPerLSB);
     readNode(fs, imuTimestampTicksPerFrame);
+    readNode(fs, imuTimestampTickDurationNs);
     readNode(fs, imuHIDEndpoint);
 
   } catch (const std::exception& ex) {
@@ -69,13 +70,18 @@ void IMUService::saveConfiguration() {
   writeNode(fs, accelMicroGPerLSB);
   writeNode(fs, gyroMicroDPSPerLSB);
   writeNode(fs, imuTimestampTicksPerFrame);
+  writeNode(fs, imuTimestampTickDurationNs);
   writeNode(fs, imuHIDEndpoint);
 }
 #undef writeNode
 
 void IMUService::processFrame(uint64_t captureTimestampNs) {
-  // Update frame-interval tracking
-  if (m_previousCaptureTimestampNs != 0) {
+
+  // Update the capture-interval rolling average. This is diagnostic display plus
+  // frame-match gate sizing only -- per-sample timing comes from line offsets -- but
+  // reject non-monotonic capture timestamps anyway: folding a negative step into unsigned
+  // math would poison the average for the next several hundred frames.
+  if (m_previousCaptureTimestampNs != 0 && captureTimestampNs > m_previousCaptureTimestampNs) {
     uint64_t interval = captureTimestampNs - m_previousCaptureTimestampNs;
 
     if (m_averageFrameIntervalNs == 0) {
@@ -87,16 +93,26 @@ void IMUService::processFrame(uint64_t captureTimestampNs) {
   }
   m_previousCaptureTimestampNs = captureTimestampNs;
 
-  // Find the IMU frame that best matches the provided capture timestamp.
-  // Since we only call processFrame() once per frame with increasing timestamps,
-  // this should be a frame that we haven't delivered before -- one with isApproximateTimestamp set.
+  // Reject candidate frames whose (approximate, HID-arrival-derived) start timestamp is
+  // more than ~1.5 capture intervals away from the capture timestamp: after a capture or
+  // IMU dropout the ring can hold stale undelivered frames, and re-stamping old motion as
+  // current is worse than reporting no data. Clamping the average keeps the gate sane
+  // before the average has converged (or if it's been disturbed by a timing glitch).
+  const uint64_t clampedAverageIntervalNs = std::min<uint64_t>(std::max<uint64_t>(m_averageFrameIntervalNs, 5'000'000ull), 50'000'000ull);
+  const int64_t matchGateNs = static_cast<int64_t>((clampedAverageIntervalNs * 3ull) / 2ull);
+
+  m_currentIMUFrame = nullptr;
+
+  // Find the committed, not-yet-delivered IMU frame that best matches the capture timestamp,
+  // and snapshot it out of the ring so the reader thread can never mutate what we hand out.
+  std::lock_guard<std::mutex> ringGuard(m_frameRingLock);
 
   int64_t minTSDelta = std::numeric_limits<int64_t>::max();
   int32_t selectedRingIdx = -1;
   for (uint32_t i = 0; i < kIMUFrameRingSize; ++i) {
     IMUFrame& frame = m_imuFrameRing[i];
-    if (!frame.isApproximateTimestamp) {
-      continue; // We've handed this one out before.
+    if (frame.commitSequence <= m_lastDeliveredCommitSequence) {
+      continue; // Never written, or already handed out.
     }
     if (frame.validSampleCount == 0 || frame.frameStartTimestampNs == 0) {
       continue; // No valid data.
@@ -110,21 +126,17 @@ void IMUService::processFrame(uint64_t captureTimestampNs) {
     }
   }
 
-  if (selectedRingIdx == -1) {
-    // No valid candidate.
-    m_currentIMUFrame = nullptr;
+  if (selectedRingIdx == -1 || minTSDelta > matchGateNs) {
+    // No valid candidate close enough to this capture.
     return;
   }
 
-  // Select current frame and lock in the timestamp
-  m_currentIMUFrame = &(m_imuFrameRing[selectedRingIdx]);
-  m_currentIMUFrame->frameStartTimestampNs = captureTimestampNs;
-  m_currentIMUFrame->isApproximateTimestamp = false;
-  // Generate per-sample absolute timestamps from the capture timestamp, frame interval, and line offsets.
-  for (uint32_t sampleIdx = 0; sampleIdx < m_currentIMUFrame->validSampleCount; ++sampleIdx) {
-    IMUSample& sample = m_currentIMUFrame->samples[sampleIdx];
-    sample.timestampNs = static_cast<uint64_t>((static_cast<float>(sample.lineOffset) / static_cast<float>(m_imuTimestampTicksPerFrame)) * static_cast<float>(m_averageFrameIntervalNs)) + captureTimestampNs;
-  }
+  m_currentFrameSnapshot = m_imuFrameRing[selectedRingIdx];
+  m_lastDeliveredCommitSequence = m_currentFrameSnapshot.commitSequence;
+
+  // Snap the approximate arrival-derived start timestamp to the authoritative capture timestamp.
+  m_currentFrameSnapshot.frameStartTimestampNs = captureTimestampNs;
+  m_currentIMUFrame = &m_currentFrameSnapshot;
 }
 
 void IMUService::imuReaderThreadFn() {
@@ -149,8 +161,17 @@ void IMUService::imuReaderThreadFn() {
   uint32_t lastLineOffset = 0;
   int lastOpenErrno = 0;
 
-  // Frame that we're in the process of building
-  IMUFrame* currentFrame = &(m_imuFrameRing[m_imuFrameRingWriteIdx & kIMUFrameRingSizeMask]);
+  // The line-offset counter legitimately spans one frame period (m_imuTimestampTicksPerFrame
+  // ticks -- slightly more when the capture interval is stretched via extended VBLANK).
+  // Values far outside that range are corrupt HID data; letting one through would inject a
+  // huge integration step downstream and poison frame-boundary detection here, so this
+  // single gate protects both.
+  const uint32_t lineOffsetSanityLimit = static_cast<uint32_t>(m_imuTimestampTicksPerFrame) * 2u;
+
+  // Frame under construction. Local staging, published to the ring only on commit, so ring
+  // slots are never observable in a half-built state.
+  IMUFrame stagingFrame;
+  stagingFrame.tickDurationNs = m_imuTimestampTickDurationNs;
 
   while (!m_serviceThreadShutdown) {
     if (fd < 0) {
@@ -191,22 +212,35 @@ void IMUService::imuReaderThreadFn() {
     }
 
     for (size_t sampleIdx = 0; sampleIdx < 4; ++sampleIdx) {
-      const IMUHIDSample& hidSample = packet.sample[sampleIdx];
+      IMUHIDSample hidSample = packet.sample[sampleIdx];
 
-      // For each packet:
-      // If the timestamp rolled over, then we commit the active frame and start a new one.
+      if (hidSample.lineOffset > lineOffsetSanityLimit) {
+        // Corrupt line offset -- drop the sample before it can touch frame-boundary
+        // detection or the integration timeline.
+        m_rejectedSampleCount.fetch_add(1, std::memory_order_relaxed);
+        continue;
+      }
+
+      // For each sample:
+      // If the line offset rolled over, the sensor started a new frame: commit the staged
+      // frame to the ring and start a new one.
       if (hidSample.lineOffset < lastLineOffset) {
-        // Commit active frame and start a new frame.
-        m_imuFrameRingWriteIdx += 1;
-        currentFrame = &(m_imuFrameRing[m_imuFrameRingWriteIdx & kIMUFrameRingSizeMask]);
-        currentFrame->resetWithApproximateTimestamp(packetTimestamp);
+        if (stagingFrame.validSampleCount > 0 && stagingFrame.frameStartTimestampNs != 0) {
+          std::lock_guard<std::mutex> ringGuard(m_frameRingLock);
+          IMUFrame& ringSlot = m_imuFrameRing[m_imuFrameRingWriteIdx & kIMUFrameRingSizeMask];
+          ringSlot = stagingFrame;
+          ringSlot.commitSequence = ++m_frameCommitCounter;
+          m_imuFrameRingWriteIdx += 1;
+        }
+        stagingFrame.frameStartTimestampNs = packetTimestamp;
+        stagingFrame.validSampleCount = 0;
       }
       lastLineOffset = hidSample.lineOffset;
 
-      // Push the sample onto the current frame.
-      // (Simple append, since we're guaranteed that timestamps will never go backwards).
-      if (currentFrame->validSampleCount < kMaxIMUSamplesPerFrame) {
-        IMUSample& outSample = currentFrame->samples[currentFrame->validSampleCount++];
+      // Push the sample onto the staged frame.
+      // (Simple append, since we're guaranteed that line offsets will never go backwards).
+      if (stagingFrame.validSampleCount < kMaxIMUSamplesPerFrame) {
+        IMUSample& outSample = stagingFrame.samples[stagingFrame.validSampleCount++];
 
         // lineOffset doesn't require a unit conversion, just copy it over.
         outSample.lineOffset = hidSample.lineOffset;
@@ -240,8 +274,9 @@ void IMUService::renderIMGUI() {
     ImGui::Text("IMU Samples this frame: %u", m_currentIMUFrame->validSampleCount);
     ImGui::Text("Min line offset: %u (%u + %u/256)", sample.lineOffset, sample.lineOffset >> 8, sample.lineOffset & 0xff);
     ImGui::Text("Max line offset: %u (%u + %u/256)", maxSample.lineOffset, maxSample.lineOffset >> 8, maxSample.lineOffset & 0xff);
-    ImGui::Text("Average frame interval: %lu ns", m_averageFrameIntervalNs);
   } else {
     ImGui::Text("No IMU frame!");
   }
+  ImGui::Text("Average frame interval: %lu ns (diagnostic only)", m_averageFrameIntervalNs);
+  ImGui::Text("Rejected samples (line-offset gate): %u", m_rejectedSampleCount.load(std::memory_order_relaxed));
 }

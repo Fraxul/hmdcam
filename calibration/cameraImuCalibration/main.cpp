@@ -93,7 +93,8 @@ bool calibrateCamera(const std::string& dataset, const std::string& calibration,
   printResultSummary(out.result);
   const std::string detail = dataset + "/imuCalibration-camera" + std::to_string(cameraIndex) + ".yml";
   const std::string plot = dataset + "/imuCalibration-camera" + std::to_string(cameraIndex) + "-plot.csv";
-  writeResults(detail, plot, out.result, cameraIndex);
+  writeResults(detail, plot, out.result, cameraIndex, timing.lineDelaySeconds);
+  out.lineDelaySeconds = timing.lineDelaySeconds;
   out.valid = out.result.converged;
   return true;
 #else

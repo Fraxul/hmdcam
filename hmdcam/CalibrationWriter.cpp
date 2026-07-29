@@ -70,21 +70,26 @@ void CalibrationWriter::processFrame(IMUFrame* imuFrame) {
       const IMUSample& sample = imuFrame->samples[sampleIdx];
 
       char sampleBuf[256];
-      // timestamp,gyro_x,gyro_y,gyro_z,accel_x,accel_y,accel_z
-      // timestamp is in nanoseconds
+      // timestamp,gyro_x,gyro_y,gyro_z,accel_x,accel_y,accel_z,line_offset
+      // timestamp is in nanoseconds, derived here from the frame capture timestamp plus
+      //   the sample's line offset (samples themselves carry only line offsets)
       // gyro_xyz are in deg/sec
       // accel_xyz are in G
+      // line_offset is in sync-controller ticks (sensor readout lines with an 8-bit fraction)
 
-      int64_t sampleTs = static_cast<int64_t>(sample.timestampNs) - static_cast<int64_t>(m_baseTimestampOffset);
+      const uint64_t sampleTimestampNs = imuFrame->frameStartTimestampNs +
+        static_cast<uint64_t>(static_cast<double>(sample.lineOffset) * imuFrame->tickDurationNs);
+      int64_t sampleTs = static_cast<int64_t>(sampleTimestampNs) - static_cast<int64_t>(m_baseTimestampOffset);
       if (sampleTs < 0) {
         continue; // Sample timestamp should never go negative
       }
 
       // Timestamp here is zero-padded to 16 digits, same as the filenames.
-      int sampleLen = snprintf(sampleBuf, sizeof(sampleBuf), "%016ld,%f,%f,%f,%f,%f,%f\n",
+      int sampleLen = snprintf(sampleBuf, sizeof(sampleBuf), "%016ld,%f,%f,%f,%f,%f,%f,%u\n",
         sampleTs,
         sample.gyroDPS[0], sample.gyroDPS[1], sample.gyroDPS[2],
-        sample.accelG[0], sample.accelG[1], sample.accelG[2]);
+        sample.accelG[0], sample.accelG[1], sample.accelG[2],
+        sample.lineOffset);
 
       writeFully(m_imuFd, sampleBuf, sampleLen);
     }
@@ -235,10 +240,11 @@ void CalibrationWriter::setActive(bool active) {
       }
 
       // Write CSV format header.
-      // timestamp is in nanoseconds
+      // timestamp is in nanoseconds (derived from the capture timestamp + line offset)
       // gyro_xyz are in deg/sec
       // accel_xyz are in G
-      const char* imuCSVHeader = "timestamp,gyro_x,gyro_y,gyro_z,accel_x,accel_y,accel_z\n";
+      // line_offset is in sync-controller ticks (readout lines with an 8-bit fraction)
+      const char* imuCSVHeader = "timestamp,gyro_x,gyro_y,gyro_z,accel_x,accel_y,accel_z,line_offset\n";
       write(m_imuFd, imuCSVHeader, strlen(imuCSVHeader));
     }
 

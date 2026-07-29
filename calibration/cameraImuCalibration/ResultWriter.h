@@ -7,8 +7,10 @@ namespace CameraImuCalib {
 
 // Write the detailed per-camera YAML result with an explicit conventions header, and a
 // plotting CSV of the aligned magnitude series and the per-axis money plot.
+// lineDelaySeconds (the sensor line duration from RollingShutterTiming) converts the solved
+// time offset into the line-domain form the base system consumes.
 bool writeResults(const std::string& yamlPath, const std::string& plotCsvPath,
-  const EstimatorResult& result, int cameraIndex);
+  const EstimatorResult& result, int cameraIndex, double lineDelaySeconds);
 
 // Print a human-readable summary (and any warnings) to stdout.
 void printResultSummary(const EstimatorResult& result);
@@ -17,6 +19,7 @@ void printResultSummary(const EstimatorResult& result);
 struct CameraCalibration {
   int cameraIndex = -1;
   bool valid = false; // false if estimation failed for this camera
+  double lineDelaySeconds = 0.0; // sensor line duration used to express the time offset in lines
   EstimatorResult result;
 };
 

@@ -65,6 +65,17 @@ public:
     glm::mat3 imuToCameraRotation = glm::mat3(1.0f);
     glm::vec3 gyroBias = glm::vec3(0.0f);
 
+    // Sync-to-readout latency: the count of sensor readout lines between the sync
+    // controller starting its line-offset counter for a frame and the sensor exposing that
+    // frame's first visible line (blanking lines plus internal pipeline delay). Image row r
+    // therefore maps to line offset (r + imuLineOffsetDeltaLines) on the IMU sample
+    // timeline. Loaded from line_offset_delta_lines in imuCalibration.yml; legacy files
+    // carrying only time_offset_delta_s (t_imu = t_cam + delta) populate
+    // imuTimeOffsetSeconds instead, which is converted at point of use via the IMU frame's
+    // tick duration. Normally at most one of the two is nonzero.
+    float imuLineOffsetDeltaLines = 0.0f;
+    float imuTimeOffsetSeconds = 0.0f;
+
     bool hasIntrinsicCalibration() const { return (!(intrinsicMatrix.empty() || distCoeffs.empty())); }
     bool hasIntrinsicDistortionMap() const { return (!(optimizedMatrix.empty() || intrinsicDistortionMap.get() == nullptr)); }
   };

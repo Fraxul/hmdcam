@@ -672,16 +672,18 @@ bool ArgusCamera::readFrame() {
     if (!iTscTimestamp) {
       printf("ArgusCamera::readFrame(): TSC timestamp metadata missing for camera index %zu\n", cameraIdx);
 
-      // Crappy fallback timestamp
+      // Crappy fallback timestamps.
       m_frameMetadata[cameraIdx].sensorTimestamp = iMetadata->getSensorTimestamp();
+      // getFrameDuration() just reports whatever was passed to Argus::ISourceSettings.setFrameDurationRange().
+      m_frameMetadata[cameraIdx].frameDurationNs = iMetadata->getFrameDuration();
     } else {
       // High-precision VI hardware timestamp based on the TSC timebase. Already converted to nanoseconds for us.
       // This is relative to the CNTVCT_EL0 TSC timebase used by currentTimeNs().
       m_frameMetadata[cameraIdx].sensorTimestamp = iTscTimestamp->getSensorSofTimestampTsc();
+      m_frameMetadata[cameraIdx].frameDurationNs = iTscTimestamp->getSensorEofTimestampTsc() - iTscTimestamp->getSensorSofTimestampTsc();
     }
 
     // Update metadata fields for this frame
-    m_frameMetadata[cameraIdx].frameDurationNs = iMetadata->getFrameDuration();
     m_frameMetadata[cameraIdx].sensorExposureTimeNs = iMetadata->getSensorExposureTime();
     m_frameMetadata[cameraIdx].sensorSensitivityISO = iMetadata->getSensorSensitivity();
     m_frameMetadata[cameraIdx].ispDigitalGain = iMetadata->getIspDigitalGain();
