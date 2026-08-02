@@ -3,6 +3,7 @@
 #include "common/Timing.h"
 #include "imgui/imgui.h"
 #include "implot/implot.h"
+#include <nvtx3/nvToolsExt.h>
 #include <algorithm>
 #include <limits>
 #include <errno.h>
@@ -232,6 +233,7 @@ void IMUService::imuReaderThreadFn() {
           ringSlot = stagingFrame;
           ringSlot.commitSequence = ++m_frameCommitCounter;
           m_imuFrameRingWriteIdx += 1;
+          nvtxMarkA("IMU frame commit");
         }
         stagingFrame.frameStartTimestampNs = packetTimestamp;
         stagingFrame.validSampleCount = 0;
