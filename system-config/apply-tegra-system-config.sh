@@ -23,7 +23,7 @@ usermod -aG plugdev ${APP_USER}
 usermod -aG input ${APP_USER}
 
 # Add ulimit override
-cp assets/video-rtprio.conf /etc/security/limits.d/
+cp assets/rtprio.conf /etc/security/limits.d/
 
 # Disable graphical environment at boot
 if [ "$(systemctl get-default)" != "multi-user.target" ]; then
