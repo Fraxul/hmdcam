@@ -26,3 +26,21 @@ lock_max ofa
 
 echo on > /sys/devices/platform/*rtcpu/power/control
 
+# Disable GPU engine-level power gating (ELPG).
+# The GPU clock is locked to a fixed rate to avoid DVFS transition latency, but ELPG
+# is an orthogonal knob: it power-gates the GR engine during brief idle windows. Each
+# un-gate forces the GPC NAFLL to relock from its ~115MHz reference back up to the locked
+# rate, parking the graphics clock at base for ~800us right as GPU work resumes -- which
+# shows up as per-frame pacing jitter. Note: devfreq cur_freq keeps reading the locked
+# rate throughout, so this is only visible in nsys GPU-metrics, not tegrastats.
+# Disabling ELPG (and adaptive ELPG) keeps the GR engine powered so the clock stays pinned.
+#
+# ELPG lock can be verified by reading the /sys/kernel/debug/gpu.0/elpg_transitions counter.
+# With ELPG disabled, the counter should stay fixed.
+#
+
+GPU=/sys/devices/platform/17000000.gpu
+echo 0 > "$GPU/elpg_enable"
+echo 0 > "$GPU/aelpg_enable"
+echo "ELPG disabled (elpg_enable=$(cat $GPU/elpg_enable) aelpg_enable=$(cat $GPU/aelpg_enable))"
+
